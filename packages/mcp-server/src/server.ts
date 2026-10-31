@@ -7,11 +7,15 @@
 // donc entier — la config personnelle de l'utilisateur n'entre pas — et Nodal
 // peut quand même exposer les siens.
 //
-// UN SEUL OUTIL : `run_task`. Le contrat de la surface chat, appliqué ici pour
-// la même raison — un appel MCP n'est pas un job, donc il ne reçoit pas les
-// outils d'un job. Il crée un job, et le job exécute avec toutes ses gardes
-// (approbations, audit, compteurs, hiérarchie). Voir tools.ts pour l'autopsie
-// de la version qui exposait les outils internes directement.
+// UNE SEULE PORTE QUI ÉCRIT : `run_task`. Le contrat de la surface chat,
+// appliqué ici pour la même raison — un appel MCP n'est pas un job, donc il ne
+// reçoit pas les outils d'un job. Il crée un job, et le job exécute avec toutes
+// ses gardes (approbations, audit, compteurs, hiérarchie). Voir tools.ts pour
+// l'autopsie de la version qui exposait les outils internes directement.
+//
+// Et une lecture : `get_task` (#887), qui rend à l'appelant la réponse du job
+// qu'il a créé. Mêmes bornes que `run_task` — l'espace de l'agent du serveur,
+// le canal `mcp` — et rien d'écrit (get-task.ts).
 //
 // STDIO UNIQUEMENT. Aucune écoute réseau ici, et ce n'est pas une omission :
 // un point d'entrée qui crée des jobs exige une authentification que ce lot ne
@@ -32,7 +36,20 @@ import {
 } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { MCP_MAX_JOBS_IN_FLIGHT } from '@nodal-agents/shared';
-import { runTaskInputSchema, RUN_TASK_DESCRIPTION } from './tools';
+import {
+  runTaskInputSchema,
+  RUN_TASK_DESCRIPTION,
+  getTaskInputSchema,
+  GET_TASK_DESCRIPTION,
+} from './tools';
+import {
+  GET_TASK_POLL_MS,
+  getTaskReply,
+  isSettled,
+  jobNotFound,
+  readMcpRun,
+  waitForRun,
+} from './get-task';
 
 export interface McpServerOptions {
   db: AnyDrizzleDb;
@@ -459,10 +476,50 @@ export async function buildNodalMcpServer(opts: McpServerOptions): Promise<McpSe
               text: JSON.stringify({
                 jobId: job?.id,
                 status: 'pending',
-                note: 'The job runs asynchronously under the agent’s own rules; results land on the Runs page.',
+                note: 'The job runs asynchronously under the agent’s own rules. Call get_task with this jobId to get its result.',
               }),
             },
           ],
+        };
+      } catch (err) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: 'text' as const,
+              text: err instanceof Error ? err.message : String(err),
+            },
+          ],
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    'get_task',
+    {
+      description: GET_TASK_DESCRIPTION,
+      inputSchema: getTaskInputSchema.shape,
+      annotations: { readOnlyHint: true },
+    },
+    async (args: unknown, extra) => {
+      try {
+        const { jobId, waitSeconds } = getTaskInputSchema.parse(args);
+        // L'interrupteur à CHAQUE appel, comme run_task : couper le serveur
+        // coupe aussi les lectures d'un client déjà connecté.
+        await assertMcpEnabled(opts.db, entityId);
+        const read = async () => {
+          const state = await readMcpRun(opts.db, entityId, jobId);
+          if (state === null) throw jobNotFound(jobId);
+          return state;
+        };
+        const state = await waitForRun(read, isSettled, {
+          waitMs: (waitSeconds ?? 0) * 1000,
+          pollMs: GET_TASK_POLL_MS,
+          signal: extra.signal,
+        });
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify(getTaskReply(jobId, state)) }],
         };
       } catch (err) {
         return {

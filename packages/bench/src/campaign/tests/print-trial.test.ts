@@ -95,7 +95,15 @@ vi.mock('../../workflows/mcp', () => ({
       toolInput: input,
       toolOutput: output,
     });
-    return { jobId: job!.id, close: () => Promise.resolve() };
+    return {
+      jobId: job!.id,
+      // Ce que `get_task` rendrait : l'état du run lu par la même lecture que le serveur MCP.
+      getTask: async () => {
+        const state = await d.readRunState(db, target.entityId, job!.id);
+        return { jobId: job!.id, status: state!.status, result: state!.result };
+      },
+      close: () => Promise.resolve(),
+    };
   },
 }));
 vi.mock('../../workflows/paths', async (orig) => ({

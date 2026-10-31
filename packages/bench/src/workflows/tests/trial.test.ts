@@ -10,7 +10,8 @@ import { mkdtempSync, readFileSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { TreeFactsSchema, type TreeFacts } from '../facts';
+import { TreeFactsSchema, isLive, type TreeFacts } from '../facts';
+import type { GetTaskReply } from '../mcp';
 import { readRecords, writeRecord } from '../../printer/record';
 import { fixturePath } from '../fixtures';
 import { SCENARIOS, scenarioById } from '../scenarios';
@@ -28,7 +29,9 @@ import {
   DELIVERY_CONTENT_FIELDS,
   DELIVERY_TARGET_FIELDS,
   busyReason,
+  callerViewReasons,
   destinationReasons,
+  readCallerView,
   measure,
   runTrial,
   type TrialDeps,
@@ -59,6 +62,17 @@ const OPTS: TrialOptions = {
 
 const IDLE: ForeignActivity = { jobs: [], lastChatMs: null };
 
+/** Ce qu'un get_task fidèle rend sur ces faits : le statut du run, le résultat de la tête. */
+function callerViewOf(facts: TreeFacts): GetTaskReply {
+  const root = facts.jobs.find((j) => j.id === facts.rootId)!;
+  const live = facts.jobs.some((j) => isLive(j.status));
+  return {
+    jobId: facts.rootId,
+    status: live ? 'running' : (root.status ?? 'running'),
+    result: root.result,
+  };
+}
+
 /** Un sujet calibré, posé pour les essais de recherche (subjects.ts) : celui de l'essai réel du 30/09. */
 const CMB: ResearchSubject = {
   id: 'test-cmb',
@@ -85,12 +99,19 @@ function world(opts: {
   afterCancel?: TreeFacts;
   foreign?: ForeignActivity[];
   subjects?: ResearchSubject[];
+  /** Ce que get_task rend à l'appelant ; par défaut, la base telle qu'elle est. */
+  getTask?: (facts: TreeFacts) => Promise<GetTaskReply> | GetTaskReply;
 }): World {
   const clock = { now: Date.parse('2026-09-30T03:00:00Z') };
   const started: string[] = [];
   const cancelled: Array<{ entityId: string; rootId: string }> = [];
   let reads = 0;
   let foreignReads = 0;
+  // Ce que la base porte maintenant : la dernière lecture, ou l'arbre annulé.
+  const current = (): TreeFacts =>
+    cancelled.length > 0 && opts.afterCancel
+      ? opts.afterCancel
+      : opts.snapshots[Math.min(Math.max(reads - 1, 0), opts.snapshots.length - 1)]!;
   const deps: TrialDeps = {
     now: () => clock.now,
     sleep: async (ms) => {
@@ -98,7 +119,12 @@ function world(opts: {
     },
     start: async (instruction) => {
       started.push(instruction);
-      return { jobId: opts.rootId, close: async () => undefined };
+      return {
+        jobId: opts.rootId,
+        // Le vrai get_task lit la même base : le faux rend ce qu'elle porte.
+        getTask: async () => (opts.getTask ?? callerViewOf)(current()),
+        close: async () => undefined,
+      };
     },
     read: async () => {
       if (cancelled.length > 0 && opts.afterCancel) return opts.afterCancel;
@@ -417,7 +443,147 @@ describe('workflow trial safety rules', () => {
       'workflow_mcp_failed: run_task refused: mcp_disabled: the MCP server is switched off',
     ]);
   });
+});
 
+describe('the answer a trial keeps is the one the caller read through get_task (#887)', () => {
+  /** L'essai vert du 30/09, dont la tête porte `result` en base. */
+  const withRootResult = (result: string): TreeFacts => {
+    const green = load('question-green');
+    return {
+      ...green,
+      jobs: green.jobs.map((j) => (j.id === green.rootId ? { ...j, result } : j)),
+    };
+  };
+
+  it('a green trial keeps the result get_task returned', async () => {
+    const facts = withRootResult('Canberra, lu par get_task');
+    const w = world({ rootId: facts.rootId, snapshots: [facts] });
+    const line = await runTrial(scenarioById('question')!, w.deps, OPTS);
+    expect(line.verdict).toBe('green');
+    expect(line.answer).toBe('Canberra, lu par get_task');
+  });
+
+  it('get_task returning another result than the database holds makes the trial red, named', async () => {
+    const green = load('question-green');
+    const w = world({
+      rootId: green.rootId,
+      snapshots: [green],
+      getTask: (f) => ({ ...callerViewOf(f), result: 'Vérification rapide des fichiers livrés :' }),
+    });
+    const line = await runTrial(scenarioById('question')!, w.deps, OPTS);
+    expect(line.verdict).toBe('red');
+    expect(line.reasons).toContain('get_task returned another result than the root job holds');
+    // La ligne garde ce que l'appelant a VU, pas la base.
+    expect(line.answer).toBe('Vérification rapide des fichiers livrés :');
+  });
+
+  it('get_task saying running on a finished run, read after read, makes the trial red, named', async () => {
+    const green = load('question-green');
+    const w = world({
+      rootId: green.rootId,
+      snapshots: [green],
+      getTask: (f) => ({ ...callerViewOf(f), status: 'running' }),
+    });
+    const line = await runTrial(scenarioById('question')!, w.deps, OPTS);
+    expect(line.verdict).toBe('red');
+    expect(line.reasons).toContain(
+      'get_task and the database still disagree after 2 reads: get_task says running, 0 job(s) of the run are live',
+    );
+  });
+
+  it('a successor job that ends BETWEEN the get_task read and the database read is not a contract breach', async () => {
+    // La course de la revue de #889 (passe 1), rendue déterministe : get_task
+    // lit le run pendant que la tête relancée par la file (#531) court encore,
+    // et elle finit avant que le banc ne relise la base. Les deux lectures sont
+    // justes, chacune à son instant ; comparées comme un instantané, elles
+    // rendaient rouge un essai correct.
+    // Mutation exécutée : revenir à une seule paire comparée telle quelle fait
+    // rougir CE test (« get_task says running … no job … is live »).
+    const green = load('question-green');
+    const root = green.jobs.find((j) => j.id === green.rootId)!;
+    let views = 0;
+    const w = world({
+      rootId: green.rootId,
+      snapshots: [green],
+      getTask: (f) =>
+        views++ === 0
+          ? { jobId: green.rootId, status: 'running', result: root.result }
+          : callerViewOf(f),
+    });
+    const line = await runTrial(scenarioById('question')!, w.deps, OPTS);
+    expect(line.reasons).toEqual([]);
+    expect(line.verdict).toBe('green');
+    expect(line.answer).toBe(root.result);
+  });
+
+  it('on a run both reads see live, nothing that can still move is compared', () => {
+    // La tête a déjà un texte, mais un délégué court : get_task dit « running »
+    // sans résultat définitif. Ni le statut ni le résultat ne sont figés.
+    // Mutation exécutée : comparer aussi sur un run vivant fait rougir CE test.
+    const after = load('file-red-approval');
+    const live = beforeCancel(after);
+    const view: GetTaskReply = { jobId: live.rootId, status: 'running', result: null };
+    expect(callerViewReasons(view, live)).toEqual([]);
+  });
+
+  it('a database read that fails while checking get_task is named as the bench failure, not get_task', async () => {
+    // Revue de #889, passe 2 : une panne de la base du banc se disait « the
+    // caller could not read the answer through get_task », accusant le contrat.
+    const green = load('question-green');
+    const view = callerViewOf(green);
+    await expect(
+      readCallerView(
+        async () => view,
+        async () => {
+          throw new Error('connection reset');
+        },
+      ),
+    ).rejects.toThrow(
+      /^the bench could not read the run from the database to check get_task: connection reset$/,
+    );
+    await expect(
+      readCallerView(
+        async () => {
+          throw new Error('get_task refused: mcp_disabled');
+        },
+        async () => green,
+      ),
+    ).rejects.toThrow(
+      /^the caller could not read the answer through get_task: get_task refused: mcp_disabled$/,
+    );
+  });
+
+  it('get_task saying completed with the wrong status of the head stays red', async () => {
+    const green = load('question-green');
+    const w = world({
+      rootId: green.rootId,
+      snapshots: [green],
+      getTask: (f) => ({ ...callerViewOf(f), status: 'failed' }),
+    });
+    const line = await runTrial(scenarioById('question')!, w.deps, OPTS);
+    expect(line.verdict).toBe('red');
+    expect(line.reasons).toContain('get_task says failed although the root job is completed');
+  });
+
+  it('a get_task that fails is a reason, and the line keeps no answer', async () => {
+    const green = load('question-green');
+    const w = world({
+      rootId: green.rootId,
+      snapshots: [green],
+      getTask: () => {
+        throw new Error('get_task refused: mcp_job_not_found: no job with id x');
+      },
+    });
+    const line = await runTrial(scenarioById('question')!, w.deps, OPTS);
+    expect(line.verdict).toBe('red');
+    expect(line.reasons).toContain(
+      'the caller could not read the answer through get_task: get_task refused: mcp_job_not_found: no job with id x',
+    );
+    expect(line.answer).toBeNull();
+  });
+});
+
+describe('workflow trial measures', () => {
   it('a green trial carries the real measures of its tree', async () => {
     const green = load('question-green');
     const w = world({ rootId: green.rootId, snapshots: [green] });

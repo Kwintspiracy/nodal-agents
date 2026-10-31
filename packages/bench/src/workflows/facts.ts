@@ -14,7 +14,13 @@ type SqlQuery = Parameters<AnyDrizzleDb['execute']>[0];
 
 export const JobFactSchema = z.object({
   id: z.string(),
+  /** Le job qui l'a délégué : un job qui en porte un est né d'une délégation. */
   parentJobId: z.string().nullable(),
+  /**
+   * Le job dont la file l'a fait naître à sa fin (#531) : la suite du même
+   * travail, pas une délégation. Absent des photos d'avant ce champ.
+   */
+  relaunchedFromJobId: z.string().nullable().default(null),
   agentSlug: z.string().nullable(),
   status: z.string().nullable(),
   channel: z.string(),
@@ -241,6 +247,7 @@ const numOrNull = z.union([z.null(), z.coerce.number()]);
 const RawJob = z.object({
   id: z.string(),
   parent_job_id: z.string().nullable(),
+  relaunched_from_job_id: z.string().nullable(),
   entity_id: z.string().nullable(),
   slug: z.string().nullable(),
   status: z.string().nullable(),
@@ -304,23 +311,44 @@ const RawDelivery = z.object({
 });
 
 /**
- * Photographie l'arbre d'un job : la tête et ses descendants (`parent_job_id`),
- * leurs appels d'outils, leurs appels de modèle (API et tours de CLI) et leurs
+ * Photographie l'arbre d'un job : la tête et tout ce qui en descend, leurs
+ * appels d'outils, leurs appels de modèle (API et tours de CLI) et leurs
  * demandes à un humain.
  * Lecture seule.
+ *
+ * L'arbre est CELUI DE LA PLATEFORME (`descendRunTree`, @nodal-agents/db) :
+ * les délégués (`parent_job_id`) ET la tête que la file relance à la fin d'un
+ * run (`relaunched_from_job_id`, #531), dans l'espace de la tête. Le banc
+ * suivait `parent_job_id` seul : une tête relancée vivante, que get_task, le
+ * bouton Stop et le budget de run comptent, lui était invisible — l'essai la
+ * disait finie, l'accusait de dire `running`, et ne l'annulait jamais (revue
+ * de #889, passe 2). Ses appels comptent désormais pour le run : c'est le même
+ * travail.
  */
 export async function readTreeFacts(db: AnyDrizzleDb, rootId: string): Promise<TreeFacts> {
-  const { sql } = await import('@nodal-agents/db');
-  const tree = sql`with recursive t as (
-      select id from agent_jobs where id = ${rootId}::uuid
-      union all
-      select j.id from agent_jobs j join t on j.parent_job_id = t.id
-    ) select id from t`;
+  const { sql, descendRunTree } = await import('@nodal-agents/db');
+  const head = z
+    .array(z.object({ entity_id: z.string().nullable() }))
+    .parse(
+      await executeRows(db, sql`select entity_id::text from agent_jobs where id = ${rootId}::uuid`),
+    )[0];
+  if (!head) throw new Error(`workflow_root_missing: job ${rootId} is not in agent_jobs`);
+  if (head.entity_id === null)
+    throw new Error(
+      `workflow_root_without_workspace: job ${rootId} belongs to no workspace, so its run tree ` +
+        'cannot be read (the platform bounds a run to its workspace)',
+    );
+  const ids = await descendRunTree(db, head.entity_id, [rootId]);
+  const tree = sql.join(
+    ids.map((id) => sql`${id}::uuid`),
+    sql`, `,
+  );
   const jobs = z.array(RawJob).parse(
     await executeRows(
       db,
       sql`
-      select j.id::text, j.parent_job_id::text, j.entity_id::text, a.slug, j.status, j.channel,
+      select j.id::text, j.parent_job_id::text, j.relaunched_from_job_id::text,
+             j.entity_id::text, a.slug, j.status, j.channel,
              j.result, j.error,
              (extract(epoch from j.created_at) * 1000)::float8 as created_ms,
              (extract(epoch from j.updated_at) * 1000)::float8 as updated_ms
@@ -455,6 +483,7 @@ export async function readTreeFacts(db: AnyDrizzleDb, rootId: string): Promise<T
     jobs: jobs.map((j) => ({
       id: j.id,
       parentJobId: j.parent_job_id,
+      relaunchedFromJobId: j.relaunched_from_job_id,
       agentSlug: j.slug,
       status: j.status,
       channel: j.channel,

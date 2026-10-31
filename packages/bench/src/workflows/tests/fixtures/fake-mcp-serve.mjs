@@ -36,4 +36,33 @@ server.registerTool(
     };
   },
 );
+// get_task, comme `nodal-agents mcp serve` (#887) : il note l'id relu, et rend
+// le job tel que le serveur le lirait en base.
+server.registerTool(
+  'get_task',
+  {
+    description: 'test double',
+    inputSchema: { jobId: z.string(), waitSeconds: z.number().optional() },
+  },
+  async (args) => {
+    writeFileSync(`${process.env.BENCH_FAKE_MCP_OUT}.get`, JSON.stringify({ args }));
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify({
+            jobId: args.jobId,
+            status: 'completed',
+            jobStatus: 'completed',
+            result: 'Canberra.',
+            error: null,
+            liveJobs: 0,
+            deliverables: [],
+            waitingForPerson: [],
+          }),
+        },
+      ],
+    };
+  },
+);
 await server.connect(new StdioServerTransport());

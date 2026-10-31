@@ -33,6 +33,7 @@ const T0 = 1_790_000_000_000;
 function job(over: Partial<JobFact> & { id: string }): JobFact {
   return {
     parentJobId: null,
+    relaunchedFromJobId: null,
     agentSlug: 'root',
     status: 'completed',
     channel: 'mcp',

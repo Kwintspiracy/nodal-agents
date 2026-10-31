@@ -30,6 +30,7 @@ import { benchDeliverables, findInRoots } from './disk';
 import { fileHash, fixturePath, prepareTrial, sharedRoot } from './fixtures';
 import type { TreeFacts } from './facts';
 import { isLive, liveJobs, pendingApprovals } from './facts';
+import type { GetTaskReply, RunTaskSession } from './mcp';
 import { cheminConstate, DELIVERY_TOOL_NAMES, PURPOSE_KEY } from '@nodal-agents/tools';
 import {
   answerOf,
@@ -78,7 +79,7 @@ export interface TrialDeps {
   now(): number;
   sleep(ms: number): Promise<void>;
   /** Envoie la demande par le chemin MCP de l'utilisateur. */
-  start(instruction: string, caller: string): Promise<{ jobId: string; close(): Promise<void> }>;
+  start(instruction: string, caller: string): Promise<RunTaskSession>;
   read(rootId: string): Promise<TreeFacts>;
   cancel(entityId: string, rootId: string): Promise<unknown>;
   foreign(): Promise<ForeignActivity>;
@@ -136,6 +137,80 @@ export const DEFAULT_TRIAL_OPTIONS: Omit<
   idlePollMs: 30_000,
   chatQuietMs: 5 * 60_000,
 };
+
+/** Ce que get_task dit d'un run qui court encore. */
+function viewIsLive(view: GetTaskReply): boolean {
+  return view.status === 'running' || view.status === 'waiting_for_person';
+}
+
+/** La vue de l'appelant et la base disent-elles toutes deux que le run vit, ou toutes deux qu'il est fini ? */
+export function callerViewAgrees(view: GetTaskReply, facts: TreeFacts): boolean {
+  return viewIsLive(view) === facts.jobs.some((j) => isLive(j.status));
+}
+
+/** Combien de paires (get_task, base) lire au plus avant de dire qu'elles divergent. */
+export const CALLER_VIEW_READS = 2;
+
+/**
+ * La vue de l'appelant ET une lecture de la base, l'une après l'autre, relues
+ * UNE fois si elles ne s'accordent pas sur « le run vit / est fini ».
+ *
+ * Les deux lisent le MÊME arbre (`descendRunTree`, voir readTreeFacts), et le
+ * banc ne les lit qu'une fois le run réglé ou annulé. Un arbre réglé l'est pour
+ * de bon : aucun enfant ne naît sous un job terminé (`insertChildJob`), et la
+ * tête que la file relance (#531) naît DANS la mise à jour qui termine la
+ * précédente. Le seul écart possible est donc celui de deux lectures qui
+ * encadrent cette mise à jour, et la paire suivante le voit déjà résolu : une
+ * relecture immédiate suffit, sans pause. Deux paires qui divergent sont un
+ * vrai désaccord (revue de #889, passes 1 et 2).
+ *
+ * Une panne de l'une ou l'autre lecture se dit pour ce qu'elle est : get_task
+ * n'a pas répondu, ou le banc n'a pas pu lire la base.
+ */
+export async function readCallerView(
+  getTask: () => Promise<GetTaskReply>,
+  read: () => Promise<TreeFacts>,
+): Promise<{ view: GetTaskReply; facts: TreeFacts }> {
+  const why = (e: unknown) => String(e instanceof Error ? e.message : e);
+  for (let i = 1; ; i++) {
+    const view = await getTask().catch((e: unknown) => {
+      throw new Error(`the caller could not read the answer through get_task: ${why(e)}`);
+    });
+    const facts = await read().catch((e: unknown) => {
+      throw new Error(
+        `the bench could not read the run from the database to check get_task: ${why(e)}`,
+      );
+    });
+    if (callerViewAgrees(view, facts) || i >= CALLER_VIEW_READS) return { view, facts };
+  }
+}
+
+/**
+ * Ce qui sépare la réponse que l'appelant a lue par `get_task` de ce que la
+ * base porte, sur une paire lue par `readCallerView`, une raison par écart.
+ * Rien quand get_task n'a pas répondu : sa panne est déjà une raison.
+ *
+ * Le résultat et le statut terminal ne se comparent que sur un run que les
+ * deux disent fini : c'est ce qui ne bouge plus. Un écart de vivacité n'est
+ * une raison qu'après CALLER_VIEW_READS paires qui divergent toutes.
+ */
+export function callerViewReasons(view: GetTaskReply | null, facts: TreeFacts): string[] {
+  if (view === null) return [];
+  const live = facts.jobs.filter((j) => isLive(j.status)).length;
+  if (!callerViewAgrees(view, facts))
+    return [
+      `get_task and the database still disagree after ${CALLER_VIEW_READS} reads: ` +
+        `get_task says ${view.status}, ${live} job(s) of the run are live`,
+    ];
+  if (live > 0) return [];
+  const root = facts.jobs.find((j) => j.id === facts.rootId);
+  const out: string[] = [];
+  if ((root?.status ?? null) !== view.status)
+    out.push(`get_task says ${view.status} although the root job is ${root?.status ?? 'missing'}`);
+  if ((root?.result ?? null) !== view.result)
+    out.push('get_task returned another result than the root job holds');
+  return out;
+}
 
 export function benchCaller(s: AnyScenario): string {
   return `nodal-bench/${s.id}/v${s.version}`;
@@ -680,7 +755,7 @@ async function runTrialSteps(s: AnyScenario, deps: TrialDeps, o: TrialOptions): 
   }
 
   const startedMs = deps.now();
-  let session: { jobId: string; close(): Promise<void> };
+  let session: RunTaskSession;
   try {
     session = await deps.start(request, benchCaller(s));
   } catch (e) {
@@ -696,6 +771,7 @@ async function runTrialSteps(s: AnyScenario, deps: TrialDeps, o: TrialOptions): 
 
   let cancelled = false;
   const benchReasons: string[] = [];
+  let callerView: { view: GetTaskReply; facts: TreeFacts } | null = null;
   const cancel = async (why: string): Promise<void> => {
     if (entityId === null) {
       // L'entité n'est connue qu'après la première lecture ; la relire ici
@@ -749,6 +825,16 @@ async function runTrialSteps(s: AnyScenario, deps: TrialDeps, o: TrialOptions): 
         `could not verify the run was stopped: ${String(e instanceof Error ? e.message : e)}`,
       );
     }
+    // La réponse que l'APPELANT obtient, par `get_task` (#887), lue avant de
+    // fermer le client : la même que tout client MCP.
+    try {
+      callerView = await readCallerView(
+        () => session.getTask(),
+        () => deps.read(rootId),
+      );
+    } catch (e) {
+      benchReasons.push(String(e instanceof Error ? e.message : e));
+    }
     await session.close();
   }
 
@@ -794,8 +880,11 @@ async function runTrialSteps(s: AnyScenario, deps: TrialDeps, o: TrialOptions): 
   } catch (e) {
     judged = [`the judge failed: ${String(e instanceof Error ? e.message : e)}`];
   }
+  // Ce que l'appelant a lu doit être ce que la base porte : un écart est le
+  // contrat de get_task cassé, et l'essai le dit (jamais un vert dessus).
+  if (callerView) benchReasons.push(...callerViewReasons(callerView.view, callerView.facts));
   const reasons = [...new Set([...benchReasons, ...judged])];
-  const result = facts.jobs.find((j) => j.id === facts.rootId)?.result ?? null;
+  const result = callerView?.view.result ?? null;
   return {
     ...emptyLine(s, o, startedMs, rootModel),
     ...measure(facts),

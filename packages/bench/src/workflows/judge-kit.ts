@@ -28,9 +28,13 @@ export function rootJob(facts: TreeFacts): JobFact | undefined {
   return facts.jobs.find((j) => j.id === facts.rootId);
 }
 
-/** Les jobs nés d'une délégation (tout job de l'arbre qui n'est pas la tête). */
+/**
+ * Les jobs nés d'une délégation : ceux qu'un job de l'arbre a délégués
+ * (`parent_job_id`). La tête que la file relance à la fin du run (#531) est
+ * dans l'arbre sans être une délégation : c'est la suite du même travail.
+ */
 export function delegatedJobs(facts: TreeFacts): JobFact[] {
-  return facts.jobs.filter((j) => j.id !== facts.rootId);
+  return facts.jobs.filter((j) => j.id !== facts.rootId && j.parentJobId !== null);
 }
 
 /**

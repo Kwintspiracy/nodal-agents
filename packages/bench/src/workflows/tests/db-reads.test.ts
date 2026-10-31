@@ -15,6 +15,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { seedMinimal, spinUpTestDb } from '@nodal-agents/db/test-utils';
 import { readTreeFacts } from '../facts';
+import { delegatedJobs } from '../judge-kit';
 import { readForeignActivity, readLiveBenchRoots } from '../stack';
 import { busyReason, measure } from '../trial';
 
@@ -200,6 +201,66 @@ describe('the live bench trials, and only them', () => {
     );
     expect(rows.every((r) => r.entityId === entityId)).toBe(true);
     expect(rows.map((r) => r.id)).not.toContain(benchDone);
+  });
+});
+
+// Revue de #889, passe 2 : le banc avait sa propre idée de l'arbre d'un run
+// (`parent_job_id` seul), et la tête que la file relance à la fin d'un run
+// (#531, `relaunched_from_job_id`, sans parent) lui était invisible. L'arbre
+// est désormais celui de la plateforme (`descendRunTree` / `runHeadOf`).
+describe('the run tree is the platform one: a relaunched successor head belongs to the run', () => {
+  async function benchRoot(status: string): Promise<string> {
+    const r = await pg.query<{ id: string }>(
+      `insert into agent_jobs (entity_id, agent_id, status, channel, task, trigger_context)
+       values ($1, $2, $3, 'mcp', 'x', $4::jsonb) returning id::text`,
+      [entityId, agentId, status, JSON.stringify({ caller: 'nodal-bench/question/v1' })],
+    );
+    return r.rows[0]!.id;
+  }
+  async function successor(of: string, status: string): Promise<string> {
+    // La forme que le déclencheur de la file lui donne (0151) : aucun parent,
+    // aucune étiquette, le lien de relance seul.
+    const r = await pg.query<{ id: string }>(
+      `insert into agent_jobs (entity_id, agent_id, status, channel, task, relaunched_from_job_id)
+       values ($1, $2, $3, 'mcp', 'la suite', $4) returning id::text`,
+      [entityId, agentId, status, of],
+    );
+    return r.rows[0]!.id;
+  }
+
+  it('readTreeFacts reads the successor, its child and their calls, and the successor is no delegation', async () => {
+    // Mutation exécutée : readTreeFacts revenu à `parent_job_id` seul fait
+    // rougir CE test (ni la suite ni son enfant ne sont lus).
+    await pg.exec('delete from approval_requests; delete from agent_jobs;');
+    const root = await benchRoot('completed');
+    const next = await successor(root, 'processing');
+    const kid = await job({ parent: next, status: 'pending' });
+    await pg.query(
+      `insert into tool_calls (entity_id, job_id, tool_name, tool_input, tool_output)
+       values ($1, $2, 'web_search', '{}'::jsonb, 'ok')`,
+      [entityId, next],
+    );
+    const facts = await readTreeFacts(db, root);
+    expect(facts.jobs.map((j) => [j.id, j.parentJobId, j.relaunchedFromJobId, j.status])).toEqual([
+      [root, null, null, 'completed'],
+      [next, null, root, 'processing'],
+      [kid, next, null, 'pending'],
+    ]);
+    expect(facts.toolCalls.map((c) => [c.jobId, c.toolName])).toEqual([[next, 'web_search']]);
+    // La suite est le même travail ; seul l'enfant qu'elle a délégué est une délégation.
+    expect(delegatedJobs(facts).map((j) => j.id)).toEqual([kid]);
+  });
+
+  it('a live successor of a bench trial is the bench, not the owner working, and the trial is still found live', async () => {
+    // Mutation exécutée : la remontée revenue à `parent_job_id` seul fait
+    // rougir CE test (la suite passe pour un job du propriétaire, et l'essai
+    // vivant n'est plus retrouvé).
+    await pg.exec('delete from approval_requests; delete from agent_jobs;');
+    const root = await benchRoot('completed');
+    const first = await successor(root, 'completed');
+    await successor(first, 'processing');
+    expect((await readForeignActivity(db, WINDOW)).jobs).toEqual([]);
+    expect(await readLiveBenchRoots(db)).toEqual([{ id: root, entityId }]);
   });
 });
 
