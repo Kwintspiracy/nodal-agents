@@ -4,6 +4,7 @@
 // une vraie base (PGlite, le schéma de spinUpTestDb) : ce que le test lit est
 // ce qu'un client MCP lit, et ce que la base porte vraiment.
 
+import { randomUUID } from 'node:crypto';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
@@ -307,7 +308,8 @@ describe('get_task ne lit que les jobs MCP de son workspace @cap:parler-par-cana
         messages: [],
       })
       .returning({ id: agentJobs.id });
-    const inconnu = '00000000-0000-4000-8000-000000000000';
+    // Un id que personne n'a créé.
+    const inconnu = randomUUID();
 
     const client = await connect(ici.agentId);
     const refus = async (jobId: string) => {
