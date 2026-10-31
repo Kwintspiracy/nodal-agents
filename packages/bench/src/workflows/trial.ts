@@ -149,27 +149,39 @@ export function callerViewAgrees(view: GetTaskReply, facts: TreeFacts): boolean 
 }
 
 /** Combien de paires (get_task, base) lire au plus avant de dire qu'elles divergent. */
-export const CALLER_VIEW_READS = 3;
+export const CALLER_VIEW_READS = 2;
 
 /**
- * La vue de l'appelant ET une lecture de la base, prises l'une après l'autre
- * jusqu'à ce qu'elles s'accordent sur « le run vit / est fini », au plus
- * CALLER_VIEW_READS fois. Deux lectures ne sont pas un instantané : la tête
- * que la file relance à la fin d'un run (#531) peut naître ou finir entre
- * les deux, et un écart de vivacité n'est alors que la course du banc, pas le
- * contrat de get_task (revue de #889, passe 1). Rend la dernière paire lue.
+ * La vue de l'appelant ET une lecture de la base, l'une après l'autre, relues
+ * UNE fois si elles ne s'accordent pas sur « le run vit / est fini ».
+ *
+ * Les deux lisent le MÊME arbre (`descendRunTree`, voir readTreeFacts), et le
+ * banc ne les lit qu'une fois le run réglé ou annulé. Un arbre réglé l'est pour
+ * de bon : aucun enfant ne naît sous un job terminé (`insertChildJob`), et la
+ * tête que la file relance (#531) naît DANS la mise à jour qui termine la
+ * précédente. Le seul écart possible est donc celui de deux lectures qui
+ * encadrent cette mise à jour, et la paire suivante le voit déjà résolu : une
+ * relecture immédiate suffit, sans pause. Deux paires qui divergent sont un
+ * vrai désaccord (revue de #889, passes 1 et 2).
+ *
+ * Une panne de l'une ou l'autre lecture se dit pour ce qu'elle est : get_task
+ * n'a pas répondu, ou le banc n'a pas pu lire la base.
  */
 export async function readCallerView(
   getTask: () => Promise<GetTaskReply>,
   read: () => Promise<TreeFacts>,
-  sleep: (ms: number) => Promise<void>,
-  pollMs: number,
 ): Promise<{ view: GetTaskReply; facts: TreeFacts }> {
+  const why = (e: unknown) => String(e instanceof Error ? e.message : e);
   for (let i = 1; ; i++) {
-    const view = await getTask();
-    const facts = await read();
+    const view = await getTask().catch((e: unknown) => {
+      throw new Error(`the caller could not read the answer through get_task: ${why(e)}`);
+    });
+    const facts = await read().catch((e: unknown) => {
+      throw new Error(
+        `the bench could not read the run from the database to check get_task: ${why(e)}`,
+      );
+    });
     if (callerViewAgrees(view, facts) || i >= CALLER_VIEW_READS) return { view, facts };
-    await sleep(pollMs);
   }
 }
 
@@ -819,13 +831,9 @@ async function runTrialSteps(s: AnyScenario, deps: TrialDeps, o: TrialOptions): 
       callerView = await readCallerView(
         () => session.getTask(),
         () => deps.read(rootId),
-        (ms) => deps.sleep(ms),
-        o.pollMs,
       );
     } catch (e) {
-      benchReasons.push(
-        `the caller could not read the answer through get_task: ${String(e instanceof Error ? e.message : e)}`,
-      );
+      benchReasons.push(String(e instanceof Error ? e.message : e));
     }
     await session.close();
   }

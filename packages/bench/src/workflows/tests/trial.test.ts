@@ -31,6 +31,7 @@ import {
   busyReason,
   callerViewReasons,
   destinationReasons,
+  readCallerView,
   measure,
   runTrial,
   type TrialDeps,
@@ -486,7 +487,7 @@ describe('the answer a trial keeps is the one the caller read through get_task (
     const line = await runTrial(scenarioById('question')!, w.deps, OPTS);
     expect(line.verdict).toBe('red');
     expect(line.reasons).toContain(
-      'get_task and the database still disagree after 3 reads: get_task says running, 0 job(s) of the run are live',
+      'get_task and the database still disagree after 2 reads: get_task says running, 0 job(s) of the run are live',
     );
   });
 
@@ -523,6 +524,33 @@ describe('the answer a trial keeps is the one the caller read through get_task (
     const live = beforeCancel(after);
     const view: GetTaskReply = { jobId: live.rootId, status: 'running', result: null };
     expect(callerViewReasons(view, live)).toEqual([]);
+  });
+
+  it('a database read that fails while checking get_task is named as the bench failure, not get_task', async () => {
+    // Revue de #889, passe 2 : une panne de la base du banc se disait « the
+    // caller could not read the answer through get_task », accusant le contrat.
+    const green = load('question-green');
+    const view = callerViewOf(green);
+    await expect(
+      readCallerView(
+        async () => view,
+        async () => {
+          throw new Error('connection reset');
+        },
+      ),
+    ).rejects.toThrow(
+      /^the bench could not read the run from the database to check get_task: connection reset$/,
+    );
+    await expect(
+      readCallerView(
+        async () => {
+          throw new Error('get_task refused: mcp_disabled');
+        },
+        async () => green,
+      ),
+    ).rejects.toThrow(
+      /^the caller could not read the answer through get_task: get_task refused: mcp_disabled$/,
+    );
   });
 
   it('get_task saying completed with the wrong status of the head stays red', async () => {

@@ -179,11 +179,60 @@ export interface ForeignActivity {
 
 const ActiveRow = z.object({
   id: z.string(),
+  entity_id: z.string().nullable(),
   status: z.string().nullable(),
   channel: z.string(),
   slug: z.string().nullable(),
-  bench: z.boolean(),
 });
+
+/** Ce que la base dit d'un statut vivant : ni terminé, ni NULL compris comme fini. */
+const LIVE_SQL = `(j.status is null or j.status not in ('completed', 'failed', 'cancelled'))`;
+
+/**
+ * Pour chaque job, la tête de son run, et si cette tête est un essai du banc.
+ *
+ * La tête est celle de la PLATEFORME (`runHeadOf`, @nodal-agents/db) : on
+ * remonte les délégations (`parent_job_id`) ET les relances de la file
+ * (`relaunched_from_job_id`, #531), dans l'espace du job. Le banc remontait
+ * `parent_job_id` seul : la tête qu'un essai relance à sa fin, qui ne porte
+ * pas l'étiquette du banc, passait pour un job du propriétaire, et un essai
+ * laissé vivant par une relance n'était jamais retrouvé (revue de #889,
+ * passe 2). Un job d'aucun espace n'appartient à aucun run : il est sa propre
+ * tête.
+ */
+async function runHeadsOf(
+  db: AnyDrizzleDb,
+  jobs: ReadonlyArray<{ id: string; entityId: string | null }>,
+): Promise<Map<string, { headId: string; entityId: string | null; bench: boolean }>> {
+  const { inArray, agentJobs, runHeadOf } = await import('@nodal-agents/db');
+  const headOf = new Map<string, string>();
+  for (const j of jobs)
+    headOf.set(j.id, j.entityId === null ? j.id : await runHeadOf(db, j.entityId, j.id));
+  const headIds = [...new Set(headOf.values())];
+  const heads =
+    headIds.length === 0
+      ? []
+      : await db
+          .select({
+            id: agentJobs.id,
+            entityId: agentJobs.entityId,
+            triggerContext: agentJobs.triggerContext,
+          })
+          .from(agentJobs)
+          .where(inArray(agentJobs.id, headIds));
+  const byId = new Map(heads.map((h) => [h.id, h]));
+  const out = new Map<string, { headId: string; entityId: string | null; bench: boolean }>();
+  for (const [jobId, headId] of headOf) {
+    const head = byId.get(headId);
+    const caller = (head?.triggerContext as { caller?: unknown } | null)?.caller;
+    out.set(jobId, {
+      headId,
+      entityId: head?.entityId ?? null,
+      bench: typeof caller === 'string' && caller.startsWith(BENCH_CALLER_PREFIX),
+    });
+  }
+  return out;
+}
 
 /**
  * Ce que le propriétaire fait en ce moment, vu de la base : ses jobs vivants
@@ -206,22 +255,16 @@ export async function readForeignActivity(
     await executeRows(
       db,
       sql`
-      with recursive up as (
-        select j.id as job_id, j.id as cur, j.parent_job_id as parent
-          from agent_jobs j
-         where j.status is null or j.status not in ('completed', 'failed', 'cancelled')
-        union all
-        select up.job_id, p.id, p.parent_job_id
-          from up join agent_jobs p on p.id = up.parent
-      )
-      select j.id::text, j.status, j.channel, a.slug,
-             coalesce(r.trigger_context->>'caller', '') like ${BENCH_CALLER_PREFIX + '%'} as bench
-        from up
-        join agent_jobs j on j.id = up.job_id
-        join agent_jobs r on r.id = up.cur
+      select j.id::text, j.entity_id::text, j.status, j.channel, a.slug
+        from agent_jobs j
         left join agents a on a.id = j.agent_id
-       where up.parent is null`,
+       where ${sql.raw(LIVE_SQL)}
+       order by j.created_at, j.id`,
     ),
+  );
+  const heads = await runHeadsOf(
+    db,
+    rows.map((r) => ({ id: r.id, entityId: r.entity_id })),
   );
   const since = sql`now() - make_interval(secs => ${chatWindowMs / 1000})`;
   const chat = z.array(z.object({ last: numOrNull })).parse(
@@ -242,7 +285,7 @@ export async function readForeignActivity(
   );
   return {
     jobs: rows
-      .filter((r) => !r.bench)
+      .filter((r) => !heads.get(r.id)!.bench)
       .map((r) => ({ id: r.id, status: r.status, channel: r.channel, agentSlug: r.slug })),
     lastChatMs: chat[0]?.last ?? null,
   };
@@ -255,28 +298,26 @@ export async function readLiveBenchRoots(
   db: AnyDrizzleDb,
 ): Promise<Array<{ id: string; entityId: string }>> {
   const { sql } = await import('@nodal-agents/db');
-  return z
-    .array(z.object({ id: z.string(), entity_id: z.string() }))
-    .parse(
-      await executeRows(
-        db,
-        sql`
-        with recursive tree as (
-          select id as root, id from agent_jobs
-           where parent_job_id is null
-             and trigger_context->>'caller' like ${BENCH_CALLER_PREFIX + '%'}
-          union all
-          select tree.root, j.id from agent_jobs j join tree on j.parent_job_id = tree.id
-        )
-        select distinct r.id::text, r.entity_id::text
-          from tree
-          join agent_jobs j on j.id = tree.id
-          join agent_jobs r on r.id = tree.root
-         where (j.status is null or j.status not in ('completed', 'failed', 'cancelled'))
-            or exists (select 1 from approval_requests ar where ar.job_id = j.id and ar.status = 'pending')`,
-      ),
-    )
-    .map((r) => ({ id: r.id, entityId: r.entity_id }));
+  // Ce qui tient encore un run : un job vivant, ou une demande en attente.
+  const holding = z.array(z.object({ id: z.string(), entity_id: z.string().nullable() })).parse(
+    await executeRows(
+      db,
+      sql`
+        select j.id::text, j.entity_id::text
+          from agent_jobs j
+         where ${sql.raw(LIVE_SQL)}
+            or exists (select 1 from approval_requests ar where ar.job_id = j.id and ar.status = 'pending')
+         order by j.created_at, j.id`,
+    ),
+  );
+  const heads = await runHeadsOf(
+    db,
+    holding.map((r) => ({ id: r.id, entityId: r.entity_id })),
+  );
+  const roots = new Map<string, string>();
+  for (const h of heads.values())
+    if (h.bench && h.entityId !== null) roots.set(h.headId, h.entityId);
+  return [...roots].map(([id, entityId]) => ({ id, entityId }));
 }
 
 /** Annule un arbre par le chemin officiel (`cancelJobTree`, le même que le bouton Stop). */
