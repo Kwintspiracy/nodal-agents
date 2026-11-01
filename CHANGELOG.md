@@ -10,6 +10,157 @@ nodal-agents update   # upgrade in place — your data is preserved
 
 ---
 
+## v0.9.9 — Nov 2, 2026
+
+A release about files, and about what comes back to you. A file sent to an agent
+on Telegram, or an image on Discord, now reaches it, and the platform records it
+as that job's own. An agent can move a file, read a PDF the way it reads an
+image, and file a document with a method that ships with Nodal. Settings →
+Safety shows the sandbox as it is on your machine and lets you set it. A job
+started through the MCP server can finally be read back. Sixteen pull requests,
+two database migrations.
+
+**Upgrading: what changes for you**
+
+- **The sandbox is still Windows only.** The macOS and Linux sandbox that 0.9.8
+  announced for this release is not in it. There, commands run unconfined, as
+  in 0.9.8, and every command result still says
+  `sandbox: { confined: false, code: "SANDBOX_NOT_IMPLEMENTED" }`. The new
+  Sandbox section says so in plain words and disables its controls on those
+  systems. (#877)
+- **Two database migrations (0153 and 0154)**, applied on the next start:
+  - 0153 adds two columns to your workspace: the sandbox switch (on, the value
+    the runner already applied) and your changes to the allowed folders (none).
+    Nothing changes for anyone until they use the new section.
+  - 0154 gives `file_move` the decision you already took on `file_write`: every
+    approval rule on `file_write` (block, ask or auto-approve, for one agent or
+    for everyone, with its folder condition) is copied to `file_move`. A
+    read-only agent that blocks `file_write` therefore cannot move files the day
+    it upgrades. A rule you had already set on `file_move` is kept. (#881)
+- **An agent that answers in prose is done.** A job turn that ends without a
+  tool call is the job's answer, and the second model call that used to check it
+  is gone. You get the answer sooner, and the agent no longer repeats an action
+  it had already done: in a month of real runs, that check made an agent send
+  the same review twice, delegate the same copy twice and create a second print
+  request. The limit: an agent that only announces ("I'll delegate to X.") now
+  ends `completed` with that sentence as its answer. A failed delivery, a
+  declared file that is missing and an approval still pending are judged on
+  facts, as before, and still stop the job. The chat keeps its check. (#890)
+- **Claude models on OpenRouter now use the prompt cache.** Anthropic does not
+  cache by itself, and Nodal only asked for it on the direct Anthropic route:
+  over 30 days, none of 852 calls to a Claude model through OpenRouter read from
+  the cache, and each paid the whole prompt, about 30,000 tokens for a root
+  agent. It is now asked for on the ten Claude models of the catalog, whatever
+  the route. Every other model is unchanged, and so is the direct Anthropic
+  route. A model of OpenRouter that is not in the catalog sends no marker. The
+  cache setting turned off still disables it everywhere. (#888)
+
+**Files**
+
+- **A file sent on Telegram reaches the agent.** A PDF, a document, an audio
+  file, a voice message, a video, a video note or an animation used to be
+  dropped, and neither you nor the agent learned that anything had been sent.
+  Now the file is saved in the shared folder under its own name, and the agent is
+  told its path, its name, its type and its size, and that it is kept 30 days. A
+  file that could not be fetched or saved is said to the agent too, with the
+  reason, so that it tells you; the other files of the message still go
+  through. A file sent without a caption becomes a job, and in a group so does a
+  file whose caption is only the bot's mention. A name that Windows refuses is
+  made safe, and a file already there is never overwritten. Photos go through
+  the same intake. (#902)
+- **On Discord, a received image goes through the same intake.** An image
+  Discord would not let through, a failed download or a full inbox used to leave
+  the agent answering without knowing an image had been sent. It is now told, with
+  the reason. Other kinds of file on Discord, and files on Slack and WhatsApp,
+  are not received yet. (#911)
+- **The path the agent is shown is the path that exists.** A received file now
+  lives in `shared/<channel>/<job>/<name>`. It first lived under the
+  conversation, and the model saw that conversation's handle where the folder
+  carried the real chat number, so `file_read` answered "File not found" and the
+  agent could not file the document. Folders of the first layout are cleaned up
+  by age, like the current ones. (#911)
+- **A file the platform saves for a job is that job's.** Moving a file you had
+  just sent asked for an approval although the tool was set to autonomous,
+  because the file counted as someone else's. A received file, and the images and
+  PDFs a tool hands to the model, are now recorded as written by the job they
+  were saved for. A file another job wrote, a file you edited, or a received file
+  that another job rewrote afterwards still asks. (#918)
+- **`file_move` moves or copies one file inside the agent's folders.** It has the
+  perimeter of `file_write`: the agent's folders and the shared folder, links
+  that escape refused. The destination is a file path, or a folder where the
+  file keeps its name; missing folders are created on request. Replacing an
+  existing file, or removing from the shared folder a file another run wrote,
+  asks for approval like an overwrite. The bytes never go through the model, and
+  the undo checkpoint covers the move. The run feed, the delivered files and the
+  approval cards say "moved A to B" or "copied A to B". The shared workflow
+  templates stay read-only: they can be copied, not moved away. Known limit: the
+  delivered-files list shows a move between two folders of a workspace by its
+  new name only. (#881)
+- **A PDF reaches a model that can read one.** `file_read` hands a PDF to the
+  model as the document, like an image, where it used to return undecodable
+  text. A model that cannot read PDFs is told so, with its name, and never
+  receives the bytes. A PDF is limited to 10 MiB, and each page counts as one
+  image of the 20 a request may carry; a longer PDF is read by windows of 20
+  pages. The models that take PDFs are listed from what their own route says,
+  never guessed: 36 on 31 October. A native OpenAI model is not on that list
+  while the sources do not say it reads PDFs. A PDF inside an MCP tool's result
+  is still only recorded, not passed on. (#905)
+- **A "File filing" skill ships with Nodal.** It is a method, not a tree: where a
+  document goes comes from a "Your folders" section that you fill in on the
+  skills screen. The method tells an agent to read a document before placing it,
+  to ask when it cannot, to give a plan and wait for your go when several files
+  or an unclear place are involved, to name a file that has no meaningful name
+  `YYYY-MM-DD Subject`, never to replace a file (a second one becomes "(2)") and
+  never to delete, and to report every file moved and every file left in place,
+  with the reason. It loads only when you ask to file, sort or put something
+  away. Assign it to the agents that file your documents. (#895)
+
+**The sandbox, in Settings → Safety**
+
+- **A Sandbox section shows the sandbox as it is on this machine**: active, or
+  unavailable with its code and a sentence that says why, the engine, and the
+  known limits of each. Three cards give the perimeter with your own paths: the
+  folders a command may write in (each agent's folders, the shared folder and
+  your allowed folders), Nodal's data, which a command cannot read, and the
+  network, open to the internet and to local services over HTTP and HTTPS, with
+  Nodal's own ports refused. (#877)
+- **One switch per workspace.** Turning the sandbox off asks you to confirm and
+  says what follows; turning it on asks nothing. While it is off, unavailable or
+  unreadable, a banner stays in the dashboard. The setting is read again at every
+  command, so a change applies from the next one and a command already running is
+  not touched. Off, a command runs unconfined and says
+  `sandbox: { confined: false, code: "SANDBOX_DISABLED" }`. A setting that cannot
+  be read is never taken for on or off: the command is refused
+  (`SANDBOX_SETTINGS_UNREADABLE`). (#877)
+- **The allowed folders are yours to edit.** Each says where it comes from (Nodal,
+  found for a tool such as ComfyUI or Ollama, added by you, or not found and
+  skipped). You can add one, remove a detected one and allow it again; a folder
+  installed later appears by itself, and the tool cache cannot be removed. Adding
+  a whole disk, your home folder or a folder that holds Nodal's data asks you to
+  confirm and names the consequence. Adding Nodal's data folder, or any folder
+  under it, is refused with the reason. Two tabs changing the list at the same
+  time both keep their change. (#877)
+- **Agents that run outside the sandbox are named.** An agent whose runtime runs
+  its commands itself, such as the Claude Code and Codex runtimes, gets a warning
+  on the screen. The Knowledge section of an agent's page says that its commands
+  can only write in its folders and in the allowed folders. (#877)
+
+**MCP**
+
+- **`get_task` reads back a job that `run_task` started.** `run_task` returns a
+  receipt, a job id, and nothing could read the answer: it was visible only on
+  the Runs page. `get_task` takes the job id and returns the status, the agent's
+  result or error, the files it declared with their proof, and any question or
+  approval waiting for you, with the request quoted. It reads the whole run,
+  delegations and continuations included, and reports it finished only when
+  nothing is left running. `waitSeconds` (0 to 60) holds the call until the run
+  finishes or needs you. It reads and writes nothing. It answers for the jobs
+  that this MCP server's workspace started, and refuses any other id with the
+  same message, whether the job does not exist or belongs elsewhere. A waiting
+  question is still answered on the dashboard. (#889)
+
+---
+
 ## v0.9.8 — Oct 23, 2026
 
 A release about what your agents can touch and what they leave behind. On
