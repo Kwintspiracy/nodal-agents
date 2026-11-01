@@ -90,6 +90,9 @@ export const ENTITY_POLICY = {
   // les dossiers ajoutés sont les vrais répertoires du propriétaire, jamais copiés.
   sandboxEnabled: 'copy',
   sandboxFolders: 'own',
+  // #917 : l'heure où les lignes d'autonomie d'avant ont été écrites. Une
+  // copie reçoit les lignes de la source, déjà écrites : elle naît `now()`.
+  autonomyRowsWrittenAt: 'own',
 } as const satisfies Record<string, ColumnPolicy>;
 
 export const AGENT_POLICY = {
@@ -188,6 +191,8 @@ export const APPROVAL_RULE_POLICY = {
   toolName: 'copy',
   action: 'copy',
   conditionJson: 'copy',
+  // Colonne GÉNÉRÉE depuis condition_json (0155) : jamais écrite.
+  conditionFolder: 'own',
   createdAt: 'own',
   updatedAt: 'own',
 } as const satisfies Record<string, ColumnPolicy>;
