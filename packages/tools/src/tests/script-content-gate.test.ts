@@ -26,6 +26,7 @@ import {
   MAX_SOURCE_TOTAL_BYTES,
 } from '../shell-checklist';
 import type { ApprovalRule, ExecuteOptions, ToolContext, ToolDefinition } from '../types';
+import { rowsAsWritten } from './autonomy-rows-fixture';
 
 let db: TestDb;
 let seed: { userId: string; entityId: string; agentId: string; jobId: string };
@@ -66,8 +67,8 @@ const runCommand: ToolDefinition<z.ZodObject<{ command: z.ZodString }>, string> 
 };
 
 const gate = (policy: ShellPolicy, rules: ApprovalRule[] = []): ExecuteOptions => ({
-  approvalRules: rules,
-  autonomy: 'destructive_gate',
+  // The run_command row written under destructive_gate (#917), the case's own rows first.
+  approvalRules: rowsAsWritten(seed, [runCommand], 'destructive_gate', rules),
   onApprovalRequired: async () => {},
   shellPolicy: policy,
 });
@@ -77,7 +78,7 @@ const yolo = (): ApprovalRule => ({
   id: 'yolo',
   toolName: 'run_command',
   action: 'auto_approve',
-  agentId: null,
+  agentId: seed.agentId,
   entityId: seed.entityId,
 });
 
@@ -786,13 +787,13 @@ describe('review pass 3 of #683: no line dropped, and the hard floor reads the c
 
   // P2 (pass 4): without a checklist, destructive_gate still sees a body
   // fed to a shell, as main did.
+  // Under destructive_gate the row of run_command says Autonomous (#917): what
+  // holds the here-document is the agent's checklist, which the runner passes
+  // on every turn. The heavy-command reading the level used to do without a
+  // checklist is gone with the level's run-time role.
   it('P2 (pass 4): destructive_gate holds a here-document fed to a shell', async () => {
     const cmd = `bash <<EOF${NL}Stop-Process -Name excel${NL}EOF`;
-    const res = await run(cmd, {
-      approvalRules: [],
-      autonomy: 'destructive_gate',
-      onApprovalRequired: async () => {},
-    });
+    const res = await run(cmd, gate(DEFAULT_SHELL_POLICY));
     expect(res.outcome).toBe('awaiting_approval');
   });
 

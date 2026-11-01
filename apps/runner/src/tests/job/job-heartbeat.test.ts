@@ -36,6 +36,8 @@ import {
   agents,
   agentAssignments,
   agentWorkspaces,
+  approvalRules,
+  APPROVAL_ROW_KEY,
 } from '@nodal-agents/db';
 import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
 import { createEmbeddingClient } from '@nodal-agents/llm';
@@ -556,11 +558,21 @@ describe('le battement est rendu quand le run rend la main (#565) @cap:organiser
           'fin',
         ]),
       );
-      // `save_memory` demande ici une approbation : le run se suspend.
+      // `save_memory` demande ici une approbation : la LIGNE de l'agent le dit
+      // (#917), le run se suspend.
       d.registry.register({
         ...d.registry.get('save_memory')!,
         defaultApproval: 'require_approval',
       });
+      await db
+        .insert(approvalRules)
+        .values({
+          entityId: seed.entityId,
+          agentId: seed.agentId,
+          toolName: 'save_memory',
+          action: 'require_approval',
+        })
+        .onConflictDoUpdate({ target: APPROVAL_ROW_KEY, set: { action: 'require_approval' } });
 
       const p = await tourneSousLesFaucheurs(executeJob(jobId as JobId, d), async () => [jobId]);
 
@@ -572,6 +584,10 @@ describe('le battement est rendu quand le run rend la main (#565) @cap:organiser
       expect(sonde.fauche).toBe(1);
       expect(sonde.status).not.toBe('processing');
     } finally {
+      await db
+        .update(approvalRules)
+        .set({ action: 'auto_approve' })
+        .where(eq(approvalRules.toolName, 'save_memory'));
       if (graceAvant === undefined) delete process.env['NODALAI_APPROVAL_GRACE_MS'];
       else process.env['NODALAI_APPROVAL_GRACE_MS'] = graceAvant;
     }

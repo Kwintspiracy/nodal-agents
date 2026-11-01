@@ -17,7 +17,9 @@
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
-import { setRootAgentAction, type AgentRow } from '@/lib/actions.ts';
+import { applyAutonomyLevelToAllAction, setRootAgentAction, type AgentRow } from '@/lib/actions.ts';
+import ConfirmDialog from '@/components/ConfirmDialog.tsx';
+import PrimaryButton from '@/components/ui/PrimaryButton';
 import { AUTONOMY_OPTIONS } from '@/lib/autonomy.ts';
 import { type RootGrants, type AutonomyLevel, DEFAULT_ROOT_GRANTS } from '@nodal-agents/shared';
 import { SetForm } from '@/components/ui/SetForm.tsx';
@@ -60,6 +62,29 @@ export default function RootAgentSection({
   const rootAgent = agents.find((a) => a.id === initialRootAgentId) ?? null;
 
   const [grants, setGrants] = useState<RootGrants>(initialGrants ?? DEFAULT_ROOT_GRANTS);
+  const [applyOpen, setApplyOpen] = useState(false);
+  const [isApplying, startApplyTransition] = useTransition();
+  // The level the server holds: "Apply to all agents" writes THAT one. A
+  // choice not saved yet is not applied behind the owner's back.
+  const savedLevel = (initialGrants ?? DEFAULT_ROOT_GRANTS).autonomy;
+  const levelUnsaved = grants.autonomy !== savedLevel;
+
+  function handleApplyToAll() {
+    setApplyOpen(false);
+    startApplyTransition(async () => {
+      const res = await applyAutonomyLevelToAllAction();
+      if (!res.ok) {
+        toast.error(res.message);
+        return;
+      }
+      toast.success(
+        res.data.changed === 1
+          ? '1 tool setting changed.'
+          : `${res.data.changed} tool settings changed.`,
+      );
+      router.refresh();
+    });
+  }
 
   function toggleGrant(key: keyof Omit<RootGrants, 'autonomy'>) {
     setGrants((prev) => ({ ...prev, [key]: !prev[key] }));
@@ -105,81 +130,119 @@ export default function RootAgentSection({
           </p>
         </div>
       ) : (
-        <form id={formId} onSubmit={handleSave}>
-          <SetForm>
-            {/* ── ROOT agent (read-only — designated automatically) ─────────── */}
-            <div className="mb-4">
-              <div className="mb-1.5 text-body-14 leading-none! text-ink-3">ROOT agent</div>
-              <div className="flex items-center gap-2 rounded-lg border border-rule bg-paper px-3 py-2">
-                <span className="text-medium-14 text-ink">{rootAgent.name}</span>
-                <span className="rounded-full border border-rule-2 px-2 py-0.5 text-micro-11 uppercase tracking-wide text-ink-4">
-                  Origin orchestrator
-                </span>
-                <a
-                  href="/settings/root-context"
-                  className="ml-auto text-medium-13 text-ink-3 underline decoration-rule underline-offset-[3px] hover:text-ink hover:decoration-ink-3"
-                >
-                  View &amp; edit context →
-                </a>
-              </div>
-            </div>
-
-            {/* ── Grant toggles + autonomy ─────────────────────────────────── */}
-            <>
-              {/* Grant toggles */}
+        <>
+          <form id={formId} onSubmit={handleSave}>
+            <SetForm>
+              {/* ── ROOT agent (read-only — designated automatically) ─────────── */}
               <div className="mb-4">
-                <div className="mb-2 text-body-14 leading-none! text-ink-3">Allowed actions</div>
-                <div className="flex flex-col gap-1.5">
-                  {(
-                    [
-                      { key: 'createAgent', label: 'Create agents' },
-                      { key: 'updateAgent', label: 'Edit agents (model, personality, name)' },
-                      { key: 'attachAgent', label: 'Attach / detach sub-agents' },
-                      { key: 'createSkill', label: 'Create skills' },
-                      { key: 'updateSkill', label: 'Update skills' },
-                      { key: 'assignSkill', label: 'Assign / unassign skills' },
-                      { key: 'createMcp', label: 'Create MCP servers' },
-                      { key: 'attachMcp', label: 'Attach / detach MCP servers' },
-                      { key: 'createConnector', label: 'Create connectors' },
-                      { key: 'attachConnector', label: 'Attach / detach connectors' },
-                      {
-                        key: 'manageSchedules',
-                        label: 'Manage schedules (create / edit / pause cron)',
-                      },
-                    ] as const
-                  ).map(({ key, label }) => (
-                    <Checkbox
-                      key={key}
-                      tone="connector"
-                      checked={grants[key]}
-                      onChange={() => toggleGrant(key)}
-                      disabled={isSaving}
-                      label={<span className="text-body-14 text-ink-2">{label}</span>}
-                    />
-                  ))}
+                <div className="mb-1.5 text-body-14 leading-none! text-ink-3">ROOT agent</div>
+                <div className="flex items-center gap-2 rounded-lg border border-rule bg-paper px-3 py-2">
+                  <span className="text-medium-14 text-ink">{rootAgent.name}</span>
+                  <span className="rounded-full border border-rule-2 px-2 py-0.5 text-micro-11 uppercase tracking-wide text-ink-4">
+                    Origin orchestrator
+                  </span>
+                  <a
+                    href="/settings/root-context"
+                    className="ml-auto text-medium-13 text-ink-3 underline decoration-rule underline-offset-[3px] hover:text-ink hover:decoration-ink-3"
+                  >
+                    View &amp; edit context →
+                  </a>
                 </div>
               </div>
 
-              {/* Autonomy level */}
-              <div className="mb-1">
-                <div className="mb-2.5 text-body-14 leading-none! text-ink-3">Autonomy level</div>
-                <div role="radiogroup" aria-label="Autonomy level">
-                  {AUTONOMY_OPTIONS.map((opt) => (
-                    <OptionRadio
-                      key={opt.value}
-                      active={grants.autonomy === opt.value}
-                      onClick={() => setAutonomy(opt.value)}
-                      name={opt.name}
-                      description={opt.description}
-                    />
-                  ))}
+              {/* ── Grant toggles + autonomy ─────────────────────────────────── */}
+              <>
+                {/* Grant toggles */}
+                <div className="mb-4">
+                  <div className="mb-2 text-body-14 leading-none! text-ink-3">Allowed actions</div>
+                  <div className="flex flex-col gap-1.5">
+                    {(
+                      [
+                        { key: 'createAgent', label: 'Create agents' },
+                        { key: 'updateAgent', label: 'Edit agents (model, personality, name)' },
+                        { key: 'attachAgent', label: 'Attach / detach sub-agents' },
+                        { key: 'createSkill', label: 'Create skills' },
+                        { key: 'updateSkill', label: 'Update skills' },
+                        { key: 'assignSkill', label: 'Assign / unassign skills' },
+                        { key: 'createMcp', label: 'Create MCP servers' },
+                        { key: 'attachMcp', label: 'Attach / detach MCP servers' },
+                        { key: 'createConnector', label: 'Create connectors' },
+                        { key: 'attachConnector', label: 'Attach / detach connectors' },
+                        {
+                          key: 'manageSchedules',
+                          label: 'Manage schedules (create / edit / pause cron)',
+                        },
+                      ] as const
+                    ).map(({ key, label }) => (
+                      <Checkbox
+                        key={key}
+                        tone="connector"
+                        checked={grants[key]}
+                        onChange={() => toggleGrant(key)}
+                        disabled={isSaving}
+                        label={<span className="text-body-14 text-ink-2">{label}</span>}
+                      />
+                    ))}
+                  </div>
                 </div>
-              </div>
-            </>
 
-            <SetCtaRow onCancel={handleCancel} pending={isSaving} saveLabel="Save" />
-          </SetForm>
-        </form>
+                {/* Autonomy level */}
+                <div className="mb-1">
+                  <div className="mb-2.5 text-body-14 leading-none! text-ink-3">Autonomy level</div>
+                  <div role="radiogroup" aria-label="Autonomy level">
+                    {AUTONOMY_OPTIONS.map((opt) => (
+                      <OptionRadio
+                        key={opt.value}
+                        active={grants.autonomy === opt.value}
+                        onClick={() => setAutonomy(opt.value)}
+                        name={opt.name}
+                        description={opt.description}
+                      />
+                    ))}
+                  </div>
+                  {/*
+                  #917 : le niveau donne le réglage de départ d'un outil, écrit
+                  quand un agent ou un outil arrive. Il ne décide plus rien à
+                  l'exécution : ce geste-ci réécrit les réglages existants.
+                */}
+                  <div
+                    className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2"
+                    data-testid="autonomy-apply-to-all"
+                  >
+                    <p className="text-body-12 text-ink-4">
+                      The level sets what a new agent or tool starts with. Existing agents keep
+                      their settings until you apply it to them.
+                    </p>
+                    <PrimaryButton
+                      type="button"
+                      variant="neutral"
+                      size="sm"
+                      onClick={() => setApplyOpen(true)}
+                      disabled={isApplying || isSaving || levelUnsaved}
+                      data-testid="autonomy-apply-to-all-button"
+                    >
+                      Apply to all agents
+                    </PrimaryButton>
+                    {levelUnsaved && (
+                      <span className="text-body-12 text-ink-4">Save the level first.</span>
+                    )}
+                  </div>
+                </div>
+              </>
+
+              <SetCtaRow onCancel={handleCancel} pending={isSaving} saveLabel="Save" />
+            </SetForm>
+          </form>
+          <ConfirmDialog
+            open={applyOpen}
+            title="Apply this level to all agents?"
+            message={`Every agent's tool settings, and its shared file setting, are set from ${AUTONOMY_OPTIONS.find((o) => o.value === savedLevel)?.name ?? savedLevel}. Server settings and rules for all agents are removed. Rules limited to one folder are kept.`}
+            confirmLabel="Apply to all agents"
+            destructive
+            onConfirm={handleApplyToAll}
+            onCancel={() => setApplyOpen(false)}
+          />
+        </>
       )}
     </>
   );

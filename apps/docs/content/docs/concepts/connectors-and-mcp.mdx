@@ -60,11 +60,12 @@ connector: destructive operations (delete, overwrite) can be switched off for
 one agent while the rest of the connector stays available. Every connector page
 in the reference marks which of its tools are destructive.
 
-An operation marked ⚠ on the Connectors tab (sending an email, publishing a
-site, deleting a file, an event or a record) asks for your approval before it
-runs, unless the agent's **Approvals** tab carries a rule for it. Under the
-`destructive_gate` autonomy level a destructive operation still asks and the
-others run; under `fully_autonomous`, none asks.
+Every operation an agent holds has its setting on the agent's **Autonomy** tab,
+and that setting is what applies. An operation marked ⚠ on the Connectors tab
+(sending an email, publishing a site, deleting a file, an event or a record)
+starts on **Ask for approval** under `propose_confirm`; under
+`destructive_gate` a destructive operation starts on Ask and the others on Run
+without asking; under `fully_autonomous`, all start on Run without asking.
 
 Credentials are fetched from the database at execution time — they are never
 baked into a job at enqueue time.

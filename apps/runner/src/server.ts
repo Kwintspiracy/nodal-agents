@@ -5,6 +5,7 @@ import '@nodal-agents/shared/node-guard';
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import { serve } from '@hono/node-server';
+import { writeAutonomyRowsAtBoot } from '@nodal-agents/orchestration';
 import { pathToFileURL } from 'url';
 import { parseEnv } from './env.ts';
 import { openNodalHome } from '@nodal-agents/shared/nodal-instances';
@@ -372,6 +373,17 @@ async function main(): Promise<void> {
   // something that scales with a user's data — a handful of local queries,
   // no external network call, sub-second in practice.
   await seedDefaultSkills(deps.db, runnerEnv);
+
+  // Every agent holds one autonomy row per tool it has (#917): the gate
+  // applies that row and refuses a call that has none. A Nodal version that
+  // adds a built-in writes its rows here, and the first boot after #917 writes
+  // the rows of the agents that exist, with the value their screen showed.
+  // Blocking, before any job starts: a job must not reach a tool whose row is
+  // still being written. One agent that fails is logged loud and does not stop
+  // the boot (writeAutonomyRowsAtBoot); its job will fail loud on its own.
+  await writeAutonomyRowsAtBoot(deps.db).catch((e: unknown) => {
+    console.error('[runner] writing the autonomy rows at boot failed:', e);
+  });
 
   // Start the WhatsApp manager BEFORE createApp: the pairing route needs the
   // manager's handle threaded in at route-registration time (its GET/POST

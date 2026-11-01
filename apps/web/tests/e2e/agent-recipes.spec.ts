@@ -156,9 +156,15 @@ test.describe('agent recipes @cap:configurer-agent/ecran', () => {
         .select({ toolName: approvalRules.toolName, action: approvalRules.action })
         .from(approvalRules)
         .where(eq(approvalRules.agentId, agent.id));
-      expect(blocked.every((r) => r.action === 'block')).toBe(true);
-      expect(blocked.map((r) => r.toolName).sort()).toEqual([
+      // The agent holds a row for every tool (#917); the preset's are Block.
+      expect(
+        blocked
+          .filter((r) => r.action === 'block')
+          .map((r) => r.toolName)
+          .sort(),
+      ).toEqual([
         'file_edit',
+        'file_move',
         'file_write',
         'run_command',
         'run_skill_script',

@@ -12,7 +12,7 @@
 // of #589, P1): a file deleted and recreated, or replaced at the same path —
 // ComfyUI names derive from a prompt hash, reproducible between runs — is not
 // what the delegate produced. The proof is the one the platform already uses
-// for "was this written by that job" (`currentContentWrittenByJob`,
+// for "was this written by that writer" (`currentContentWrittenByAgentOf`,
 // record-constat.ts; `filesTheChildWrote`, orchestration/delegated-files.ts):
 //
 //   - a write the platform fingerprinted (`constated_writes.content_sha256`):

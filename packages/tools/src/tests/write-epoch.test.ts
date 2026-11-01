@@ -26,6 +26,7 @@ import {
 } from '../verification/write-epoch';
 import type { DirtiedDeliverable } from '../verification/intent';
 import type { ApprovalRule, ExecuteOptions, ToolContext } from '../types';
+import { autonomousRows } from './autonomy-rows-fixture';
 
 let db: TestDb;
 let seed: { userId: string; entityId: string; agentId: string; jobId: string };
@@ -95,6 +96,7 @@ function options(toolName = 'file_write'): ExecuteOptions {
         agentId: seed.agentId,
         entityId: seed.entityId,
       },
+      ...autonomousRows(seed),
     ] as ApprovalRule[],
     onApprovalRequired: async () => {},
   };

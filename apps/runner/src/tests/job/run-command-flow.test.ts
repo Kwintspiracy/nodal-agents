@@ -12,7 +12,7 @@
 //   delegation-parallel-tools.test.ts  (mock-LLM infra)
 //   execute.test.ts ~L2632–2681        (approval suspend→resume drive)
 
-import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach, vi } from 'vitest';
 import { mkdtemp, rm, realpath, readFile, writeFile } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -206,6 +206,14 @@ let workspaceDir: string;
 let skillId: string;
 
 // ─── Suite-level setup ────────────────────────────────────────────────────────
+
+// Each case runs an agent whose autonomy rows are written when ITS job starts
+// (#917), from the level and the template rules the case sets: an agent keeps
+// its rows from one job to the next, and without this reset the first case's
+// level would decide every case after it.
+beforeEach(async () => {
+  if (seed) await db.delete(approvalRules).where(eq(approvalRules.agentId, seed.agentId));
+});
 
 beforeAll(async () => {
   const result = await spinUpTestDb();

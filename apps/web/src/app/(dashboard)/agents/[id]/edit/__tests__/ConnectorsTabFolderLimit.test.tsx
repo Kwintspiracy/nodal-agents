@@ -1,15 +1,6 @@
-// ConnectorsTabFolderLimit.test.tsx — issue #401 : faire confiance à un serveur
-// MCP depuis l'onglet Connectors ne peut plus effacer en silence une règle
-// confinée à un dossier.
-//
-// Ce que ça prouve, sur le DOM rendu et sur CE QUI PART au serveur :
-//   - quand le motif du serveur porte déjà une limite de dossier, la boîte de
-//     #390 s'ouvre, nomme le dossier, et rien n'est écrit tant qu'elle est là ;
-//   - confirmer envoie `confirmWidening: true` — le drapeau que l'action
-//     gardée exige pour retirer la condition ;
-//   - annuler n'écrit RIEN : la règle de dossier reste ce qu'elle était ;
-//   - sans limite de dossier, aucune boîte en plus, et l'écriture part sans
-//     drapeau, comme avant.
+// ConnectorsTabFolderLimit.test.tsx — issue #401, puis #917 : faire confiance à
+// un serveur MCP depuis l'onglet Connectors écrit la ligne du serveur, et ne
+// touche jamais une ligne confinée à un dossier (elles coexistent, 0156).
 //
 // Assertions sur le texte rendu et sur l'objet envoyé à l'action, jamais sur un
 // compteur d'appels (invariant #5).
@@ -31,7 +22,6 @@ type RulePayload = {
   toolName: string;
   action: string;
   scope?: string;
-  confirmWidening?: boolean;
 };
 
 const actions = vi.hoisted(() => ({
@@ -139,56 +129,12 @@ function attacherEtFaireConfiance(tousLesAgents = false): void {
   clickByText('Trust it');
 }
 
-const folderRule: Rule = {
-  id: 'r1',
-  toolName: 'cogni_cortex__*',
-  action: 'auto_approve',
-  conditionJson: { workspacePath: 'D:\\APPS\\Dev' },
-  workspaceLabel: 'Dev',
-};
-
-describe("l'onglet Connectors ne franchit pas une limite de dossier en silence @cap:approuver-une-action/ecran", () => {
-  it('nomme le dossier et ne rien écrire tant que la boîte est ouverte', async () => {
-    await render([folderRule]);
-    attacherEtFaireConfiance();
-
-    const texte = document.body.textContent ?? '';
-    expect(texte).toContain('Remove the folder limit?');
-    expect(texte).toContain(
-      'This rule applies only in Dev today. Saving from here applies your choice everywhere this agent works.',
-    );
-    // Rien n'est parti : la question précède l'écriture.
-    expect(actions.setAgentApprovalRuleAction.mock.calls).toEqual([]);
-  });
-
-  it('confirmer envoie le drapeau explicite, sur le motif du serveur', async () => {
-    await render([folderRule]);
-    attacherEtFaireConfiance();
-    clickByText('Remove the limit');
-    await act(async () => {});
-
-    expect(actions.setAgentApprovalRuleAction.mock.calls.map((c) => c[0])).toEqual([
-      {
-        agentId: AGENT_ID,
-        toolName: 'cogni_cortex__*',
-        action: 'auto_approve',
-        scope: 'agent',
-        confirmWidening: true,
-      },
-    ]);
-  });
-
-  it('annuler laisse la règle de dossier intacte : aucune écriture', async () => {
-    await render([folderRule]);
-    attacherEtFaireConfiance();
-    clickByText('Cancel');
-    await act(async () => {});
-
-    expect(actions.setAgentApprovalRuleAction.mock.calls).toEqual([]);
-    expect(document.body.textContent ?? '').not.toContain('Remove the folder limit?');
-  });
-
-  it('sans limite de dossier, aucune boîte en plus et aucun drapeau', async () => {
+describe("faire confiance à un serveur depuis l'onglet Connectors écrit la ligne du serveur (#917) @cap:approuver-une-action/ecran", () => {
+  // Avant #917, la ligne du serveur et une ligne de dossier pouvaient être la
+  // même ligne, d'où une boîte « Remove the folder limit? ». Elles coexistent
+  // maintenant : la confiance écrit la ligne du serveur (et le serveur
+  // réécrit celles de ses outils), sans rien demander de plus.
+  it('pour cet agent : la ligne du serveur, sans boîte en plus', async () => {
     await render([]);
     attacherEtFaireConfiance();
     await act(async () => {});
@@ -204,22 +150,9 @@ describe("l'onglet Connectors ne franchit pas une limite de dossier en silence @
     ]);
   });
 
-  it('« pour tous mes agents » dit une AUTRE phrase, et envoie la portée entité', async () => {
-    // Revue Reviewer C, C1 : ici la règle de dossier de l'agent n'est pas
-    // retirée, elle est déclassée hors de son dossier par la règle d'entité,
-    // qui vaut de surcroît pour les autres agents. Dire « everywhere this
-    // agent works » serait vrai et sous-décrirait le geste.
-    await render([folderRule]);
+  it('« pour tous mes agents » envoie la portée entité', async () => {
+    await render([]);
     attacherEtFaireConfiance(true);
-
-    const texte = document.body.textContent ?? '';
-    expect(texte).toContain('Remove the folder limit?');
-    expect(texte).toContain(
-      'This rule applies only in Dev today. A rule for all your agents lets these tools run everywhere, outside that folder too.',
-    );
-    expect(texte).not.toContain('everywhere this agent works');
-
-    clickByText('Remove the limit');
     await act(async () => {});
     expect(actions.setAgentApprovalRuleAction.mock.calls.map((c) => c[0])).toEqual([
       {
@@ -227,68 +160,7 @@ describe("l'onglet Connectors ne franchit pas une limite de dossier en silence @
         toolName: 'cogni_cortex__*',
         action: 'auto_approve',
         scope: 'entity',
-        confirmWidening: true,
       },
     ]);
-  });
-
-  it('la limite de l’agent survit à une règle d’entité, et la boîte se rouvre', async () => {
-    // Suite du cas précédent : après une écriture d'ENTITÉ, la règle de
-    // dossier de l'agent est toujours en base. Détacher puis rattacher doit
-    // donc reposer la question, alors qu'après un élargissement de l'agent
-    // lui-même il n'y aurait plus rien à demander.
-    await render([folderRule]);
-    attacherEtFaireConfiance(true);
-    clickByText('Remove the limit');
-    await act(async () => {});
-
-    clickByAriaLabel('Detach');
-    attacherEtFaireConfiance();
-    expect(document.body.textContent ?? '').toContain('Remove the folder limit?');
-  });
-
-  it('après un élargissement sur l’agent, la question ne se repose pas', async () => {
-    await render([folderRule]);
-    attacherEtFaireConfiance();
-    clickByText('Remove the limit');
-    await act(async () => {});
-
-    clickByAriaLabel('Detach');
-    attacherEtFaireConfiance();
-    expect(document.body.textContent ?? '').not.toContain('Remove the folder limit?');
-  });
-
-  it('une règle de dossier qui DEMANDE l’approbation n’ouvre pas la boîte', async () => {
-    // Seule une règle `auto_approve` confinée se perd en étant écrasée. Une
-    // règle `require_approval` dans un dossier n'accorde rien : la remplacer
-    // par la confiance est le geste que le propriétaire vient de demander.
-    await render([{ ...folderRule, id: 'r3', action: 'require_approval' }]);
-    attacherEtFaireConfiance();
-    await act(async () => {});
-
-    expect(document.body.textContent ?? '').not.toContain('Remove the folder limit?');
-    expect(actions.setAgentApprovalRuleAction.mock.calls[0]?.[0]).toEqual({
-      agentId: AGENT_ID,
-      toolName: 'cogni_cortex__*',
-      action: 'auto_approve',
-      scope: 'agent',
-    });
-  });
-
-  it('une limite posée sur UN outil du serveur ne déclenche pas la boîte', async () => {
-    // `cogni_cortex__read_page` confiné à Dev n'est pas la ligne que cet onglet
-    // remplace : la règle exacte bat le motif dans son dossier (chaîne
-    // d'approbation, tier `agent-tool-in-folder`). Avertir là serait faux.
-    await render([{ ...folderRule, id: 'r2', toolName: 'cogni_cortex__read_page' }]);
-    attacherEtFaireConfiance();
-    await act(async () => {});
-
-    expect(document.body.textContent ?? '').not.toContain('Remove the folder limit?');
-    expect(actions.setAgentApprovalRuleAction.mock.calls[0]?.[0]).toEqual({
-      agentId: AGENT_ID,
-      toolName: 'cogni_cortex__*',
-      action: 'auto_approve',
-      scope: 'agent',
-    });
   });
 });

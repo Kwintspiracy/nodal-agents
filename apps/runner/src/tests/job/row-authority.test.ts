@@ -30,7 +30,17 @@ import { MockLanguageModelV3 } from 'ai/test';
 import { generateText } from 'ai';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { and, eq, sql, agentJobs, agents, agentAssignments, toolCalls } from '@nodal-agents/db';
+import {
+  and,
+  eq,
+  sql,
+  agentJobs,
+  agents,
+  agentAssignments,
+  approvalRules,
+  APPROVAL_ROW_KEY,
+  toolCalls,
+} from '@nodal-agents/db';
 import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
 import { createEmbeddingClient, LLMCallCancelledError } from '@nodal-agents/llm';
 import { LocalTrustProvider } from '@nodal-agents/auth';
@@ -478,6 +488,17 @@ describe('la ligne du job fait autorité avant chaque effet (#566) @cap:suivre-e
 });
 
 describe('aucune écriture du run hors de sa prise (#566, revue Codex passe 1) @cap:suivre-execution/moteur', () => {
+  // La porte applique la LIGNE de l'agent (#917) : c'est elle qui met
+  // `save_memory` sous approbation, le temps de ces cas, puis le rend.
+  const ligneSaveMemory = (action: 'auto_approve' | 'require_approval') =>
+    db
+      .insert(approvalRules)
+      .values({ entityId: seed.entityId, agentId: seed.agentId, toolName: 'save_memory', action })
+      .onConflictDoUpdate({ target: APPROVAL_ROW_KEY, set: { action } });
+  afterEach(async () => {
+    await ligneSaveMemory('auto_approve');
+  });
+
   /** `save_memory` soumis à approbation : la porte crée une demande et rend la main. */
   function depsSousApprobation(llm: RunnerDeps['llmClient']): RunnerDeps {
     const d = deps(llm, [], async () => {});
@@ -491,6 +512,7 @@ describe('aucune écriture du run hors de sa prise (#566, revue Codex passe 1) @
   });
 
   it('fauché pendant la porte d’approbation : la ligne reste `failed`, jamais `awaiting_approval`', async () => {
+    await ligneSaveMemory('require_approval');
     process.env['NODALAI_APPROVAL_GRACE_MS'] = '0';
     const jobId = await nouveauJob();
     pendant.laDemande = async (id) => {
@@ -517,6 +539,7 @@ describe('aucune écriture du run hors de sa prise (#566, revue Codex passe 1) @
   });
 
   it('annulé pendant la porte d’approbation : la ligne reste `cancelled`, la transcription est gardée', async () => {
+    await ligneSaveMemory('require_approval');
     process.env['NODALAI_APPROVAL_GRACE_MS'] = '0';
     const jobId = await nouveauJob();
     pendant.laDemande = async (id) => {

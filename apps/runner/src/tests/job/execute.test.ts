@@ -28,6 +28,7 @@ import {
   agentAssignments,
   approvalRequests,
   approvalRules,
+  APPROVAL_ROW_KEY,
   agentMemory,
   chatMessages,
   codeProjects,
@@ -45,7 +46,9 @@ import { createEmbeddingClient, validateMessageStructure } from '@nodal-agents/l
 import { LocalTrustProvider } from '@nodal-agents/auth';
 import { DeliveryError } from '@nodal-agents/delivery';
 import {
+  DEFAULT_ROOT_GRANTS,
   ENV_ALLOWLIST_VERSION,
+  REPLACE_SHARED_FILE_SETTING,
   SHELL_POLICY_VERSION,
   findModelCatalogEntry,
   hashVerificationManifest,
@@ -5552,12 +5555,20 @@ describe('the unavailable-tool budget counts turns, not calls (#560) @cap:assign
   });
 
   it('the budget survives a suspension: after resume, the next unavailable turn fails and its valid call never runs', async () => {
-    await db.insert(approvalRules).values({
-      entityId: seed.entityId,
-      agentId: null,
-      toolName: 'save_memory',
-      action: 'require_approval',
-    });
+    // The agent's own row Ask first (#917): a rule for every agent is a
+    // template, and this agent already holds a save_memory row.
+    await db
+      .insert(approvalRules)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        toolName: 'save_memory',
+        action: 'require_approval',
+      })
+      .onConflictDoUpdate({
+        target: APPROVAL_ROW_KEY,
+        set: { action: 'require_approval' },
+      });
     try {
       const job = await createTestJob(db, seed);
       const gated = `gated-560-${Date.now()}`;
@@ -10023,6 +10034,94 @@ describe('stored text reaches the provider with handles (#824) @cap:parler-par-c
       expect(sent).not.toContain(WA);
     } finally {
       await db.delete(agentMemory).where(eq(agentMemory.fact, fact));
+    }
+  });
+});
+
+// ─── #917 : la ligne de chaque outil, écrite au démarrage du job ─────────────
+
+describe('a job writes the autonomy rows of the tools it holds (#917) @cap:regler-autonomie/moteur', () => {
+  const finishCall = {
+    text: 'Done.',
+    toolCalls: [{ toolCallId: 'rr-917', toolName: 'return_result', args: { status: 'success' } }],
+  };
+
+  it('an agent with no row: the job start writes one for every tool it holds, and its call runs on that row', async () => {
+    await db.delete(approvalRules).where(eq(approvalRules.agentId, seed.agentId));
+    const job = await createTestJob(db, seed);
+    const fact = `rows-917-${Date.now()}`;
+    const llmClient = makeMockLlmClient([
+      {
+        toolCalls: [
+          { toolCallId: 's-917', toolName: 'save_memory', args: { fact, category: 'context' } },
+        ],
+      },
+      finishCall,
+    ]);
+    try {
+      const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+      expect(result.status).toBe('completed');
+
+      const [row] = await db
+        .select({ tools: agentJobs.systemPromptTools })
+        .from(agentJobs)
+        .where(eq(agentJobs.id, job.id));
+      const rows = await db
+        .select({ toolName: approvalRules.toolName, action: approvalRules.action })
+        .from(approvalRules)
+        .where(and(eq(approvalRules.agentId, seed.agentId), eq(approvalRules.conditionFolder, '')));
+      const named = new Set(rows.map((r) => r.toolName));
+      // Every tool of the job has its row, read back from the database.
+      expect((row?.tools ?? []).filter((t) => !named.has(t))).toEqual([]);
+      expect(named.has(REPLACE_SHARED_FILE_SETTING)).toBe(true);
+      // The call ran on the row the level wrote.
+      expect(rows.find((r) => r.toolName === 'save_memory')?.action).toBe('auto_approve');
+      const saved = await db
+        .select({ fact: agentMemory.fact })
+        .from(agentMemory)
+        .where(eq(agentMemory.fact, fact));
+      expect(saved).toHaveLength(1);
+    } finally {
+      await db.delete(agentMemory).where(eq(agentMemory.fact, fact));
+    }
+  });
+
+  it('the level decides nothing at run time: a row on Ask first asks under fully_autonomous', async () => {
+    await db
+      .insert(approvalRules)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        toolName: 'save_memory',
+        action: 'require_approval',
+      })
+      .onConflictDoUpdate({ target: APPROVAL_ROW_KEY, set: { action: 'require_approval' } });
+    await db
+      .update(entities)
+      .set({ rootGrants: { ...DEFAULT_ROOT_GRANTS, autonomy: 'fully_autonomous' } })
+      .where(eq(entities.id, seed.entityId));
+    try {
+      const job = await createTestJob(db, seed);
+      const llmClient = makeMockLlmClient([
+        {
+          toolCalls: [
+            {
+              toolCallId: 'a-917',
+              toolName: 'save_memory',
+              args: { fact: 'asked-917', category: 'context', purpose: 'Keep this.' },
+            },
+          ],
+        },
+        finishCall,
+      ]);
+      const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+      expect(result.status).toBe('awaiting_approval');
+    } finally {
+      await db
+        .update(entities)
+        .set({ rootGrants: DEFAULT_ROOT_GRANTS })
+        .where(eq(entities.id, seed.entityId));
+      await db.delete(approvalRules).where(eq(approvalRules.agentId, seed.agentId));
     }
   });
 });

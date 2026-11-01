@@ -83,7 +83,6 @@ function demande(over: Partial<Approval> = {}): Approval {
       impact: null,
     },
     ruleChain: [],
-    toolDefault: 'require_approval',
     agentWorkspaces: [],
     gateReasons: [],
     ...over,
@@ -257,14 +256,52 @@ describe('la carte dit quelle règle a décidé @cap:approuver-une-action/ecran'
     expect(lignesDeRegles()[0]!.textContent).toContain('Reviewer C \u00b7 in nodal');
   });
 
-  it('sans aucune règle, montre la posture propre de l’outil', async () => {
+  it('sans ligne, le dit : plus de « Tool default » calculé pour un outil qui n’a pas de ligne (#917)', async () => {
     await monter(demande());
-    const lignes = lignesDeRegles();
-    expect(lignes).toHaveLength(1);
-    expect(lignes[0]!.getAttribute('data-testid')).toBe('approval-rule-tool-default');
-    expect(lignes[0]!.textContent).toContain('Tool default');
-    expect(lignes[0]!.textContent).toContain('Ask first');
-    expect(lignes[0]!.textContent).toContain('Wins');
+    expect(rendu().textContent).not.toContain('Tool default');
+    expect(rendu().querySelector('[data-testid="approval-rule-none"]')?.textContent).toBe(
+      'This agent has no setting for this tool.',
+    );
+  });
+
+  it('le réglage « shared file » se nomme en mots, pas par son nom de ligne', async () => {
+    await monter(
+      demande({
+        ruleChain: [
+          {
+            id: 'r-move',
+            sourceIndex: 0,
+            toolName: 'file_move',
+            action: 'auto_approve',
+            agentId: 'a',
+            scope: 'agent',
+            tier: 'agent-tool',
+            workspacePath: null,
+            workspaceLabel: null,
+            wins: false,
+          },
+          {
+            id: 'r-setting',
+            sourceIndex: 1,
+            toolName: 'setting:replace_shared_file',
+            action: 'require_approval',
+            agentId: 'a',
+            scope: 'agent',
+            tier: 'agent-tool',
+            workspacePath: null,
+            workspaceLabel: null,
+            wins: true,
+          },
+        ],
+      } as Partial<Approval>),
+    );
+    const ligne = rendu().querySelector('[data-testid="approval-rule-r-setting"]');
+    expect(ligne?.textContent).toContain('Replace a shared file it did not create');
+    expect(ligne?.textContent).toContain('Ask first');
+    expect(ligne?.textContent).toContain('Wins');
+    expect(rendu().querySelector('[data-testid="approval-rule-r-move"]')?.textContent).toContain(
+      'Overridden',
+    );
   });
 
   it('Change remplace le bouton par le sélecteur et enregistre au bon scope', async () => {

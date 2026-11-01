@@ -387,10 +387,25 @@ export async function readProcessStarters(
   entityId: string,
 ): Promise<ProcessStarter[]> {
   const { sql } = await import('@nodal-agents/db');
-  const { resolveAgentToolNames, servedToolDefinitions } =
+  const { resolveAgentToolNames, servedToolDefinitions, syncAgentAutonomyRows } =
     await import('@nodal-agents/orchestration');
   const { matchApprovalRule } = await import('@nodal-agents/tools');
   const d = await import('@nodal-agents/db');
+  const agents = z
+    .array(z.object({ id: z.string(), slug: z.string(), runtime: z.string().nullable() }))
+    .parse(
+      await executeRows(
+        db,
+        sql`
+        select id::text, slug, runtime from agents
+         where entity_id = ${entityId}::uuid and coalesce(active, true) = true
+         order by slug`,
+      ),
+    );
+  // Les lignes que l'agent tiendra au lancement de son job (#917) : écrites
+  // par le même écrivain que le runner, avant d'être lues. Une règle pour tout
+  // l'espace n'est qu'un modèle ; c'est la ligne de l'agent qui décide.
+  for (const a of agents) await syncAgentAutonomyRows(db, a.id);
   const rules = await db
     .select({
       id: d.approvalRules.id,
@@ -407,17 +422,6 @@ export async function readProcessStarters(
       .filter((t) => t.egress === 'process')
       .map((t) => t.name),
   );
-  const agents = z
-    .array(z.object({ id: z.string(), slug: z.string(), runtime: z.string().nullable() }))
-    .parse(
-      await executeRows(
-        db,
-        sql`
-        select id::text, slug, runtime from agents
-         where entity_id = ${entityId}::uuid and coalesce(active, true) = true
-         order by slug`,
-      ),
-    );
   const out: ProcessStarter[] = [];
   for (const a of agents) {
     // Ce qu'un job de l'agent recevrait vraiment : la liste du runner (#863).

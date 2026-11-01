@@ -20,7 +20,7 @@
 // pour un job (`recordPlatformWrites`, #913) passe par le même rangement, et
 // elle lève : l'appelant ne promet pas au job un fichier qu'il n'a pas rangé.
 
-import { constatedWrites, desc, eq, sql } from '@nodal-agents/db';
+import { agentJobs, constatedWrites, desc, eq, sql } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import type { ConstatedBy, ConstatedChangeKind, ConstatedWrite } from '@nodal-agents/shared';
 import { normalizePath } from '@nodal-agents/shared';
@@ -165,11 +165,11 @@ export const PLATFORM_WRITE_TURN = 0;
 /**
  * Une écriture que la plateforme a faite POUR un job (#913) : rangée comme
  * celle d'un outil, par la même fonction, avec l'empreinte des octets écrits.
- * La porte d'écrasement du dossier partagé (`currentContentWrittenByJob`) la
- * lit donc comme le travail de CE job : un fichier reçu pour lui se range sans
- * demander à personne, tant que son contenu est celui que la plateforme a
- * écrit. Un autre job qui le réécrit, une personne qui l'édite : la porte
- * redemande.
+ * La porte d'écrasement du dossier partagé (`currentContentWrittenByAgentOf`)
+ * la lit donc comme le travail de l'AGENT de ce job (#917) : un fichier reçu
+ * pour lui se range sans demander à personne, dans ce run ou un suivant de ce
+ * même agent, tant que son contenu est celui que la plateforme a écrit. Un
+ * autre agent qui le réécrit, une personne qui l'édite : la porte redemande.
  *
  * LÈVE, contrairement à `recordConstatedWrites` : l'appelant écrit le fichier
  * pour le job, et un fichier dont l'écriture n'a pas été rangée ne doit pas
@@ -244,39 +244,57 @@ async function rangerConstats(input: ConstatsARanger): Promise<number> {
 }
 
 /**
- * Le contenu ACTUEL de ce fichier est-il celui que CE job y a écrit ?
- * (issue #505, revue Codex P1-a et P1-b)
+ * Le contenu ACTUEL de ce fichier est-il celui que L'AGENT de ce job y a écrit ?
+ * (issue #505, revue Codex P1-a et P1-b ; portée de l'agent depuis #917)
  *
  * C'est la question que pose la porte d'écrasement du dossier partagé : elle
- * protège le travail d'un AUTRE, et un run qui réécrit le fichier qu'il vient
- * de produire n'écrase le travail de personne. Job 8c763150 : six voix off
+ * protège le travail d'un AUTRE, et un agent qui réécrit le fichier qu'il a
+ * produit n'écrase le travail de personne. Job 8c763150 : six voix off
  * régénérées aux mêmes chemins, six demandes d'approbation pour un travail
  * qui était le sien.
+ *
+ * Le propriétaire est l'AGENT, pas le run (#917, décision du propriétaire du
+ * 01/11/2026) : le réglage que l'écran affiche s'appelle « Replace or remove a
+ * shared file this agent did not create ». Limitée au run, la porte faisait
+ * demander une personne au run suivant d'un agent pour ranger le PDF que cet
+ * agent avait reçu sur Telegram au run précédent : le réglage affiché n'était
+ * pas celui appliqué.
+ * Toute écriture d'un job compte pour l'agent de ce job, celles que la
+ * plateforme fait pour lui comprises (`recordPlatformWrites`, #913).
  *
  * La réponse se lit sur le CONTENU, pas sur l'ordre des lignes :
  *
  *  - l'empreinte actuelle du fichier doit égaler celle de la dernière écriture
- *    constatée de CE job. Une édition faite hors de Nodal (une personne, un
- *    CLI, une restauration) ne laisse aucun constat, mais elle change
- *    l'empreinte : la porte redemande ;
- *  - aucun AUTRE job ne doit avoir constaté ce même contenu à ce chemin. Les
- *    constats sont rangés APRÈS l'écriture, dans un ordre qui n'est pas celui
- *    des écritures : un run qui range son constat après qu'un autre a réécrit
- *    le fichier y lit le contenu de l'autre. Ce contenu porte alors deux noms,
- *    et un contenu qui n'est pas prouvablement le nôtre se protège.
+ *    constatée d'un job de CET agent. Une édition faite hors de Nodal (une
+ *    personne, un CLI, une restauration) ne laisse aucun constat, mais elle
+ *    change l'empreinte : la porte redemande. Un autre agent qui réécrit le
+ *    fichier la change aussi ;
+ *  - aucun job d'un AUTRE agent ne doit avoir constaté ce même contenu à ce
+ *    chemin. Les constats sont rangés APRÈS l'écriture, dans un ordre qui
+ *    n'est pas celui des écritures : un run qui range son constat après qu'un
+ *    autre a réécrit le fichier y lit le contenu de l'autre. Ce contenu porte
+ *    alors deux noms, et un contenu qui n'est pas prouvablement le nôtre se
+ *    protège.
  *
- * Fichier absent, illisible, ou constat sans empreinte (suppression, ligne
- * d'avant 0131) : pas de propriété, la porte demande.
+ * Fichier absent, illisible, constat sans empreinte (suppression, ligne
+ * d'avant 0131), ou job sans agent : pas de propriété, la porte demande.
  */
-export async function currentContentWrittenByJob(
+export async function currentContentWrittenByAgentOf(
   db: AnyDrizzleDb,
   jobId: string | null | undefined,
   absPath: string,
 ): Promise<boolean> {
   if (!jobId) return false;
+  // L'agent du job qui demande, lu dans la même requête : comparé en texte,
+  // pour qu'un identifiant de job qui n'est pas un uuid ne fasse rien lever.
   const lignes = await db
-    .select({ jobId: constatedWrites.jobId, sha: constatedWrites.contentSha256 })
+    .select({
+      agentId: agentJobs.agentId,
+      sha: constatedWrites.contentSha256,
+      owner: sql<string | null>`(select o.agent_id from agent_jobs o where o.id::text = ${jobId})`,
+    })
     .from(constatedWrites)
+    .leftJoin(agentJobs, eq(agentJobs.id, constatedWrites.jobId))
     .where(eq(constatedWrites.path, await cheminConstate(absPath)))
     .orderBy(desc(constatedWrites.createdAt));
   // Le disque EN DERNIER (revue Codex de #505, passe 3) : l'écriture atomique
@@ -285,7 +303,9 @@ export async function currentContentWrittenByJob(
   // contenu du `rename`. Tout ce qui suit est synchrone.
   const actuel = await fingerprint(absPath);
   if (actuel.kind !== 'file') return false;
-  const derniereDuJob = lignes.find((l) => l.jobId === jobId);
-  if (derniereDuJob?.sha !== actuel.sha256) return false;
-  return !lignes.some((l) => l.jobId !== jobId && l.sha === actuel.sha256);
+  const agent = lignes[0]?.owner ?? null;
+  if (agent === null) return false;
+  const derniereDeLAgent = lignes.find((l) => l.agentId === agent);
+  if (derniereDeLAgent?.sha !== actuel.sha256) return false;
+  return !lignes.some((l) => l.agentId !== agent && l.sha === actuel.sha256);
 }

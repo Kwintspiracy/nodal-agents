@@ -24,6 +24,7 @@ import { SHARED_WORKSPACE_LABEL, isProtectedWorkflowTemplatePath } from './works
 import { fileWriteTool } from './file-write';
 import { fileEditTool } from './file-edit';
 import type { ToolContext, ExecuteOptions } from '../../types';
+import { rowsAsWritten } from '../../tests/autonomy-rows-fixture';
 
 let db: TestDb;
 let seed: { userId: string; entityId: string; agentId: string; jobId: string };
@@ -61,8 +62,9 @@ function ctx(): ToolContext {
 // the call before we can observe the P4 fail-loud outcome.
 function opts(): ExecuteOptions {
   return {
-    approvalRules: [],
-    autonomy: 'fully_autonomous',
+    // The rows the level writes (#917): the file tools and the shared-file
+    // setting all Autonomous under fully_autonomous.
+    approvalRules: rowsAsWritten(seed, [], 'fully_autonomous'),
     onApprovalRequired: async () => {},
   };
 }

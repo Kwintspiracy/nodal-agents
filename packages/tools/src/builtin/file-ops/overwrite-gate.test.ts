@@ -17,17 +17,21 @@ import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, writeFile, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { eq } from '@nodal-agents/db';
-import { approvalRequests, agentJobs, constatedWrites } from '@nodal-agents/db';
+import { approvalRequests, agentJobs, agents, constatedWrites } from '@nodal-agents/db';
 import { cheminConstate } from '../../verification/record-constat';
 import { executeTool } from '../../execute';
 import { SHARED_WORKSPACE_LABEL } from './workspace';
 import { fileWriteTool } from './file-write';
 import { fileEditTool } from './file-edit';
+import { fileMoveTool } from './file-move';
 import type { ToolContext, ExecuteOptions, ApprovalRule } from '../../types';
+import type { AutonomyLevel } from '@nodal-agents/shared';
+import { REPLACE_SHARED_FILE_SETTING } from '@nodal-agents/shared';
+import { rowsAsWritten } from '../../tests/autonomy-rows-fixture';
 
 let db: TestDb;
 let seed: { userId: string; entityId: string; agentId: string; jobId: string };
@@ -67,12 +71,50 @@ function ctx(): ToolContext {
   };
 }
 
-function opts(autonomy?: ExecuteOptions['autonomy'], rules: ApprovalRule[] = []): ExecuteOptions {
+/**
+ * The rows of an agent whose file tools and shared-file setting were written
+ * under `autonomy` (#917): the level is a template, and these rows are what
+ * it wrote. The case's own `rules` come first and win.
+ */
+function opts(autonomy?: AutonomyLevel, rules: ApprovalRule[] = []): ExecuteOptions {
   return {
-    approvalRules: rules,
-    autonomy,
+    approvalRules: rowsAsWritten(seed, [fileWriteTool, fileEditTool], autonomy, rules),
     onApprovalRequired: async () => {},
   };
+}
+
+/** Un autre agent du même espace de travail. */
+async function anotherAgent(): Promise<string> {
+  const [row] = await db
+    .insert(agents)
+    .values({
+      entityId: seed.entityId,
+      name: 'Another Agent',
+      slug: `another-agent-${randomUUID()}`,
+      personality: 'You are another agent.',
+    })
+    .returning({ id: agents.id });
+  return row!.id;
+}
+
+/** Un nouveau run de `agentId`. */
+async function jobOf(agentId: string): Promise<string> {
+  const [row] = await db
+    .insert(agentJobs)
+    .values({
+      entityId: seed.entityId,
+      agentId,
+      channel: 'api',
+      task: 'a run',
+      status: 'processing',
+    })
+    .returning({ id: agentJobs.id });
+  return row!.id;
+}
+
+/** Le contexte du run `jobId` de `agentId`, sur les mêmes dossiers. */
+function ctxOf(jobId: string, agentId: string = seed.agentId): ToolContext {
+  return { ...ctx(), jobId, agentId };
 }
 
 describe('D1 overwrite gate — file_write @cap:travailler-sur-des-fichiers/moteur', () => {
@@ -167,20 +209,32 @@ describe('D1 overwrite gate — file_write @cap:travailler-sur-des-fichiers/mote
 
   it('resume after approval: synthetic auto_approve rule executes without re-gating', async () => {
     await writeFile(join(SHARED_ROOT, 'template.json'), 'old', 'utf8');
-    const resumeRule: ApprovalRule = {
-      id: 'resume-bypass',
-      toolName: 'file_write',
-      action: 'auto_approve',
-      agentId: null,
-      entityId: seed.entityId,
-    };
+    // The runner's resume rows (apps/runner/src/job/execute.ts): the tool AND
+    // the shared-file setting, both for the agent — the person approved this
+    // call, the file it replaces included.
+    const resumeRules: ApprovalRule[] = [
+      {
+        id: 'resume-bypass',
+        toolName: 'file_write',
+        action: 'auto_approve',
+        agentId: seed.agentId,
+        entityId: seed.entityId,
+      },
+      {
+        id: 'resume-bypass-shared-file',
+        toolName: REPLACE_SHARED_FILE_SETTING,
+        action: 'auto_approve',
+        agentId: seed.agentId,
+        entityId: seed.entityId,
+      },
+    ];
     // Same shared+existing+propose_confirm shape that gated above — but with
-    // the resume-time synthetic rule, it must execute immediately.
+    // the resume-time synthetic rows, it must execute immediately.
     const result = await executeTool(
       fileWriteTool,
       { path: `${SHARED_WORKSPACE_LABEL}/template.json`, content: 'resumed' },
       ctx(),
-      opts(undefined, [resumeRule]),
+      opts(undefined, resumeRules),
     );
     expect(result.outcome).toBe('success');
     const written = await import('node:fs/promises').then((fs) =>
@@ -236,19 +290,9 @@ describe('D1 overwrite gate — file_edit', () => {
 // travail d'un AUTRE run. Un fichier dont la dernière écriture constatée est
 // celle de CE run lui appartient : il le réécrit sans demander.
 describe('D1 overwrite gate — a file this run wrote belongs to this run (#505) @cap:travailler-sur-des-fichiers/moteur', () => {
-  async function otherJob(): Promise<string> {
-    const [row] = await db
-      .insert(agentJobs)
-      .values({
-        entityId: seed.entityId,
-        agentId: seed.agentId,
-        channel: 'api',
-        task: 'another run',
-        status: 'processing',
-      })
-      .returning({ id: agentJobs.id });
-    return row!.id;
-  }
+  // Depuis #917, le travail d'un autre run de CE MÊME agent est le sien : le
+  // run qui protège ici est celui d'un AUTRE agent.
+  const otherJob = async () => jobOf(await anotherAgent());
 
   it('re-writing a shared file THIS run created runs without asking anyone', async () => {
     const path = `${SHARED_WORKSPACE_LABEL}/vo/line-06.wav.txt`;
@@ -436,5 +480,131 @@ describe('D1 overwrite gate — the fingerprint is what the tool WROTE, checked 
     expect(out.ok).toBe(false);
     expect(out.reason).toContain('changed since this call was allowed');
     expect(await readFile(abs, 'utf8')).toBe('edited meanwhile');
+  });
+});
+
+// #917, décision A du propriétaire (01/11/2026) : le réglage s'intitule
+// « Replace or remove a shared file this agent did not create ». Il était
+// appliqué au RUN : un fichier qu'un agent avait écrit (ou reçu sur Telegram)
+// dans un run comptait, au run suivant du même agent, comme le travail d'un autre.
+// Le contenu actuel écrit par N'IMPORTE QUEL run de CET agent, et pas modifié
+// depuis, est à lui ; celui d'un autre agent, d'une personne, ou modifié après
+// l'écriture de l'agent, reste protégé par le réglage.
+describe('D1 overwrite gate — a file this AGENT wrote belongs to it, whatever the run (#917) @cap:travailler-sur-des-fichiers/moteur', () => {
+  const path = `${SHARED_WORKSPACE_LABEL}/brief.md`;
+  const abs = () => join(SHARED_ROOT, 'brief.md');
+  const asked = async (jobId: string) =>
+    (await db.select().from(approvalRequests).where(eq(approvalRequests.jobId, jobId))).map(
+      (r) => r.toolName,
+    );
+  /** Les lignes d'un AUTRE agent, toutes autonomes : sa porte ne l'arrête pas. */
+  const theirs = (agentId: string): ExecuteOptions => ({
+    approvalRules: rowsAsWritten(
+      { agentId, entityId: seed.entityId },
+      [fileWriteTool],
+      'fully_autonomous',
+    ),
+    onApprovalRequired: async () => {},
+  });
+
+  it('a shared file the agent wrote in one run is replaced by its next run without asking anyone', async () => {
+    const run1 = await jobOf(seed.agentId);
+    const written = await executeTool(fileWriteTool, { path, content: 'v1' }, ctxOf(run1), opts());
+    expect(written.outcome).toBe('success');
+
+    const run2 = await jobOf(seed.agentId);
+    const replaced = await executeTool(
+      fileWriteTool,
+      { path, content: 'v2', purpose: 'Mettre le brief à jour.' },
+      ctxOf(run2),
+      opts(),
+    );
+
+    expect(replaced.outcome).toBe('success');
+    expect(await readFile(abs(), 'utf8')).toBe('v2');
+    expect(await asked(run2)).toEqual([]);
+  });
+
+  it('a shared file the agent wrote in one run is moved out by its next run without asking anyone', async () => {
+    const run1 = await jobOf(seed.agentId);
+    await executeTool(fileWriteTool, { path, content: 'v1' }, ctxOf(run1), opts());
+
+    const run2 = await jobOf(seed.agentId);
+    const moved = await executeTool(
+      fileMoveTool,
+      { source: path, destination: 'vault/brief.md', purpose: 'Ranger le brief.' } as never,
+      ctxOf(run2),
+      opts(),
+    );
+
+    expect(moved).toMatchObject({ outcome: 'success', output: { ok: true, operation: 'moved' } });
+    expect(await readFile(join(ATTACHED_ROOT, 'brief.md'), 'utf8')).toBe('v1');
+    expect(await asked(run2)).toEqual([]);
+  });
+
+  it('the same file changed by a person after the agent wrote it asks again, and nothing moves', async () => {
+    const run1 = await jobOf(seed.agentId);
+    await executeTool(fileWriteTool, { path, content: 'v1' }, ctxOf(run1), opts());
+    await writeFile(abs(), 'edited by a person', 'utf8');
+
+    const run2 = await jobOf(seed.agentId);
+    const res = await executeTool(
+      fileWriteTool,
+      { path, content: 'v2', purpose: 'Mettre le brief à jour.' },
+      ctxOf(run2),
+      opts(),
+    );
+
+    expect(res.outcome).toBe('awaiting_approval');
+    expect(await asked(run2)).toEqual(['file_write']);
+    expect(await readFile(abs(), 'utf8')).toBe('edited by a person');
+  });
+
+  it('the same file rewritten by another agent after this agent wrote it asks again, and nothing moves', async () => {
+    const run1 = await jobOf(seed.agentId);
+    await executeTool(fileWriteTool, { path, content: 'v1' }, ctxOf(run1), opts());
+    const other = await anotherAgent();
+    const rewritten = await executeTool(
+      fileWriteTool,
+      { path, content: 'their version' },
+      ctxOf(await jobOf(other), other),
+      theirs(other),
+    );
+    expect(rewritten.outcome).toBe('success');
+
+    const run2 = await jobOf(seed.agentId);
+    const res = await executeTool(
+      fileMoveTool,
+      { source: path, destination: 'vault/brief.md', purpose: 'Ranger le brief.' } as never,
+      ctxOf(run2),
+      opts(),
+    );
+
+    expect(res.outcome).toBe('awaiting_approval');
+    expect(await asked(run2)).toEqual(['file_move']);
+    expect(await readFile(abs(), 'utf8')).toBe('their version');
+  });
+
+  it('a shared file another agent created asks this agent, and nothing moves', async () => {
+    const other = await anotherAgent();
+    const created = await executeTool(
+      fileWriteTool,
+      { path, content: 'their work' },
+      ctxOf(await jobOf(other), other),
+      theirs(other),
+    );
+    expect(created.outcome).toBe('success');
+
+    const run = await jobOf(seed.agentId);
+    const res = await executeTool(
+      fileWriteTool,
+      { path, content: 'mine', purpose: 'Remplacer le brief.' },
+      ctxOf(run),
+      opts(),
+    );
+
+    expect(res.outcome).toBe('awaiting_approval');
+    expect(await asked(run)).toEqual(['file_write']);
+    expect(await readFile(abs(), 'utf8')).toBe('their work');
   });
 });

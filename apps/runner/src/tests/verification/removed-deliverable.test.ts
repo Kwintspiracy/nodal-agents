@@ -65,7 +65,7 @@ import {
   asc,
   eq,
 } from '@nodal-agents/db';
-import { normalizePath } from '@nodal-agents/shared';
+import { normalizePath, REPLACE_SHARED_FILE_SETTING } from '@nodal-agents/shared';
 import {
   createToolRegistry,
   executeTool,
@@ -147,8 +147,10 @@ function ctx(workspace: string = ws): ToolContext {
   } as unknown as ToolContext;
 }
 
+// Les lignes que l'agent tient (#917) : une par outil, et le réglage « shared
+// file » que file_write et file_move consultent, tous sur Autonomous.
 const opts = (): ExecuteOptions => ({
-  approvalRules: ['file_write', 'file_move', 'run_command'].map(
+  approvalRules: ['file_write', 'file_move', 'run_command', REPLACE_SHARED_FILE_SETTING].map(
     (toolName): ApprovalRule => ({
       id: `rule-${toolName}`,
       toolName,

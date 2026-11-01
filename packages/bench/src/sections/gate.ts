@@ -10,6 +10,11 @@
 // So: run a fixed grid of (tool × rules × autonomy) through the production gate
 // and count outcomes. The counts are the metric. Any flip shows up as a diff
 // with the exact scenario named.
+//
+// Since #917 "under an autonomy" means what it means in the product: the tool's
+// row is the one the level WRITES for it on arrival (`templateAutonomy`), and
+// the gate applies that row. A shell command is judged, as in every job, by the
+// agent's checklist (the shipped one here).
 
 import {
   createGateHarness,
@@ -17,8 +22,9 @@ import {
   aBuiltinTool,
   aGatedBuiltinTool,
 } from '@nodal-agents/test-kit';
-import type { ExecuteToolFn } from '@nodal-agents/test-kit';
-import { executeTool } from '@nodal-agents/tools';
+import type { ExecuteToolFn, TemplateFn } from '@nodal-agents/test-kit';
+import { executeTool, templateAutonomy } from '@nodal-agents/tools';
+import { DEFAULT_SHELL_POLICY } from '@nodal-agents/shared';
 import type { Metric, Section } from '../types';
 
 const AUTONOMIES = [undefined, 'propose_confirm', 'destructive_gate', 'fully_autonomous'] as const;
@@ -59,7 +65,10 @@ export const gateSection: Section = {
   ],
 
   async run(): Promise<Metric[]> {
-    const { expectGate } = createGateHarness(executeTool as unknown as ExecuteToolFn);
+    const { expectGate } = createGateHarness(
+      executeTool as unknown as ExecuteToolFn,
+      templateAutonomy as unknown as TemplateFn,
+    );
     let asked = 0;
     let ran = 0;
     let blocked = 0;
@@ -68,7 +77,10 @@ export const gateSection: Section = {
     for (const s of SCENARIOS) {
       for (const autonomy of AUTONOMIES) {
         const built = s.build();
-        let chain = expectGate(built).withRules([]).underAutonomy(autonomy);
+        let chain = expectGate(built)
+          .withRules([])
+          .withShellPolicy(DEFAULT_SHELL_POLICY)
+          .underAutonomy(autonomy);
         if (s.input !== undefined) chain = chain.withInput(s.input);
         const [r] = await chain.run();
         if (!r) continue;

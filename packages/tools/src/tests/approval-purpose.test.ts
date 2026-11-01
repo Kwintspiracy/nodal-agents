@@ -23,6 +23,7 @@ import type {
   ApprovalRule,
 } from '../types';
 import type { TestDb } from '@nodal-agents/db/test-utils';
+import { rowsAsWritten } from './autonomy-rows-fixture';
 
 let db: TestDb;
 let seed: { userId: string; entityId: string; agentId: string; jobId: string };
@@ -79,10 +80,14 @@ function aTool(
   return { tool, ran };
 }
 
-function opts(rules: ApprovalRule[] = []): ExecuteOptions {
+/** The tool's row as the shipped level writes it (#917), the case's own rows first. */
+function opts(
+  tool: ToolDefinition<z.ZodTypeAny, unknown>,
+  rules: ApprovalRule[] = [],
+): ExecuteOptions {
   const asked: ApprovalGateRequest[] = [];
   return {
-    approvalRules: rules,
+    approvalRules: rowsAsWritten(seed, [tool], 'propose_confirm', rules),
     onApprovalRequired: async (r) => {
       asked.push(r);
     },
@@ -93,7 +98,7 @@ describe('la porte d’approbation exige la raison de l’agent @cap:approuver-u
   it('ne crée AUCUNE ligne d’approbation quand l’agent n’a pas dit pourquoi', async () => {
     const { tool, ran } = aTool('gated_no_reason', { defaultApproval: 'require_approval' });
 
-    const result = await executeTool(tool, { path: '/tmp/a' }, makeCtx(), opts());
+    const result = await executeTool(tool, { path: '/tmp/a' }, makeCtx(), opts(tool));
 
     // La ligne que la personne aurait dû lire n'existe pas.
     expect(await approvalInputsFor('gated_no_reason')).toEqual([]);
@@ -117,7 +122,7 @@ describe('la porte d’approbation exige la raison de l’agent @cap:approuver-u
   it('le refus dit que RIEN n’est arrêté et que le même appel, avec `purpose`, suffit (#505)', async () => {
     const { tool } = aTool('gated_not_halted', { defaultApproval: 'require_approval' });
 
-    const result = await executeTool(tool, { path: '/tmp/a' }, makeCtx(), opts());
+    const result = await executeTool(tool, { path: '/tmp/a' }, makeCtx(), opts(tool));
 
     expect(result.outcome).toBe('error');
     if (result.outcome === 'error') {
@@ -138,7 +143,12 @@ describe('la porte d’approbation exige la raison de l’agent @cap:approuver-u
   it('une raison faite d’espaces ne compte pas — la carte la lirait comme absente', async () => {
     const { tool } = aTool('gated_blank_reason', { defaultApproval: 'require_approval' });
 
-    const result = await executeTool(tool, { path: '/tmp/a', purpose: '   ' }, makeCtx(), opts());
+    const result = await executeTool(
+      tool,
+      { path: '/tmp/a', purpose: '   ' },
+      makeCtx(),
+      opts(tool),
+    );
 
     expect(await approvalInputsFor('gated_blank_reason')).toEqual([]);
     expect(result.outcome).toBe('error');
@@ -148,7 +158,12 @@ describe('la porte d’approbation exige la raison de l’agent @cap:approuver-u
     const { tool, ran } = aTool('gated_with_reason', { defaultApproval: 'require_approval' });
     const phrase = 'Je dois lire le CHANGELOG pour dater la régression.';
 
-    const result = await executeTool(tool, { path: '/tmp/a', purpose: phrase }, makeCtx(), opts());
+    const result = await executeTool(
+      tool,
+      { path: '/tmp/a', purpose: phrase },
+      makeCtx(),
+      opts(tool),
+    );
 
     expect(result.outcome).toBe('awaiting_approval');
     const inputs = await approvalInputsFor('gated_with_reason');
@@ -171,7 +186,7 @@ describe('la porte d’approbation exige la raison de l’agent @cap:approuver-u
       entityId: seed.entityId,
     };
 
-    const refus = await executeTool(tool, { path: '/tmp/a' }, makeCtx(), opts([rule]));
+    const refus = await executeTool(tool, { path: '/tmp/a' }, makeCtx(), opts(tool, [rule]));
     expect(refus.outcome).toBe('error');
     expect(await approvalInputsFor('file_read_like')).toEqual([]);
 
@@ -179,7 +194,7 @@ describe('la porte d’approbation exige la raison de l’agent @cap:approuver-u
       tool,
       { path: '/tmp/a', purpose: 'Relire le fichier avant de le corriger.' },
       makeCtx(),
-      opts([rule]),
+      opts(tool, [rule]),
     );
     expect(ok.outcome).toBe('awaiting_approval');
     expect(await approvalInputsFor('file_read_like')).toHaveLength(1);
@@ -188,7 +203,7 @@ describe('la porte d’approbation exige la raison de l’agent @cap:approuver-u
   it('un appel AUTO-APPROUVÉ ne doit rien : il ne passe devant personne', async () => {
     const { tool, ran } = aTool('autonomous_tool');
 
-    const result = await executeTool(tool, { path: '/tmp/a' }, makeCtx(), opts());
+    const result = await executeTool(tool, { path: '/tmp/a' }, makeCtx(), opts(tool));
 
     expect(result.outcome).toBe('success');
     expect(ran.inputs).toEqual([{ path: '/tmp/a' }]);
@@ -204,7 +219,7 @@ describe('la porte d’approbation exige la raison de l’agent @cap:approuver-u
       entityId: seed.entityId,
     };
 
-    const result = await executeTool(tool, { path: '/tmp/a' }, makeCtx(), opts([rule]));
+    const result = await executeTool(tool, { path: '/tmp/a' }, makeCtx(), opts(tool, [rule]));
 
     expect(result.outcome).toBe('success');
     expect(ran.inputs).toEqual([{ path: '/tmp/a' }]);
@@ -220,7 +235,7 @@ describe('la porte d’approbation exige la raison de l’agent @cap:approuver-u
       entityId: seed.entityId,
     };
 
-    const result = await executeTool(tool, { path: '/tmp/a' }, makeCtx(), opts([rule]));
+    const result = await executeTool(tool, { path: '/tmp/a' }, makeCtx(), opts(tool, [rule]));
 
     expect(result.outcome).toBe('error');
     if (result.outcome === 'error') {
@@ -250,7 +265,7 @@ describe('la porte d’approbation exige la raison de l’agent @cap:approuver-u
       tool,
       { question: 'Quelle version publier ?' },
       makeCtx({ toolCallId: 'call-q-1' }),
-      opts(),
+      opts(tool),
     );
 
     expect(result.outcome).toBe('awaiting_approval');

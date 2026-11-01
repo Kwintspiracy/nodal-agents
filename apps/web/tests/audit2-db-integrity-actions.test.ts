@@ -173,13 +173,13 @@ describe('setRunCommandRuleAction — re-setting never leaves a duplicate row �
     expect(rows[0]?.action).toBe('auto_approve');
   });
 
-  it('disable removes the row', async () => {
+  it('there is no "disable": the row is never removed, null is refused (#917)', async () => {
     const agentId = await makeAgent('Audit2 Yolo Agent Off');
     const { setRunCommandRuleAction } = await import('../src/lib/actions.ts');
 
     await setRunCommandRuleAction({ agentId, action: 'auto_approve' });
     const off = await setRunCommandRuleAction({ agentId, action: null });
-    expect(off.ok).toBe(true);
+    expect(off.ok).toBe(false);
 
     const rows = await _testDb!
       .select({ action: approvalRules.action })
@@ -191,7 +191,7 @@ describe('setRunCommandRuleAction — re-setting never leaves a duplicate row �
           eq(approvalRules.toolName, 'run_command'),
         ),
       );
-    expect(rows).toHaveLength(0);
+    expect(rows).toEqual([{ action: 'auto_approve' }]);
   });
 });
 
@@ -221,7 +221,7 @@ describe('setCodeTaskYoloAction — re-toggle never leaves a duplicate row', () 
     expect(rows[0]?.action).toBe('auto_approve');
   });
 
-  it('disable removes the row', async () => {
+  it('disable keeps the row, on Ask first (#917: a tool always has its row)', async () => {
     const agentId = await makeAgent('Audit2 CodeTask Yolo Agent Off');
     const { setCodeTaskYoloAction } = await import('../src/lib/actions.ts');
 
@@ -239,7 +239,7 @@ describe('setCodeTaskYoloAction — re-toggle never leaves a duplicate row', () 
           eq(approvalRules.toolName, 'code_task'),
         ),
       );
-    expect(rows).toHaveLength(0);
+    expect(rows).toEqual([{ action: 'require_approval' }]);
   });
 
   it('does not touch a run_command rule on the same agent (distinct tool_name rows)', async () => {
@@ -458,7 +458,7 @@ describe('setReviewerReadOnlyPresetAction', () => {
     expect(rows.every((r) => r.action === 'block')).toBe(true);
   });
 
-  it('disable removes only the block rows, a require_approval rule set by hand survives', async () => {
+  it('disable gives each blocked row back the level’s value, and a require_approval rule set by hand survives (#917)', async () => {
     const agentId = await makeAgent('Audit2 ReadOnly Disable Agent');
     const { setReviewerReadOnlyPresetAction, setAgentApprovalRuleAction } =
       await import('../src/lib/actions.ts');
@@ -480,9 +480,12 @@ describe('setReviewerReadOnlyPresetAction', () => {
       .from(approvalRules)
       .where(and(eq(approvalRules.entityId, _testEntityId), eq(approvalRules.agentId, agentId)));
 
-    expect(rows).toHaveLength(1);
-    expect(rows[0]?.toolName).toBe('run_command');
-    expect(rows[0]?.action).toBe('require_approval');
+    // No row is deleted any more: the preset's rows are given back the value
+    // the level writes for each tool, none stays blocked, and the row set by
+    // hand is the owner's.
+    expect(rows.filter((r) => r.action === 'block')).toEqual([]);
+    expect(rows.find((r) => r.toolName === 'run_command')?.action).toBe('require_approval');
+    expect(rows.find((r) => r.toolName === 'file_write')?.action).toBe('auto_approve');
   });
 
   it('disable on an agent with no rules is a harmless no-op', async () => {

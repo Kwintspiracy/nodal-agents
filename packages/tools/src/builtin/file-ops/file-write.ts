@@ -86,11 +86,11 @@ export const fileWriteTool: ToolDefinition<typeof FileWriteInputSchema, FileWrit
   mutatesWorkspace: true,
   // The ONE file this call is about to write — the same resolution execute()
   // does below, run again here rather than guessed at the seam. Resolving
-  // twice is already the accepted pattern in this file (computeApproval does
+  // twice is already the accepted pattern in this file (replacesSharedFile does
   // it too): the cost is a path join, and the alternative is a verification
   // layer that has to re-implement every tool's addressing.
   //
-  // A resolution failure yields NO target, exactly like computeApproval's
+  // A resolution failure yields NO target, exactly like replacesSharedFile's
   // catch: no write will leave this call anyway — execute() fails loud on the
   // same error a few lines down, with the message the agent can act on.
   //
@@ -125,14 +125,14 @@ export const fileWriteTool: ToolDefinition<typeof FileWriteInputSchema, FileWrit
   // into an attached/private workspace, never gates (see computeSharedOverwriteApproval).
   // P4: a protected workflow template is refused outright at execute() —
   // never surface an approval prompt for a call that can never succeed.
-  computeApproval: async (input, ctx) => {
+  replacesSharedFile: async (input, ctx) => {
     try {
       const path = await resolveAndCheckPath(ctx, input.path);
-      if (await isProtectedWorkflowTemplate(ctx, path)) return undefined;
+      if (await isProtectedWorkflowTemplate(ctx, path)) return false;
     } catch {
-      return undefined; // resolution failure — execute() will fail loud on it
+      return false; // resolution failure — execute() will fail loud on it
     }
-    return computeSharedOverwriteApproval(ctx, input.path);
+    return (await computeSharedOverwriteApproval(ctx, input.path)) === 'require_approval';
   },
   execute: async (input, ctx) => {
     try {

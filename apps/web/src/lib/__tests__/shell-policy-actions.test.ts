@@ -12,8 +12,8 @@
 import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { eq, agents, approvalRequests, entities } from '@nodal-agents/db';
-import { DEFAULT_ROOT_GRANTS, DEFAULT_SHELL_POLICY } from '@nodal-agents/shared';
+import { eq, agents, approvalRequests } from '@nodal-agents/db';
+import { DEFAULT_SHELL_POLICY } from '@nodal-agents/shared';
 
 let testDb: TestDb;
 let seed: Awaited<ReturnType<typeof seedMinimal>>;
@@ -140,20 +140,6 @@ describe('setAgentShellPolicyAction @cap:regler-autonomie/moteur', () => {
       stop_programs: 'never',
       system_settings: 'never',
     });
-  });
-});
-
-describe('getAutoRunPauseAction gives the workspace autonomy (#464) @cap:regler-autonomie/moteur', () => {
-  it('reads it from root_grants', async () => {
-    await testDb
-      .update(entities)
-      .set({ rootGrants: { ...DEFAULT_ROOT_GRANTS, autonomy: 'destructive_gate' } })
-      .where(eq(entities.id, seed.entityId));
-    const { getAutoRunPauseAction } = await import('../actions.ts');
-
-    const res = await getAutoRunPauseAction();
-
-    expect(res.ok && res.data.workspaceAutonomy).toBe('destructive_gate');
   });
 });
 

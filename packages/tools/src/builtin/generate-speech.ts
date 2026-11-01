@@ -140,10 +140,10 @@ export const generateSpeechTool: ToolDefinition<
       { kind: 'file', path, deliverableType: await deliverableTypeForWrittenFile(ctx, path) },
     ];
   },
-  computeApproval: async (input, ctx) => {
+  replacesSharedFile: async (input, ctx) => {
     const target = wavPath(input.path);
-    if (target === null) return undefined;
-    return computeSharedOverwriteApproval(ctx, target);
+    if (target === null) return false;
+    return (await computeSharedOverwriteApproval(ctx, target)) === 'require_approval';
   },
   execute: async (input, ctx) => {
     const target = wavPath(input.path);

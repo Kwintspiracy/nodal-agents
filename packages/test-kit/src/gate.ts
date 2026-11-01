@@ -1,11 +1,16 @@
 // gate.ts — a declarative harness for the approval gate.
 //
 // The gate is the product's most consequential branch: it decides whether a tool
-// runs without a human. Its logic is a stack of interacting rules — explicit
-// rules by specificity, `defaultApproval`, autonomy relaxation, the per-call
-// `computeApproval` hook, and two hardline floors — and every audit finding
-// around it (MCP-001, É-2, the run_command floor) came from ONE of those layers
-// being reachable in some states and not others.
+// runs without a human. Since #917 it applies the agent's ROW for the tool and
+// what only hardens it (the shared-file setting, the shell checklist, the
+// floors); the workspace autonomy level gives a row its value when the row is
+// written, and nothing at run time. Every audit finding around the gate
+// (MCP-001, É-2, the run_command floor) came from ONE layer being reachable in
+// some states and not others.
+//
+// So "under an autonomy" means here what it means in the product: the tool's
+// row is the one the level writes for it on arrival (the injected template),
+// unless the case hands a row of its own.
 //
 // Testing that by hand means rebuilding a ToolDefinition, a ToolContext, a rule
 // array and an options object for every case. That is verbose enough that
@@ -26,6 +31,7 @@ import type {
   ApprovalRuleLike as ApprovalRule,
   ToolContextLike as ToolContext,
   ExecuteToolFn,
+  TemplateFn,
 } from './types';
 import { aToolContext, type BuiltTool } from './builders';
 
@@ -58,8 +64,12 @@ export interface GateOutcome {
   error?: string;
 }
 
+/** The row name of the shared-file setting (`REPLACE_SHARED_FILE_SETTING`). */
+const SHARED_FILE_SETTING = 'setting:replace_shared_file';
+
 class GateExpectation {
   #executeTool: ExecuteToolFn;
+  #template: TemplateFn;
   #built: BuiltTool;
   #rules: ApprovalRule[] = [];
   #autonomies: Autonomy[] = [undefined];
@@ -69,10 +79,12 @@ class GateExpectation {
   // d'approbation, pas sur la phrase, et un défaut vide les ferait tous échouer
   // pour une raison qui n'est pas la leur. Le refus lui-même a ses tests à lui.
   #input: unknown = { purpose: TEST_PURPOSE };
+  #shellPolicy: unknown = undefined;
   #ctx: ToolContext;
 
-  constructor(executeTool: ExecuteToolFn, built: BuiltTool) {
+  constructor(executeTool: ExecuteToolFn, template: TemplateFn, built: BuiltTool) {
     this.#executeTool = executeTool;
+    this.#template = template;
     this.#built = built;
     this.#ctx = aToolContext();
   }
@@ -84,6 +96,12 @@ class GateExpectation {
 
   withInput(input: unknown): this {
     this.#input = input;
+    return this;
+  }
+
+  /** The agent's shell checklist: what the runner passes on every turn. */
+  withShellPolicy(policy: unknown): this {
+    this.#shellPolicy = policy;
     return this;
   }
 
@@ -119,8 +137,8 @@ class GateExpectation {
       let request: { toolName: string } | null = null;
 
       const result = await this.#executeTool(built.tool, this.#input, this.#ctx, {
-        approvalRules: this.#rules,
-        autonomy,
+        approvalRules: this.#rowsUnder(autonomy ?? 'propose_confirm'),
+        ...(this.#shellPolicy === undefined ? {} : { shellPolicy: this.#shellPolicy }),
         onApprovalRequired: async (req) => {
           request = { toolName: req.toolName };
         },
@@ -136,6 +154,48 @@ class GateExpectation {
       });
     }
     return out;
+  }
+
+  /**
+   * The rows the agent holds under `level`: the case's own, plus, for the tool
+   * and the shared-file setting when it has none, the row the level writes on
+   * arrival (#917).
+   */
+  #rowsUnder(level: 'propose_confirm' | 'destructive_gate' | 'fully_autonomous'): ApprovalRule[] {
+    const { tool } = this.#built;
+    const ctx = this.#ctx;
+    const has = (name: string) =>
+      this.#rules.some(
+        (r) => r.toolName === name && r.agentId === ctx.agentId && !r.conditionJson?.workspacePath,
+      );
+    const rows = [...this.#rules];
+    const templated = (name: string, t: Parameters<TemplateFn>[0]): ApprovalRule => ({
+      id: `template-${name}`,
+      toolName: name,
+      action: this.#template(t, {
+        level,
+        rules: this.#rules,
+        agentId: ctx.agentId,
+        entityId: ctx.entityId,
+      }),
+      agentId: ctx.agentId,
+      entityId: ctx.entityId,
+    });
+    if (!has(tool.name)) {
+      rows.push(
+        templated(tool.name, {
+          name: tool.name,
+          riskLevel: tool.riskLevel,
+          ...(tool.defaultApproval === 'require_approval'
+            ? { defaultApproval: 'require_approval' as const }
+            : {}),
+        }),
+      );
+    }
+    if (tool.replacesSharedFile && !has(SHARED_FILE_SETTING)) {
+      rows.push(templated(SHARED_FILE_SETTING, { name: SHARED_FILE_SETTING, riskLevel: 'write' }));
+    }
+    return rows;
   }
 
   /** Every selected level must suspend for a human, and never execute. */
@@ -194,9 +254,9 @@ function assert(cond: boolean, message: string): void {
 }
 
 /**
- * Bind the harness to the product's `executeTool`, once per suite.
+ * Bind the harness to the product's `executeTool` and template, once per suite.
  *
- *     const { expectGate } = createGateHarness(executeTool);
+ *     const { expectGate } = createGateHarness(executeTool, templateAutonomy);
  *
  * Injection keeps this package free of product dependencies — the first version
  * imported `@nodal-agents/tools` and turbo refused the graph (`tools →
@@ -204,7 +264,10 @@ function assert(cond: boolean, message: string): void {
  * code under test cannot be used BY that code's own suite, which is exactly
  * where the gate contracts belong.
  */
-export function createGateHarness(executeTool: ExecuteToolFn): {
+export function createGateHarness(
+  executeTool: ExecuteToolFn,
+  template: TemplateFn,
+): {
   expectGate: (built: BuiltTool) => GateExpectation;
 } {
   return {
@@ -215,6 +278,6 @@ export function createGateHarness(executeTool: ExecuteToolFn): {
      * observable — asserting on the outcome alone would let a "success" that
      * never executed pass.
      */
-    expectGate: (built: BuiltTool) => new GateExpectation(executeTool, built),
+    expectGate: (built: BuiltTool) => new GateExpectation(executeTool, template, built),
   };
 }

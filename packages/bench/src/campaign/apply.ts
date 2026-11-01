@@ -383,6 +383,12 @@ export async function applyCampaignConfig(
     log(`agent ${a.slug} ${agentId}`);
   }
 
+  // One autonomy row per agent and tool (#917), written by the product's own
+  // writer once every tool source is attached, as `createAgentAction` does:
+  // the rows set above are kept, the others take the level's value.
+  const { syncAgentAutonomyRows } = await import('@nodal-agents/orchestration');
+  for (const created of Object.values(ids)) await syncAgentAutonomyRows(db, created.id);
+
   return {
     userId,
     tested: { entityId: entityOf.tested, rootAgentId: ids[rootSlug]!.id, rootAgentSlug: rootSlug },

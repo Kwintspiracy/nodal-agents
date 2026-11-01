@@ -198,7 +198,6 @@ function carteApprobation(
       impact: null,
     },
     ruleChain: [],
-    toolDefault: 'require_approval',
     agentWorkspaces: dossiers,
     gateReasons: [],
   } as unknown as Parameters<typeof ApprovalRequestCard>[0]['approval'];

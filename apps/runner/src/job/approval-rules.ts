@@ -98,10 +98,8 @@ export async function loadApprovalRules(
  *   (b) if no tool-specific rule then remains, inject a require_approval rule
  *       so a blanket wildcard ('*') auto_approve can't sweep them in.
  * Nothing is deleted from the DB — releasing the brake re-arms the rules.
- * Injecting an explicit require_approval rule also matters downstream: the
- * autonomy relaxation in executeTool is guarded by `!matchedRule`, so once a
- * tool has a matched rule here, fully_autonomous/destructive_gate can no longer
- * auto-approve it either — the brake outranks autonomy.
+ * The injected row is the agent's row for the call (#917): the gate applies
+ * it as it applies any row, and the brake outranks whatever the row said.
  *
  * Exported for the tests that prove the brake survives a reload (issue #370).
  */
@@ -119,7 +117,13 @@ export function applyAutoRunBrake(
   // auto_approve alors même que le frein est enclenché.
   for (const codeTool of CODE_EXECUTION_TOOL_NAMES) {
     list = list.filter((r) => !(r.toolName === codeTool && r.action === 'auto_approve'));
-    const hasToolRule = list.some((r) => r.toolName === codeTool);
+    // The AGENT's row (#917): the gate reads nothing else, so a template
+    // rule (Everyone, a server) left here would not hold the tool, and the
+    // call would be refused for a missing row instead of asking.
+    const hasToolRule = list.some(
+      (r) =>
+        r.toolName === codeTool && r.agentId === params.agentId && !r.conditionJson?.workspacePath,
+    );
     if (!hasToolRule) {
       list.push({
         id: `auto-run-pause-${codeTool}`,
