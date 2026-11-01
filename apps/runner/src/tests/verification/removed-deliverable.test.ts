@@ -28,8 +28,8 @@
 //      promesse : `exists`, rouge.
 //
 // Mutations vérifiées (chacune fait rougir les tests nommés) :
-//   - `recordObservedRemovals` retiré d'`execute.ts` → 1, 2, 4, 5 ;
-//   - `probeJobDeliverables` qui ne rend rien → 1, 2, 4 ;
+//   - `recordObservedRemovals` retiré d'`execute.ts` → 1, 2, 4, 6 ;
+//   - `probeJobDeliverables` qui ne rend rien → 1, 2, 4, 6 ;
 //   - `removedDeliverableVerifier` jamais choisi dans `finalize.ts` → 1, 2, 4 ;
 //   - `&& !state.declared` retiré de `finalize.ts` → 6 ;
 //   - la levée (`absent -> present`) retirée de `removed.ts` → 5 ;
