@@ -134,6 +134,54 @@ describe('file-filing skill', () => {
     );
   });
 
+  // Owner's ruling, 2026-11-01: two documents dropped at once, both with an
+  // obvious place, and the agent still asked "do you approve the plan for the 2
+  // files?". The NUMBER of files is never a reason to ask; only an unclear place
+  // is. The rule is read from the "Act or propose" step of the shipped text.
+  describe('the number of files is never a reason to ask', () => {
+    const actOrPropose = (): string => {
+      const c = fileFilingSkill.content;
+      const at = c.indexOf('3. **Act or propose.**');
+      expect(at, 'the "Act or propose" step is gone').toBeGreaterThan(-1);
+      const rest = c.slice(at);
+      const next = rest.search(/\n4\. /);
+      return rest.slice(0, next);
+    };
+
+    it('moves every file whose place is clear, whatever how many there are, and asks nothing', () => {
+      expect(actOrPropose()).toContain(
+        'Every file whose place is clear: move it and ask nothing, however many files there are.',
+      );
+    });
+
+    it('asks only for the files whose place is not clear, in ONE question covering them all', () => {
+      const e = actOrPropose();
+      expect(e).toContain(
+        "Only the files whose place is not clear: show the plan for them (each file -> destination, new name) and wait for the person's go, in one question covering all of them.",
+      );
+      expect(e, 'one question, never several').toMatch(/one question/i);
+    });
+
+    it('no longer makes "several files" a reason to ask, anywhere in the skill', () => {
+      const c = fileFilingSkill.content;
+      expect(c).not.toContain('One file whose place is clear: move it.');
+      expect(c).not.toMatch(/Several files, or a place that is not clear/);
+      // The rule that decides is the clarity of the place; no sentence of the
+      // method may tie asking to a count of files.
+      expect(actOrPropose()).not.toMatch(/several files|more than one file|\d+ files/i);
+    });
+
+    it('keeps "no folder fits" in the question, with a proposal, after the new rule', () => {
+      const e = actOrPropose();
+      expect(e).toContain(
+        'When no folder fits, put a proposal (an existing folder or a new subfolder) in that same question: one question, never several.',
+      );
+      expect(e.indexOf('Every file whose place is clear')).toBeLessThan(
+        e.indexOf('When no folder fits, put a proposal'),
+      );
+    });
+  });
+
   it('an unreadable document is never filed on its name, unless the person named the place', () => {
     const c = fileFilingSkill.content;
     expect(c).toMatch(/its name and extension are no evidence/);
