@@ -409,7 +409,11 @@ export interface PreviewSkillUpdateResult {
    * since the preview it REFUSES rather than installing text nobody reviewed.
    */
   upstreamContentHash: string;
-  /** True when the owner edited the skill locally — an apply won't clobber `content`. */
+  /**
+   * True when the owner edited the skill locally. The apply replaces their
+   * text with `upstreamContent`: the dashboard says so before they confirm,
+   * and shows their current text so they can redo their changes.
+   */
   contentOverridden: boolean;
 }
 
@@ -492,11 +496,14 @@ export interface ApplySkillUpdateResult {
  * to be called from the explicit "apply update" action (POST /api/skills/update),
  * never from the throttled background check.
  *
- * - `defaultContent` is always overwritten with the freshly wrapped content.
- * - `content` is overwritten too, UNLESS the owner has edited it
- *   (`contentOverridden=true`) — a local edit is never silently clobbered by
- *   an upstream change; the owner sees the drift via `contentOverridden` and
- *   can reconcile manually.
+ * - `content` and `defaultContent` both take the freshly wrapped content, and
+ *   `contentOverridden` goes false — the owner is on the new version, as for
+ *   a system skill's "Reset to default". This holds for an EDITED skill too:
+ *   keeping the local text used to leave the owner on it for good, the badge
+ *   gone and every later improvement silently skipped. The edit is never
+ *   clobbered blind: the update dialog tells the owner it replaces their
+ *   changes and shows their text to copy, and only their confirmation (with
+ *   the reviewed `expectedContentHash`) reaches this function.
  * - scripts changed (recomputed HERE, not read from the update_available
  *   cache written by the last background check — the upstream may have moved
  *   again since then) revokes scripts_authorized on every agent×skill
@@ -652,7 +659,8 @@ export async function applySkillUpdate(
         .update(agentSkills)
         .set({
           defaultContent: content,
-          ...(existing.contentOverridden ? {} : { content }),
+          content,
+          contentOverridden: false,
           installedScripts,
           updateAvailable: false,
           updateDetail: null,

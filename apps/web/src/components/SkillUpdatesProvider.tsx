@@ -18,8 +18,8 @@ const POLL_INTERVAL_MS = 15_000;
 
 /**
  * SkillUpdatesProvider — sibling to ApprovalsProvider (same poll cadence,
- * same hidden-tab skip), for the second source the bell watches: community
- * skills with a pending update or a source problem. Kept as its own context instead of folding
+ * same hidden-tab skip), for the second source the bell watches: skills with
+ * a pending update (any origin) or a community skill's source problem. Kept as its own context instead of folding
  * into ApprovalsProvider — approvals and skill updates are different
  * domains with different action-result shapes, and the bell just merges
  * both counts.

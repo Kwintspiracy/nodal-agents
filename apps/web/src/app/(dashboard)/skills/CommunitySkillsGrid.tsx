@@ -14,18 +14,15 @@ import MarketplaceCard from '@/components/ui/MarketplaceCard';
 import MarketplaceCardActions from '@/components/ui/MarketplaceCardActions';
 import StatusPill from '@/components/ui/StatusPill';
 import EmptyState from '@/components/ui/EmptyState';
-import SkillUpdateAction from './SkillUpdateAction.tsx';
+import SkillUpdateAction, { toUpdatableSkill, type UpdatableSkill } from './SkillUpdateAction.tsx';
 import SkillSourceProblemPill from './SkillSourceProblemPill.tsx';
 
 /** Per-installed-skill update state, keyed by slug — just enough to drive the
- *  "Update available" badge/CTA without pulling in the full SkillRow. */
-export type InstalledSkillInfo = {
-  slug: string;
+ *  "Update available" badge/CTA (and the update dialog, UpdatableSkill)
+ *  without pulling in the full SkillRow. */
+export type InstalledSkillInfo = UpdatableSkill & {
   updateAvailable: boolean;
   updateDetail: SkillUpdateDetail | null;
-  /** True when the skill bundles any scripts — drives the unconditional
-   *  revocation warning in the update confirm dialog. */
-  hasScripts: boolean;
 };
 
 /**
@@ -35,12 +32,7 @@ export type InstalledSkillInfo = {
  * skills already in the workspace were offered for install).
  */
 export function toCatalogCardSkills(skills: SkillRow[]): InstalledSkillInfo[] {
-  return skills.map((s) => ({
-    slug: s.slug,
-    updateAvailable: s.updateAvailable,
-    updateDetail: s.updateDetail,
-    hasScripts: Boolean(s.installedScripts && s.installedScripts.length > 0),
-  }));
+  return skills.map((s) => ({ ...toUpdatableSkill(s), updateAvailable: s.updateAvailable }));
 }
 
 type Props = {
@@ -145,12 +137,7 @@ function CommunitySkillCard({
       foot={
         isInstalled ? (
           installed?.updateAvailable ? (
-            <SkillUpdateAction
-              slug={entry.slug}
-              name={entry.name}
-              updateDetail={installed.updateDetail}
-              hasScripts={installed.hasScripts}
-            >
+            <SkillUpdateAction skill={installed}>
               {({ onClick, pending }) => (
                 <MarketplaceCardActions
                   status={
