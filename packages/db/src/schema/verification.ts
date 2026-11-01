@@ -40,6 +40,7 @@ import {
   text,
   uuid,
   integer,
+  bigint,
   boolean,
   timestamp,
   index,
@@ -121,6 +122,12 @@ export const jobDeliverableVerificationState = pgTable(
      * par son ABSENCE (`apps/runner/src/verification/removed.ts`).
      */
     removed: boolean('removed').notNull().default(false),
+    /**
+     * La taille de l'adresse vue AVANT l'appel qui l'a retirée (revue A de
+     * #919, passe 3). Seul un fichier de cette taille peut encore porter le
+     * contenu retiré : la finalisation ne lit rien d'autre. NULL hors retrait.
+     */
+    removedSize: bigint('removed_size', { mode: 'number' }),
     /** DecisionStatus — l'état lisible affiché à l'owner. */
     decisionStatus: text('decision_status').notNull(),
     /** Empreinte de la dernière commande de preuve exécutée (diagnostic, pas le hash d'approbation). */

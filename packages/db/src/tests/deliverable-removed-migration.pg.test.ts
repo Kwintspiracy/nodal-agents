@@ -38,7 +38,7 @@ describe('migration 0155_deliverable_removed @cap:verifier-un-livrable/moteur', 
     await runMigrations(pg.url, { patchVectorAsText: true });
   }, 120_000);
 
-  it('a state row written without the column reads removed = false', async () => {
+  it('a state row written without the columns reads removed = false, removed_size = null', async () => {
     const { db, close } = createClient(harness().url);
     try {
       const u = await rows<{ id: string }>(
@@ -59,14 +59,15 @@ describe('migration 0155_deliverable_removed @cap:verifier-un-livrable/moteur', 
         sql`INSERT INTO agent_jobs (entity_id, agent_id, channel, task)
             VALUES (${e[0]!.id}, ${a[0]!.id}, 'api', 't') RETURNING id`,
       );
-      const s = await rows<{ removed: boolean }>(
+      const s = await rows<{ removed: boolean; removed_size: string | null }>(
         db,
         sql`INSERT INTO job_deliverable_verification_state
               (job_id, deliverable_type, canonical_key, dirty_generation, decision_status)
             VALUES (${j[0]!.id}, 'document', 'd:/ws/a.md', 1, 'dirty')
-            RETURNING removed`,
+            RETURNING removed, removed_size`,
       );
       expect(s[0]!.removed).toBe(false);
+      expect(s[0]!.removed_size).toBeNull();
     } finally {
       await close();
     }

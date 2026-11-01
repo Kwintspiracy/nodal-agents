@@ -104,6 +104,7 @@ import { readProofRepairAttempts } from '@nodal-agents/shared';
 import { resolveRunWorkspaces, withJobFolder } from '@nodal-agents/tools';
 import { getVerifier } from '../verification/registry.ts';
 import { removedDeliverableVerifier, rescuedRemovals } from '../verification/removed.ts';
+import type { RescueLimits } from '../verification/removed.ts';
 import { buildRepairBrief } from '../verification/repair-brief.ts';
 import type { RepairBriefCommand } from '../verification/repair-brief.ts';
 import type {
@@ -340,6 +341,12 @@ export interface FinalizeDeps {
   readonly prepareDelivery?: PrepareDelivery;
   /** La veille du Stop pendant la preuve (process-scopes.ts) — injectable pour les tests. */
   readonly watchJobEnd?: typeof watchJobEnd;
+  /**
+   * Le plafond de ce qu'une finalisation hache pour retrouver un contenu
+   * retiré (`RESCUE_LIMITS` par défaut, #919) — injectable pour prouver qu'il
+   * tient sans écrire des centaines de Mo en test.
+   */
+  readonly rescueLimits?: RescueLimits;
 }
 
 /**
@@ -820,7 +827,7 @@ export async function finalizeJobSuccess(
   // qui revient la rend périmée. Ce qui n'est PAS regardé de nouveau : le
   // candidat qui portait le contenu, si un AUTRE écrivain l'efface entre cette
   // lecture et la preuve — une fenêtre de la durée de la finalisation.
-  const sauvees = await rescuedRemovals(db, jobId);
+  const sauvees = await rescuedRemovals(db, jobId, deps.rescueLimits);
 
   // ─── Transaction 1 : verrous, lecture, capture de G ───────────────────────
   const opened = await db.transaction(async (tx): Promise<OpenedJob | null> => {

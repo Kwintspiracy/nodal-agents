@@ -42,11 +42,20 @@
 
 import { stat } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
-import { jobDeliverableVerificationState, eq, inArray } from '@nodal-agents/db';
+import { jobDeliverableVerificationState, eq } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 
-/** Trois réponses, pas deux : un `stat` refusé ne dit rien de l'existence. */
-type Presence = 'present' | 'absent' | 'unknown';
+/**
+ * Trois réponses, pas deux : un `stat` refusé ne dit rien de l'existence. La
+ * TAILLE vue avant l'appel est gardée (revue A de #919, passe 3) : rangée avec
+ * le retrait (`removed_size`), elle borne ce que la finalisation acceptera de
+ * lire pour retrouver le contenu ailleurs — un fichier d'une autre taille ne
+ * peut pas porter ces octets-là.
+ */
+type Presence =
+  | { readonly kind: 'present'; readonly size: number }
+  | { readonly kind: 'absent' }
+  | { readonly kind: 'unknown' };
 
 /** L'état d'avant : par ligne d'état, son adresse et ce que la sonde y a vu. */
 export type DeliverablePresence = ReadonlyMap<
@@ -56,13 +65,13 @@ export type DeliverablePresence = ReadonlyMap<
 
 async function presence(address: string): Promise<Presence> {
   try {
-    await stat(address);
-    return 'present';
+    const s = await stat(address);
+    return { kind: 'present', size: s.size };
   } catch (error) {
     const code = (error as NodeJS.ErrnoException | null)?.code;
     // `ENOTDIR` : un segment du chemin n'est plus un dossier, donc ce chemin
     // n'est plus — la règle d'`observed.ts`.
-    return code === 'ENOENT' || code === 'ENOTDIR' ? 'absent' : 'unknown';
+    return code === 'ENOENT' || code === 'ENOTDIR' ? { kind: 'absent' } : { kind: 'unknown' };
   }
 }
 
@@ -111,9 +120,10 @@ export async function probeJobDeliverables(
 }
 
 /**
- * La sonde d'APRÈS, et ce qu'elle range : `removed = true` sur chaque livrable
- * passé de présent à absent pendant l'appel, `false` sur chaque livrable
- * revenu. Une adresse inconnue d'un côté ou de l'autre ne pose rien.
+ * La sonde d'APRÈS, et ce qu'elle range : `removed = true` et la taille vue
+ * avant (`removed_size`) sur chaque livrable passé de présent à absent pendant
+ * l'appel ; `removed = false`, sans taille, sur chaque livrable revenu. Une
+ * adresse inconnue d'un côté ou de l'autre ne pose rien.
  *
  * Rend les identifiants des lignes réellement marquées retirées — ce qui rend
  * la règle observable en test plutôt que muette.
@@ -124,31 +134,30 @@ export async function recordObservedRemovals(
   before: DeliverablePresence,
 ): Promise<readonly string[]> {
   if (!jobId || before.size === 0) return [];
-  const retires: string[] = [];
-  const revenus: string[] = [];
+  const marques: string[] = [];
   for (const [id, { address, presence: avant }] of before) {
     const apres = await presence(address);
-    if (avant === 'present' && apres === 'absent') retires.push(id);
-    else if (avant === 'absent' && apres === 'present') revenus.push(id);
-  }
-  const ecrire = async (ids: string[], removed: boolean): Promise<string[]> => {
-    if (ids.length === 0) return [];
+    let set: { removed: boolean; removedSize: number | null } | null = null;
+    if (avant.kind === 'present' && apres.kind === 'absent') {
+      set = { removed: true, removedSize: avant.size };
+    } else if (avant.kind === 'absent' && apres.kind === 'present') {
+      set = { removed: false, removedSize: null };
+    }
+    if (set === null) continue;
     try {
+      // Une ligne par livrable : chacun porte SA taille.
       const rows = await db
         .update(jobDeliverableVerificationState)
-        .set({ removed, updatedAt: new Date() })
-        .where(inArray(jobDeliverableVerificationState.id, ids))
+        .set({ ...set, updatedAt: new Date() })
+        .where(eq(jobDeliverableVerificationState.id, id))
         .returning({ id: jobDeliverableVerificationState.id });
-      return rows.map((r) => r.id);
+      if (set.removed) marques.push(...rows.map((r) => r.id));
     } catch (err) {
       console.error(
-        `[verification] VERIFICATION_REMOVAL_MARK_FAILED job=${jobId} removed=${removed} ` +
-          `count=${ids.length} error=${err instanceof Error ? err.message : String(err)}`,
+        `[verification] VERIFICATION_REMOVAL_MARK_FAILED job=${jobId} removed=${set.removed} ` +
+          `error=${err instanceof Error ? err.message : String(err)}`,
       );
-      return [];
     }
-  };
-  const marques = await ecrire(retires, true);
-  await ecrire(revenus, false);
+  }
   return marques;
 }

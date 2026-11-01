@@ -46,7 +46,17 @@
 //      un AUTRE contenu : ce chemin n'est pas un candidat, le retrait reste
 //      rouge — le sauvetage ne vient que des faits rangés ;
 //  13. une copie que le job a écrite (empreinte rangée), puis l'original
-//      effacé : l'original est vert par son absence.
+//      effacé : l'original est vert par son absence ;
+//  14. une chaîne de déplacements par commande (a → b, puis b → c) : la source
+//      est verte (revue A de #919, passe 3) ;
+//  15. la même chaîne par `file_move` : la source ET le pas intermédiaire sont
+//      verts ;
+//  16. un tour qui range un petit brouillon ET écrit de gros fichiers d'une
+//      autre taille : le brouillon est vert, et les gros fichiers n'entrent pas
+//      dans le budget de lecture — avec un plafond qu'ils dépasseraient, aucun
+//      plafond n'est atteint (preuve par le résultat, sur toute plateforme) ;
+//  17. un candidat au-delà du plafond : la ligne garde son rouge, et le code
+//      `VERIFICATION_RESCUE_CAP_REACHED` est journalisé.
 //
 // Mutations vérifiées : la liste est dans la PR #919, avec les tests que
 // chacune fait rougir.
@@ -77,6 +87,7 @@ import {
 import type { ApprovalRule, ExecuteOptions, ToolContext } from '@nodal-agents/tools';
 import { finalizeJobSuccess } from '../../job/finalize.ts';
 import { REMOVED_PROOF_COMMAND } from '../../verification/removed.ts';
+import type { RescueLimits } from '../../verification/removed.ts';
 
 let db: TestDb;
 let seed: { userId: string; entityId: string; agentId: string; jobId: string };
@@ -181,12 +192,26 @@ async function shell(script: string): Promise<void> {
   await call('run_command', { purpose: 'test', command: `node -e "${script}"` });
 }
 
-async function finalize(repairTurn: 'supported' | 'unsupported' = 'unsupported') {
+async function finalize(
+  repairTurn: 'supported' | 'unsupported' = 'unsupported',
+  rescueLimits?: RescueLimits,
+) {
   return finalizeJobSuccess(
     asDb(),
     { jobId, resultKind: 'prose', repairTurn, result: 'fait' },
-    { log: () => {} },
+    { log: () => {}, ...(rescueLimits ? { rescueLimits } : {}) },
   );
+}
+
+/** Les lignes `[verification] <code>` journalisées pendant `fn`. */
+async function journal(code: string, fn: () => Promise<unknown>): Promise<string[]> {
+  const espion = vi.spyOn(console, 'warn');
+  try {
+    await fn();
+    return espion.mock.calls.map((c) => String(c[0])).filter((l) => l.includes(code));
+  } finally {
+    espion.mockRestore();
+  }
 }
 
 /** Les constats de la preuve, par fichier (le chemin d'affichage, comme la page). */
@@ -467,5 +492,77 @@ describe('un livrable retiré par le job (#916) @cap:verifier-un-livrable/moteur
     const f = await constats(original);
     expect(f.state.removed).toBe(true);
     expect(f.verdicts).toEqual([`${REMOVED_PROOF_COMMAND}:green`]);
+  });
+
+  it('14. une chaîne de déplacements par commande : la source est verte', async () => {
+    const source = join(ws, 'report.md');
+    await mkdir(join(ws, 'final'), { recursive: true });
+    await call('file_write', { path: 'report.md', content: '# Report\n' });
+    await shell(`require('fs').renameSync('report.md','tmp.md')`);
+    await shell(`require('fs').renameSync('tmp.md','final/report.md')`);
+
+    await finalize();
+
+    expect(await rouges()).toEqual([]);
+    const src = await constats(source);
+    expect(src.state.removed).toBe(true);
+    expect(src.verdicts).toEqual([`${REMOVED_PROOF_COMMAND}:green`]);
+  });
+
+  it('15. la même chaîne par file_move : la source et le pas intermédiaire sont verts', async () => {
+    await call('file_write', { path: 'a.md', content: '# A\n' });
+    await call('file_move', { source: 'a.md', destination: 'b.md' });
+    await call('file_move', { source: 'b.md', destination: 'c.md' });
+
+    await finalize();
+
+    expect(await rouges()).toEqual([]);
+    for (const nom of ['a.md', 'b.md']) {
+      const r = await constats(join(ws, nom));
+      expect(r.state.removed, nom).toBe(true);
+      expect(r.verdicts, nom).toEqual([`${REMOVED_PROOF_COMMAND}:green`]);
+    }
+    const c = await constats(join(ws, 'c.md'));
+    expect(c.runs[0]).toMatchObject({ command: 'exists', verdict: 'green' });
+  });
+
+  it('16. un petit brouillon rangé au tour où naissent de gros fichiers : ils ne sont pas lus', async () => {
+    const source = join(ws, 'draft.md');
+    await mkdir(join(ws, 'final'), { recursive: true });
+    await call('file_write', { path: 'draft.md', content: '# Draft\n' });
+    // UN appel : le brouillon déplacé, et trois fichiers de 400 Ko écrits.
+    await shell(
+      `const f=require('fs');f.renameSync('draft.md','final/draft.md');` +
+        `for(const n of [1,2,3])f.writeFileSync('big'+n+'.bin',Buffer.alloc(400000,n))`,
+    );
+
+    // Un plafond que les trois gros fichiers dépasseraient (1,2 Mo > 1 Mo) :
+    // s'ils entraient dans la lecture, la ligne serait rouge et le code dit.
+    const plafond: RescueLimits = { maxFiles: 4, maxBytes: 1_000_000 };
+    const atteints = await journal('VERIFICATION_RESCUE_CAP_REACHED', () =>
+      finalize('unsupported', plafond),
+    );
+
+    expect(atteints).toEqual([]);
+    const src = await constats(source);
+    expect(src.state.removed).toBe(true);
+    expect(src.state.removedSize).toBe(Buffer.byteLength('# Draft\n'));
+    expect(src.verdicts).toEqual([`${REMOVED_PROOF_COMMAND}:green`]);
+  });
+
+  it('17. au-delà du plafond : la ligne garde son rouge et le code est journalisé', async () => {
+    const source = join(ws, 'draft.md');
+    await mkdir(join(ws, 'final'), { recursive: true });
+    await call('file_write', { path: 'draft.md', content: '# Draft\n' });
+    await call('file_move', { source: 'draft.md', destination: 'final/draft.md' });
+
+    const atteints = await journal('VERIFICATION_RESCUE_CAP_REACHED', () =>
+      finalize('unsupported', { maxFiles: 8, maxBytes: 1 }),
+    );
+
+    const src = await constats(source);
+    expect(src.verdicts).toEqual(['exists:red']);
+    expect(atteints).toHaveLength(1);
+    expect(atteints[0]).toContain(`row=${src.state.id}`);
   });
 });

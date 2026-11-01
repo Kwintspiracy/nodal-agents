@@ -15,3 +15,11 @@
 -- Défaut `false` : aucune ligne déjà écrite n'a été observée retirée.
 ALTER TABLE job_deliverable_verification_state
   ADD COLUMN IF NOT EXISTS removed boolean NOT NULL DEFAULT false;
+
+-- removed_size — la taille de l'adresse vue AVANT l'appel qui l'a retirée
+-- (revue A de la PR #919, passe 3). La finalisation cherche le contenu retiré
+-- ailleurs avant de le déclarer perdu ; seul un fichier de cette taille peut
+-- le porter, et c'est elle qui empêche un brouillon de 2 Ko de faire lire un
+-- rendu de 300 Mo. NULL quand la ligne n'est pas retirée.
+ALTER TABLE job_deliverable_verification_state
+  ADD COLUMN IF NOT EXISTS removed_size bigint;

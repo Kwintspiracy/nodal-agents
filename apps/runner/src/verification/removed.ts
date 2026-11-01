@@ -51,31 +51,54 @@
 // a écrit est perdu, et c'est ce que la preuve doit dire.
 //
 // OÙ LE CONTENU PEUT ÊTRE ALLÉ — LES CANDIDATS, LUS DANS LES FAITS RANGÉS, JAMAIS
-// UN BALAYAGE (revue A de la PR #919, passe 2). La première version lisait et
-// hachait en entier CHAQUE chemin constaté du job, pour chaque ligne retirée,
-// verrou du job tenu : un job de médias à dix sorties de 300 Mo qui rangeait un
-// brouillon lisait 3 Go au moment où la personne attend. Un fichier n'est lu que
-// si les `constated_writes` du job en font un candidat :
+// UN BALAYAGE (revue A de la PR #919, passes 2 et 3). La première version
+// lisait et hachait en entier CHAQUE chemin constaté du job, pour chaque ligne
+// retirée, verrou du job tenu : un job de médias à dix sorties de 300 Mo qui
+// rangeait un brouillon lisait 3 Go au moment où la personne attend.
+//
+// LA CHAÎNE. Un contenu peut avoir fait plusieurs pas (`mv a b`, puis
+// `mv b c`, ou deux `file_move`). On la suit dans les `constated_writes` du
+// job, sans rien lire sur le disque, à partir de l'adresse retirée et des tours
+// où elle a été constatée `deleted`. Une ligne de constat est un pas de la
+// chaîne quand :
 //
 //   - son empreinte RANGÉE est celle du contenu perdu (l'outil qui l'a écrit a
 //     rapporté ces octets-là) ;
-//   - il porte `renamed_from` = l'adresse retirée (un renommage vu par git) ;
-//   - il est apparu, sans empreinte rangée, au TOUR même où l'adresse a été
-//     retirée (le `deleted` constaté) : un `file_move`, ou un `mv` de shell vu
-//     par l'instantané de checkpoint, crée sa destination dans l'appel qui
-//     retire sa source, et ne rapporte pas d'octets.
+//   - elle porte `renamed_from` = un chemin déjà dans la chaîne (un renommage
+//     vu par git) ;
+//   - elle est apparue, sans empreinte rangée, au TOUR où un chemin de la
+//     chaîne a été retiré : un `file_move`, ou un `mv` de shell vu par
+//     l'instantané de checkpoint, crée sa destination dans l'appel qui retire
+//     sa source, et ne rapporte pas d'octets.
 //
-// Un candidat est d'abord `stat`é (un fichier, là), puis lu EN FLUX une seule
-// fois par finalisation, toutes lignes retirées confondues. Aucun autre fichier
-// n'est ouvert. Ce qui n'a pas d'empreinte rangée et n'est pas né au tour du
-// retrait n'est pas un candidat : rouge, faute de fait qui le désigne — un shell
-// qui déplace hors de tout constat reste au cas c. Une lecture de candidat qui
-// échoue se DIT (`VERIFICATION_RESCUE_UNREADABLE`) et ne sauve rien.
+// Un pas que le constat montre lui-même retiré plus tard entre dans la chaîne
+// avec ses propres tours de retrait ; les autres sont les CANDIDATS. Chaque
+// ligne de constat est prise au plus une fois.
 //
-// LA BORNE, pour une finalisation : un `select` des lignes retirées, un
-// `select` des constats du job, puis au plus un `stat` et une lecture complète
-// par CHEMIN CANDIDAT distinct — jamais par chemin constaté, jamais par ligne
-// retirée. Sans ligne retirée non promise, aucun constat n'est lu.
+// LE FILTRE DE TAILLE. La sonde d'avant l'appel a vu la taille de l'adresse
+// retirée (`removed_size`). Un candidat n'est lu que si son `stat` rend cette
+// taille-là : un fichier d'une autre taille ne porte pas ces octets, et un
+// brouillon de 2 Ko ne fait plus lire un rendu de 300 Mo né au même tour.
+//
+// LE PLAFOND. Ce qu'une finalisation hache est borné : `RESCUE_LIMITS`, en
+// fichiers et en octets, cumulés sur toutes les lignes retirées. La décision se
+// prend AVANT de lire, sur les candidats d'une ligne qui ont passé le filtre de
+// taille : s'ils dépassent ce qui reste, la ligne n'est pas sauvée — elle garde
+// la preuve de son type, donc son rouge — et c'est dit
+// (`VERIFICATION_RESCUE_CAP_REACHED`). Jamais une lecture partielle, jamais un
+// repli muet.
+//
+// Un candidat est lu EN FLUX (une empreinte, pas un tampon), une seule fois par
+// finalisation. Une lecture qui échoue se DIT (`VERIFICATION_RESCUE_UNREADABLE`)
+// et ne sauve rien. Ce qui n'est pas dans la chaîne n'est jamais ouvert : un
+// shell qui déplace hors de tout constat reste au cas c, rouge.
+//
+// LA BORNE, pour une finalisation, en ce que le job a produit :
+//   - aucune ligne retirée non promise : un `select`, rien d'autre ;
+//   - sinon : un `select` des constats du job (R lignes), la chaîne en
+//     O(R × longueur de la chaîne) en mémoire, un `stat` par candidat distinct,
+//     et au plus `maxFiles` lectures et `maxBytes` octets hachés — chaque
+//     lecture d'un fichier qui a la taille exacte du contenu retiré.
 //
 // HORS DU VERROU : `rescuedRemovals` tourne AVANT la transaction 1 de la
 // finalisation, qui ne fait que relire sa réponse. Voir `finalize.ts` pour ce
@@ -178,14 +201,26 @@ export function removedDeliverableVerifier(base: DeliverableVerifier): Deliverab
   };
 }
 
-/** L'empreinte d'un candidat, lue en flux : `null` quand il n'est pas un fichier là. */
+/**
+ * Ce qu'une finalisation accepte de hacher pour retrouver un contenu retiré.
+ *
+ * Les valeurs : un candidat a la taille EXACTE du contenu retiré, donc le
+ * plafond d'octets borne surtout le cas d'un gros fichier déplacé. 256 Mio se
+ * hachent en une à deux secondes sur un disque ordinaire — l'attente qu'on
+ * accepte d'ajouter à la fin d'un run ; au-delà, la ligne garde son rouge et
+ * le run se répare plutôt que de faire attendre la personne. 8 fichiers : un
+ * contenu retiré n'a, en pratique, qu'une ou deux copies vivantes ; plus de
+ * huit fichiers de la même taille exacte dans la chaîne n'est plus une
+ * recherche, c'est un balayage.
+ */
+export interface RescueLimits {
+  readonly maxFiles: number;
+  readonly maxBytes: number;
+}
+export const RESCUE_LIMITS: RescueLimits = { maxFiles: 8, maxBytes: 256 * 1024 * 1024 };
+
+/** L'empreinte d'un candidat, lue en flux : `null` quand la lecture échoue (dit). */
 async function empreinteCandidat(path: string): Promise<string | null> {
-  try {
-    const s = await stat(path);
-    if (!s.isFile()) return null;
-  } catch {
-    return null;
-  }
   try {
     const hash = createHash('sha256');
     for await (const chunk of createReadStream(path)) hash.update(chunk as Buffer);
@@ -195,6 +230,107 @@ async function empreinteCandidat(path: string): Promise<string | null> {
     console.warn(`[verification] VERIFICATION_RESCUE_UNREADABLE path=${path} code=${code}`);
     return null;
   }
+}
+
+/** La taille d'un candidat s'il est un fichier là, `null` sinon. Sans lire. */
+async function tailleCandidat(path: string): Promise<number | null> {
+  try {
+    const s = await stat(path);
+    return s.isFile() ? s.size : null;
+  } catch {
+    return null;
+  }
+}
+
+type Constat = {
+  readonly path: string;
+  readonly turn: number;
+  readonly changeKind: string;
+  readonly renamedFrom: string | null;
+  readonly sha: string | null;
+};
+
+/**
+ * Les chemins où le contenu retiré de `ici` peut vivre encore : la chaîne de
+ * l'en-tête, suivie dans les constats seuls. Aucune lecture de disque.
+ */
+export function rescueCandidates(
+  ecritures: readonly Constat[],
+  ici: string,
+  perdus: ReadonlySet<string>,
+  depuis: number,
+): ReadonlySet<string> {
+  const retraits = (path: string, apres: number): Set<number> =>
+    new Set(
+      ecritures
+        .filter((e) => e.path === path && e.changeKind === 'deleted' && e.turn >= apres)
+        .map((e) => e.turn),
+    );
+  const chaine = new Map<string, Set<number>>([[ici, retraits(ici, depuis)]]);
+  const file = [ici];
+  const pris = new Set<number>();
+  const candidats = new Set<string>();
+  while (file.length > 0) {
+    const chemin = file.shift() as string;
+    const tours = chaine.get(chemin) ?? new Set<number>();
+    for (const [i, e] of ecritures.entries()) {
+      if (pris.has(i) || e.changeKind === 'deleted' || chaine.has(e.path)) continue;
+      const pas =
+        (e.sha !== null && perdus.has(e.sha)) ||
+        e.renamedFrom === chemin ||
+        (e.sha === null && tours.has(e.turn));
+      if (!pas) continue;
+      pris.add(i);
+      const plusTard = retraits(e.path, e.turn);
+      if (plusTard.size > 0) {
+        // Ce pas a lui-même été retiré : la chaîne continue depuis lui.
+        chaine.set(e.path, plusTard);
+        file.push(e.path);
+        candidats.delete(e.path);
+      } else {
+        candidats.add(e.path);
+      }
+    }
+  }
+  return candidats;
+}
+
+/**
+ * Les empreintes que le contenu de `path` peut avoir eues à sa dernière
+ * écriture avant le tour `avant` — sans rien lire.
+ *
+ * L'empreinte rangée quand l'écrivain l'a rapportée. Sinon (un `file_move`, un
+ * `mv` de shell ne rapportent pas d'octets), celles du contenu qui est ARRIVÉ
+ * là : les chemins retirés au tour de cette écriture et `renamed_from`, en
+ * remontant. C'est ce qui sauve le pas intermédiaire d'une chaîne de
+ * `file_move` (a → b → c) : `b` n'a pas d'empreinte rangée, mais il portait
+ * celle de `a`. Le tour de la plateforme compte ici : on cherche l'IDENTITÉ
+ * d'un contenu, pas qui l'a écrit. Plusieurs retraits au même tour donnent
+ * plusieurs empreintes possibles, toutes acceptées : un appel qui déplace deux
+ * fichiers ne dit pas lequel va où.
+ */
+export function contenusPossibles(
+  ecritures: readonly Constat[],
+  path: string,
+  avant: number,
+  vus: Set<string> = new Set(),
+): ReadonlySet<string> {
+  const out = new Set<string>();
+  if (vus.has(path)) return out;
+  vus.add(path);
+  const w = ecritures.find((e) => e.path === path && e.changeKind !== 'deleted' && e.turn <= avant);
+  if (!w) return out;
+  if (w.sha !== null) return new Set([w.sha]);
+  const sources = new Set<string>(
+    ecritures
+      .filter((e) => e.changeKind === 'deleted' && e.turn === w.turn && e.path !== path)
+      .map((e) => e.path),
+  );
+  if (w.renamedFrom !== null) sources.add(w.renamedFrom);
+  for (const source of sources) {
+    for (const sha of contenusPossibles(ecritures, source, w.turn, vus)) out.add(sha);
+  }
+  return out;
 }
 
 /**
@@ -207,6 +343,7 @@ async function empreinteCandidat(path: string): Promise<string | null> {
 export async function rescuedRemovals(
   db: AnyDrizzleDb,
   jobId: string,
+  limits: RescueLimits = RESCUE_LIMITS,
 ): Promise<ReadonlyMap<string, number>> {
   const out = new Map<string, number>();
   const retirees = await db
@@ -215,6 +352,7 @@ export async function rescuedRemovals(
       canonicalKey: jobDeliverableVerificationState.canonicalKey,
       displayPathSnapshot: jobDeliverableVerificationState.displayPathSnapshot,
       dirtyGeneration: jobDeliverableVerificationState.dirtyGeneration,
+      removedSize: jobDeliverableVerificationState.removedSize,
     })
     .from(jobDeliverableVerificationState)
     .where(
@@ -238,16 +376,20 @@ export async function rescuedRemovals(
     .where(eq(constatedWrites.jobId, jobId))
     .orderBy(desc(constatedWrites.createdAt));
 
-  // Une lecture par chemin candidat et par finalisation, toutes lignes confondues.
-  const lues = new Map<string, Promise<string | null>>();
-  const lire = (path: string): Promise<string | null> => {
-    let p = lues.get(path);
+  // Un `stat` et au plus une lecture par chemin, toutes lignes confondues ; le
+  // budget de la finalisation, consommé par chaque lecture faite.
+  const tailles = new Map<string, Promise<number | null>>();
+  const taille = (path: string): Promise<number | null> => {
+    let p = tailles.get(path);
     if (!p) {
-      p = empreinteCandidat(path);
-      lues.set(path, p);
+      p = tailleCandidat(path);
+      tailles.set(path, p);
     }
     return p;
   };
+  const lues = new Map<string, string | null>();
+  let fichiersLus = 0;
+  let octetsLus = 0;
 
   for (const row of retirees) {
     if (row.dirtyGeneration === null) continue;
@@ -263,24 +405,40 @@ export async function rescuedRemovals(
       continue;
     }
     // Un contenu dont l'empreinte n'a pas été rangée ne se retrouve nulle part.
-    const perdu = derniere.sha;
-    if (perdu === null) continue;
-    // Le tour où l'adresse a été retirée, quand un constat l'a vu.
-    const retrait = ecritures.find((e) => e.path === ici && e.changeKind === 'deleted');
-    const candidats = new Set<string>();
-    for (const e of ecritures) {
-      if (e.path === ici || e.changeKind === 'deleted') continue;
-      if (
-        e.sha === perdu ||
-        e.renamedFrom === ici ||
-        (e.sha === null && retrait !== undefined && e.turn === retrait.turn)
-      ) {
-        candidats.add(e.path);
-      }
+    const perdus =
+      derniere.sha !== null
+        ? new Set([derniere.sha])
+        : contenusPossibles(ecritures, ici, derniere.turn);
+    if (perdus.size === 0) continue;
+
+    // Les candidats qui ont la taille du contenu retiré — sans rien lire.
+    const aLire: { path: string; size: number }[] = [];
+    for (const c of rescueCandidates(ecritures, ici, perdus, derniere.turn)) {
+      const size = await taille(c);
+      if (size === null) continue;
+      if (row.removedSize !== null && size !== row.removedSize) continue;
+      aLire.push({ path: c, size });
     }
-    for (const c of candidats) {
+    // Le plafond, décidé AVANT de lire.
+    const neufs = aLire.filter((c) => !lues.has(c.path));
+    const fichiers = fichiersLus + neufs.length;
+    const octets = octetsLus + neufs.reduce((n, c) => n + c.size, 0);
+    if (fichiers > limits.maxFiles || octets > limits.maxBytes) {
+      console.warn(
+        `[verification] VERIFICATION_RESCUE_CAP_REACHED job=${jobId} row=${row.id} ` +
+          `files=${fichiers} bytes=${octets} maxFiles=${limits.maxFiles} maxBytes=${limits.maxBytes}`,
+      );
+      continue;
+    }
+    for (const c of aLire) {
+      if (!lues.has(c.path)) {
+        lues.set(c.path, await empreinteCandidat(c.path));
+        fichiersLus += 1;
+        octetsLus += c.size;
+      }
       // Cas b : le contenu que le job a écrit ici existe encore ailleurs.
-      if ((await lire(c)) === perdu) {
+      const lu = lues.get(c.path);
+      if (lu !== null && lu !== undefined && perdus.has(lu)) {
         out.set(row.id, row.dirtyGeneration);
         break;
       }
