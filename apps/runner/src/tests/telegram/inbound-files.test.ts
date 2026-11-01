@@ -1109,27 +1109,8 @@ async function callFileTool(
     modelInput: { image: { sees: true }, pdf: { sees: true } },
   };
   // The rows the level writes for this tool and the shared-file setting (#917).
-  const template = {
-    level: autonomy ?? ('propose_confirm' as const),
-    rules: [],
-    agentId: seed.agentId,
-    entityId: seed.entityId,
-  };
-  const row = (toolName: string, action: 'auto_approve' | 'require_approval' | 'block') => ({
-    id: `row-${toolName}`,
-    toolName,
-    action,
-    agentId: seed.agentId,
-    entityId: seed.entityId,
-  });
   const res = await executeTool(tool, input as never, ctx, {
-    approvalRules: [
-      row(name, templateAutonomy(tool, template)),
-      row(
-        REPLACE_SHARED_FILE_SETTING,
-        templateAutonomy({ name: REPLACE_SHARED_FILE_SETTING, riskLevel: 'write' }, template),
-      ),
-    ],
+    approvalRules: rowsWrittenFor(tool, name, autonomy ?? 'propose_confirm'),
     onApprovalRequired: async () => {},
   });
   if (res.outcome !== 'success') throw new Error(`${name}: ${JSON.stringify(res)}`);
@@ -1506,9 +1487,37 @@ async function runFileTool(
       turn: 1,
       workspaces,
     },
-    // L'autonomie par défaut (`destructive_gate`), aucune règle : la porte décide seule.
-    { approvalRules: [], ...(autonomy ? { autonomy } : {}), onApprovalRequired: async () => {} },
+    // Les lignes qu'un agent tient sous l'autonomie par défaut (`destructive_gate`,
+    // #917) : l'outil et le réglage « shared file », écrits par le modèle. Aucune
+    // règle posée à la main : la porte applique ces lignes, seule.
+    {
+      approvalRules: rowsWrittenFor(tool, name, autonomy ?? 'destructive_gate'),
+      onApprovalRequired: async () => {},
+    },
   );
+}
+
+/** The rows the level writes for one tool and the shared-file setting (#917). */
+function rowsWrittenFor(
+  tool: Parameters<typeof templateAutonomy>[0],
+  name: string,
+  level: 'propose_confirm' | 'destructive_gate' | 'fully_autonomous',
+) {
+  const template = { level, rules: [], agentId: seed.agentId, entityId: seed.entityId };
+  const row = (toolName: string, action: 'auto_approve' | 'require_approval' | 'block') => ({
+    id: `row-${toolName}`,
+    toolName,
+    action,
+    agentId: seed.agentId,
+    entityId: seed.entityId,
+  });
+  return [
+    row(name, templateAutonomy(tool, template)),
+    row(
+      REPLACE_SHARED_FILE_SETTING,
+      templateAutonomy({ name: REPLACE_SHARED_FILE_SETTING, riskLevel: 'write' }, template),
+    ),
+  ];
 }
 
 const sha256 = (bytes: Uint8Array | string) => createHash('sha256').update(bytes).digest('hex');
