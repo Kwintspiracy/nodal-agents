@@ -32,6 +32,11 @@
 //     déjà 200 fichiers reçus non déplacés dans ce délai voit les suivants
 //     refusés, et c'est dit (une partie « NOT received » qui dit pourquoi),
 //     jamais un fichier promis effacé à leur place (revue de #911) ;
+//   - est une écriture de SON job (#913), rangée dans `constated_writes` par le
+//     rangement de ses outils (`recordPlatformWrites`) : la porte d'écrasement
+//     du dossier partagé la lui reconnaît, et le ranger ne demande à personne.
+//     Une demande appartient à l'agent à qui elle est adressée ; un canal n'est
+//     propriétaire de rien ;
 //   - devient UNE partie texte du premier message du job, pour l'agent : son
 //     chemin pour les outils fichiers (`shared/…`) et son chemin absolu (un
 //     runtime CLI n'a que lui), son nom, son type, sa taille ;
@@ -45,6 +50,7 @@
 // Le texte de ces parties s'adresse au MODÈLE, comme les notes d'image de
 // job/model-images.ts : il n'est pas montré à la personne par le runner.
 
+import { createHash } from 'node:crypto';
 import { mkdir, readdir, rename, rm, rmdir, stat, writeFile } from 'node:fs/promises';
 import type { Dirent } from 'node:fs';
 import { join } from 'node:path';
@@ -56,6 +62,7 @@ import {
   MODEL_IMAGE_MEDIA_TYPES,
   SHARED_WORKSPACE_LABEL,
   formatBytes,
+  recordPlatformWrites,
   sniffImageMediaType,
   windowsDeviceName,
   workspacesRoot,
@@ -165,6 +172,7 @@ export async function receiveInboundFiles(args: {
 
   const outcomes: InboundFileOutcome[] = [];
   const parts: unknown[] = [{ type: 'text', text }];
+  const written: Array<{ path: string; sha256: string }> = [];
   for (const file of files) {
     const shownName = displayName(file);
     if (room <= 0) {
@@ -196,6 +204,7 @@ export async function receiveInboundFiles(args: {
       continue;
     }
     room -= 1;
+    written.push({ path: saved.path, sha256: createHash('sha256').update(bytes).digest('hex') });
     const outcome: InboundFileOutcome = {
       received: true,
       name: shownName,
@@ -215,11 +224,22 @@ export async function receiveInboundFiles(args: {
     }
   }
 
-  const attached = await db
-    .update(agentJobs)
-    .set({ messages: [{ role: 'user', content: parts }] })
-    .where(and(eq(agentJobs.id, jobId), eq(agentJobs.status, 'pending')))
-    .returning({ id: agentJobs.id });
+  // Les fichiers reçus sont des écritures de CE job (#913), rangées comme
+  // celles de ses outils (`recordPlatformWrites`) : la porte d'écrasement du
+  // dossier partagé les lui reconnaît, et un `file_move` qui range le fichier
+  // reçu ne demande à personne. Le constat et le message du job partent dans
+  // la MÊME transaction, après l'écriture des fichiers : aucun constat sans
+  // son fichier, aucun fichier promis au job sans son constat. Une coupure
+  // avant la fin laisse au plus des fichiers que rien ne nomme ni ne
+  // reconnaît : la porte les protège, le ménage les retire à leur âge.
+  const attached = await db.transaction(async (tx) => {
+    if (written.length > 0) await recordPlatformWrites({ db: tx, jobId, files: written });
+    return tx
+      .update(agentJobs)
+      .set({ messages: [{ role: 'user', content: parts }] })
+      .where(and(eq(agentJobs.id, jobId), eq(agentJobs.status, 'pending')))
+      .returning({ id: agentJobs.id });
+  });
 
   if (attached.length === 0) {
     const where = outcomes
@@ -579,6 +599,12 @@ const LEGACY_INBOUND_CHANNELS = ['telegram', 'discord'] as const;
  *
  * Joué à chaque démarrage du runner : idempotent, un fil déjà vidé n'existe
  * plus.
+ *
+ * Il ne range AUCUN constat (#913) : ce n'est pas une écriture faite pour un
+ * job qui tourne. Les entrées sont celles de jobs reçus avant #910, dont la
+ * réception ne rangeait rien ; un run qui les déplace aujourd'hui est un AUTRE
+ * job, et la porte d'écrasement le fait demander, comme pour le travail de
+ * n'importe qui d'autre.
  */
 export async function moveLegacyInboundFolders(
   db: RunnerDeps['db'],
