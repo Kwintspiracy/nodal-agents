@@ -13,10 +13,12 @@
 // l'écran : une liste prise sur le disque ne promet pas ce qu'une liste prise
 // dans git promet, et les confondre serait un faux complet (invariant #4).
 //
-// IL NE LÈVE JAMAIS. Comme `markDeliverablesProduced`, il est appelé depuis le
-// seam, DANS le `try` qui entoure l'appel de l'outil : une exception ici
-// rendrait un échec d'outil pour une écriture qui a eu lieu. Une panne se dit
-// par un code et n'empêche rien.
+// LE CONSTAT D'UN OUTIL NE LÈVE JAMAIS. Comme `markDeliverablesProduced`, il
+// est appelé depuis le seam, DANS le `try` qui entoure l'appel de l'outil : une
+// exception ici rendrait un échec d'outil pour une écriture qui a eu lieu. Une
+// panne se dit par un code et n'empêche rien. Une écriture de la PLATEFORME
+// pour un job (`recordPlatformWrites`, #913) passe par le même rangement, et
+// elle lève : l'appelant ne promet pas au job un fichier qu'il n'a pas rangé.
 
 import { constatedWrites, desc, eq, sql } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
@@ -112,16 +114,8 @@ export function fusionnerConstats(input: {
   ];
 }
 
-/**
- * Range les lignes du constat de CE tour.
- *
- * `onConflictDoNothing` sur (job, tour, chemin) : un fichier écrit par deux
- * commandes du même tour est UN fichier livré. Le premier constat gagne — il
- * dit déjà que ce fichier a bougé, et c'est tout ce que l'écran montre.
- *
- * Rend le nombre de lignes présentées, jamais une erreur.
- */
-export async function recordConstatedWrites(input: {
+/** Ce que `rangerConstats` range : le job, son tour, les lignes et les empreintes écrites. */
+interface ConstatsARanger {
   readonly db: AnyDrizzleDb;
   readonly jobId: string | null | undefined;
   readonly turn: number | null | undefined;
@@ -134,7 +128,74 @@ export async function recordConstatedWrites(input: {
    * (`writeWorkspaceBinary`), comme les outils fichier.
    */
   readonly contenusEcrits?: ReadonlyMap<string, string>;
-}): Promise<number> {
+}
+
+/**
+ * Range les lignes du constat de CE tour.
+ *
+ * `onConflictDoNothing` sur (job, tour, chemin) : un fichier écrit par deux
+ * commandes du même tour est UN fichier livré. Le premier constat gagne — il
+ * dit déjà que ce fichier a bougé, et c'est tout ce que l'écran montre.
+ *
+ * Rend le nombre de lignes présentées, jamais une erreur : le seam l'appelle
+ * après une écriture qui a eu lieu (voir l'en-tête).
+ */
+export async function recordConstatedWrites(input: ConstatsARanger): Promise<number> {
+  try {
+    return await rangerConstats(input);
+  } catch (err) {
+    console.warn(
+      `[verification] CONSTAT_WRITE_FAILED job=${input.jobId} turn=${input.turn ?? 0}`,
+      err,
+    );
+    return 0;
+  }
+}
+
+/**
+ * Le tour des écritures que la PLATEFORME fait pour un job hors de tout appel
+ * d'outil (#913) : un fichier reçu par un canal, un fichier qu'un outil a rendu
+ * et que le runner range pour le modèle. Le compteur du runner part de 0 et le
+ * premier tour du modèle est 1 : aucun appel d'outil ne porte ce tour, donc
+ * aucune commande n'est dite « certaine » (`classifyProduction`, apps/web) sur
+ * la foi d'une écriture qu'elle n'a pas faite.
+ */
+export const PLATFORM_WRITE_TURN = 0;
+
+/**
+ * Une écriture que la plateforme a faite POUR un job (#913) : rangée comme
+ * celle d'un outil, par la même fonction, avec l'empreinte des octets écrits.
+ * La porte d'écrasement du dossier partagé (`currentContentWrittenByJob`) la
+ * lit donc comme le travail de CE job : un fichier reçu pour lui se range sans
+ * demander à personne, tant que son contenu est celui que la plateforme a
+ * écrit. Un autre job qui le réécrit, une personne qui l'édite : la porte
+ * redemande.
+ *
+ * LÈVE, contrairement à `recordConstatedWrites` : l'appelant écrit le fichier
+ * pour le job, et un fichier dont l'écriture n'a pas été rangée ne doit pas
+ * lui être promis en silence (invariant #4). `db` peut être une transaction.
+ */
+export async function recordPlatformWrites(input: {
+  readonly db: AnyDrizzleDb;
+  readonly jobId: string;
+  /** Chaque fichier écrit : son chemin absolu et l'empreinte sha256 des octets écrits. */
+  readonly files: ReadonlyArray<{ readonly path: string; readonly sha256: string }>;
+}): Promise<void> {
+  await rangerConstats({
+    db: input.db,
+    jobId: input.jobId,
+    turn: PLATFORM_WRITE_TURN,
+    lignes: input.files.map((f) => ({
+      path: f.path,
+      kind: 'added' as const,
+      constatedBy: 'disk' as const,
+    })),
+    contenusEcrits: new Map(input.files.map((f) => [f.path, f.sha256])),
+  });
+}
+
+/** Le rangement lui-même, commun aux deux : il lève. */
+async function rangerConstats(input: ConstatsARanger): Promise<number> {
   const { db, jobId, lignes } = input;
   // Sans job, il n'y a pas de run à qui rattacher le constat — un appel d'outil
   // hors boucle de travail (un test, un tour de chat). Rien à ranger, et rien
@@ -169,22 +230,17 @@ export async function recordConstatedWrites(input: {
       contentSha256: empreinte,
     });
   }
-  try {
-    // Le même fichier réécrit dans le MÊME tour reste une ligne (l'unicité de
-    // #199), mais son empreinte suit la DERNIÈRE écriture : sinon la porte
-    // comparerait le disque au premier jet et redemanderait pour le troisième.
-    await db
-      .insert(constatedWrites)
-      .values(values)
-      .onConflictDoUpdate({
-        target: [constatedWrites.jobId, constatedWrites.turn, constatedWrites.path],
-        set: { contentSha256: sql`excluded.content_sha256` },
-      });
-    return values.length;
-  } catch (err) {
-    console.warn(`[verification] CONSTAT_WRITE_FAILED job=${jobId} turn=${turn}`, err);
-    return 0;
-  }
+  // Le même fichier réécrit dans le MÊME tour reste une ligne (l'unicité de
+  // #199), mais son empreinte suit la DERNIÈRE écriture : sinon la porte
+  // comparerait le disque au premier jet et redemanderait pour le troisième.
+  await db
+    .insert(constatedWrites)
+    .values(values)
+    .onConflictDoUpdate({
+      target: [constatedWrites.jobId, constatedWrites.turn, constatedWrites.path],
+      set: { contentSha256: sql`excluded.content_sha256` },
+    });
+  return values.length;
 }
 
 /**

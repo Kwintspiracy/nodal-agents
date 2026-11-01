@@ -22,10 +22,12 @@
 // past the budget is replaced by a sentence that names it, which the agent can
 // read again.
 
+import { createHash } from 'node:crypto';
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { basename, isAbsolute, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import type { ModelMessage } from 'ai';
+import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { MODEL_REQUEST_MAX_IMAGES, MODEL_REQUEST_MAX_IMAGE_BYTES } from '@nodal-agents/shared';
 import {
   MODEL_IMAGE_MEDIA_TYPES,
@@ -33,6 +35,7 @@ import {
   attachmentKind,
   countPdfPages,
   formatBytes,
+  recordPlatformWrites,
   sniffAttachmentMediaType,
   type ModelAttachmentInput,
   type ToolAttachment,
@@ -69,18 +72,28 @@ export type SavedAttachmentPart =
  * keeps: one part per file, its `file:` URL — `image-url` for an image,
  * `file-url` for a document. The bytes go to the disk once; no row ever holds
  * them.
+ *
+ * Each file is a write the platform made for `jobId` (#913), recorded as that
+ * job's write by the one record the tools use (`recordPlatformWrites`), after
+ * every file is written and before any part is returned: a record never names
+ * a file that is not there, and a file the record could not take is never
+ * handed to the model (the caller says none was saved). Throws.
  */
 export async function saveToolAttachments(
+  owner: { db: AnyDrizzleDb; jobId: string },
   dir: string,
   toolCallId: string,
   attachments: readonly ToolAttachment[],
 ): Promise<SavedAttachmentPart[]> {
   await mkdir(dir, { recursive: true });
   const parts: SavedAttachmentPart[] = [];
+  const written: Array<{ path: string; sha256: string }> = [];
   for (const [k, attachment] of attachments.entries()) {
     const ext = EXTENSION_OF[attachment.mediaType] ?? 'bin';
     const path = join(dir, `${toolCallId.replace(/[^\w.-]/g, '_')}-${k + 1}.${ext}`);
-    await writeFile(path, Buffer.from(attachment.data, 'base64'));
+    const bytes = Buffer.from(attachment.data, 'base64');
+    await writeFile(path, bytes);
+    written.push({ path, sha256: createHash('sha256').update(bytes).digest('hex') });
     const url = pathToFileURL(path).href;
     parts.push(
       attachmentKind(attachment.mediaType) === 'image'
@@ -88,6 +101,7 @@ export async function saveToolAttachments(
         : { type: 'file-url', url },
     );
   }
+  await recordPlatformWrites({ db: owner.db, jobId: owner.jobId, files: written });
   return parts;
 }
 
@@ -96,11 +110,13 @@ export async function saveToolAttachments(
  * one, so the LLM itself decides what to do (routing is its call, never
  * hardcoded): delegate to a teammate that sees, or tell the person. `reason`
  * says which it is — a model known to be text-only, or one Nodal does not know
- * (`modelImageInputFor`) — never the second said as the first.
+ * (`modelImageInputFor`) — never the second said as the first. `where` is the
+ * whole phrase that says where the image is (`saved at <path>`, `at <url>`,
+ * `not kept as a file`): the note adds no words of its own around it (#913).
  */
-export function visionRoutingNote(path: string, reason: string): string {
+export function visionRoutingNote(where: string, reason: string): string {
   return (
-    `[The user attached an IMAGE (saved at ${path}). It was not passed to you: ${reason}. ` +
+    `[The user attached an IMAGE (${where}). It was not passed to you: ${reason}. ` +
     `Decide what to do: if a teammate runs a vision-capable model, DELEGATE this to them — the ` +
     `image travels with the delegation, so just assign them the task (e.g. "describe this image"). ` +
     `If no agent in this workspace can see images, tell the user plainly and suggest switching an ` +
