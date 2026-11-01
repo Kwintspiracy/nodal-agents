@@ -80,6 +80,18 @@ export const entities = pgTable(
      */
     autoRunPaused: boolean('auto_run_paused').notNull().default(false),
     /**
+     * L'heure à laquelle les lignes d'autonomie manquantes des agents de cet
+     * espace ont été écrites avec la valeur que l'écran montrait avant #917
+     * (migration 0155). NULL : pas encore fait, l'état de tout espace d'avant
+     * 0155 ; le runner le fait à son démarrage (`writeAutonomyRowsAtBoot`,
+     * @nodal-agents/orchestration). Un espace créé après naît avec `now()` :
+     * il n'a rien d'avant à reprendre. Une ligne nouvelle prend alors la
+     * valeur du niveau d'autonomie.
+     */
+    autonomyRowsWrittenAt: timestamp('autonomy_rows_written_at', {
+      withTimezone: true,
+    }).defaultNow(),
+    /**
      * Interrupteur maitre du serveur MCP (PR C, decision Quentin 23/08).
      * Defaut FERME : un point d'entree externe qui cree des jobs doit etre
      * ouvert par un geste explicite, pas exister parce qu'un paquet est

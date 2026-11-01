@@ -37,15 +37,22 @@ Only enabled grants appear as tools in the ROOT agent's system context. Disablin
 
 ### Autonomy level
 
-Controls whether the ROOT's meta-tool calls require your approval:
+Every agent holds one setting per tool it has: **Run without asking**, **Ask for
+approval** or **Block**, shown on its **Autonomy** tab, and that setting is what
+applies. The autonomy level is what a setting **starts with**, when an agent is
+created or a tool becomes available to it (a skill, a connector, an MCP server, a
+new version of Nodal):
 
-| Level                            | Behaviour                                                                                                                                |
-| -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| **Propose and confirm**          | Every meta-tool call is queued in the Approvals queue — the ROOT waits for your go-ahead before executing.                               |
-| **Autonomous, gate destructive** | Non-destructive meta-tools execute automatically. Destructive ones (none exist yet in the current toolset) would still require approval. |
-| **Fully autonomous**             | All enabled meta-tools execute without any approval step. Use only for an agent you fully trust.                                         |
+| Level                            | A new tool starts on                                                                                                                                               |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Propose and confirm**          | Ask for approval, for every tool that asks by default (commands, scripts, meta-tools, connector writes, third-party tools). The others run without asking.         |
+| **Autonomous, gate destructive** | Run without asking, except a tool declared destructive (skill scripts, coding tasks, a connector delete), which asks. Commands follow the agent's shell checklist. |
+| **Fully autonomous**             | Run without asking, except what runs code on this machine (commands, scripts, coding tasks), which asks. Catastrophic commands always ask.                         |
 
-The default is **Propose and confirm**.
+The default is **Propose and confirm**. Changing the level changes no existing
+setting. **Apply to all agents**, under the level, sets every agent's tools (and
+its shared-file setting) from the level, after a confirmation; server settings
+and rules for all agents are removed, rules limited to one folder are kept.
 
 ## Save
 

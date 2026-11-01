@@ -30,6 +30,8 @@ import { registerBuiltins } from '../../builtin';
 import { executeTool } from '../../execute';
 import { withStatedPurpose } from '../../purpose';
 import type { ExecuteOptions, ToolContext } from '../../types';
+import type { AutonomyLevel } from '@nodal-agents/shared';
+import { rowsAsWritten } from '../autonomy-rows-fixture';
 
 /**
  * Le seul truquage de ce fichier, et il est ciblé : `rmdir`.
@@ -179,19 +181,20 @@ function regleDuProprietaire(): ExecuteOptions['approvalRules'] {
 }
 
 /** Un propriétaire qui a accordé la règle permanente. */
-function options(autonomy?: ExecuteOptions['autonomy']): ExecuteOptions {
+function options(autonomy?: AutonomyLevel): ExecuteOptions {
   return {
-    approvalRules: regleDuProprietaire(),
-    ...(autonomy === undefined ? {} : { autonomy }),
+    approvalRules: rowsAsWritten(seed, [outil()], autonomy, regleDuProprietaire()),
     onApprovalRequired: async () => {},
   };
 }
 
-/** Aucune règle : la posture par défaut de l'outil s'applique. */
-function optionsSansRegle(autonomy?: ExecuteOptions['autonomy']): ExecuteOptions {
+/**
+ * Aucune ligne posée par le propriétaire : celle que le niveau a écrite pour
+ * l'outil à son arrivée (#917).
+ */
+function optionsSansRegle(autonomy?: AutonomyLevel): ExecuteOptions {
   return {
-    approvalRules: [] as ExecuteOptions['approvalRules'],
-    ...(autonomy === undefined ? {} : { autonomy }),
+    approvalRules: rowsAsWritten(seed, [outil()], autonomy),
     onApprovalRequired: async () => {},
   };
 }
@@ -236,7 +239,7 @@ async function appel(
   input: unknown,
   jobId: string,
   conversationId: string | null,
-  autonomy?: ExecuteOptions['autonomy'],
+  autonomy?: AutonomyLevel,
 ) {
   return executeTool(outil(), input, ctx(jobId, conversationId), options(autonomy));
 }
@@ -650,7 +653,8 @@ describe('register_project — la porte : le propriétaire confirme (revue Codex
           {
             id: 'resume-bypass',
             entityId: seed.entityId,
-            agentId: null,
+            // The agent's own row, as the runner's resume passes it (#917).
+            agentId: seed.agentId,
             toolName: 'register_project',
             action: 'auto_approve',
           },

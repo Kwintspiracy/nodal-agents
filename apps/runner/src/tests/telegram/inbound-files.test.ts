@@ -31,6 +31,8 @@ import {
   executeTool,
   registerBuiltins,
   resolveRunWorkspaces,
+  templateAutonomy,
+  REPLACE_SHARED_FILE_SETTING,
 } from '@nodal-agents/tools';
 import type { ModelAttachmentInput, ToolContext } from '@nodal-agents/tools';
 import type { TelegramUpdate } from '@nodal-agents/delivery';
@@ -1102,9 +1104,28 @@ async function callFileTool(
     // Un modèle qui prend les images et les PDF : `file_read` les lui passe (#905).
     modelInput: { image: { sees: true }, pdf: { sees: true } },
   };
+  // The rows the level writes for this tool and the shared-file setting (#917).
+  const template = {
+    level: autonomy ?? ('propose_confirm' as const),
+    rules: [],
+    agentId: seed.agentId,
+    entityId: seed.entityId,
+  };
+  const row = (toolName: string, action: 'auto_approve' | 'require_approval' | 'block') => ({
+    id: `row-${toolName}`,
+    toolName,
+    action,
+    agentId: seed.agentId,
+    entityId: seed.entityId,
+  });
   const res = await executeTool(tool, input as never, ctx, {
-    approvalRules: [],
-    ...(autonomy ? { autonomy } : {}),
+    approvalRules: [
+      row(name, templateAutonomy(tool, template)),
+      row(
+        REPLACE_SHARED_FILE_SETTING,
+        templateAutonomy({ name: REPLACE_SHARED_FILE_SETTING, riskLevel: 'write' }, template),
+      ),
+    ],
     onApprovalRequired: async () => {},
   });
   if (res.outcome !== 'success') throw new Error(`${name}: ${JSON.stringify(res)}`);

@@ -19,6 +19,8 @@ import { judgeShellChecklist, shellChecklistDeclined, type ShellPlace } from '..
 import { runCommandTool } from '../builtin/run-command';
 import { codeTaskTool } from '../builtin/code-task';
 import type { ApprovalRule, ExecuteOptions, ToolContext, ToolDefinition } from '../types';
+import { rowsAsWritten } from './autonomy-rows-fixture';
+import type { TemplateTool } from '../autonomy-template';
 
 let db: TestDb;
 let seed: { userId: string; entityId: string; agentId: string; jobId: string };
@@ -60,10 +62,16 @@ const runCommand: ToolDefinition<z.ZodObject<{ command: z.ZodString }>, string> 
 };
 
 const gate = (policy: ShellPolicy | undefined, rules: ApprovalRule[] = []): ExecuteOptions => ({
-  approvalRules: rules,
-  autonomy: 'destructive_gate',
+  // The run_command row written under destructive_gate (#917), the case's own rows first.
+  approvalRules: rowsAsWritten(seed, [runCommand], 'destructive_gate', rules),
   onApprovalRequired: async () => {},
   ...(policy ? { shellPolicy: policy } : {}),
+});
+
+/** The rows a tool gets under the shipped level (#917): a safe-by-default tool asks. */
+const shipped = (tool: TemplateTool): ExecuteOptions => ({
+  approvalRules: rowsAsWritten(seed, [tool], 'propose_confirm'),
+  onApprovalRequired: async () => {},
 });
 
 const run = (command: string, opts: ExecuteOptions) =>
@@ -74,7 +82,7 @@ const yolo = (): ApprovalRule => ({
   id: 'yolo',
   toolName: 'run_command',
   action: 'auto_approve',
-  agentId: null,
+  agentId: seed.agentId,
   entityId: seed.entityId,
 });
 
@@ -808,7 +816,7 @@ describe('nowhere is not a place, and an unaddressed start never reaches a perso
     for (const [command, opts] of [
       [commons, gate(DEFAULT_SHELL_POLICY)],
       [commons, gate(DEFAULT_SHELL_POLICY, [yolo()])],
-      ['git status', { ...gate(undefined), autonomy: 'propose_confirm' as const }],
+      ['git status', shipped(runCommandTool)],
     ] as const) {
       const before = await approvalCount();
       const res = await executeTool(
@@ -829,7 +837,7 @@ describe('nowhere is not a place, and an unaddressed start never reaches a perso
       runCommandTool,
       { command: 'git status', purpose: 'Look.', cwd: elsewhere },
       ctx(),
-      { ...gate(undefined), autonomy: 'propose_confirm' },
+      shipped(runCommandTool),
     );
     expect(outside).toMatchObject({ outcome: 'error' });
     if (outside.outcome === 'error') expect(outside.error).toContain('does not reside in any');
@@ -842,7 +850,7 @@ describe('nowhere is not a place, and an unaddressed start never reaches a perso
       codeTaskTool,
       { purpose: 'Read the code.', provider: 'claude', task: 'Summarise.', mode: 'read' },
       twoWorkspaces(),
-      { ...gate(undefined), autonomy: 'propose_confirm' },
+      shipped(codeTaskTool),
     );
 
     expect(res.outcome).toBe('error');

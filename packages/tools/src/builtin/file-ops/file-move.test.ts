@@ -65,6 +65,7 @@ import { SHARED_WORKSPACE_LABEL } from './workspace';
 import { fileMoveTool, type FileMoveOutput } from './file-move';
 import { fileWriteTool } from './file-write';
 import type { ExecuteOptions, ToolContext } from '../../types';
+import { rowsAsWritten } from '../../tests/autonomy-rows-fixture';
 
 let db: TestDb;
 let seed: { userId: string; entityId: string; agentId: string; jobId: string };
@@ -125,7 +126,17 @@ function ctx(jobId: string = seed.jobId): ToolContext {
   };
 }
 
-const sansRegle: ExecuteOptions = { approvalRules: [], onApprovalRequired: async () => {} };
+/**
+ * Les lignes qu'un agent neuf tient (#917) : celle de `file_move` et le réglage
+ * « shared file », écrits sous le niveau livré — l'outil Autonomous, le réglage
+ * Ask first.
+ */
+const sansRegle: ExecuteOptions = {
+  get approvalRules() {
+    return rowsAsWritten(seed, [fileMoveTool]);
+  },
+  onApprovalRequired: async () => {},
+};
 
 /** Un appel par le vrai seam, et ce que l'outil a rendu. */
 async function deplacer(

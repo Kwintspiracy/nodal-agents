@@ -12,7 +12,11 @@ import {
   type ApprovalRow,
 } from '@/lib/actions.ts';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
-import { readQuestionToolInput, toolDisplayName } from '@nodal-agents/shared';
+import {
+  readQuestionToolInput,
+  REPLACE_SHARED_FILE_SETTING,
+  toolDisplayName,
+} from '@nodal-agents/shared';
 import type { ExplainedApprovalRule } from '@nodal-agents/shared';
 import PrimaryButton from '@/components/ui/PrimaryButton';
 import TextArea from '@/components/ui/TextArea';
@@ -309,9 +313,10 @@ function ApprovalDecisionCard({
   }
 
   /**
-   * Changer une regle. `scope` suit la ligne : une ligne d'agent ecrit une
-   * regle d'agent, une ligne Everyone une regle d'entite. La ligne « Tool
-   * default » n'est pas une regle : la changer en CREE une, pour cet agent.
+   * Changer une ligne : celle de l'outil pour cet agent, sa ligne de dossier,
+   * ou le réglage « shared file » de l'agent (#917). Chaque ligne affichée est
+   * une ligne en base ; il n'y a plus de « Tool default » qui n'en serait pas
+   * une.
    */
   function handleRuleChange(row: RuleLine, next: RuleAction) {
     if (!a.agentId) return;
@@ -336,7 +341,7 @@ function ApprovalDecisionCard({
     });
   }
 
-  const lines: RuleLine[] = buildRuleLines(chain, agentName, a.toolName, a.toolDefault);
+  const lines: RuleLine[] = buildRuleLines(chain, agentName);
 
   return (
     <div
@@ -533,6 +538,11 @@ function ApprovalDecisionCard({
         <div className="flex flex-col gap-2 border-t border-rule-2 px-4 pb-6 pt-4">
           <p className="text-body-13 text-ink">Reason this triggered Approval request</p>
           <div className="overflow-clip rounded-lg bg-hover" data-testid="approval-rule-list">
+            {lines.length === 0 && (
+              <p className="px-2.5 py-3 text-body-12 text-ink-3" data-testid="approval-rule-none">
+                This agent has no setting for this tool.
+              </p>
+            )}
             {lines.map((row, i) => (
               <div
                 key={row.key}
@@ -548,7 +558,7 @@ function ApprovalDecisionCard({
                 <span
                   className={`min-w-0 flex-1 truncate text-mono-11 text-feed-tool ${row.wins ? '' : 'opacity-60'}`}
                 >
-                  {row.toolName}
+                  {row.display}
                 </span>
                 {/* Le dessin écrit « Overriden » avec un seul r : c'est une
                     faute d'orthographe, pas un mot du produit. */}
@@ -753,6 +763,8 @@ function ApprovalDecisionCard({
 interface RuleLine {
   key: string;
   toolName: string;
+  /** What the line names: the tool, or the setting in words. */
+  display: string;
   action: RuleAction;
   scope: 'agent' | 'entity';
   scopeLabel: string;
@@ -761,36 +773,20 @@ interface RuleLine {
   wins: boolean;
 }
 
+/** The shared-file setting, named as the Autonomy tab names it. */
+export const SHARED_FILE_SETTING_LABEL = 'Replace a shared file it did not create';
+
 /**
- * La chaine telle qu'elle s'affiche, et la ligne « Tool default » quand aucune
- * regle ne nomme cet appel.
- *
- * Cette derniere n'est PAS une regle : c'est la posture propre de l'outil. La
- * changer cree une regle d'agent sur l'outil exact — ce que la ligne dit deja
- * en portant ce nom d'outil.
+ * Les lignes telles qu'elles s'affichent (#917) : chacune est une ligne en
+ * base — celle de l'outil (et sa ligne de dossier), puis, pour un outil qui
+ * peut remplacer un fichier partagé, le réglage de l'agent. Plus de « Tool
+ * default » : sans ligne, la porte refuse l'appel, elle n'en demande rien.
  */
-export function buildRuleLines(
-  chain: ExplainedApprovalRule[],
-  agentName: string,
-  toolName: string,
-  toolDefault: RuleAction,
-): RuleLine[] {
-  if (chain.length === 0) {
-    return [
-      {
-        key: 'tool-default',
-        toolName,
-        action: toolDefault,
-        scope: 'agent',
-        scopeLabel: 'Tool default',
-        workspacePath: null,
-        wins: true,
-      },
-    ];
-  }
+export function buildRuleLines(chain: ExplainedApprovalRule[], agentName: string): RuleLine[] {
   return chain.map((r) => ({
     key: r.id,
     toolName: r.toolName,
+    display: r.toolName === REPLACE_SHARED_FILE_SETTING ? SHARED_FILE_SETTING_LABEL : r.toolName,
     action: r.action,
     scope: r.scope,
     workspacePath: r.workspacePath,

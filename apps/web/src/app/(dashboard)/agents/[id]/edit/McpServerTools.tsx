@@ -16,9 +16,14 @@
 import { useState } from 'react';
 import DisclosureButton from '@/components/ui/DisclosureButton';
 import SegmentedControl from '@/components/ui/SegmentedControl';
-import type { AutonomyAction } from './AutonomyToolRow.tsx';
+import { AUTONOMY_LABEL, type AutonomyAction } from './AutonomyToolRow.tsx';
 
-/** `null` = aucune règle sur l'outil exact : il suit celle du serveur. */
+/**
+ * La ligne de l'outil pour cet agent (#917). `null` : il n'en a pas, et la
+ * porte le refuse. Il n'y a plus de « Follow the server » : la ligne du
+ * serveur réécrit celle de chacun de ses outils, et donne sa valeur aux outils
+ * qu'il ajoute plus tard.
+ */
 export type McpToolRule = AutonomyAction | null;
 
 export default function McpServerTools({
@@ -36,7 +41,7 @@ export default function McpServerTools({
   tools: readonly { name: string; description?: string }[];
   ruleFor: (toolName: string) => McpToolRule;
   isSaving: (toolName: string) => boolean;
-  onChange: (toolName: string, action: McpToolRule) => void;
+  onChange: (toolName: string, action: AutonomyAction) => void;
   /**
    * Les outils que l'agent ne détient PLUS mais sur lesquels une règle traîne
    * (revue Reviewer C, passe 2, Q4).
@@ -95,34 +100,36 @@ export default function McpServerTools({
                   {tool.description !== undefined && tool.description !== '' && (
                     <p className="mt-0.5 truncate text-body-12 text-ink-4">{tool.description}</p>
                   )}
+                  {value === null && (
+                    <p
+                      className="mt-0.5 text-body-12 text-err"
+                      data-testid={`autonomy-unset-${name}`}
+                    >
+                      Not set: this tool is refused until you choose.
+                    </p>
+                  )}
                 </div>
                 <SegmentedControl
-                  value={value ?? 'inherit'}
-                  onChange={(next) => onChange(name, next === 'inherit' ? null : next)}
+                  value={value}
+                  onChange={(next) => onChange(name, next)}
                   disabled={isSaving(name)}
                   ariaLabel={`Approval rule for ${tool.name} on ${serverLabel}`}
                   options={[
                     {
-                      value: 'inherit' as const,
-                      label: 'Follow the server',
-                      activeClassName: 'bg-hover text-ink-2 border-rule',
-                      testId: `autonomy-btn-${name}-inherit`,
-                    },
-                    {
                       value: 'auto_approve' as const,
-                      label: 'Run without asking',
+                      label: AUTONOMY_LABEL.auto_approve,
                       activeClassName: 'bg-agent-vivid/15 text-agent-vivid border-agent-vivid/30',
                       testId: `autonomy-btn-${name}-auto_approve`,
                     },
                     {
                       value: 'require_approval' as const,
-                      label: 'Ask for approval',
+                      label: AUTONOMY_LABEL.require_approval,
                       activeClassName: 'bg-warn/15 text-warn border-warn/30',
                       testId: `autonomy-btn-${name}-require_approval`,
                     },
                     {
                       value: 'block' as const,
-                      label: 'Block',
+                      label: AUTONOMY_LABEL.block,
                       activeClassName: 'bg-err/15 text-err border-err/30',
                       testId: `autonomy-btn-${name}-block`,
                     },

@@ -3,10 +3,10 @@
 // Jusqu'au lot approbations (24/08), seul le web écrivait dans approval_rules
 // (setAgentApprovalRuleAction, drizzle inline). Le bouton « 🔁 Always allow »
 // des cartes canal a besoin du même geste côté runner : même upsert, même
-// contrainte unique (entity, agent, tool) NULLS NOT DISTINCT — une ligne par
-// triplet, l'action écrase la précédente.
+// contrainte unique (entity, agent, tool, dossier) NULLS NOT DISTINCT — une
+// ligne par outil, l'action écrase la précédente.
 
-import { and, eq, approvalRules, entities } from '@nodal-agents/db';
+import { and, eq, approvalRules, entities, APPROVAL_ROW_KEY } from '@nodal-agents/db';
 import type { RunnerDeps } from '../deps.ts';
 
 export type RuleTarget = { entityId: string; agentId: string; toolName: string };
@@ -25,6 +25,8 @@ export async function getApprovalRule(db: RunnerDeps['db'], t: RuleTarget): Prom
         eq(approvalRules.entityId, t.entityId),
         eq(approvalRules.agentId, t.agentId),
         eq(approvalRules.toolName, t.toolName),
+        // La ligne de l'outil, pas une ligne de dossier (#917, 0155).
+        eq(approvalRules.conditionFolder, ''),
       ),
     )
     .limit(1);
@@ -53,6 +55,7 @@ export async function restoreApprovalRule(
       eq(approvalRules.entityId, t.entityId),
       eq(approvalRules.agentId, t.agentId),
       eq(approvalRules.toolName, t.toolName),
+      eq(approvalRules.conditionFolder, ''),
       eq(approvalRules.action, 'auto_approve'),
     );
     if (t.previousAction === null) {
@@ -103,7 +106,7 @@ export async function upsertAutoApproveRule(
       action: 'auto_approve',
     })
     .onConflictDoUpdate({
-      target: [approvalRules.entityId, approvalRules.agentId, approvalRules.toolName],
+      target: APPROVAL_ROW_KEY,
       set: { action: 'auto_approve', updatedAt: new Date() },
     });
 }

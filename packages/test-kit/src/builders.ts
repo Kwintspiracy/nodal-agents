@@ -180,11 +180,15 @@ export function aServerRule(
   return anApprovalRule({ toolName: `${serverPrefix}__*`, action, ...over });
 }
 
-/** A rule for one exact tool. */
+/**
+ * The agent's row for one exact tool (#917): what the Autonomy tab shows and
+ * the gate applies. Pass `{ agentId: null }` for a rule for every agent, which
+ * is a template, never a run-time decision.
+ */
 export function aToolRule(
   toolName: string,
   action: ApprovalRule['action'] = 'auto_approve',
   over?: Partial<ApprovalRule>,
 ): ApprovalRule {
-  return anApprovalRule({ toolName, action, ...over });
+  return anApprovalRule({ toolName, action, agentId: TEST_AGENT_ID, ...over });
 }

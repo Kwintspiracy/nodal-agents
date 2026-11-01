@@ -38,6 +38,7 @@ import { OFFICE_TOOLS } from '../builtin/office-ops';
 import type { ApprovalRule, ExecuteOptions, ToolContext } from '../types';
 import { z } from 'zod';
 import { resolveAndCheckPath } from '../builtin/file-ops/workspace';
+import { autonomousRows } from './autonomy-rows-fixture';
 
 // `@electric-sql/pglite` n'est PAS une dépendance de ce paquet (le harnais la
 // porte) : le type de la poignée est repris de la signature du harnais.
@@ -106,7 +107,12 @@ function ctx(over: Partial<ToolContext> = {}): ToolContext {
   } as unknown as ToolContext;
 }
 
-const opts: ExecuteOptions = { approvalRules: [], onApprovalRequired: async () => {} };
+const opts: ExecuteOptions = {
+  get approvalRules() {
+    return autonomousRows(seed);
+  },
+  onApprovalRequired: async () => {},
+};
 
 /** Les outils sous approbation par défaut tournent ici sur une règle explicite. */
 function autoApprove(toolName: string): ExecuteOptions {
@@ -117,7 +123,7 @@ function autoApprove(toolName: string): ExecuteOptions {
     agentId: seed.agentId,
     entityId: seed.entityId,
   };
-  return { approvalRules: [rule], onApprovalRequired: async () => {} };
+  return { approvalRules: [rule, ...autonomousRows(seed)], onApprovalRequired: async () => {} };
 }
 
 async function statesOf(job: string) {

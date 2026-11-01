@@ -44,6 +44,7 @@ import type { ApprovalRequestRow } from '@nodal-agents/db';
 import {
   metaToolsForAgent,
   parseRootGrants,
+  REPLACE_SHARED_FILE_SETTING,
   resolveShellPolicy,
   ShellGateReasonsSchema,
   serverTimezone,
@@ -170,6 +171,7 @@ import {
   remainingDelegationHops,
   delegationDepthExceededMessage,
   resolveAgentToolNames,
+  writeMissingAutonomyRows,
 } from '@nodal-agents/orchestration';
 import { decrypt, encrypt } from '@nodal-agents/secrets';
 import type {
@@ -2899,6 +2901,30 @@ async function runJobTracked(
       .where(ownJobRow(jobId as string));
   }
 
+  // ── 7b. The autonomy rows of the tools THIS job holds (#917) ─────────────────
+  // Every tool an agent holds has its row, always: the gate applies it and
+  // refuses a call that has none. The rows are written whenever a tool becomes
+  // available — and the start of a job is where the runner learns for certain
+  // which tools that is (an MCP server answering this connection with a new
+  // tool, a skill or connector attached by any path). Written from the
+  // template, never over an existing row; a failure fails the job loud
+  // rather than starting a run that would refuse its own tools.
+  try {
+    await writeMissingAutonomyRows(db, {
+      entityId: job.entityId ?? '',
+      agentId: agentRow.id,
+      tools: jobTools,
+    });
+  } catch (err) {
+    console.error(
+      `[execute] AUTONOMY_ROWS_FAILED agent=${agentRow.slug} job=${jobId}: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+    await failJob(db, jobId as string, 'autonomy_rows_failed', runStats(), messages);
+    return { status: 'failed', error: 'autonomy_rows_failed' };
+  }
+
   // ── 8. Load approval rules ────────────────────────────────────────────────────
   // Read FRESH here, and again at every turn boundary + after every resolved
   // approval (issue #370): a rule written while the job waited for an approval
@@ -2908,15 +2934,12 @@ async function runJobTracked(
   // re-applied by every reload and no reload can release it.
   let approvalRuleList: ApprovalRule[] = await loadApprovalRules(db, job, agentRow);
 
-  // ── 8b. Fully-autonomous workspace ────────────────────────────────────────────
-  // The owner's ROOT autonomy level governs how much hand-holding the workspace
-  // wants. `fully_autonomous` = "no approval prompts, period" — so we relax the
-  // safe-by-default require_approval posture inside executeTool. It is applied
-  // there AFTER explicit rules + the auto-run brake (job/approval-rules.ts) and BEFORE
-  // the catastrophic-command hardline floor, so neither safety boundary is bypassed.
+  // ── 8b. The workspace's run budget ────────────────────────────────────────────
+  // The autonomy level is NOT read here any more (#917): it only gives the
+  // value of a row when that row is written (7b), and decides nothing at run
+  // time. The gate applies the rows.
   const [autonomyRow] = await db
     .select({
-      rootGrants: entitiesTable.rootGrants,
       // Le budget de run de l'espace (#442), lu ici avec le reste des réglages.
       maxRunCostUsd: entitiesTable.maxRunCostUsd,
       maxRunHours: entitiesTable.maxRunHours,
@@ -2924,7 +2947,6 @@ async function runJobTracked(
     .from(entitiesTable)
     .where(eq(entitiesTable.id, job.entityId ?? ''))
     .limit(1);
-  const workspaceAutonomy = parseRootGrants(autonomyRow?.rootGrants).autonomy;
 
   // ── 8c. Ce que l'agent n'a pas le droit de faire avec un shell (#464) ───────
   // Lu une fois par job, passé à CHAQUE appel d'outil du tour : `executeTool`
@@ -3258,8 +3280,8 @@ async function runJobTracked(
         } else {
           // Execute the approved tool, bypassing the gate — the human already
           // reviewed and approved this exact call. The bypass is expressed via a
-          // synthetic auto_approve rule below (NOT an empty rules array: that would
-          // re-fire the tool's own defaultApproval and loop forever for run_command).
+          // synthetic auto_approve row below (NOT an empty rules array: the gate
+          // refuses a call whose tool has no row, #917).
           const toolDef = toolMap.get(req.toolName);
           if (!toolDef) {
             // Tool no longer in whitelist — treat as error and mark executed.
@@ -3322,8 +3344,19 @@ async function runJobTracked(
               {
                 id: 'resume-bypass',
                 entityId: job.entityId ?? '',
-                agentId: null,
+                // The agent's own row for this call (#917): the gate reads
+                // an agent row and nothing else.
+                agentId: agentRow.id,
                 toolName: req.toolName,
+                action: 'auto_approve',
+              },
+              // The shared-file setting too (#917): the person approved THIS
+              // call, the file it replaces included, and is not asked again.
+              {
+                id: 'resume-bypass-shared-file',
+                entityId: job.entityId ?? '',
+                agentId: agentRow.id,
+                toolName: REPLACE_SHARED_FILE_SETTING,
                 action: 'auto_approve',
               },
             ];
@@ -3371,7 +3404,6 @@ async function runJobTracked(
                 },
                 {
                   approvalRules: resumeApprovalRules,
-                  autonomy: workspaceAutonomy,
                   onApprovalRequired: (r: ApprovalGateRequest) => notifyApprovalCreated(deps, r),
                 },
               );
@@ -5773,7 +5805,6 @@ async function runJobTracked(
       };
       const sharedToolOpts = {
         approvalRules: approvalRuleList,
-        autonomy: workspaceAutonomy,
         shellPolicy: agentShellPolicy,
         onApprovalRequired: (req: ApprovalGateRequest) => notifyApprovalCreated(deps, req),
       };
@@ -5797,7 +5828,9 @@ async function runJobTracked(
           job.entityId ?? '',
           agentWorkspacesList,
         );
-        return (rule?.action ?? def.defaultApproval) === 'require_approval';
+        // The row and nothing else (#917). No row: the gate refuses the
+        // call, which runs nothing either way.
+        return rule?.action === 'require_approval';
       };
       const parallelizable =
         callsToProcess.length > 1 &&
@@ -6092,7 +6125,6 @@ async function runJobTracked(
               },
               {
                 approvalRules: approvalRuleList,
-                autonomy: workspaceAutonomy,
                 shellPolicy: agentShellPolicy,
                 onApprovalRequired: (req: ApprovalGateRequest) => notifyApprovalCreated(deps, req),
               },

@@ -18,6 +18,7 @@ import { fileWriteTool } from '../builtin/file-ops/file-write';
 import { returnResultTool } from '../builtin/return-result';
 import { declareDeliverables } from '../verification/declared-deliverables';
 import type { ExecuteOptions, ToolContext } from '../types';
+import { autonomousRows } from './autonomy-rows-fixture';
 
 let db: TestDb;
 let seed: { userId: string; entityId: string; agentId: string; jobId: string };
@@ -60,7 +61,12 @@ function ctx(over: Partial<ToolContext> = {}): ToolContext {
   } as unknown as ToolContext;
 }
 
-const opts: ExecuteOptions = { approvalRules: [], onApprovalRequired: async () => {} };
+const opts: ExecuteOptions = {
+  get approvalRules() {
+    return autonomousRows(seed);
+  },
+  onApprovalRequired: async () => {},
+};
 
 async function statesOf(job: string) {
   return db

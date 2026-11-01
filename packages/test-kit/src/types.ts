@@ -19,6 +19,7 @@ export interface ApprovalRuleLike {
   action: ApprovalAction;
   agentId: string | null;
   entityId: string | null;
+  conditionJson?: { workspacePath?: string } | null;
 }
 
 export interface ToolContextLike {
@@ -35,7 +36,7 @@ export interface ToolDefinitionLike {
   riskLevel: RiskLevel;
   defaultApproval?: ApprovalAction;
   execute: (input: unknown, ctx: ToolContextLike) => Promise<unknown>;
-  computeApproval?: (input: unknown, ctx: ToolContextLike) => Promise<ApprovalAction | undefined>;
+  replacesSharedFile?: (input: unknown, ctx: ToolContextLike) => Promise<boolean>;
 }
 
 export type ToolOutcome =
@@ -55,7 +56,23 @@ export type ExecuteToolFn = (
   ctx: ToolContextLike,
   opts: {
     approvalRules: ApprovalRuleLike[];
-    autonomy?: 'propose_confirm' | 'destructive_gate' | 'fully_autonomous' | undefined;
+    /** The agent's shell checklist, as the runner passes it on every turn (#464). */
+    shellPolicy?: unknown;
     onApprovalRequired: (req: { toolName: string }) => Promise<void>;
   },
 ) => Promise<ToolOutcome>;
+
+/**
+ * The product's template (`templateAutonomy`, @nodal-agents/tools), injected:
+ * the value a NEW row of this tool is written with under a workspace level
+ * (#917). The gate itself reads rows and nothing else.
+ */
+export type TemplateFn = (
+  tool: { name: string; defaultApproval?: 'require_approval'; riskLevel: RiskLevel },
+  ctx: {
+    level: 'propose_confirm' | 'destructive_gate' | 'fully_autonomous';
+    rules: readonly ApprovalRuleLike[];
+    agentId: string;
+    entityId: string;
+  },
+) => ApprovalAction;

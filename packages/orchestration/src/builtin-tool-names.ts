@@ -47,6 +47,28 @@ export function registeredBuiltinNames(): ReadonlySet<string> {
   return registered;
 }
 
+let sharedFile: ReadonlySet<string> | null = null;
+
+/**
+ * The built-in tools that can replace or remove a shared file this job did not
+ * write (`replacesSharedFile`), read off the registry: the tools the agent's
+ * shared-file setting applies to (#917). The approval card shows that setting
+ * beside their own row.
+ */
+export function sharedFileToolNames(): ReadonlySet<string> {
+  if (!sharedFile) {
+    const registry = createToolRegistry();
+    registerBuiltins(registry);
+    sharedFile = new Set(
+      registry
+        .list()
+        .filter((t) => t.replacesSharedFile !== undefined)
+        .map((t) => t.name),
+    );
+  }
+  return sharedFile;
+}
+
 export interface BuiltinToolNames {
   isOrchestrator: boolean;
   /** Built-in tool names only: no assign_*, connector, MCP or delivery tool. */

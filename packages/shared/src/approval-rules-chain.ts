@@ -165,65 +165,18 @@ function readCondition(rule: ApprovalRuleForChain): string | null {
   return typeof raw === 'string' && raw.trim().length > 0 ? raw : null;
 }
 
-/**
- * Every rule that applies to one call, most specific first.
- *
- * The order is the gate's order, and the only copy of it:
- *
- *   0. agent + exact tool, confined to a folder this job is working in
- *   1. agent + exact tool
- *   2. Everyone + exact tool
- *   3. agent + `<server>__*`
- *   4. Everyone + `<server>__*`
- *   5. agent + `*`
- *   6. Everyone + `*`
- *
- * A rule carrying a folder condition that this job does NOT work in is left out
- * entirely: it does not apply, so it must not be shown as overridden either —
- * the search simply continues at the next tier. A conditioned rule that DOES
- * apply is the most precise statement the owner ever made about this call, so
- * it comes ahead of everything, including an unconditioned rule on the same
- * (agent, tool) pair. In practice the unique constraint on
- * (entity_id, agent_id, tool_name) means only one of those two can exist at a
- * time; the order is stated anyway so it never has to be guessed.
- *
- * Returns `[]` when nothing matches — the caller then falls back to the tool's
- * own default posture, which is what the card calls "Tool default".
- */
-export function explainApprovalRules(
+/** One tier of the ranking: its name, and which rows it takes. */
+interface Tier {
+  tier: ApprovalRuleTier;
+  pick: (r: ApprovalRuleForChain) => boolean;
+}
+
+function rank(
   rules: readonly ApprovalRuleForChain[],
-  toolName: string,
-  agentId: string,
-  entityId: string,
-  workspaces?: readonly ChainWorkspace[],
-  platform?: string,
+  tiers: readonly Tier[],
+  workspaces: readonly ChainWorkspace[] | undefined,
+  platform: string | undefined,
 ): ExplainedApprovalRule[] {
-  const namespace = namespaceOfToolName(toolName);
-  const serverPattern = namespace === null ? null : `${namespace}__*`;
-
-  const forAgent = (r: ApprovalRuleForChain) => r.agentId === agentId;
-  const forEveryone = (r: ApprovalRuleForChain) => r.agentId === null && r.entityId === entityId;
-
-  type Tier = { tier: ApprovalRuleTier; pick: (r: ApprovalRuleForChain) => boolean };
-  const tiers: Tier[] = [
-    { tier: 'agent-tool', pick: (r) => r.toolName === toolName && forAgent(r) },
-    { tier: 'entity-tool', pick: (r) => r.toolName === toolName && forEveryone(r) },
-    ...(serverPattern === null
-      ? []
-      : ([
-          {
-            tier: 'agent-server',
-            pick: (r: ApprovalRuleForChain) => r.toolName === serverPattern && forAgent(r),
-          },
-          {
-            tier: 'entity-server',
-            pick: (r: ApprovalRuleForChain) => r.toolName === serverPattern && forEveryone(r),
-          },
-        ] satisfies Tier[])),
-    { tier: 'agent-all', pick: (r) => r.toolName === '*' && forAgent(r) },
-    { tier: 'entity-all', pick: (r) => r.toolName === '*' && forEveryone(r) },
-  ];
-
   const ordered: ExplainedApprovalRule[] = [];
 
   for (const { tier, pick } of tiers) {
@@ -256,15 +209,120 @@ export function explainApprovalRules(
       (condition !== null ? conditioned : plain).push(explained);
     }
     // Conditionnee d'abord, A L'INTERIEUR de son tier, jamais au-dessus des
-    // autres. Hisser toute regle conditionnee en tete de chaine ouvrait une
-    // elevation de privilege : un joker conditionne battait alors un `block`
-    // pose sur l'agent et l'outil exact (revue Reviewer C, passe 1). Sur le
-    // tier qui compte - agent + outil exact, deja le plus haut - l'effet voulu
-    // est le meme, et la contrainte d'unicite fait de toute facon que les deux
-    // formes ne coexistent pas.
+    // autres (revue Reviewer C, passe 1) : hisser toute regle conditionnee en
+    // tete de chaine laissait un joker conditionne battre un `block` pose sur
+    // l'agent et l'outil exact.
     ordered.push(...conditioned, ...plain);
   }
 
   if (ordered[0]) ordered[0].wins = true;
   return ordered;
 }
+
+/**
+ * The rows that decide one call, most specific first: the gate obeys the first.
+ *
+ * Since #917 an agent holds ONE row per tool it has (`approval_rules`, agent +
+ * exact tool, no condition), and that row is what the Autonomy tab shows and
+ * what the gate applies. The only thing more precise is a row confined to a
+ * folder this job works in ("Approve for this project", #346):
+ *
+ *   0. agent + exact tool, confined to a folder this job is working in
+ *   1. agent + exact tool
+ *
+ * Nothing else decides at run time. A rule that names a server
+ * (`<server>__*`), every tool (`*`) or every agent (agent_id NULL) is a
+ * TEMPLATE: it gives the value of a row when that row is written
+ * (`explainTemplateRules`), never a decision for a call that has no row.
+ *
+ * A rule carrying a folder condition that this job does NOT work in is left out
+ * entirely: it does not apply, so it must not be shown as overridden either.
+ *
+ * Returns `[]` when the agent has no row for this tool: the gate then REFUSES
+ * the call and says why (invariant #4), it never guesses a default.
+ */
+export function explainApprovalRules(
+  rules: readonly ApprovalRuleForChain[],
+  toolName: string,
+  agentId: string,
+  _entityId: string,
+  workspaces?: readonly ChainWorkspace[],
+  platform?: string,
+): ExplainedApprovalRule[] {
+  return rank(
+    rules,
+    [{ tier: 'agent-tool', pick: (r) => r.toolName === toolName && r.agentId === agentId }],
+    workspaces,
+    platform,
+  );
+}
+
+/**
+ * The template rules that would give a NEW row of this agent and tool its
+ * value, most specific first (#917):
+ *
+ *   2. Everyone + exact tool
+ *   3. agent + `<server>__*`
+ *   4. Everyone + `<server>__*`
+ *   5. agent + `*`
+ *   6. Everyone + `*`
+ *
+ * Read only when a row is written (an agent created, a tool that becomes
+ * available to it). With none, the workspace autonomy level gives the value.
+ * Folder-conditioned rules are never templates: they say "in this folder",
+ * which a new row, valid everywhere, cannot inherit.
+ */
+export function explainTemplateRules(
+  rules: readonly ApprovalRuleForChain[],
+  toolName: string,
+  agentId: string,
+  entityId: string,
+): ExplainedApprovalRule[] {
+  const namespace = namespaceOfToolName(toolName);
+  const serverPattern = namespace === null ? null : `${namespace}__*`;
+  const forAgent = (r: ApprovalRuleForChain) => r.agentId === agentId;
+  const forEveryone = (r: ApprovalRuleForChain) => r.agentId === null && r.entityId === entityId;
+  const unconditioned = rules.filter((r) => readCondition(r) === null);
+  return rank(
+    unconditioned,
+    [
+      { tier: 'entity-tool', pick: (r) => r.toolName === toolName && forEveryone(r) },
+      ...(serverPattern === null
+        ? []
+        : ([
+            {
+              tier: 'agent-server',
+              pick: (r: ApprovalRuleForChain) => r.toolName === serverPattern && forAgent(r),
+            },
+            {
+              tier: 'entity-server',
+              pick: (r: ApprovalRuleForChain) => r.toolName === serverPattern && forEveryone(r),
+            },
+          ] satisfies Tier[])),
+      { tier: 'agent-all', pick: (r) => r.toolName === '*' && forAgent(r) },
+      { tier: 'entity-all', pick: (r) => r.toolName === '*' && forEveryone(r) },
+    ],
+    undefined,
+    undefined,
+  );
+}
+
+/**
+ * A rule that names more than one tool: a server (`<server>__*`) or every tool
+ * (`*`). Such a row is a template, never a tool's own row.
+ */
+export function isPatternToolName(toolName: string): boolean {
+  return toolName === '*' || toolName.endsWith('__*');
+}
+
+/**
+ * The row of the shared-file protection (#917): "Replace or remove a shared
+ * file this agent did not create". A SETTING, stored like a tool's row (agent +
+ * this name) and shown on the Autonomy tab beside the tools. The colon keeps it
+ * out of every tool namespace: no tool name may carry one.
+ *
+ * It applies to every call whose tool declares `replacesSharedFile`
+ * (file_write, file_edit, file_move, generate_speech), whatever that tool's
+ * own row says: the stricter of the two decides.
+ */
+export const REPLACE_SHARED_FILE_SETTING = 'setting:replace_shared_file';

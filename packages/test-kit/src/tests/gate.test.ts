@@ -13,15 +13,18 @@ import {
   aBuiltinTool,
   ALL_AUTONOMIES,
   autonomyLabel,
+  TEST_AGENT_ID,
+  TEST_ENTITY_ID,
   type ExecuteToolFn,
+  type TemplateFn,
 } from '../index';
 
-/** Gate factice : applique la règle exacte, sinon `defaultApproval`, sinon exécute. */
+/** Gate factice : applique la ligne de l'outil, refuse sans ligne (#917). */
 const fakeGate: ExecuteToolFn = async (tool, input, ctx, opts) => {
   const rule = opts.approvalRules.find((r) => r.toolName === tool.name);
-  const action = rule?.action ?? tool.defaultApproval;
-  if (action === 'block') return { outcome: 'error', error: 'blocked' };
-  if (action === 'require_approval' && opts.autonomy !== 'fully_autonomous') {
+  if (!rule) return { outcome: 'error', error: 'autonomy_not_set' };
+  if (rule.action === 'block') return { outcome: 'error', error: 'blocked' };
+  if (rule.action === 'require_approval') {
     await opts.onApprovalRequired({ toolName: tool.name });
     return { outcome: 'awaiting_approval', approvalRequestId: 'x' };
   }
@@ -29,7 +32,13 @@ const fakeGate: ExecuteToolFn = async (tool, input, ctx, opts) => {
   return { outcome: 'success', output };
 };
 
-const { expectGate } = createGateHarness(fakeGate);
+/** Modèle factice : un outil qui demande garde sa demande, sauf en autonomie totale. */
+const fakeTemplate: TemplateFn = (tool, ctx) =>
+  tool.defaultApproval === 'require_approval' && ctx.level !== 'fully_autonomous'
+    ? 'require_approval'
+    : 'auto_approve';
+
+const { expectGate } = createGateHarness(fakeGate, fakeTemplate);
 
 describe('le harnais rapporte fidèlement', () => {
   it('distingue « exécuté » de « succès rapporté »', async () => {
@@ -42,7 +51,7 @@ describe('le harnais rapporte fidèlement', () => {
     // Un gate qui rapporte success sans appeler l'outil doit échouer l'attente,
     // pas la satisfaire.
     const menteur: ExecuteToolFn = async () => ({ outcome: 'success', output: {} });
-    const { expectGate: g } = createGateHarness(menteur);
+    const { expectGate: g } = createGateHarness(menteur, fakeTemplate);
     await expect(
       g(aBuiltinTool()).withRules([]).underAutonomy(undefined).toRunWithoutAsking(),
     ).rejects.toThrow(/sans exécution/);
@@ -53,7 +62,7 @@ describe('le harnais rapporte fidèlement', () => {
       outcome: 'awaiting_approval',
       approvalRequestId: 'x',
     });
-    const { expectGate: g } = createGateHarness(muet);
+    const { expectGate: g } = createGateHarness(muet, fakeTemplate);
     await expect(
       g(anMcpTool()).withRules([]).underAutonomy(undefined).toRequireApproval(),
     ).rejects.toThrow(/sans jamais demander/);
@@ -77,6 +86,27 @@ describe('le harnais rapporte fidèlement', () => {
     await expect(
       expectGate(aBuiltinTool()).withRules([]).underAutonomy('propose_confirm').toRequireApproval(),
     ).rejects.toThrow(/propose_confirm/);
+  });
+
+  it('sous un niveau, la ligne de l’outil est celle que le modèle écrit ; une ligne du cas gagne', async () => {
+    const [sous] = await expectGate(anMcpTool())
+      .withRules([])
+      .underAutonomy('fully_autonomous')
+      .run();
+    expect(sous?.outcome).toBe('success');
+    const [posee] = await expectGate(anMcpTool())
+      .withRules([
+        {
+          id: 'r',
+          toolName: 'srv__do_thing',
+          action: 'block',
+          agentId: TEST_AGENT_ID,
+          entityId: TEST_ENTITY_ID,
+        },
+      ])
+      .underAutonomy('fully_autonomous')
+      .run();
+    expect(posee?.outcome).toBe('error');
   });
 
   it('autonomyLabel nomme le défaut livré plutôt que « undefined »', () => {

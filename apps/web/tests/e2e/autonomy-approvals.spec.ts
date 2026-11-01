@@ -27,7 +27,13 @@
  */
 
 import { test, expect } from '@playwright/test';
-import { requireLiveStack } from './helpers.ts';
+import {
+  requireLiveStack,
+  makeDbClient,
+  pollDb,
+  resolveActingUser,
+  testSlugSuffix,
+} from './helpers.ts';
 
 test.beforeAll(async () => {
   await requireLiveStack();
@@ -159,5 +165,103 @@ test.describe('Approvals tab @cap:regler-autonomie/ecran', () => {
     await autoBtn.click();
     // Wait for the server action to finish.
     await expect(autoBtn).not.toBeDisabled({ timeout: 8_000 });
+  });
+});
+
+/**
+ * #917 — the owner's rule: as soon as an agent exists and a tool is available,
+ * its autonomy is a row in the database, and the tab shows that row, the one
+ * the gate applies. Its own agent, created before and deleted after.
+ */
+test.describe('every tool has its row, and the tab shows it (#917) @cap:regler-autonomie/ecran', () => {
+  const SETTING = 'setting:replace_shared_file';
+  let agentId = '';
+
+  test.beforeAll(async () => {
+    const acting = await resolveActingUser();
+    const { agents } = await import('@nodal-agents/db');
+    const { db, close } = makeDbClient();
+    try {
+      const [agent] = await db
+        .insert(agents)
+        .values({
+          entityId: acting.entityId,
+          name: `Autonomy Rows E2E ${testSlugSuffix()}`,
+          slug: `e2e-rows-${testSlugSuffix()}`,
+          personality: 'E2E fixture, never executed.',
+          role: 'agent',
+          active: true,
+        })
+        .returning({ id: agents.id });
+      agentId = agent!.id;
+    } finally {
+      await close();
+    }
+  });
+
+  test.afterAll(async () => {
+    if (!agentId) return;
+    const { agents, eq } = await import('@nodal-agents/db');
+    const { db, close } = makeDbClient();
+    try {
+      await db.delete(agents).where(eq(agents.id, agentId));
+    } finally {
+      await close();
+    }
+  });
+
+  /** The agent's rows valid everywhere, read from the database. */
+  async function rowsOf(): Promise<Map<string, string>> {
+    const { approvalRules, and, eq } = await import('@nodal-agents/db');
+    const { db, close } = makeDbClient();
+    try {
+      const rows = await db
+        .select({ toolName: approvalRules.toolName, action: approvalRules.action })
+        .from(approvalRules)
+        .where(and(eq(approvalRules.agentId, agentId), eq(approvalRules.conditionFolder, '')));
+      return new Map(rows.map((r) => [r.toolName, r.action]));
+    } finally {
+      await close();
+    }
+  }
+
+  test('opening the tab writes a row per tool, each control shows its row, and the shared-file setting is one of them', async ({
+    page,
+  }) => {
+    expect((await rowsOf()).size).toBe(0);
+    await page.goto(`/agents/${agentId}/edit?tab=autonomy`);
+    await expect(page.locator('[data-testid="autonomy-internal-list"]')).toBeVisible({
+      timeout: 30_000,
+    });
+
+    const rows = await rowsOf();
+    expect(rows.size).toBeGreaterThan(10);
+    for (const slug of ['file_read', 'file_write', 'file_move', SETTING]) {
+      const action = rows.get(slug);
+      expect(action, `${slug} has no row`).toBeDefined();
+      await expect(page.getByTestId(`autonomy-btn-${slug}-${action}`)).toHaveAttribute(
+        'aria-pressed',
+        'true',
+      );
+    }
+    await expect(
+      page.getByText('Replace or remove a shared file this agent did not create'),
+    ).toBeVisible();
+
+    // The owner changes the setting: the row reads back, and a reload shows it.
+    const next = rows.get(SETTING) === 'auto_approve' ? 'require_approval' : 'auto_approve';
+    await page.getByTestId(`autonomy-btn-${SETTING}-${next}`).click();
+    expect(
+      await pollDb(async () => ((await rowsOf()).get(SETTING) === next ? 'yes' : null), {
+        timeoutMs: 15_000,
+        intervalMs: 300,
+      }),
+    ).toBe('yes');
+    await page.goto(`/agents/${agentId}/edit?tab=autonomy`);
+    await expect(page.getByTestId(`autonomy-btn-${SETTING}-${next}`)).toHaveAttribute(
+      'aria-pressed',
+      'true',
+      { timeout: 30_000 },
+    );
   });
 });

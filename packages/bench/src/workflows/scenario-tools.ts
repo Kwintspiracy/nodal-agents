@@ -297,6 +297,9 @@ async function currentRule(
         d.eq(d.approvalRules.entityId, entityId),
         d.eq(d.approvalRules.agentId, agentId),
         d.eq(d.approvalRules.toolName, toolName),
+        // La ligne de l'outil, pas une ligne de dossier : les deux coexistent
+        // depuis #917 (0155).
+        d.eq(d.approvalRules.conditionFolder, ''),
       ),
     );
   return row
@@ -329,13 +332,18 @@ async function putBack(
       );
       continue;
     }
+    // Pas de ligne avant le banc : il la retire. La ligne d'un outil ne se
+    // retire pas par le chemin de l'écran (#917), d'où la porte à part.
+    if (c.before === null) {
+      await d.removeAgentToolRowRepo(db, entityId, c.agentId, c.toolName);
+      continue;
+    }
     const r = await d.setApprovalRuleRepo(db, entityId, {
       agentId: c.agentId,
       toolName: c.toolName,
-      action: c.before?.action ?? null,
+      action: c.before.action,
       scope: 'agent',
-      conditionJson: c.before?.conditionJson ?? {},
-      confirmWidening: true,
+      conditionJson: c.before.conditionJson,
     });
     if ('refused' in r)
       throw new Error(`scenario_tools_restore_refused: ${c.toolName}: ${r.refused}`);

@@ -82,13 +82,33 @@ beforeEach(async () => {
     .where(and(eq(approvalRules.agentId, seed.agentId), eq(approvalRules.toolName, 'run_command')));
 });
 
+/** The agent's run_command row, valid everywhere (a folder row lives beside it, #917). */
 async function rule() {
   const rows = await testDb
     .select({ action: approvalRules.action, conditionJson: approvalRules.conditionJson })
     .from(approvalRules)
-    .where(and(eq(approvalRules.agentId, seed.agentId), eq(approvalRules.toolName, 'run_command')));
-  expect(rows.length, 'plus d’une règle run_command pour cet agent').toBeLessThanOrEqual(1);
+    .where(
+      and(
+        eq(approvalRules.agentId, seed.agentId),
+        eq(approvalRules.toolName, 'run_command'),
+        eq(approvalRules.conditionFolder, ''),
+      ),
+    );
+  expect(rows.length, 'plus d’une ligne run_command pour cet agent').toBeLessThanOrEqual(1);
   return rows[0] ?? null;
+}
+
+async function folderRows() {
+  return testDb
+    .select({ action: approvalRules.action, conditionJson: approvalRules.conditionJson })
+    .from(approvalRules)
+    .where(
+      and(
+        eq(approvalRules.agentId, seed.agentId),
+        eq(approvalRules.toolName, 'run_command'),
+        eq(approvalRules.conditionFolder, FOLDER),
+      ),
+    );
 }
 
 async function asNonOwner(run: () => Promise<void>) {
@@ -114,7 +134,7 @@ async function folderRule(action: 'auto_approve' | 'require_approval' | 'block' 
 }
 
 describe('setRunCommandRuleAction @cap:assigner-outils/moteur', () => {
-  it('chaque choix écrit SA règle, et null la retire', async () => {
+  it('chaque choix écrit SA ligne ; il n’y a plus de « pas de ligne » (#917)', async () => {
     const { setRunCommandRuleAction } = await import('../actions.ts');
     const agentId = seed.agentId;
 
@@ -124,17 +144,19 @@ describe('setRunCommandRuleAction @cap:assigner-outils/moteur', () => {
       expect(await rule()).toEqual({ action, conditionJson: {} });
     }
 
-    expect((await setRunCommandRuleAction({ agentId, action: null })).ok).toBe(true);
-    expect(await rule()).toBeNull();
+    // `null` was "let the workspace autonomy decide": refused by validation,
+    // the row stays as it was.
+    expect((await setRunCommandRuleAction({ agentId, action: null })).ok).toBe(false);
+    expect(await rule()).toEqual({ action: 'auto_approve', conditionJson: {} });
   });
 
-  it('hors local-trust, un tiers ne change rien, dans aucun des quatre sens', async () => {
+  it('hors local-trust, un tiers ne change rien, dans aucun des trois sens', async () => {
     const { setRunCommandRuleAction } = await import('../actions.ts');
     await setRunCommandRuleAction({ agentId: seed.agentId, action: 'require_approval' });
     authState.mode = 'local-auth';
 
     await asNonOwner(async () => {
-      for (const action of ['auto_approve', 'require_approval', 'block', null] as const) {
+      for (const action of ['auto_approve', 'require_approval', 'block'] as const) {
         const r = await setRunCommandRuleAction({ agentId: seed.agentId, action });
         expect(r.ok, `${String(action)} accepté pour un tiers`).toBe(false);
         if (!r.ok) expect(r.code).toBe('forbidden');
@@ -149,46 +171,24 @@ describe('setRunCommandRuleAction @cap:assigner-outils/moteur', () => {
     expect(await rule()).toEqual({ action: 'block', conditionJson: {} });
   });
 
-  it('« Run without asking » n’élargit pas une règle de dossier ; Block la remplace', async () => {
+  // #917 : la ligne de dossier vit À CÔTÉ de la ligne de l'outil (0155).
+  // Écrire la ligne de l'outil, dans n'importe quel sens, ne la touche pas.
+  it('une ligne de dossier n’est ni remplacée ni élargie : la ligne de l’outil s’écrit à côté', async () => {
     const { setRunCommandRuleAction } = await import('../actions.ts');
-    await folderRule();
-
-    const partout = await setRunCommandRuleAction({
-      agentId: seed.agentId,
-      action: 'auto_approve',
-    });
-    expect(partout.ok).toBe(false);
-    expect(await rule()).toEqual({
-      action: 'auto_approve',
-      conditionJson: { workspacePath: FOLDER },
-    });
-
-    expect((await setRunCommandRuleAction({ agentId: seed.agentId, action: 'block' })).ok).toBe(
-      true,
-    );
-    expect(await rule()).toEqual({ action: 'block', conditionJson: {} });
-  });
-
-  // Revue de la PR #481 (Reviewer A, P2) : une règle de dossier Block ou Ask
-  // devenait une permission GLOBALE sans refus du serveur.
-  it('« Run without asking » ne remplace pas non plus une règle de dossier Block ou Ask', async () => {
-    const { setRunCommandRuleAction } = await import('../actions.ts');
-    for (const existing of ['block', 'require_approval'] as const) {
+    for (const existing of ['auto_approve', 'block', 'require_approval'] as const) {
       await testDb
         .delete(approvalRules)
         .where(
           and(eq(approvalRules.agentId, seed.agentId), eq(approvalRules.toolName, 'run_command')),
         );
       await folderRule(existing);
-
-      const partout = await setRunCommandRuleAction({
-        agentId: seed.agentId,
-        action: 'auto_approve',
-      });
-
-      expect(partout.ok, `${existing} de dossier élargi en permission globale`).toBe(false);
-      if (!partout.ok) expect(partout.message).toContain(FOLDER);
-      expect(await rule()).toEqual({ action: existing, conditionJson: { workspacePath: FOLDER } });
+      for (const action of ['auto_approve', 'block'] as const) {
+        expect((await setRunCommandRuleAction({ agentId: seed.agentId, action })).ok).toBe(true);
+        expect(await rule()).toEqual({ action, conditionJson: {} });
+        expect(await folderRows(), `${existing} de dossier touché par ${action}`).toEqual([
+          { action: existing, conditionJson: { workspacePath: FOLDER } },
+        ]);
+      }
     }
   });
 

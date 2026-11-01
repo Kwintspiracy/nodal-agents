@@ -30,6 +30,7 @@ import { registerBuiltins } from '../builtin';
 import { executeTool } from '../execute';
 import { MAX_READ_BYTES } from '../builtin/file-ops/workspace';
 import type { ApprovalRule, ExecuteOptions, ToolContext } from '../types';
+import { autonomousRows } from './autonomy-rows-fixture';
 
 const registry = createToolRegistry();
 registerBuiltins(registry);
@@ -99,7 +100,7 @@ function autoApprove(): ExecuteOptions {
       agentId: seed.agentId,
       entityId: seed.entityId,
     })) as ApprovalRule[];
-  return { approvalRules: rules, onApprovalRequired: async () => {} };
+  return { approvalRules: [...rules, ...autonomousRows(seed)], onApprovalRequired: async () => {} };
 }
 
 const sha = (b: string | Buffer): string => createHash('sha256').update(b).digest('hex');

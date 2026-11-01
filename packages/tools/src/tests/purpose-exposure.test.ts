@@ -13,6 +13,7 @@ import { exposeStatedPurpose } from '../purpose-exposure';
 import { createToolRegistry } from '../registry';
 import { registerBuiltins } from '../builtin';
 import type { ApprovalRule, ToolDefinition } from '../types';
+import { rowsAsWritten } from './autonomy-rows-fixture';
 
 const AGENT = '11111111-1111-1111-1111-111111111111';
 const ENTITY = '22222222-2222-2222-2222-222222222222';
@@ -44,8 +45,18 @@ function purposeOf(t: AnyTool): { present: boolean; required: boolean } {
   return { present: true, required: !sansPhrase.success };
 }
 
+/** The tools with the rows the shipped level writes for them (#917), the case's own first. */
 function expose(tools: AnyTool[], rules: ApprovalRule[] = []): AnyTool[] {
-  return exposeStatedPurpose(tools, { approvalRules: rules, agentId: AGENT, entityId: ENTITY });
+  return exposeStatedPurpose(tools, {
+    approvalRules: rowsAsWritten(
+      { agentId: AGENT, entityId: ENTITY },
+      tools,
+      'propose_confirm',
+      rules,
+    ),
+    agentId: AGENT,
+    entityId: ENTITY,
+  });
 }
 
 describe('la liste d’outils d’un job expose `purpose` @cap:approuver-une-action/moteur', () => {

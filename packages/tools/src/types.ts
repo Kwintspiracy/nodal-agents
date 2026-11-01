@@ -294,7 +294,8 @@ export interface ToolContext {
    * par le seam sur le contexte d'exécution, et lu par l'écriture atomique
    * (`writeFileAtomically`), qui refait la même question JUSTE AVANT de
    * remplacer le fichier : entre la porte et l'écriture, quelqu'un a pu le
-   * changer. Absent après une approbation humaine ou en autonomie totale :
+   * changer. Absent après une approbation humaine, ou quand le réglage
+   * « Replace or remove a shared file » de l'agent est Autonomous (#917) :
    * la personne a déjà tranché, ou n'a rien demandé.
    */
   sharedOverwriteUnattended?: boolean;
@@ -592,14 +593,13 @@ export interface ToolDefinition<TInput extends z.ZodTypeAny, TOutput> {
    * stated a promise the run could not keep, the human approved it, and only
    * then did the refusal appear.
    *
-   * `computeApproval` cannot serve this purpose — it is skipped whenever an
-   * approval rule matches, whenever the posture is already 'require_approval'
-   * (which is exactly the safe-by-default tools that need this most), and under
-   * fully_autonomous. A refusal must not depend on any of those.
+   * `replacesSharedFile` cannot serve this purpose — it is judged only when
+   * the call would otherwise run, and under the agent's shared-file setting.
+   * A refusal must not depend on any of those.
    *
    * Reserve it for "this call is impossible here, whoever approves it" —
    * platform, configuration, missing prerequisite. Not for per-call risk, which
-   * is `computeApproval`'s job.
+   * is `replacesSharedFile`'s job.
    */
   preflight?: (input: z.infer<TInput>, ctx: ToolContext) => Promise<void> | void;
   /**
@@ -650,7 +650,7 @@ export interface ToolDefinition<TInput extends z.ZodTypeAny, TOutput> {
    * fields. The pairing is enforced, just not by the compiler — same
    * mechanism as invariants #1, #2 and #6 (see CLAUDE.md).
    *
-   * Same argument as `computeApproval` right below: the answer depends on the
+   * Same argument as `replacesSharedFile` right below: the answer depends on the
    * call's actual TARGET, not on the tool's identity. `file_write` writes one
    * resolved path; `run_command` hands a shell to the agent and that shell
    * writes wherever it likes. One flag cannot say both.
@@ -697,26 +697,20 @@ export interface ToolDefinition<TInput extends z.ZodTypeAny, TOutput> {
    */
   reportsHarnessWrites?: boolean;
   /**
-   * Optional PER-CALL destructiveness check, complementing the static
-   * `defaultApproval` above for tools where gating depends on the call's
-   * actual TARGET, not the tool's identity — e.g. `file_write`/`file_edit`
-   * only need a human in the loop when the resolved path would overwrite an
-   * EXISTING file inside the entity-wide SHARED workspace (D1), never for a
-   * brand-new file or a workspace the owner explicitly attached. Declaring a
-   * static `defaultApproval: 'require_approval'` on those tools would gate
-   * EVERY write instead of just the destructive-on-shared ones, so this hook
-   * exists to make that decision per call instead.
+   * Whether THIS call would replace or remove an existing file of the shared
+   * workspace that this job did not write (D1, #505). Declared by every tool
+   * that can (file_write, file_edit, file_move, generate_speech), and judged by
+   * the gate under the agent's shared-file SETTING
+   * (`REPLACE_SHARED_FILE_SETTING`, #917), whatever the tool's own row says:
+   * the stricter of the two decides. A brand-new file, a file this job wrote,
+   * or a workspace the owner attached answers false.
    *
-   * Evaluated by `executeTool` only when no explicit approval rule matched
-   * (same precedence as `defaultApproval` — an explicit rule always wins)
-   * and autonomy is not `fully_autonomous`. Return 'require_approval' to gate
-   * THIS call; return undefined to leave the tool's ordinary posture
-   * untouched.
+   * Until #917 this was `computeApproval`, consulted only when no rule named
+   * the tool and the workspace was not fully autonomous: the Autonomy tab
+   * showed a tool Autonomous and the call still asked, with nothing on screen
+   * to say why. The check is now a visible setting with its own row.
    */
-  computeApproval?: (
-    input: z.infer<TInput>,
-    ctx: ToolContext,
-  ) => Promise<'require_approval' | undefined>;
+  replacesSharedFile?: (input: z.infer<TInput>, ctx: ToolContext) => Promise<boolean>;
   /**
    * What the model reads of a successful result, when that is not the result
    * itself.
@@ -834,27 +828,21 @@ export interface ApprovalGateRequest {
 }
 
 export interface ExecuteOptions {
-  /** Approval rules loaded from DB for this agent/entity. Pass [] if not applicable. */
-  approvalRules: ApprovalRule[];
   /**
-   * The workspace ROOT's autonomy level, which relaxes the safe-by-default
-   * `require_approval` posture — but ONLY where no explicit rule applies (a
-   * user/master-switch `require_approval` rule still wins) and the
-   * catastrophic-command hardline floor still forces a human decision:
-   *   - `fully_autonomous`  → auto-approve everything (no prompts, the owner's call);
-   *   - `destructive_gate`  → auto-approve ordinary work, but KEEP the gate for
-   *     destructive/heavy actions (a `destructive` tool, or a run_command that
-   *     deletes / installs / downloads / kills / formats — isDestructiveOrHeavyCommand);
-   *   - `propose_confirm` / undefined → no relaxation (every gated tool still asks).
+   * The agent's autonomy rows, loaded from `approval_rules` (#917): ONE row
+   * per tool it holds, which the gate applies as is. A call whose tool has no
+   * row here is REFUSED, never run on a guessed default. The workspace
+   * autonomy level is not an option of the gate any more: it only gives the
+   * value of a row when that row is written.
    */
-  autonomy?: 'propose_confirm' | 'destructive_gate' | 'fully_autonomous';
+  approvalRules: ApprovalRule[];
   /**
    * What this agent may do with a shell, per kind of action (#464, resolved
    * from `agents.shell_policy`). Judged on every command `run_command` and
    * `declare_verification` will run, at every autonomy level: `never` blocks
    * with the reason, `ask` holds the command for approval with the kinds of
-   * action named. Under `destructive_gate` it REPLACES the heavy-command
-   * classifier for those two tools. The catastrophic floor still applies.
+   * action named, whatever the tool's row says. The catastrophic floor still
+   * applies.
    *
    * The job loop passes it on every agent turn. It is absent on the replay of
    * a call a human already approved (the person saw this exact command), and

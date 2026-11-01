@@ -2,58 +2,35 @@
 //
 // The "Run commands" section used to say "Commands ask for your approval by
 // default." Under `destructive_gate` that was false: with no rule, an ordinary
-// command runs without asking (run 06a949cb, 23/09). And under
-// `fully_autonomous` it is the opposite of what the level's name suggests: full
-// autonomy never covers the shell, only a rule on `run_command` does
-// (packages/tools/src/execute.ts, the code-execution exception). The sentence is
-// computed from the same facts the engine reads, so it cannot drift from what
-// the gate does.
-
-import type { RootGrants } from '@nodal-agents/shared';
+// command ran without asking (run 06a949cb, 23/09). Since #917 there is no
+// "no rule": `run_command` has a row like every tool, the gate applies it, and
+// this sentence says it. The workspace autonomy level is not read here: it
+// only gave the row its first value.
 
 export function runCommandsTruth({
   rule,
   paused,
-  autonomy,
-  folder = null,
 }: {
-  /** The agent's rule on `run_command`, if any. */
+  /** The agent's row for `run_command`; `null` only when it is missing. */
   rule: 'auto_approve' | 'require_approval' | 'block' | null;
-  /** The workspace auto-run brake: an `auto_approve` rule is then dormant. */
+  /** The workspace auto-run brake: an `auto_approve` row is then dormant. */
   paused: boolean;
-  /** `null`: the workspace level could not be read, and the sentence says so. */
-  autonomy: RootGrants['autonomy'] | null;
-  /**
-   * The folder the rule is confined to, if any. The rule only holds there;
-   * elsewhere the workspace autonomy decides (review of PR #481, Reviewer A).
-   */
-  folder?: string | null;
 }): string {
-  if (rule !== null && folder !== null) {
-    const elsewhere = 'Elsewhere, the workspace autonomy decides.';
-    if (rule === 'block') return `In ${folder}, a rule blocks commands. ${elsewhere}`;
-    if (rule === 'require_approval') {
-      return `In ${folder}, every command asks for your approval. ${elsewhere}`;
-    }
-    if (paused) {
-      return `In ${folder}, Run without asking is paused by the auto-run brake: every command asks for your approval. ${elsewhere}`;
-    }
-    return `In ${folder}, commands run without asking, except the kinds of action below set to Ask me or Never. ${elsewhere}`;
-  }
-  if (rule === 'block') return 'This agent cannot run commands: a rule blocks them.';
+  if (rule === null) return 'No setting: every command is refused until you choose one.';
+  if (rule === 'block') return 'This agent cannot run commands.';
   if (rule === 'auto_approve' && paused) {
     return 'Run without asking is paused by the auto-run brake: every command asks for your approval.';
   }
   if (rule === 'auto_approve') {
     return 'Commands run without asking, except the kinds of action below set to Ask me or Never.';
   }
-  if (rule === 'require_approval') return 'Every command asks for your approval.';
-  if (autonomy === null) return 'How commands run depends on the workspace autonomy.';
-  if (autonomy === 'destructive_gate') {
-    return 'Ordinary commands run without asking: the workspace only gates risky actions. The kinds of action below follow their setting.';
-  }
-  if (autonomy === 'fully_autonomous') {
-    return 'Every command asks for your approval. Full autonomy never covers the shell: only Run without asking does.';
-  }
   return 'Every command asks for your approval.';
 }
+
+/**
+ * The floor no setting lifts (#917): said where the tool is shown, so the
+ * row never promises more than the gate gives (packages/tools/src/execute.ts,
+ * the catastrophic-command floor).
+ */
+export const RUN_COMMAND_FLOOR =
+  'A command that can wipe this machine (formatting a disk, a fork bomb) always asks, whatever this setting says.';

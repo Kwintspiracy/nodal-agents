@@ -721,7 +721,7 @@ export const WORKFLOW_TEMPLATE_PROTECTED_MESSAGE =
  * D1 gate: file_write/file_edit only need a human in the loop when the call
  * would OVERWRITE an EXISTING file inside the shared workspace — never for a
  * brand-new file, and never for an attached or private workspace. Wired as
- * each tool's `computeApproval` hook (see ToolDefinition) so the decision is
+ * each tool's `replacesSharedFile` hook (see ToolDefinition) so the decision is
  * made PER CALL instead of a blanket `defaultApproval` that would gate every
  * write regardless of target.
  *

@@ -31,8 +31,7 @@ export interface PurposeExposureContext {
 
 /**
  * Vrai quand, pour CET agent, l'outil demande l'approbation d'une personne
- * avant de s'exécuter — par une règle qui le nomme (ou un wildcard), ou par sa
- * propre posture `defaultApproval`.
+ * avant de s'exécuter : sa ligne d'autonomie dit Ask first (#917).
  *
  * `block` rend faux : un outil interdit ne demande rien, il refuse.
  */
@@ -43,8 +42,9 @@ export function asksForApprovalFirst(tool: AnyTool, ctx: PurposeExposureContext)
     ctx.agentId,
     ctx.entityId,
   );
-  const action = rule?.action ?? tool.defaultApproval;
-  return action === 'require_approval';
+  // The agent's row and nothing else (#917): a tool without one is refused
+  // by the gate, and asks nobody.
+  return rule?.action === 'require_approval';
 }
 
 /**

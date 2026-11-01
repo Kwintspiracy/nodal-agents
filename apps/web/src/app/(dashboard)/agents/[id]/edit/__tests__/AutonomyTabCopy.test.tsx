@@ -1,14 +1,14 @@
-// AutonomyTabCopy.test.tsx : les textes de l'onglet Approvals (issue #382), et
-// ce qu'une règle confinée à un dossier y montre (issue #361).
+// AutonomyTabCopy.test.tsx : ce que l'onglet Autonomie MONTRE (issues #382,
+// #361, #917).
 //
-// Ce que ça prouve, sur le DOM rendu : chaque phrase de la table « Screen copy »
-// de l'issue est bien À L'ÉCRAN, et l'onglet montre `label`/`summary` des outils
-// natifs, jamais leur `description`. Les textes sont ceux de Quentin, relus
-// contre le code ; ce fichier est ce qui empêche une reformulation silencieuse.
+// Depuis #917 chaque ligne de l'onglet est une ligne en base : celle que la
+// porte applique. Ce fichier prouve, sur le DOM rendu, que l'écran montre la
+// valeur de la ligne et rien d'autre (aucune valeur calculée pour un outil qui
+// n'en a pas), que chaque geste envoie la ligne qu'il écrit, et que les textes
+// de Quentin sont à l'écran.
 //
 // L'onglet est rendu en entier, avec ses sections filles, parce que la copie
-// est répartie entre elles : une assertion par section prouverait chaque bout
-// sans prouver que le propriétaire les lit ensemble.
+// est répartie entre elles.
 
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { act } from 'react';
@@ -28,6 +28,15 @@ type InternalTool = {
   risk: 'read' | 'write' | 'destructive';
   unblockableReason?: string;
 };
+type HeldTool = {
+  name: string;
+  label: string;
+  summary: string;
+  risk: 'read' | 'write' | 'destructive';
+  source: 'builtin' | 'delivery' | 'connector' | 'mcp' | 'delegation';
+};
+
+const SETTING = 'setting:replace_shared_file';
 
 const INTERNAL_TOOLS: InternalTool[] = [
   {
@@ -49,18 +58,49 @@ const INTERNAL_TOOLS: InternalTool[] = [
   },
 ];
 
+const HELD_TOOLS: HeldTool[] = [
+  {
+    name: 'file_write',
+    label: 'Write a workspace file',
+    summary: '',
+    risk: 'write',
+    source: 'builtin',
+  },
+  { name: 'return_result', label: 'Finish a task', summary: '', risk: 'write', source: 'builtin' },
+  {
+    name: 'run_command',
+    label: 'Run a command',
+    summary: '',
+    risk: 'destructive',
+    source: 'builtin',
+  },
+  {
+    name: 'create_mcp',
+    label: 'Add an MCP server',
+    summary: 'Connect a new MCP server to the workspace.',
+    risk: 'write',
+    source: 'builtin',
+  },
+  { name: 'cogni_cortex__read_page', label: 'read_page', summary: '', risk: 'read', source: 'mcp' },
+];
+
 const actions = vi.hoisted(() => {
   const noop = () => vi.fn(async () => ({ ok: true as const, data: undefined }));
   return {
     listAgentApprovalRulesAction: vi.fn(async () => ({ ok: true as const, data: [] as Rule[] })),
     listInternalToolsAction: vi.fn(async () => ({ ok: true as const, data: [] as InternalTool[] })),
+    listAgentAutonomyToolsAction: vi.fn(async () => ({
+      ok: true as const,
+      data: { tools: [] as HeldTool[], sharedFileSetting: true },
+    })),
     // Typée avec son argument : les assertions portent sur CE QUI EST ENVOYÉ
     // au serveur, pas sur un compteur d'appels (invariant #5).
     setAgentApprovalRuleAction: vi.fn(
       async (_raw: {
         agentId: string;
         toolName: string;
-        action: string;
+        action: string | null;
+        workspacePath?: string;
       }): Promise<
         { ok: true; data: undefined } | { ok: false; code: string; message: string }
       > => ({ ok: true, data: undefined }),
@@ -68,7 +108,7 @@ const actions = vi.hoisted(() => {
     setRunCommandRuleAction: vi.fn(
       async (_raw: {
         agentId: string;
-        action: 'auto_approve' | 'require_approval' | 'block' | null;
+        action: 'auto_approve' | 'require_approval' | 'block';
       }): Promise<
         { ok: true; data: undefined } | { ok: false; code: string; message: string }
       > => ({
@@ -110,11 +150,6 @@ const AGENT_ID = '33333333-3333-4333-8333-333333333333';
 let container: HTMLDivElement;
 let root: Root;
 
-/**
- * Deux operations de connecteur : celle qui declare ses textes (issue #382) et
- * celle qui n'en declare pas encore. Le repli de la seconde est ce que l'ecran
- * montre aux douze adaptateurs non encore repris.
- */
 const CONNECTOR = {
   connectorId: 'c1',
   slug: 'cloudflare',
@@ -156,14 +191,31 @@ const MCP_SERVER = {
   ],
 };
 
+const row = (
+  toolName: string,
+  action: 'auto_approve' | 'require_approval' | 'block',
+  folder?: { path: string; label: string },
+): Rule => ({
+  id: `r-${toolName}-${folder?.label ?? ''}`,
+  toolName,
+  action,
+  conditionJson: folder ? { workspacePath: folder.path } : null,
+  workspaceLabel: folder?.label ?? null,
+});
+
 async function render(
   connectors: unknown[] = [],
   rules: Rule[] = [],
   mcpServers: unknown[] = [],
+  opts: { skills?: string[]; tools?: HeldTool[]; sharedFileSetting?: boolean } = {},
 ): Promise<string> {
   actions.listAgentApprovalRulesAction.mockImplementation(async () => ({
     ok: true as const,
     data: rules,
+  }));
+  actions.listAgentAutonomyToolsAction.mockImplementation(async () => ({
+    ok: true as const,
+    data: { tools: opts.tools ?? HELD_TOOLS, sharedFileSetting: opts.sharedFileSetting ?? true },
   }));
   container = document.createElement('div');
   document.body.appendChild(container);
@@ -175,28 +227,40 @@ async function render(
         connectors={connectors as never}
         mcpServers={mcpServers as never}
         hasTelegramBot={false}
-        attachedSkills={[
-          {
-            id: 'skill-1',
-            slug: 'command-execution',
-            name: 'Run commands',
-            description: null,
-            assigned: true,
-          } as never,
-        ]}
+        attachedSkills={(opts.skills ?? ['command-execution']).map(
+          (slug) =>
+            ({
+              id: `skill-${slug}`,
+              slug,
+              name: slug,
+              description: null,
+              assigned: true,
+            }) as never,
+        )}
         autoRunPaused={false}
         isOwner
         commandAllowlist={null}
         mayChangeTeam={false}
         shellPolicy={null}
-        workspaceAutonomy={null}
       />,
     );
   });
-  // Les deux chargements (règles, outils natifs) se résolvent après le montage.
   await act(async () => {});
   return container.textContent ?? '';
 }
+
+function control(slug: string, action: string): HTMLButtonElement {
+  const el = container.querySelector<HTMLButtonElement>(
+    `[data-testid="autonomy-btn-${slug}-${action}"]`,
+  );
+  if (!el) throw new Error(`no control for ${slug} ${action}`);
+  return el;
+}
+
+const pressed = (slug: string) =>
+  ['auto_approve', 'require_approval', 'block'].filter(
+    (a) => control(slug, a).getAttribute('aria-pressed') === 'true',
+  );
 
 // Le corps du document est PARTAGÉ : la boîte de confirmation sort par un
 // portail, et un rendu laissé en place ferait lire à l'assertion suivante un
@@ -209,9 +273,10 @@ afterEach(() => {
 });
 
 beforeEach(() => {
-  actions.listAgentApprovalRulesAction.mockImplementation(async () => ({
-    ok: true as const,
-    data: [],
+  actions.setAgentApprovalRuleAction.mockReset();
+  actions.setAgentApprovalRuleAction.mockImplementation(async () => ({
+    ok: true,
+    data: undefined,
   }));
   actions.listInternalToolsAction.mockImplementation(async () => ({
     ok: true as const,
@@ -219,474 +284,73 @@ beforeEach(() => {
   }));
 });
 
-// Sans règle, la ligne d'une opération de connecteur montre ce que le runner
-// fera : le `requiresApproval` de sa fiche est la posture par défaut de l'outil
-// (issue #735). Avant, toute ligne sans règle lisait « Run without asking »,
-// alors qu'un envoi d'e-mail demande désormais d'abord.
-describe("la ligne d'une opération sans règle dit sa posture par défaut @cap:regler-autonomie/ecran", () => {
-  const pressed = (slug: string, action: string) =>
-    container
-      .querySelector(`[data-testid="autonomy-btn-${slug}-${action}"]`)
-      ?.getAttribute('aria-pressed');
-  const WITH_QUIET_OP = {
-    ...CONNECTOR,
-    availableOperations: [
-      ...CONNECTOR.availableOperations,
-      {
-        slug: 'quiet_write',
-        name: 'Quiet write',
-        risk: 'write' as const,
-        requiresApproval: false,
-        description: 'A write that does not ask.',
-      },
-    ],
-  };
-
-  it('« Ask for approval » pour une opération marquée requiresApproval, « Run without asking » pour les autres', async () => {
-    await render([WITH_QUIET_OP]);
-    expect(pressed('cloudflare_deploy', 'require_approval')).toBe('true');
-    expect(pressed('cloudflare_deploy', 'auto_approve')).toBe('false');
-    expect(pressed('quiet_write', 'auto_approve')).toBe('true');
-    expect(pressed('quiet_write', 'require_approval')).toBe('false');
-  });
-
-  it('une règle explicite l’emporte sur la posture par défaut', async () => {
-    await render(
-      [WITH_QUIET_OP],
-      [
-        {
-          id: 'r1',
-          toolName: 'cloudflare_deploy',
-          action: 'auto_approve',
-          conditionJson: null,
-          workspaceLabel: null,
-        },
-      ],
-    );
-    expect(pressed('cloudflare_deploy', 'auto_approve')).toBe('true');
-    expect(pressed('cloudflare_deploy', 'require_approval')).toBe('false');
-  });
-});
-
-describe("les textes de l'onglet Approvals @cap:regler-autonomie/ecran", () => {
-  it('ouvre sur ce que le propriétaire décide ici', async () => {
-    const text = await render();
-    expect(text).toContain(
-      'Choose what this agent can do on its own, what needs your approval, and what it cannot do. Set a rule for each external tool. Built-in tools are listed below.',
-    );
-  });
-
-  it('dit la règle par défaut et quand un changement prend effet', async () => {
-    const text = await render();
-    expect(text).toContain(
-      'Connector tools marked ⚠ in the Connectors tab ask first unless you set a rule. The others run without asking. Third-party tools, commands and the tools that change your workspace ask first.',
-    );
-    expect(text).toContain("Changes apply at the agent's next step.");
-  });
-
-  it('dit ce que devient un outil bloqué', async () => {
-    const text = await render();
-    expect(text).toContain(
-      'Blocked tools stay visible to the agent. If it tries to use one, it is told the tool is blocked.',
-    );
-  });
-
-  it('présente les outils natifs, et les rend par label et summary', async () => {
-    const text = await render();
-    expect(text).toContain(
-      'Every agent has these tools. Set which ones this agent may use, including memory, web search, and workspace files.',
-    );
-    expect(text).toContain('Write a workspace file');
-    expect(text).toContain('Create or replace a file safely.');
-    expect(text).toContain('file_write');
-  });
-
-  it('dit pourquoi return_result ne se bloque pas', async () => {
-    const text = await render();
-    expect(text).toContain(
-      'Always available. The agent needs this tool to finish a job or explain why it is stuck. It cannot be blocked.',
-    );
-  });
-
-  it('porte les trois décisions du curseur', async () => {
-    const text = await render();
-    expect(text).toContain('Run without asking');
-    expect(text).toContain('Ask for approval');
-    expect(text).toContain('Block');
-    // Les anciens mots ont disparu de l'écran, pas seulement été doublés.
-    expect(text).not.toContain('Autonomous');
-    expect(text).not.toContain('Ask first');
-  });
-
-  it('rend une operation de connecteur par ses textes de proprietaire, jamais par sa description', async () => {
-    // Le chemin `ownerTextFor` : sans ce cas, remplacer le repli par
-    // `op.description ?? op.summary` laisserait les suites vertes et ramenerait
-    // le mur ecrit pour le modele (revue Reviewer C, passe 1, P2-11).
-    const text = await render([CONNECTOR]);
-
-    expect(text).toContain('Publish to Cloudflare Workers');
-    expect(text).toContain(
-      'Publish a built site or app from the workspace. It goes live at a workers.dev address.',
-    );
-    expect(text).not.toContain('Publish a built static site/app directory');
-    expect(text).not.toContain('Deploy to Workers');
-  });
-
-  it("montre encore le nom et la description d'un connecteur pas encore repris", async () => {
-    // Douze adaptateurs n'ont pas encore leurs deux textes. Tant qu'ils ne les
-    // ont pas, leur ligne reste celle d'avant plutot qu'une ligne vide.
-    const text = await render([CONNECTOR]);
-
-    expect(text).toContain('Legacy operation');
-    expect(text).toContain(
-      'What this connector has always shown, for an adapter not yet rewritten.',
-    );
-  });
-
-  it('dit ce que sont les commandes, et la liste qui les borne', async () => {
-    await render();
-    // Plus de « asks by default » (#464) : ce que les commandes font VRAIMENT
-    // dépend de l'autonomie de l'espace, et sans elle la phrase le dit.
-    expect(container.textContent).not.toContain('Commands ask for your approval by default.');
-    expect(container.textContent).toContain('How commands run depends on the workspace autonomy.');
-    expect(container.textContent).toContain('What it may do with a shell');
-    expect(container.textContent).toContain('Run code written into a command');
-    // La liste de programmes est sous « Advanced », repliée quand aucune n'est posée.
-    expect(container.textContent).not.toContain('Allowed commands');
-    await act(async () => {
-      container.querySelector<HTMLButtonElement>('[data-testid="shell-advanced"]')!.click();
-    });
-    const text = container.textContent ?? '';
-    expect(text).toContain('Run commands on this machine');
-    expect(text).toContain(
-      'Any command the agent writes, in a shell on this machine. Every command is logged.',
-    );
-    expect(text).toContain(
-      'No choice set: the workspace autonomy decides, as the line above says.',
-    );
-    expect(text).toContain('Allowed commands');
-    expect(text).toContain('Leave the list empty to allow any command.');
-    expect(text).toContain(
-      'Add one command prefix per line, such as node or npx vitest. Each entry allows that program and its arguments. With a list, commands run without a shell: no chaining, no redirection. Clear the list and save to remove the limit.',
-    );
-    expect(text).toContain('Block all commands');
-    expect(text).toContain(
-      'This list applies only to run_command. Skill scripts, Code tasks, and verification commands are unaffected.',
-    );
-  });
-
-  it("dit ce que l'agent peut faire de son équipe, et ce qu'être en lecture seule veut dire", async () => {
-    const text = await render();
-    expect(text).toContain('Let this agent change its team');
-    expect(text).toContain(
-      'Allow the agent to create, attach, or detach agents during a run. When off, it must work with the team you assigned and tell you if it needs someone else.',
-    );
-    expect(text).toContain('Read-only agent');
-    expect(text).toContain(
-      'Prevent this agent from writing files, editing skill files, running commands, or running skill scripts. You can turn this off at any time.',
-    );
-  });
-});
-
-describe('une règle confinée à un dossier @cap:regler-autonomie/ecran', () => {
-  const FOLDER_RULE: Rule = {
-    id: 'r1',
-    toolName: 'file_write',
-    action: 'auto_approve',
-    conditionJson: { workspacePath: 'D:\APPS\Dev' },
-    workspaceLabel: 'Dev',
-  };
-
-  function control(slug: string, action: string): HTMLButtonElement {
-    const el = container.querySelector<HTMLButtonElement>(
-      `[data-testid="autonomy-btn-${slug}-${action}"]`,
-    );
-    if (!el) throw new Error(`no control for ${slug} ${action}`);
-    return el;
-  }
-
-  function dialogText(): string {
-    return document.body.textContent ?? '';
-  }
-
-  it('nomme le dossier sur la ligne, au lieu de laisser lire « partout »', async () => {
-    await render([], [FOLDER_RULE]);
-    expect(container.querySelector('[data-testid="autonomy-folder-file_write"]')?.textContent).toBe(
-      'in Dev',
-    );
-  });
-
-  it('ne dit rien pour une règle sans condition, et le dit pour sa voisine', async () => {
-    // Revue Reviewer C, passe 2, question 8 : sur la seule ABSENCE, ce test
-    // passait aussi sur le code d'avant, qui n'affichait jamais rien. Les deux
-    // lignes sont rendues ensemble, dans le même DOM : l'une porte un dossier,
-    // l'autre non.
+describe('every row shows the value stored for this agent, and nothing else (#917) @cap:regler-autonomie/ecran', () => {
+  it('a connector operation shows ITS row, whatever the operation asks by default', async () => {
     await render(
       [CONNECTOR],
-      [
-        {
-          id: 'r2',
-          toolName: 'file_write',
-          action: 'block',
-          conditionJson: null,
-          workspaceLabel: null,
-        },
-        {
-          id: 'r3',
-          toolName: 'legacy_write',
-          action: 'auto_approve',
-          conditionJson: { workspacePath: 'D:\APPS\Dev' },
-          workspaceLabel: 'Dev',
-        },
-      ],
+      [row('cloudflare_deploy', 'auto_approve'), row('legacy_write', 'block')],
     );
-    expect(container.querySelector('[data-testid="autonomy-folder-file_write"]')).toBeNull();
+    // `requiresApproval: true` on both: the row decides what is shown.
+    expect(pressed('cloudflare_deploy')).toEqual(['auto_approve']);
+    expect(pressed('legacy_write')).toEqual(['block']);
+  });
+
+  it('a tool without a row shows no choice and says it is refused: no computed default', async () => {
+    await render([CONNECTOR], [row('cloudflare_deploy', 'require_approval')]);
+    expect(pressed('legacy_write')).toEqual([]);
     expect(
-      container.querySelector('[data-testid="autonomy-folder-legacy_write"]')?.textContent,
-    ).toBe('in Dev');
+      container.querySelector('[data-testid="autonomy-unset-legacy_write"]')?.textContent,
+    ).toBe('Not set: this tool is refused until you choose.');
+    // A built-in without a row: the same, never "Run without asking".
+    expect(pressed('file_write')).toEqual([]);
   });
 
-  it("avertit AVANT d'enregistrer, et n'écrit rien tant que personne n'a répondu", async () => {
-    await render([], [FOLDER_RULE]);
-    actions.setAgentApprovalRuleAction.mockClear();
-
+  it('a change sends the row it writes, and the row shows it', async () => {
+    await render([CONNECTOR], [row('cloudflare_deploy', 'require_approval')]);
     await act(async () => {
-      control('file_write', 'block').click();
+      control('cloudflare_deploy', 'block').click();
     });
-
-    expect(dialogText()).toContain('Remove the folder limit?');
-    expect(dialogText()).toContain(
-      'This rule applies only in Dev today. Saving from here applies your choice everywhere this agent works.',
-    );
-    // Revue Reviewer C, passe 3, C5 : la carte d'approbation n'existe que
-    // quand une demande existe. Y envoyer le propriétaire, c'est peut-être
-    // l'envoyer devant un écran vide.
-    expect(dialogText()).not.toContain('approval card');
-    expect(actions.setAgentApprovalRuleAction.mock.calls).toEqual([]);
-  });
-
-  it('enregistre le choix une fois la perte acceptée', async () => {
-    await render([], [FOLDER_RULE]);
-    actions.setAgentApprovalRuleAction.mockClear();
-
-    await act(async () => {
-      control('file_write', 'block').click();
-    });
-    const confirm = [...document.body.querySelectorAll('button')].find(
-      (b) => b.textContent === 'Remove the limit',
-    );
-    expect(confirm).toBeDefined();
-    await act(async () => {
-      confirm!.click();
-    });
-
     expect(actions.setAgentApprovalRuleAction.mock.calls.at(-1)?.[0]).toEqual({
       agentId: AGENT_ID,
-      toolName: 'file_write',
+      toolName: 'cloudflare_deploy',
       action: 'block',
     });
+    expect(pressed('cloudflare_deploy')).toEqual(['block']);
   });
 
-  it('garde la règle telle quelle quand on renonce', async () => {
-    await render([], [FOLDER_RULE]);
-    actions.setAgentApprovalRuleAction.mockClear();
-
-    await act(async () => {
-      control('file_write', 'block').click();
-    });
-    const cancel = [...document.body.querySelectorAll('button')].find(
-      (b) => b.textContent === 'Cancel',
-    );
-    await act(async () => {
-      cancel!.click();
-    });
-
-    expect(actions.setAgentApprovalRuleAction.mock.calls).toEqual([]);
-    expect(container.querySelector('[data-testid="autonomy-folder-file_write"]')?.textContent).toBe(
-      'in Dev',
-    );
-  });
-
-  it('avertit AUSSI pour « Ask for approval », pas seulement pour « Block »', async () => {
-    // Revue Reviewer C, passe 2, question 9 : la suite ne couvrait que `block`,
-    // donc restreindre la boîte à ce seul cas serait passé inaperçu, et un
-    // passage en « Ask for approval » aurait perdu le dossier sans un mot.
-    await render([], [FOLDER_RULE]);
-    actions.setAgentApprovalRuleAction.mockClear();
-
-    await act(async () => {
-      control('file_write', 'require_approval').click();
-    });
-
-    expect(dialogText()).toContain('Remove the folder limit?');
-    expect(actions.setAgentApprovalRuleAction.mock.calls).toEqual([]);
-  });
-
-  it("n'annonce aucun élargissement pour « Run without asking », que le serveur refuse", async () => {
-    // Revue Reviewer C, passe 1, C1 : `refuseGlobalGrantOverFolderRule` refuse
-    // cette écriture. Faire confirmer « la limite va sauter » serait annoncer
-    // ce qui n'arrivera pas. L'appel part, et c'est le serveur qui parle.
+  it('a refused write puts the row back as the server holds it', async () => {
     actions.setAgentApprovalRuleAction.mockImplementation(async () => ({
-      ok: false as const,
+      ok: false,
       code: 'validation_failed',
-      message: 'file_write is already approved for this agent only inside D:\APPS\Dev.',
+      message: 'nope',
     }));
-    await render([], [{ ...FOLDER_RULE, action: 'require_approval' }]);
-    actions.setAgentApprovalRuleAction.mockClear();
-
+    await render([CONNECTOR], [row('cloudflare_deploy', 'require_approval')]);
     await act(async () => {
-      control('file_write', 'auto_approve').click();
+      control('cloudflare_deploy', 'auto_approve').click();
     });
-
-    expect(dialogText()).not.toContain('Remove the folder limit?');
-    expect(actions.setAgentApprovalRuleAction.mock.calls.at(-1)?.[0]).toEqual({
-      agentId: AGENT_ID,
-      toolName: 'file_write',
-      action: 'auto_approve',
-    });
+    await act(async () => {});
+    expect(pressed('cloudflare_deploy')).toEqual(['require_approval']);
   });
 
-  it('ne retire pas le dossier de la ligne avant la réponse du serveur', async () => {
-    // C2 : poser tout de suite une ligne sans condition ferait lire
-    // « partout » sur une règle que la base garde confinée.
-    let resolveSave: ((r: { ok: true; data: undefined }) => void) | undefined;
-    actions.setAgentApprovalRuleAction.mockImplementation(
-      () =>
-        new Promise<{ ok: true; data: undefined }>((r) => {
-          resolveSave = r;
-        }),
-    );
-    await render([], [FOLDER_RULE]);
-
+  it('relâche la ligne quand la promesse d’enregistrement rejette', async () => {
+    // Revue Reviewer C, passe 4, C1 : un rejet saute tout le `then`. La ligne
+    // restait grise pour toujours, sans un mot.
+    actions.setAgentApprovalRuleAction.mockImplementation(async () => {
+      throw new Error('network down');
+    });
+    await render([], [row('file_write', 'auto_approve')]);
     await act(async () => {
       control('file_write', 'block').click();
     });
-    const confirm = [...document.body.querySelectorAll('button')].find(
-      (b) => b.textContent === 'Remove the limit',
-    );
-    await act(async () => {
-      confirm!.click();
-    });
-
-    // L'écriture est partie, la réponse n'est pas revenue : la ligne dit encore
-    // ce que la base porte.
-    expect(container.querySelector('[data-testid="autonomy-folder-file_write"]')?.textContent).toBe(
-      'in Dev',
-    );
-
-    // Le serveur répond, et la relecture ramène ce qu'il a VRAIMENT écrit :
-    // une règle sans condition. Le dossier quitte la ligne à ce moment-là, et
-    // pas avant.
-    actions.listAgentApprovalRulesAction.mockImplementation(async () => ({
-      ok: true as const,
-      data: [
-        {
-          id: 'r1',
-          toolName: 'file_write',
-          action: 'block',
-          conditionJson: {},
-          workspaceLabel: null,
-        },
-      ],
-    }));
-    await act(async () => {
-      resolveSave?.({ ok: true, data: undefined });
-    });
     await act(async () => {});
-    expect(container.querySelector('[data-testid="autonomy-folder-file_write"]')).toBeNull();
+    expect(control('file_write', 'block').disabled).toBe(false);
   });
 
-  it('nomme le dossier même sur une ligne qui ne peut pas être bloquée', async () => {
-    // Revue Reviewer C, passe 3, C4 : le verrou n'interdit que le blocage, une
-    // règle de dossier existe ici comme ailleurs.
-    await render(
-      [],
-      [
-        {
-          id: 'r5',
-          toolName: 'return_result',
-          action: 'auto_approve',
-          conditionJson: { workspacePath: 'D:\APPS\Dev' },
-          workspaceLabel: 'Dev',
-        },
-      ],
-    );
-    expect(
-      container.querySelector('[data-testid="autonomy-folder-return_result"]')?.textContent,
-    ).toBe('in Dev');
-    // La raison du verrou reste, elle : les deux se lisent ensemble.
-    expect(container.querySelector('[data-testid="autonomy-locked-return_result"]')).not.toBeNull();
-  });
-
-  it("une relecture n'écrase pas une écriture encore en vol", async () => {
-    // Revue Reviewer C, passe 3, C2. La relecture déclenchée par la règle de
-    // dossier peut lire la base AVANT que l'écriture partie entre-temps sur un
-    // autre outil y soit visible. Elle ramène alors l'ancienne valeur, et
-    // comme la seconde réponse ne relit rien, l'écran resterait faux.
-    let resolveFolderSave: ((r: { ok: true; data: undefined }) => void) | undefined;
-    let resolveOtherSave: ((r: { ok: true; data: undefined }) => void) | undefined;
-    actions.setAgentApprovalRuleAction.mockImplementation(
-      (raw) =>
-        new Promise<{ ok: true; data: undefined }>((r) => {
-          if (raw.toolName === 'file_write') resolveFolderSave = r;
-          else resolveOtherSave = r;
-        }),
-    );
-    await render([CONNECTOR], [FOLDER_RULE]);
-
-    // 1. La règle de dossier : confirmée, l'écriture part.
-    await act(async () => {
-      control('file_write', 'block').click();
-    });
-    await act(async () => {
-      [...document.body.querySelectorAll('button')]
-        .find((b) => b.textContent === 'Remove the limit')!
-        .click();
-    });
-
-    // 2. Un autre outil, dont l'écriture est encore en vol.
-    await act(async () => {
-      control('legacy_write', 'block').click();
-    });
-
-    // 3. La première réponse arrive et déclenche une relecture qui n'a pas
-    //    encore vu la seconde écriture.
-    actions.listAgentApprovalRulesAction.mockImplementation(async () => ({
-      ok: true as const,
-      data: [
-        {
-          id: 'r1',
-          toolName: 'file_write',
-          action: 'block',
-          conditionJson: {},
-          workspaceLabel: null,
-        },
-      ],
-    }));
-    await act(async () => {
-      resolveFolderSave?.({ ok: true, data: undefined });
-    });
-    await act(async () => {});
-
-    // La ligne dont personne n'a le résultat garde ce que le propriétaire a
-    // choisi, au lieu de retomber sur l'état d'avant.
-    expect(control('legacy_write', 'block').getAttribute('aria-pressed')).toBe('true');
-    await act(async () => {
-      resolveOtherSave?.({ ok: true, data: undefined });
-    });
-  });
-
-  it("n'affiche pas les règles de l'agent précédent quand on change d'agent", async () => {
-    // Revue Reviewer C, passe 3, C1 : les règles étaient gardées telles quelles
-    // tant que la lecture du nouvel agent n'avait pas abouti, dossiers compris.
-    await render([], [FOLDER_RULE]);
-    expect(container.querySelector('[data-testid="autonomy-folder-file_write"]')?.textContent).toBe(
-      'in Dev',
-    );
-
-    // Le second agent, dont la lecture ÉCHOUE : c'est le cas qui compte. Une
-    // lecture qui réussit remplace les règles de toute façon ; une lecture qui
-    // échoue laissait celles d'avant à l'écran, sous le nom du nouvel agent.
+  it("n'affiche pas les lignes de l'agent précédent quand on change d'agent", async () => {
+    // Revue Reviewer C, passe 3, C1 : une lecture qui échoue laissait celles
+    // d'avant à l'écran, sous le nom du nouvel agent.
+    await render([], [row('file_write', 'block')]);
+    expect(pressed('file_write')).toEqual(['block']);
     actions.listAgentApprovalRulesAction.mockImplementation(
       async () =>
         ({ ok: false, code: 'db_error', message: 'Failed to load approval rules' }) as never,
@@ -704,217 +368,97 @@ describe('une règle confinée à un dossier @cap:regler-autonomie/ecran', () =>
           commandAllowlist={null}
           mayChangeTeam={false}
           shellPolicy={null}
-          workspaceAutonomy={null}
         />,
       );
     });
-
     await act(async () => {});
-    expect(container.querySelector('[data-testid="autonomy-folder-file_write"]')).toBeNull();
-    // Et pas seulement le dossier : l'ACTION de l'agent précédent est partie
-    // aussi. Sans cette ligne, le test passait sur le code d'avant la PR, qui
-    // n'affichait jamais de dossier (revue Reviewer C, passe 4, question 5).
-    expect(control('file_write', 'auto_approve').getAttribute('aria-pressed')).toBe('true');
-    expect(control('file_write', 'block').getAttribute('aria-pressed')).toBe('false');
+    expect(pressed('file_write')).toEqual([]);
   });
+});
 
-  it('relâche la ligne quand la promesse d’enregistrement rejette', async () => {
-    // Revue Reviewer C, passe 4, C1 : un rejet saute tout le `then`. La ligne
-    // restait grise pour toujours, et protégée de toute relecture, sans un mot.
-    actions.setAgentApprovalRuleAction.mockImplementation(async () => {
-      throw new Error('network down');
-    });
-    await render([], [FOLDER_RULE]);
-
-    await act(async () => {
-      control('file_write', 'block').click();
-    });
-    await act(async () => {
-      [...document.body.querySelectorAll('button')]
-        .find((b) => b.textContent === 'Remove the limit')!
-        .click();
-    });
-    await act(async () => {});
-
-    expect(control('file_write', 'block').disabled).toBe(false);
-  });
-
-  it('prévient avant que la ligne Run commands ne remplace une règle de dossier', async () => {
-    // Revue Reviewer C, passe 4, C3, puis #468 : changer la ligne REMPLACE la
-    // règle. Quand elle ne valait que dans un dossier, c'est une permission
-    // posée dossier par dossier qui disparaît, et rien sur cet onglet ne sait
-    // la recréer.
-    await render(
-      [],
-      [
-        {
-          id: 'r6',
-          toolName: 'run_command',
-          action: 'auto_approve',
-          conditionJson: { workspacePath: 'D:\APPS\Dev' },
-          workspaceLabel: 'Dev',
-        },
-      ],
+describe('the shared-file setting has its own row (#917) @cap:regler-autonomie/ecran', () => {
+  it('is shown beside the built-in tools, with its value, and a change sends its row', async () => {
+    const text = await render([], [row(SETTING, 'require_approval')]);
+    expect(text).toContain('Replace or remove a shared file this agent did not create');
+    expect(text).toContain(
+      'Writing over, editing, moving or removing a file in the shared folder that another run made. Applies to every file tool, whatever its own setting.',
     );
-    actions.setRunCommandRuleAction.mockClear();
-
-    expect(control('run_command', 'auto_approve').getAttribute('aria-pressed')).toBe('true');
-    expect(
-      container.querySelector('[data-testid="autonomy-folder-run_command"]')?.textContent,
-    ).toBe('in Dev');
-    await act(async () => {
-      control('run_command', 'block').click();
-    });
-
-    expect(dialogText()).toContain('Replace the rule for this folder?');
-    expect(dialogText()).toContain(
-      'Commands run without asking only in Dev today. Changing this replaces that rule with one for every folder.',
-    );
-    expect(actions.setRunCommandRuleAction.mock.calls).toEqual([]);
+    expect(pressed(SETTING)).toEqual(['require_approval']);
 
     await act(async () => {
-      [...document.body.querySelectorAll('button')]
-        .find((b) => b.textContent === 'Replace the rule')!
-        .click();
+      control(SETTING, 'auto_approve').click();
     });
-    expect(actions.setRunCommandRuleAction.mock.calls.at(-1)?.[0]).toEqual({
+    expect(actions.setAgentApprovalRuleAction.mock.calls.at(-1)?.[0]).toEqual({
       agentId: AGENT_ID,
-      action: 'block',
-    });
-  });
-
-  // Revue de la PR #481 (Reviewer A) : le dialogue disait « Run without asking
-  // only in Dev » quelle que soit la règle, promettait un remplacement que le
-  // serveur refuse, et disait « Replace » pour une suppression.
-  it('dit ce que la règle de dossier fait vraiment, et ce que le geste en fera', async () => {
-    await render(
-      [],
-      [
-        {
-          id: 'r7',
-          toolName: 'run_command',
-          action: 'block',
-          conditionJson: { workspacePath: 'D:\APPS\Dev' },
-          workspaceLabel: 'Dev',
-        },
-      ],
-    );
-    actions.setRunCommandRuleAction.mockClear();
-
-    await act(async () => {
-      control('run_command', 'require_approval').click();
-    });
-    expect(dialogText()).toContain('Replace the rule for this folder?');
-    expect(dialogText()).toContain('A rule blocks commands in Dev today.');
-    expect(dialogText()).not.toContain('run without asking only in Dev');
-    await act(async () => {
-      [...document.body.querySelectorAll('button')]
-        .find((b) => b.textContent === 'Cancel')!
-        .click();
-    });
-
-    await act(async () => {
-      container.querySelector<HTMLButtonElement>('[data-testid="run-command-reset"]')!.click();
-    });
-    expect(dialogText()).toContain('Remove the rule for this folder?');
-    expect(dialogText()).toContain('The workspace autonomy then decides everywhere.');
-    expect(actions.setRunCommandRuleAction.mock.calls).toEqual([]);
-  });
-
-  it('Run without asking par-dessus une règle de dossier ne promet pas un remplacement : le serveur tranche', async () => {
-    await render(
-      [],
-      [
-        {
-          id: 'r8',
-          toolName: 'run_command',
-          action: 'block',
-          conditionJson: { workspacePath: 'D:\APPS\Dev' },
-          workspaceLabel: 'Dev',
-        },
-      ],
-    );
-    actions.setRunCommandRuleAction.mockClear();
-
-    await act(async () => {
-      control('run_command', 'auto_approve').click();
-    });
-
-    expect(dialogText()).not.toContain('Replace the rule');
-    expect(actions.setRunCommandRuleAction.mock.calls.at(-1)?.[0]).toEqual({
-      agentId: AGENT_ID,
+      toolName: SETTING,
       action: 'auto_approve',
     });
   });
 
-  it('nomme le dossier dans le nom accessible du curseur', async () => {
-    await render([], [FOLDER_RULE]);
-    const group = container.querySelector('[aria-label*="limited to Dev"]');
-    expect(group?.getAttribute('aria-label')).toBe(
-      'Approval rule for Write a workspace file, limited to Dev',
-    );
+  it('is not shown for an agent with no tool that can replace a shared file', async () => {
+    await render([], [], [], { sharedFileSetting: false });
+    expect(container.querySelector(`[data-testid="autonomy-btn-${SETTING}-block"]`)).toBeNull();
   });
+});
 
-  it('nomme le dossier sur une ligne de CONNECTEUR, pas seulement sur un outil natif', async () => {
-    const text = await render(
-      [CONNECTOR],
-      [
-        {
-          id: 'r3',
-          toolName: 'cloudflare_deploy',
-          action: 'auto_approve',
-          conditionJson: { workspacePath: 'D:\APPS\Dev' },
-          workspaceLabel: 'Dev',
-        },
-      ],
+describe('every tool the agent holds is on the tab (#917) @cap:regler-autonomie/ecran', () => {
+  it('"Other tools" lists the ones no section names, with their row, and says what no setting lifts', async () => {
+    const text = await render([], [row('create_mcp', 'auto_approve')]);
+    expect(text).toContain('Other tools');
+    const list = container.querySelector('[data-testid="autonomy-other-list"]');
+    expect(list?.textContent).toContain('Add an MCP server');
+    expect(pressed('create_mcp')).toEqual(['auto_approve']);
+    expect(container.querySelector('[data-testid="autonomy-note-create_mcp"]')?.textContent).toBe(
+      'A local server always asks before it starts, whatever this setting says.',
     );
-    expect(text).toContain('Publish to Cloudflare Workers');
+    // Shown in their own section, never twice: built-ins, run_command, MCP tools.
+    expect(list?.textContent).not.toContain('Write a workspace file');
+    expect(list?.textContent).not.toContain('read_page');
+    expect(list?.textContent).not.toContain('Run a command');
+  });
+});
+
+describe('a row confined to a folder lives beside the tool row (#361, #917) @cap:regler-autonomie/ecran', () => {
+  const DEV = { path: 'D:\\APPS\\Dev', label: 'Dev' };
+
+  it('the tool row shows its own value; the folder row is said under it, with its value', async () => {
+    await render([], [row('file_write', 'block'), row('file_write', 'auto_approve', DEV)]);
+    expect(pressed('file_write')).toEqual(['block']);
     expect(
-      container.querySelector('[data-testid="autonomy-folder-cloudflare_deploy"]')?.textContent,
-    ).toBe('in Dev');
+      container.querySelector('[data-testid="autonomy-folder-file_write"]')?.textContent,
+    ).toContain('In Dev: Run without asking');
   });
 
-  it('nomme le dossier sur une ligne de SERVEUR MCP', async () => {
-    await render(
-      [],
-      [
-        {
-          id: 'r4',
-          toolName: 'cogni_cortex__*',
-          action: 'auto_approve',
-          conditionJson: { workspacePath: 'D:\APPS\Dev' },
-          workspaceLabel: 'Dev',
-        },
-      ],
-      [MCP_SERVER],
-    );
-    expect(
-      container.querySelector('[data-testid="autonomy-folder-cogni_cortex__*"]')?.textContent,
-    ).toBe('in Dev');
-  });
-
-  it("enregistre sans rien demander quand la règle n'a pas de dossier", async () => {
-    await render([]);
-    actions.setAgentApprovalRuleAction.mockClear();
-
+  it('changing the tool row leaves the folder row alone: one write, no folder in it', async () => {
+    await render([], [row('file_write', 'block'), row('file_write', 'auto_approve', DEV)]);
     await act(async () => {
-      control('file_write', 'block').click();
+      control('file_write', 'require_approval').click();
     });
+    expect(actions.setAgentApprovalRuleAction.mock.calls).toEqual([
+      [{ agentId: AGENT_ID, toolName: 'file_write', action: 'require_approval' }],
+    ]);
+    expect(
+      container.querySelector('[data-testid="autonomy-folder-file_write"]')?.textContent,
+    ).toContain('In Dev: Run without asking');
+  });
 
-    expect(dialogText()).not.toContain('Remove the folder limit?');
+  it('Remove deletes the folder row only, by its folder', async () => {
+    await render([], [row('file_write', 'block'), row('file_write', 'auto_approve', DEV)]);
+    await act(async () => {
+      container
+        .querySelector<HTMLButtonElement>('[data-testid="autonomy-folder-remove-file_write"]')!
+        .click();
+    });
     expect(actions.setAgentApprovalRuleAction.mock.calls.at(-1)?.[0]).toEqual({
       agentId: AGENT_ID,
       toolName: 'file_write',
-      action: 'block',
+      action: null,
+      workspacePath: DEV.path,
     });
   });
 });
 
 describe("les outils d'un serveur MCP, un par un @cap:regler-autonomie/ecran", () => {
-  // Issue #357 : la section ne portait qu'une ligne PAR SERVEUR. Garder
-  // `cogni_cortex__*` autonome et bloquer un seul de ses outils ne se disait
-  // nulle part depuis la page de l'agent.
-
   function fold(): HTMLButtonElement {
     const el = container.querySelector<HTMLButtonElement>(
       '[data-testid="autonomy-mcp-fold-cogni_cortex"]',
@@ -929,65 +473,41 @@ describe("les outils d'un serveur MCP, un par un @cap:regler-autonomie/ecran", (
     });
   }
 
-  function toolControl(name: string, action: string): HTMLButtonElement {
-    const el = container.querySelector<HTMLButtonElement>(
-      `[data-testid="autonomy-btn-cogni_cortex__${name}-${action}"]`,
-    );
-    if (!el) throw new Error(`no control for ${name} ${action}`);
-    return el;
-  }
-
   it('annonce combien le serveur expose, et ne les montre que sur demande', async () => {
     await render([], [], [MCP_SERVER]);
     expect(fold().textContent).toContain('2 tools');
-    expect(fold().getAttribute('aria-expanded')).toBe('false');
     expect(container.querySelector('[data-testid="autonomy-mcp-tools-cogni_cortex"]')).toBeNull();
-
     await open();
-    expect(fold().getAttribute('aria-expanded')).toBe('true');
     const list = container.querySelector('[data-testid="autonomy-mcp-tools-cogni_cortex"]');
-    expect(list).not.toBeNull();
     expect(list!.textContent).toContain('read_page');
-    expect(list!.textContent).toContain('run_code_unsafe');
     expect(list!.textContent).toContain('Run arbitrary code in the browser.');
   });
 
-  it("sans règle sur l'outil exact, la ligne suit le serveur", async () => {
-    await render([], [], [MCP_SERVER]);
-    await open();
-    expect(toolControl('read_page', 'inherit').getAttribute('aria-pressed')).toBe('true');
-    expect(toolControl('read_page', 'block').getAttribute('aria-pressed')).toBe('false');
-  });
-
-  it("montre la valeur d'une règle déjà posée sur un outil exact", async () => {
+  it('each tool shows ITS row; there is no "Follow the server" any more', async () => {
     await render(
       [],
       [
-        {
-          id: 'r7',
-          toolName: 'cogni_cortex__run_code_unsafe',
-          action: 'block',
-          conditionJson: null,
-          workspaceLabel: null,
-        },
+        row('cogni_cortex__*', 'auto_approve'),
+        row('cogni_cortex__read_page', 'auto_approve'),
+        row('cogni_cortex__run_code_unsafe', 'block'),
       ],
       [MCP_SERVER],
     );
     await open();
-    expect(toolControl('run_code_unsafe', 'block').getAttribute('aria-pressed')).toBe('true');
-    // Sa voisine, elle, n'a pas de règle : elle suit toujours le serveur.
-    expect(toolControl('read_page', 'inherit').getAttribute('aria-pressed')).toBe('true');
+    expect(pressed('cogni_cortex__read_page')).toEqual(['auto_approve']);
+    expect(pressed('cogni_cortex__run_code_unsafe')).toEqual(['block']);
+    expect(
+      container.querySelector('[data-testid="autonomy-btn-cogni_cortex__read_page-inherit"]'),
+    ).toBeNull();
+    expect(container.textContent).not.toContain('Follow the server');
   });
 
   it("enregistre sur le NOM EXACT de l'outil, pas sur le motif du serveur", async () => {
-    await render([], [], [MCP_SERVER]);
+    await render([], [row('cogni_cortex__run_code_unsafe', 'require_approval')], [MCP_SERVER]);
     await open();
-    actions.setAgentApprovalRuleAction.mockClear();
-
     await act(async () => {
-      toolControl('run_code_unsafe', 'block').click();
+      control('cogni_cortex__run_code_unsafe', 'block').click();
     });
-
     expect(actions.setAgentApprovalRuleAction.mock.calls.at(-1)?.[0]).toEqual({
       agentId: AGENT_ID,
       toolName: 'cogni_cortex__run_code_unsafe',
@@ -995,219 +515,63 @@ describe("les outils d'un serveur MCP, un par un @cap:regler-autonomie/ecran", (
     });
   });
 
-  it('« Follow the server » supprime la règle de l’outil', async () => {
+  it('the server row sets every tool of the server; with a tool set apart, it asks first', async () => {
     await render(
       [],
       [
-        {
-          id: 'r8',
-          toolName: 'cogni_cortex__run_code_unsafe',
-          action: 'block',
-          conditionJson: null,
-          workspaceLabel: null,
-        },
+        row('cogni_cortex__*', 'require_approval'),
+        row('cogni_cortex__read_page', 'require_approval'),
+        row('cogni_cortex__run_code_unsafe', 'block'),
       ],
       [MCP_SERVER],
     );
     await open();
-    actions.setAgentApprovalRuleAction.mockClear();
-
     await act(async () => {
-      toolControl('run_code_unsafe', 'inherit').click();
+      control('cogni_cortex__*', 'auto_approve').click();
     });
-
-    // `action: null` = supprimer la ligne, et non poser une quatrième valeur.
-    expect(actions.setAgentApprovalRuleAction.mock.calls.at(-1)?.[0]).toEqual({
-      agentId: AGENT_ID,
-      toolName: 'cogni_cortex__run_code_unsafe',
-      action: null,
-    });
-    // Et la LIGNE a disparu de l'écran, sans attendre un rechargement : sans
-    // cela, le curseur resterait sur « Block » alors que la règle est partie
-    // (revue Reviewer C, passe 4, P1-6).
-    expect(toolControl('run_code_unsafe', 'inherit').getAttribute('aria-pressed')).toBe('true');
-    expect(toolControl('run_code_unsafe', 'block').getAttribute('aria-pressed')).toBe('false');
-  });
-
-  it("ne liste que les outils que l'agent a vraiment", async () => {
-    // Revue Reviewer C, C3 : une règle posée sur un outil retiré de la liste
-    // blanche du serveur ne protège rien, et la ligne promettrait un contrôle
-    // sans effet.
-    await render([], [], [{ ...MCP_SERVER, enabledTools: ['read_page'] }]);
-    expect(fold().textContent).toContain('1 tool');
-
-    await open();
-    const list = container.querySelector('[data-testid="autonomy-mcp-tools-cogni_cortex"]');
-    expect(list!.textContent).toContain('read_page');
-    expect(list!.textContent).not.toContain('run_code_unsafe');
-  });
-
-  it('la ligne du serveur dit sa portée, pas un instantané', async () => {
-    // Revue Reviewer C, passes 2 et 3 : « All 5 current tools and any added
-    // later » au-dessus de « 2 tools » faisait lire deux nombres contraires ;
-    // et compter ce que l'agent tient aujourd'hui décrirait mal une règle qui
-    // gouverne par nom, donc aussi un outil re-donné demain.
-    const text = await render([], [], [{ ...MCP_SERVER, enabledTools: ['read_page'] }]);
-    expect(text).toContain('Every tool from this server, including any you give this agent later.');
-    // Pas de compte sur cette ligne : le motif `<prefix>__*` gouverne par nom,
-    // donc aussi un outil re-donné demain. Le compte est dans le dépli.
-    expect(text).not.toContain('current tools and any added later');
-    expect(fold().textContent).toContain('1 tool');
-  });
-
-  it('sans liste blanche, la ligne du serveur parle bien de tout le serveur', async () => {
-    const text = await render([], [], [MCP_SERVER]);
-    expect(text).toContain('All 2 current tools and any added later.');
-  });
-
-  it("nomme les règles restées sur des outils que l'agent ne tient plus", async () => {
-    // Revue Reviewer C, passe 2, Q4 : une règle survit au décochage de son
-    // outil et reprend effet à son retour. Invisible, elle réapparaîtrait
-    // « déjà posée » sans que rien ne l'ait dit.
-    await render(
-      [],
-      [
-        {
-          id: 'r9',
-          toolName: 'cogni_cortex__run_code_unsafe',
-          action: 'block',
-          conditionJson: null,
-          workspaceLabel: null,
-        },
-      ],
-      [{ ...MCP_SERVER, enabledTools: ['read_page'] }],
-    );
-    await open();
-    expect(
-      container.querySelector('[data-testid="autonomy-mcp-hidden-cogni_cortex"]')?.textContent,
-    ).toContain('A rule is still stored for run_code_unsafe, which this agent no longer holds.');
-  });
-
-  it('accorde la phrase quand DEUX règles traînent', async () => {
-    await render(
-      [],
-      [
-        {
-          id: 'r11',
-          toolName: 'cogni_cortex__run_code_unsafe',
-          action: 'block',
-          conditionJson: null,
-          workspaceLabel: null,
-        },
-        {
-          id: 'r12',
-          toolName: 'cogni_cortex__read_page',
-          action: 'block',
-          conditionJson: null,
-          workspaceLabel: null,
-        },
-      ],
-      // Aucun des deux outils n'est tenu par l'agent.
-      [{ ...MCP_SERVER, enabledTools: [] }],
-    );
-    await open();
-    expect(
-      container.querySelector('[data-testid="autonomy-mcp-hidden-cogni_cortex"]')?.textContent,
-    ).toContain(
-      'Rules are still stored for read_page, run_code_unsafe, which this agent no longer holds.',
-    );
-  });
-
-  it("ne dit rien de tel pour une règle posée sur un outil que l'agent tient", async () => {
-    // Revue Reviewer C, passe 3, P1-4 : l'absence seule était satisfaite par
-    // un calcul qui ne verrait plus rien. Ici une règle EXISTE, sur un outil
-    // que l'agent tient : la ligne ne doit pas se déclencher pour autant.
-    await render(
-      [],
-      [
-        {
-          id: 'r13',
-          toolName: 'cogni_cortex__read_page',
-          action: 'block',
-          conditionJson: null,
-          workspaceLabel: null,
-        },
-      ],
-      [{ ...MCP_SERVER, enabledTools: ['read_page'] }],
-    );
-    await open();
-    expect(container.querySelector('[data-testid="autonomy-mcp-hidden-cogni_cortex"]')).toBeNull();
-    // Et la règle est bien là, sur sa propre ligne.
-    expect(toolControl('read_page', 'block').getAttribute('aria-pressed')).toBe('true');
-  });
-
-  it('sur une règle de dossier, « Follow the server » dit ce qui sera supprimé', async () => {
-    // Revue Reviewer C, passe 2, Q6 : les trois textes de ce dialogue n'étaient
-    // assertés nulle part, donc les remettre à ceux de #361 passait inaperçu.
-    await render(
-      [],
-      [
-        {
-          id: 'r10',
-          toolName: 'cogni_cortex__run_code_unsafe',
-          action: 'auto_approve',
-          conditionJson: { workspacePath: 'D:\APPS\Dev' },
-          workspaceLabel: 'Dev',
-        },
-      ],
-      [MCP_SERVER],
-    );
-    await open();
-    actions.setAgentApprovalRuleAction.mockClear();
-
-    await act(async () => {
-      toolControl('run_code_unsafe', 'inherit').click();
-    });
-
-    const dialog = document.body.textContent ?? '';
-    expect(dialog).toContain('Delete this rule?');
-    expect(dialog).toContain(
-      "This rule applies only in Dev today. Following the server deletes this agent's rule on the tool.",
+    // run_code_unsafe was set apart (Block): the change would rewrite it.
+    expect(document.body.textContent).toContain('Change every tool of this server?');
+    expect(document.body.textContent).toContain(
+      'This sets all 2 tools of Cogni Cortex to Run without asking, including the ones you set one by one.',
     );
     expect(actions.setAgentApprovalRuleAction.mock.calls).toEqual([]);
 
+    // What the server holds after the write (setApprovalRuleRepo rewrites the
+    // covered rows): the tab reads it back after a server row.
+    actions.listAgentApprovalRulesAction.mockImplementation(async () => ({
+      ok: true as const,
+      data: [
+        row('cogni_cortex__*', 'auto_approve'),
+        row('cogni_cortex__read_page', 'auto_approve'),
+        row('cogni_cortex__run_code_unsafe', 'auto_approve'),
+      ],
+    }));
     await act(async () => {
       [...document.body.querySelectorAll('button')]
-        .find((b) => b.textContent === 'Delete the rule')!
+        .find((b) => b.textContent === 'Change all')!
         .click();
     });
+    await act(async () => {});
     expect(actions.setAgentApprovalRuleAction.mock.calls.at(-1)?.[0]).toEqual({
       agentId: AGENT_ID,
-      toolName: 'cogni_cortex__run_code_unsafe',
-      action: null,
+      toolName: 'cogni_cortex__*',
+      action: 'auto_approve',
     });
+    expect(pressed('cogni_cortex__run_code_unsafe')).toEqual(['auto_approve']);
+    expect(pressed('cogni_cortex__read_page')).toEqual(['auto_approve']);
   });
 
-  it("dit, une fois, qu'une règle d'outil bat celle du serveur", async () => {
-    const text = await render([], [], [MCP_SERVER]);
-    expect(text).toContain(
-      "A rule on one tool wins over the server's rule. These rows show the rules set for this agent.",
+  it('without a server row, the server line says new tools follow the level, and refuses nothing', async () => {
+    await render([], [row('cogni_cortex__read_page', 'require_approval')], [MCP_SERVER]);
+    expect(container.textContent).toContain(
+      'Not set: tools added later start with the workspace autonomy level.',
     );
+    expect(container.querySelector('[data-testid="autonomy-unset-cogni_cortex__*"]')).toBeNull();
   });
 });
 
-describe('Run commands : les trois choix de tout outil (#468) @cap:regler-autonomie/ecran', () => {
-  function control(action: string): HTMLButtonElement {
-    const el = container.querySelector<HTMLButtonElement>(
-      `[data-testid="autonomy-btn-run_command-${action}"]`,
-    );
-    if (!el) throw new Error(`no run_command control for ${action}`);
-    return el;
-  }
-
-  function pressed(): string[] {
-    return ['auto_approve', 'require_approval', 'block'].filter(
-      (a) => control(a).getAttribute('aria-pressed') === 'true',
-    );
-  }
-
-  const RULE = (action: 'auto_approve' | 'require_approval' | 'block'): Rule => ({
-    id: 'rc',
-    toolName: 'run_command',
-    action,
-    conditionJson: null,
-    workspaceLabel: null,
-  });
+describe('Run commands : une ligne, comme tout outil (#468, #917) @cap:regler-autonomie/ecran', () => {
+  const runPressed = () => pressed('run_command');
 
   beforeEach(() => {
     actions.setRunCommandRuleAction.mockClear();
@@ -1217,53 +581,50 @@ describe('Run commands : les trois choix de tout outil (#468) @cap:regler-autono
     }));
   });
 
-  it('sans règle, AUCUN choix n’est allumé, et la ligne dit qui décide', async () => {
-    await render([], []);
-    expect(pressed()).toEqual([]);
-    expect(container.querySelector('[data-testid="run-command-no-rule"]')?.textContent).toBe(
-      'No choice set: the workspace autonomy decides, as the line above says.',
-    );
-    expect(container.querySelector('[data-testid="run-command-reset"]')).toBeNull();
-  });
-
-  it('chaque règle allume SON choix', async () => {
+  it('chaque ligne allume SON choix, et la phrase dit ce qu’elle fait', async () => {
     for (const action of ['auto_approve', 'require_approval', 'block'] as const) {
-      await render([], [RULE(action)]);
-      expect(pressed(), action).toEqual([action]);
+      await render([], [row('run_command', action)]);
+      expect(runPressed(), action).toEqual([action]);
       act(() => root.unmount());
       document.body.innerHTML = '';
     }
-    await render([], []);
+    await render([], [row('run_command', 'require_approval')]);
+    expect(container.textContent).toContain('Every command asks for your approval.');
+  });
+
+  it('there is no "no choice" state and no "Let the workspace autonomy decide"', async () => {
+    const text = await render([], [row('run_command', 'auto_approve')]);
+    expect(container.querySelector('[data-testid="run-command-reset"]')).toBeNull();
+    expect(container.querySelector('[data-testid="run-command-no-rule"]')).toBeNull();
+    expect(text).not.toContain('workspace autonomy decides');
+  });
+
+  it('says the floor no setting lifts', async () => {
+    await render([], [row('run_command', 'auto_approve')]);
+    expect(container.querySelector('[data-testid="autonomy-note-run_command"]')?.textContent).toBe(
+      'A command that can wipe this machine (formatting a disk, a fork bomb) always asks, whatever this setting says.',
+    );
   });
 
   it('Block et Ask s’enregistrent sans confirmation, et envoient LEUR action', async () => {
-    await render([], []);
+    await render([], [row('run_command', 'auto_approve')]);
     await act(async () => {
-      control('block').click();
+      control('run_command', 'block').click();
     });
     expect(actions.setRunCommandRuleAction.mock.calls.at(-1)?.[0]).toEqual({
       agentId: AGENT_ID,
       action: 'block',
     });
-    expect(pressed()).toEqual(['block']);
-
-    await act(async () => {
-      control('require_approval').click();
-    });
-    expect(actions.setRunCommandRuleAction.mock.calls.at(-1)?.[0]).toEqual({
-      agentId: AGENT_ID,
-      action: 'require_approval',
-    });
+    expect(runPressed()).toEqual(['block']);
   });
 
   it('« Run without asking » demande d’abord, et n’écrit rien avant la réponse', async () => {
-    await render([], []);
+    await render([], [row('run_command', 'require_approval')]);
     await act(async () => {
-      control('auto_approve').click();
+      control('run_command', 'auto_approve').click();
     });
     expect(document.body.textContent).toContain('Run commands without asking?');
     expect(actions.setRunCommandRuleAction.mock.calls).toEqual([]);
-
     await act(async () => {
       [...document.body.querySelectorAll('button')]
         .find((b) => b.textContent === 'Run without asking' && b.closest('[role="dialog"]'))!
@@ -1274,28 +635,78 @@ describe('Run commands : les trois choix de tout outil (#468) @cap:regler-autono
     ]);
   });
 
-  it('« Let the workspace autonomy decide » retire la règle', async () => {
-    await render([], [RULE('block')]);
-    await act(async () => {
-      container.querySelector<HTMLButtonElement>('[data-testid="run-command-reset"]')!.click();
-    });
-    expect(actions.setRunCommandRuleAction.mock.calls.at(-1)?.[0]).toEqual({
-      agentId: AGENT_ID,
-      action: null,
-    });
-    expect(pressed()).toEqual([]);
-  });
-
   it('un refus du serveur remet le choix d’avant', async () => {
     actions.setRunCommandRuleAction.mockImplementation(async () => ({
       ok: false,
       code: 'forbidden',
       message: 'Only the workspace owner can change how this agent runs commands.',
     }));
-    await render([], [RULE('require_approval')]);
+    await render([], [row('run_command', 'require_approval')]);
     await act(async () => {
-      control('block').click();
+      control('run_command', 'block').click();
     });
-    expect(pressed()).toEqual(['require_approval']);
+    expect(runPressed()).toEqual(['require_approval']);
+  });
+});
+
+describe("les textes de l'onglet Autonomie @cap:regler-autonomie/ecran", () => {
+  it('ouvre sur ce que le propriétaire décide ici, et d’où vient un réglage', async () => {
+    const text = await render();
+    expect(text).toContain(
+      'Choose what this agent can do on its own, what needs your approval, and what it cannot do. Every tool it has is listed on this tab with its setting.',
+    );
+    expect(text).toContain(
+      "A tool starts with the setting of the workspace autonomy level, in Settings. What you set here is what applies, from the agent's next step.",
+    );
+  });
+
+  it('dit ce que devient un outil bloqué', async () => {
+    const text = await render();
+    expect(text).toContain(
+      'Blocked tools stay visible to the agent. If it tries to use one, it is told the tool is blocked.',
+    );
+  });
+
+  it('présente les outils natifs, et les rend par label et summary', async () => {
+    const text = await render();
+    expect(text).toContain('Write a workspace file');
+    expect(text).toContain('Create or replace a file safely.');
+    expect(text).toContain(
+      'Always available. The agent needs this tool to finish a job or explain why it is stuck. It cannot be blocked.',
+    );
+  });
+
+  it('porte les trois décisions du curseur', async () => {
+    const text = await render();
+    expect(text).toContain('Run without asking');
+    expect(text).toContain('Ask for approval');
+    expect(text).toContain('Block');
+  });
+
+  it('rend une operation de connecteur par ses textes de proprietaire, jamais par sa description', async () => {
+    const text = await render([CONNECTOR]);
+    expect(text).toContain('Publish to Cloudflare Workers');
+    expect(text).not.toContain('Publish a built static site/app directory');
+    expect(text).toContain('Legacy operation');
+  });
+
+  it('dit ce que sont les commandes, et la liste qui les borne', async () => {
+    await render([], [row('run_command', 'auto_approve')]);
+    expect(container.textContent).toContain(
+      'Commands run without asking, except the kinds of action below set to Ask me or Never.',
+    );
+    expect(container.textContent).toContain('What it may do with a shell');
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="shell-advanced"]')!.click();
+    });
+    const text = container.textContent ?? '';
+    expect(text).toContain('Run commands on this machine');
+    expect(text).toContain('Allowed commands');
+  });
+
+  it("dit ce que l'agent peut faire de son équipe, et ce qu'être en lecture seule veut dire", async () => {
+    const text = await render();
+    expect(text).toContain('Let this agent change its team');
+    expect(text).toContain('Read-only agent');
   });
 });

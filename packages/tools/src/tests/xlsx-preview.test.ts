@@ -22,6 +22,7 @@ import { executeTool } from '../execute';
 import { OFFICE_TOOLS } from '../builtin/office-ops';
 import type { ToolContext, ToolDefinition } from '../types';
 import type { z } from 'zod';
+import { autonomousRows } from './autonomy-rows-fixture';
 
 let db: TestDb;
 let seed: { userId: string; entityId: string; agentId: string; jobId: string };
@@ -71,7 +72,12 @@ function ctx(workspaces: Array<{ label: string; path: string }> = []): ToolConte
   };
 }
 
-const opts = { approvalRules: [], onApprovalRequired: async () => {} };
+const opts = {
+  get approvalRules() {
+    return autonomousRows(seed);
+  },
+  onApprovalRequired: async () => {},
+};
 
 /**
  * Les outils TELS QUE LE REGISTRE les porte — enveloppés de `mutatesWorkspace`

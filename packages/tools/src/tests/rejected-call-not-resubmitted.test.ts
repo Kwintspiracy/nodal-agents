@@ -19,6 +19,7 @@ import { approvalRequests, agentJobs } from '@nodal-agents/db';
 import { executeTool } from '../execute';
 import type { ToolDefinition, ToolContext, ExecuteOptions } from '../types';
 import type { TestDb } from '@nodal-agents/db/test-utils';
+import { aRow, autonomousRows } from './autonomy-rows-fixture';
 
 let db: TestDb;
 let seed: { userId: string; entityId: string; agentId: string; jobId: string };
@@ -39,7 +40,21 @@ function makeCtx(jobId: string): ToolContext {
   };
 }
 
+/**
+ * The rows of the tools under test (#917): a tool made by `gatedTool` asks
+ * first, its `ungated` copy runs without asking — what their rows say.
+ */
+const asking = new Set<string>();
+const autonomous = new Set<string>();
+
+function ungatedCopy<T extends { name: string }>(tool: T): T {
+  asking.delete(tool.name);
+  autonomous.add(tool.name);
+  return { ...tool, defaultApproval: undefined };
+}
+
 function gatedTool(name: string): { tool: ToolDefinition<z.ZodTypeAny, unknown>; ran: unknown[] } {
+  asking.add(name);
   const ran: unknown[] = [];
   const tool = {
     name,
@@ -61,7 +76,13 @@ function gatedTool(name: string): { tool: ToolDefinition<z.ZodTypeAny, unknown>;
 }
 
 function opts(): ExecuteOptions {
-  return { approvalRules: [], onApprovalRequired: async () => {} };
+  return {
+    approvalRules: [
+      ...autonomousRows(seed, [...autonomous]),
+      ...[...asking].map((name) => aRow(name, 'require_approval', seed)),
+    ],
+    onApprovalRequired: async () => {},
+  };
 }
 
 async function newJob(): Promise<string> {
@@ -216,11 +237,13 @@ describe('an identical call the owner already rejected in this run (#492) @cap:a
 
     // La sauvegarde : un autre outil, qui s'exécute (pas de porte).
     const { tool: backup } = gatedTool('backup_492_f');
-    const ungated = { ...backup, defaultApproval: undefined } as typeof backup;
-    const saved = await executeTool(ungated, { ...CALL, purpose: 'Sauvegarde.' }, makeCtx(jobId), {
-      ...opts(),
-      approvalRules: [],
-    });
+    const ungated = ungatedCopy(backup);
+    const saved = await executeTool(
+      ungated,
+      { ...CALL, purpose: 'Sauvegarde.' },
+      makeCtx(jobId),
+      opts(),
+    );
     expect(saved.outcome).toBe('success');
 
     const afterBackup = await executeTool(
@@ -245,15 +268,7 @@ describe('an identical call the owner already rejected in this run (#492) @cap:a
 
     const allowed = await executeTool(tool, { ...CALL, purpose: 'Permis.' }, makeCtx(jobId), {
       ...opts(),
-      approvalRules: [
-        {
-          id: 'rule-492-g',
-          toolName: 'delete_492_g',
-          action: 'auto_approve',
-          agentId: seed.agentId,
-          entityId: seed.entityId,
-        },
-      ],
+      approvalRules: [aRow('delete_492_g', 'auto_approve', seed)],
     });
     expect(allowed.outcome).toBe('success');
     expect(ran).toHaveLength(1);
@@ -274,7 +289,7 @@ describe('an identical call the owner already rejected in this run (#492) @cap:a
     await reject(first!.id, 'premier refus');
 
     const { tool: other } = gatedTool('other_492_h');
-    const ungated = { ...other, defaultApproval: undefined } as typeof other;
+    const ungated = ungatedCopy(other);
     expect((await executeTool(ungated, { ...CALL }, makeCtx(jobId), opts())).outcome).toBe(
       'success',
     );

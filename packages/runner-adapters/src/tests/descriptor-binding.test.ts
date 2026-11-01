@@ -23,10 +23,12 @@ import {
   TEST_AGENT_ID,
   type BuiltTool,
   type ExecuteToolFn,
+  type TemplateFn,
 } from '@nodal-agents/test-kit';
 import {
   executeTool,
   exposeStatedPurpose,
+  templateAutonomy,
   type ConnectorToolDefinition,
   type ToolDefinition,
 } from '@nodal-agents/tools';
@@ -192,7 +194,12 @@ describe('bindOperationDescriptors fails loud, never defaults @cap:approuver-une
 
 // ─── The real gate, on the real tools ──────────────────────────────────────────
 
-const { expectGate } = createGateHarness(executeTool as unknown as ExecuteToolFn);
+// The production gate AND the production template (#917): "under a level"
+// is the row that level writes for the connector tool on arrival.
+const { expectGate } = createGateHarness(
+  executeTool as unknown as ExecuteToolFn,
+  templateAutonomy as unknown as TemplateFn,
+);
 
 /**
  * The real tool the registry hands a job, prepared the way the runner prepares

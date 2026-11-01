@@ -302,22 +302,22 @@ export const fileMoveTool: ToolDefinition<typeof FileMoveInputSchema, FileMoveOu
   // n'a pas écrit ne se remplace pas, et ne se retire pas, sans personne. Un
   // fichier neuf, ou un dossier de l'agent, ne demande rien : l'instantané le
   // défait.
-  computeApproval: async (input, ctx) => {
+  replacesSharedFile: async (input, ctx) => {
     let paths: MovePaths;
     try {
       paths = await resolveMove(ctx, input);
     } catch {
-      return undefined; // execute() échouera sur la même raison
+      return false; // execute() échouera sur la même raison
     }
-    if (!paths.ok) return undefined;
-    if (await isProtectedWorkflowTemplate(ctx, paths.destination)) return undefined;
-    if (!input.copy && (await isProtectedWorkflowTemplate(ctx, paths.source))) return undefined;
+    if (!paths.ok) return false;
+    if (await isProtectedWorkflowTemplate(ctx, paths.destination)) return false;
+    if (!input.copy && (await isProtectedWorkflowTemplate(ctx, paths.source))) return false;
     for (const path of destroyedBy(input.copy, paths)) {
       if ((await computeSharedOverwriteApproval(ctx, path)) === 'require_approval') {
-        return 'require_approval';
+        return true;
       }
     }
-    return undefined;
+    return false;
   },
   execute: async (input, ctx) => {
     let paths: MovePaths;

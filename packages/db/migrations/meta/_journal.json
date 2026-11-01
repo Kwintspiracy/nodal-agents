@@ -1072,6 +1072,13 @@
       "when": 1786263500000,
       "tag": "0154_file_move_rules",
       "breakpoints": true
+    },
+    {
+      "idx": 155,
+      "version": "7",
+      "when": 1786263600000,
+      "tag": "0155_autonomy_rows",
+      "breakpoints": true
     }
   ]
 }

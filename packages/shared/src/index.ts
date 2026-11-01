@@ -38,7 +38,6 @@ export * from './redact-secrets';
 export * from './approval-impact';
 export * from './approval-explain';
 export * from './approval-rules-chain';
-export * from './approval-tool-default';
 export * from './readonly-preset';
 export * from './question-answer';
 export * from './elicitation';

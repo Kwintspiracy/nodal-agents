@@ -28,6 +28,9 @@ import { SHARED_WORKSPACE_LABEL } from './workspace';
 import { fileWriteTool } from './file-write';
 import { fileEditTool } from './file-edit';
 import type { ToolContext, ExecuteOptions, ApprovalRule } from '../../types';
+import type { AutonomyLevel } from '@nodal-agents/shared';
+import { REPLACE_SHARED_FILE_SETTING } from '@nodal-agents/shared';
+import { rowsAsWritten } from '../../tests/autonomy-rows-fixture';
 
 let db: TestDb;
 let seed: { userId: string; entityId: string; agentId: string; jobId: string };
@@ -67,10 +70,14 @@ function ctx(): ToolContext {
   };
 }
 
-function opts(autonomy?: ExecuteOptions['autonomy'], rules: ApprovalRule[] = []): ExecuteOptions {
+/**
+ * The rows of an agent whose file tools and shared-file setting were written
+ * under `autonomy` (#917): the level is a template, and these rows are what
+ * it wrote. The case's own `rules` come first and win.
+ */
+function opts(autonomy?: AutonomyLevel, rules: ApprovalRule[] = []): ExecuteOptions {
   return {
-    approvalRules: rules,
-    autonomy,
+    approvalRules: rowsAsWritten(seed, [fileWriteTool, fileEditTool], autonomy, rules),
     onApprovalRequired: async () => {},
   };
 }
@@ -167,20 +174,32 @@ describe('D1 overwrite gate — file_write @cap:travailler-sur-des-fichiers/mote
 
   it('resume after approval: synthetic auto_approve rule executes without re-gating', async () => {
     await writeFile(join(SHARED_ROOT, 'template.json'), 'old', 'utf8');
-    const resumeRule: ApprovalRule = {
-      id: 'resume-bypass',
-      toolName: 'file_write',
-      action: 'auto_approve',
-      agentId: null,
-      entityId: seed.entityId,
-    };
+    // The runner's resume rows (apps/runner/src/job/execute.ts): the tool AND
+    // the shared-file setting, both for the agent — the person approved this
+    // call, the file it replaces included.
+    const resumeRules: ApprovalRule[] = [
+      {
+        id: 'resume-bypass',
+        toolName: 'file_write',
+        action: 'auto_approve',
+        agentId: seed.agentId,
+        entityId: seed.entityId,
+      },
+      {
+        id: 'resume-bypass-shared-file',
+        toolName: REPLACE_SHARED_FILE_SETTING,
+        action: 'auto_approve',
+        agentId: seed.agentId,
+        entityId: seed.entityId,
+      },
+    ];
     // Same shared+existing+propose_confirm shape that gated above — but with
-    // the resume-time synthetic rule, it must execute immediately.
+    // the resume-time synthetic rows, it must execute immediately.
     const result = await executeTool(
       fileWriteTool,
       { path: `${SHARED_WORKSPACE_LABEL}/template.json`, content: 'resumed' },
       ctx(),
-      opts(undefined, [resumeRule]),
+      opts(undefined, resumeRules),
     );
     expect(result.outcome).toBe('success');
     const written = await import('node:fs/promises').then((fs) =>
