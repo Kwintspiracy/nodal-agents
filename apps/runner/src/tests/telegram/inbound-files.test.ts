@@ -1,0 +1,1705 @@
+// inbound-files.test.ts — les fichiers envoyés à un agent sur Telegram arrivent
+// jusqu'à lui (#899) : écrits sur le disque sous leur nom d'origine, et nommés
+// dans le premier message de son job ; un fichier qui n'a pas pu être obtenu y
+// est dit, jamais abandonné.
+//
+// Le parcours réel, de la mise à jour Telegram au disque : handleTelegramUpdate
+// (la base de test) puis attachInboundFiles. Seul le Bot API est remplacé
+// (getTelegramFile) ; le disque est un vrai dossier temporaire.
+
+import { createHash } from 'node:crypto';
+import { mkdtemp, readFile, readdir, rm, mkdir, stat, writeFile, utimes } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import type { ModelMessage } from 'ai';
+import { createLlmClient } from '@nodal-agents/llm';
+import type { NodalLlmClient } from '@nodal-agents/llm';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
+import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
+import type { TestDb } from '@nodal-agents/db/test-utils';
+import { eq } from '@nodal-agents/db';
+import {
+  agentJobs,
+  approvalRequests,
+  channelAllowedConversations,
+  constatedWrites,
+  conversationHandleFor,
+  conversations,
+  telegramAllowedChats,
+} from '@nodal-agents/db';
+import type { AnyDrizzleDb } from '@nodal-agents/db';
+import {
+  cheminConstate,
+  createToolRegistry,
+  executeTool,
+  registerBuiltins,
+  resolveRunWorkspaces,
+} from '@nodal-agents/tools';
+import type { ModelAttachmentInput, ToolContext } from '@nodal-agents/tools';
+import type { TelegramUpdate } from '@nodal-agents/delivery';
+import type { RunnerDeps } from '../../deps.ts';
+import { hydrateForLlm, saveToolAttachments, toolImagesDir } from '../../job/model-images.ts';
+import { addressedByHandle } from '../../llm/addressed-by-handle.ts';
+
+// Provider calls leave through packages/llm's own transport (#609): routed to
+// the global fetch stubbed in `wireBody`, the network boundary.
+vi.mock('../../../../../packages/llm/src/transport.ts', () => ({
+  providerFetch: (input: RequestInfo | URL, init?: RequestInit) => globalThis.fetch(input, init),
+}));
+
+/** Ce que le Bot API rend pour chaque file_id : des octets, ou une erreur. */
+const telegramFiles = new Map<string, Uint8Array | Error>();
+
+vi.mock('@nodal-agents/delivery', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@nodal-agents/delivery')>();
+  return {
+    ...actual,
+    getTelegramFile: vi.fn(async (_token: string, fileId: string) => {
+      const found = telegramFiles.get(fileId);
+      if (found === undefined) throw new Error(`test: no stub for file_id ${fileId}`);
+      if (found instanceof Error) throw found;
+      return { bytes: found, ext: 'bin' };
+    }),
+  };
+});
+
+import { handleTelegramUpdate, attachInboundFiles } from '../../telegram/handler.ts';
+import {
+  moveLegacyInboundFolders,
+  receiveInboundFiles,
+  safeFileName,
+  pruneInboundFolder,
+} from '../../channels/inbound-files.ts';
+import { pruneJobMediaFiles } from '../../cron/prune-media.ts';
+import {
+  attachInboundFiles as attachDiscordFiles,
+  handleDiscordMessage,
+} from '../../channels/discord/handler.ts';
+import type { DiscordInboundAttachment } from '../../channels/discord/types.ts';
+import { buildTestPdf } from '@nodal-agents/test-kit';
+
+const CHAT = 4242;
+let db: TestDb;
+let seed: { userId: string; entityId: string; agentId: string };
+let root: string;
+const previousRoot = process.env['NODALAI_WORKSPACES_ROOT'];
+
+beforeAll(async () => {
+  root = await mkdtemp(join(tmpdir(), 'nodal-inbound-files-'));
+  process.env['NODALAI_WORKSPACES_ROOT'] = root;
+  const res = await spinUpTestDb();
+  db = res.db;
+  seed = await seedMinimal(db);
+});
+
+afterAll(async () => {
+  if (previousRoot === undefined) delete process.env['NODALAI_WORKSPACES_ROOT'];
+  else process.env['NODALAI_WORKSPACES_ROOT'] = previousRoot;
+  await rm(root, { recursive: true, force: true });
+});
+
+beforeEach(async () => {
+  telegramFiles.clear();
+  await db.delete(agentJobs);
+  await db.delete(conversations);
+  await db.delete(telegramAllowedChats);
+  await db.insert(telegramAllowedChats).values([
+    {
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      chatId: String(CHAT),
+      role: 'owner',
+      status: 'active',
+    },
+    {
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      chatId: '-100777',
+      role: 'member',
+      status: 'active',
+    },
+  ]);
+});
+
+type Msg = NonNullable<TelegramUpdate['message']>;
+
+function update(fields: Partial<Msg>, chat: Msg['chat'] = { id: CHAT, type: 'private' }) {
+  return {
+    update_id: 1,
+    message: {
+      message_id: 1,
+      chat,
+      from: { id: 7, first_name: 'Quentin', is_bot: false },
+      ...fields,
+    },
+  } satisfies TelegramUpdate;
+}
+
+/** Une mise à jour, de bout en bout : le job créé, puis ses fichiers reçus. */
+async function deliver(u: TelegramUpdate) {
+  const result = await handleTelegramUpdate({
+    update: u,
+    receivingAgentId: seed.agentId,
+    receivingAgentEntityId: seed.entityId,
+    receivingAgentBotUsername: 'nodal_bot',
+    tx: db as unknown as RunnerDeps['db'],
+  });
+  expect(result.jobId).toBeDefined();
+  const jobId = result.jobId!;
+  expect(result.files).toBeDefined();
+  const outcomes = await attachInboundFiles({
+    jobId,
+    entityId: seed.entityId,
+    botToken: '123:fake',
+    inbound: result.files!,
+    db: db as unknown as RunnerDeps['db'],
+  });
+  const [job] = await db.select().from(agentJobs).where(eq(agentJobs.id, jobId));
+  const messages = job!.messages as Array<{ role: string; content: unknown }>;
+  expect(messages).toHaveLength(1);
+  expect(messages[0]!.role).toBe('user');
+  const parts = messages[0]!.content as Array<{ type: string; text?: string; image?: string }>;
+  return { jobId, job: job!, parts, outcomes };
+}
+
+/** Le dossier d'arrivée de Telegram : un dossier par job, aucune adresse de chat (#910). */
+function telegramFolder(): string {
+  return join(root, seed.entityId, 'shared', 'telegram');
+}
+
+const PDF = new Uint8Array(Buffer.from('%PDF-1.7\n1 0 obj << /Type /Catalog >> endobj\n%%EOF\n'));
+const JPEG = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0, 16, 0x4a, 0x46, 0x49, 0x46, 0, 1, 2, 3]);
+
+describe('Telegram files reach the agent (#899) @cap:parler-par-canal-externe/moteur', () => {
+  it('a PDF with a caption: written under its own name, named in the job beside the caption', async () => {
+    telegramFiles.set('pdf-1', PDF);
+    const { jobId, job, parts } = await deliver(
+      update({
+        caption: 'Range moi ça , merci',
+        document: {
+          file_id: 'pdf-1',
+          file_name: 'Facture EDF.pdf',
+          mime_type: 'application/pdf',
+          file_size: PDF.byteLength,
+        },
+      }),
+    );
+
+    const onDisk = join(telegramFolder(), jobId, 'Facture EDF.pdf');
+    expect(new Uint8Array(await readFile(onDisk))).toEqual(PDF);
+
+    expect(job.task).toBe('Range moi ça , merci');
+    expect(parts[0]).toEqual({ type: 'text', text: 'Range moi ça , merci' });
+    expect(parts).toHaveLength(2);
+    const note = parts[1]!.text!;
+    expect(parts[1]!.type).toBe('text');
+    expect(note).toContain(`shared/telegram/${jobId}/Facture EDF.pdf`);
+    expect(note).toContain(onDisk);
+    expect(note).toContain('"Facture EDF.pdf"');
+    expect(note).toContain('application/pdf');
+    expect(note).toContain(`${PDF.byteLength} B`);
+    // Un PDF n'est pas une image : aucune partie image.
+    expect(parts.some((p) => p.type === 'image')).toBe(false);
+  });
+
+  it.each([
+    {
+      kind: 'audio',
+      fields: {
+        audio: { file_id: 'a-1', file_name: 'memo.mp3', mime_type: 'audio/mpeg', file_size: 4 },
+      },
+      bytes: new Uint8Array([0x49, 0x44, 0x33, 4]),
+      saved: 'memo.mp3',
+      type: 'audio/mpeg',
+    },
+    {
+      // Un message vocal n'a pas de nom : il prend celui de son type.
+      kind: 'voice',
+      fields: { voice: { file_id: 'v-1', mime_type: 'audio/ogg', file_size: 4 } },
+      bytes: new Uint8Array([0x4f, 0x67, 0x67, 0x53]),
+      saved: 'audio.ogg',
+      type: 'audio/ogg',
+    },
+    {
+      kind: 'video',
+      fields: {
+        video: { file_id: 'vd-1', file_name: 'clip.mov', mime_type: 'video/quicktime' },
+      },
+      bytes: new Uint8Array([0, 0, 0, 0x14, 0x66, 0x74]),
+      saved: 'clip.mov',
+      type: 'video/quicktime',
+    },
+    {
+      // Une vidéo ronde : ni nom ni type déclarés, toujours du MP4.
+      kind: 'video_note',
+      fields: { video_note: { file_id: 'vn-1', file_size: 3 } },
+      bytes: new Uint8Array([1, 2, 3]),
+      saved: 'video.mp4',
+      type: 'video/mp4',
+    },
+    {
+      // Telegram envoie une animation AUSSI comme document, même file_id : un seul fichier.
+      kind: 'animation',
+      fields: {
+        animation: { file_id: 'an-1', file_name: 'dance.mp4', mime_type: 'video/mp4' },
+        document: { file_id: 'an-1', file_name: 'dance.mp4', mime_type: 'video/mp4' },
+      },
+      bytes: new Uint8Array([9, 9, 9]),
+      saved: 'dance.mp4',
+      type: 'video/mp4',
+    },
+  ])('$kind: written with its bytes, named in the job', async ({ fields, bytes, saved, type }) => {
+    for (const ref of Object.values(fields)) telegramFiles.set(ref.file_id, bytes);
+    const { jobId, parts } = await deliver(update({ caption: 'tiens', ...fields }));
+
+    expect(new Uint8Array(await readFile(join(telegramFolder(), jobId, saved)))).toEqual(bytes);
+    expect(await readdir(join(telegramFolder(), jobId))).toEqual([saved]);
+    expect(parts[0]).toEqual({ type: 'text', text: 'tiens' });
+    const notes = parts.slice(1);
+    expect(notes).toHaveLength(1);
+    expect(notes[0]!.text).toContain(`shared/telegram/${jobId}/${saved}`);
+    expect(notes[0]!.text).toContain(type);
+  });
+
+  it('a file with no caption still becomes a job, with a neutral task and its file part', async () => {
+    telegramFiles.set('pdf-2', PDF);
+    const { jobId, job, parts } = await deliver(
+      update({
+        document: { file_id: 'pdf-2', file_name: 'contrat.pdf', mime_type: 'application/pdf' },
+      }),
+    );
+    expect(job.task).toBe('Fichier envoyé (sans légende).');
+    expect(parts[0]).toEqual({ type: 'text', text: 'Fichier envoyé (sans légende).' });
+    expect(parts[1]!.text).toContain(`shared/telegram/${jobId}/contrat.pdf`);
+    expect(new Uint8Array(await readFile(join(telegramFolder(), jobId, 'contrat.pdf')))).toEqual(
+      PDF,
+    );
+  });
+
+  it('in a group, a file whose caption is only the bot mention still becomes a job', async () => {
+    telegramFiles.set('pdf-3', PDF);
+    const { jobId, parts } = await deliver(
+      update(
+        {
+          caption: '@nodal_bot',
+          document: { file_id: 'pdf-3', file_name: 'devis.pdf', mime_type: 'application/pdf' },
+        },
+        { id: -100777, type: 'group' },
+      ),
+    );
+    expect(parts[0]!.text).toBe('[Message from Quentin]: Fichier envoyé (sans légende).');
+    expect(parts[1]!.text).toContain(`shared/telegram/${jobId}/devis.pdf`);
+  });
+
+  it('a download that fails: the job exists, and a part names the file and the reason', async () => {
+    telegramFiles.set('broken', new Error('telegram_request_failed: file download HTTP 502'));
+    const { jobId, parts, outcomes } = await deliver(
+      update({
+        caption: 'voici',
+        document: { file_id: 'broken', file_name: 'rapport.docx', file_size: 2048 },
+      }),
+    );
+    expect(parts).toHaveLength(2);
+    expect(parts[1]!.text).toContain('NOT received');
+    expect(parts[1]!.text).toContain('"rapport.docx"');
+    expect(parts[1]!.text).toContain('file download HTTP 502');
+    expect(outcomes).toEqual([
+      {
+        received: false,
+        name: 'rapport.docx',
+        mediaType: null,
+        size: 2048,
+        reason: 'telegram_request_failed: file download HTTP 502',
+      },
+    ]);
+    await expect(readdir(join(telegramFolder(), jobId))).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('a file over the Bot API 20 MB limit: said with its size, never fetched', async () => {
+    // Pas de stub pour ce file_id : un appel au Bot API lèverait « no stub »,
+    // et la raison dite serait celle-là, pas la limite.
+    const { parts } = await deliver(
+      update({
+        caption: 'la vidéo',
+        video: {
+          file_id: 'huge',
+          file_name: 'vacances.mp4',
+          mime_type: 'video/mp4',
+          file_size: 48 * 1024 * 1024,
+        },
+      }),
+    );
+    const note = parts[1]!.text!;
+    expect(note).toContain('NOT received');
+    expect(note).toContain('"vacances.mp4"');
+    expect(note).toContain('Telegram lets a bot download files up to 20.0 MiB');
+    expect(note).toContain('48.0 MiB');
+    expect(note).not.toContain('no stub');
+  });
+
+  it('a photo keeps its image part (the file: URL of the saved JPEG), plus its file part', async () => {
+    telegramFiles.set('big', JPEG);
+    const { jobId, parts } = await deliver(
+      update({
+        photo: [
+          { file_id: 'small', width: 90, height: 90 },
+          { file_id: 'big', width: 1280, height: 1280 },
+        ],
+      }),
+    );
+    const onDisk = join(telegramFolder(), jobId, 'image.jpg');
+    expect(new Uint8Array(await readFile(onDisk))).toEqual(JPEG);
+    expect(parts[0]).toEqual({ type: 'text', text: 'Image envoyée (sans légende).' });
+    expect(parts[1]!.text).toContain(`shared/telegram/${jobId}/image.jpg`);
+    expect(parts[2]).toEqual({ type: 'image', image: pathToFileURL(onDisk).href });
+  });
+
+  it('an image sent as a document gets an image part too: its bytes decide, not its kind', async () => {
+    telegramFiles.set('png-doc', new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+    const { jobId, parts } = await deliver(
+      update({ caption: 'en qualité', document: { file_id: 'png-doc', file_name: 'scan' } }),
+    );
+    // Sans extension, le nom prend celle de son type.
+    const onDisk = join(telegramFolder(), jobId, 'scan.png');
+    expect(parts[2]).toEqual({ type: 'image', image: pathToFileURL(onDisk).href });
+  });
+
+  // Revue de #902 (F2) : le chemin nu n'était lu comme un fichier que s'il
+  // finissait par une extension de 2 à 5 caractères ; `capture.20261031` en a
+  // une de 8, et l'image tombait en « illisible » avant le modèle.
+  it('an image whose name ends in an extension of any length reaches the model, in the request body', async () => {
+    const PNG = new Uint8Array([
+      0x89,
+      0x50,
+      0x4e,
+      0x47,
+      0x0d,
+      0x0a,
+      0x1a,
+      0x0a,
+      ...Buffer.from('a capture of a bill'),
+    ]);
+    telegramFiles.set('capture', PNG);
+    const { job, parts } = await deliver(
+      update({
+        caption: 'range-la',
+        document: { file_id: 'capture', file_name: 'capture.20261031' },
+      }),
+    );
+    expect(parts[1]!.text).toContain('/capture.20261031');
+
+    const hydrated = await hydrateForLlm(
+      job.messages as ModelMessage[],
+      { image: { sees: true }, pdf: { sees: true } },
+      new Map(),
+    );
+    const body = await wireBody(hydrated);
+    const b64 = Buffer.from(PNG).toString('base64');
+    expect(body).toContain(
+      `"type":"image","source":{"type":"base64","media_type":"image/png","data":"${b64}"}`,
+    );
+    expect(body).not.toContain('holds no image Nodal can read');
+  });
+
+  it('a job already claimed while the file downloaded keeps its transcript (G1), the file stays on disk', async () => {
+    telegramFiles.set('late', PDF);
+    const result = await handleTelegramUpdate({
+      update: update({
+        caption: 'tard',
+        document: { file_id: 'late', file_name: 'tard.pdf', mime_type: 'application/pdf' },
+      }),
+      receivingAgentId: seed.agentId,
+      receivingAgentEntityId: seed.entityId,
+      receivingAgentBotUsername: 'nodal_bot',
+      tx: db as unknown as RunnerDeps['db'],
+    });
+    const jobId = result.jobId!;
+    await db.update(agentJobs).set({ status: 'processing' }).where(eq(agentJobs.id, jobId));
+    const [before] = await db.select().from(agentJobs).where(eq(agentJobs.id, jobId));
+
+    await attachInboundFiles({
+      jobId,
+      entityId: seed.entityId,
+      botToken: '123:fake',
+      inbound: result.files!,
+      db: db as unknown as RunnerDeps['db'],
+    });
+
+    const [after] = await db.select().from(agentJobs).where(eq(agentJobs.id, jobId));
+    expect(after!.messages).toEqual(before!.messages);
+    expect(await readdir(join(telegramFolder(), jobId))).toEqual(['tard.pdf']);
+  });
+});
+
+describe('receiveInboundFiles — never overwrites @cap:parler-par-canal-externe/moteur', () => {
+  it('two files of the same name in one message: both kept, the second suffixed', async () => {
+    const [job] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'telegram',
+        task: 't',
+        chatId: '1',
+        status: 'pending',
+        messages: [{ role: 'user', content: 't' }],
+      })
+      .returning({ id: agentJobs.id });
+    const first = new Uint8Array([1, 1, 1]);
+    const second = new Uint8Array([2, 2, 2]);
+    const { outcomes } = await receiveInboundFiles({
+      db: db as unknown as RunnerDeps['db'],
+      jobId: job!.id,
+      entityId: seed.entityId,
+      channel: 'telegram',
+      text: 't',
+      files: [
+        { name: 'Facture.pdf', mediaType: 'application/pdf', size: 3, download: async () => first },
+        {
+          name: 'Facture.pdf',
+          mediaType: 'application/pdf',
+          size: 3,
+          download: async () => second,
+        },
+      ],
+    });
+    const dir = join(telegramFolder(), job!.id);
+    expect((await readdir(dir)).sort()).toEqual(['Facture (2).pdf', 'Facture.pdf']);
+    expect(new Uint8Array(await readFile(join(dir, 'Facture.pdf')))).toEqual(first);
+    expect(new Uint8Array(await readFile(join(dir, 'Facture (2).pdf')))).toEqual(second);
+    expect(outcomes.map((o) => (o.received ? o.workspacePath : null))).toEqual([
+      `shared/telegram/${job!.id}/Facture.pdf`,
+      `shared/telegram/${job!.id}/Facture (2).pdf`,
+    ]);
+  });
+
+  // Revue de #902 (F1) : sous Windows, une écriture vers `con .txt` part dans
+  // la console et ne laisse rien sur le disque, alors que le job disait « Saved ».
+  it.each([
+    'con .txt',
+    'nul .pdf',
+    'aux .mp3',
+    'com1 .docx',
+    'conin$.log',
+    'conout$ .txt',
+    'CONOUT$',
+  ])(
+    'a file named like a Windows device (%j) is written, with its bytes, under a name that is not one',
+    async (name) => {
+      const [job] = await db
+        .insert(agentJobs)
+        .values({
+          entityId: seed.entityId,
+          agentId: seed.agentId,
+          channel: 'telegram',
+          task: 't',
+          chatId: '3',
+          status: 'pending',
+        })
+        .returning({ id: agentJobs.id });
+      const bytes = new Uint8Array(Buffer.from(`content of ${name}`));
+      const { outcomes } = await receiveInboundFiles({
+        db: db as unknown as RunnerDeps['db'],
+        jobId: job!.id,
+        entityId: seed.entityId,
+        channel: 'telegram',
+        text: 't',
+        files: [{ name, mediaType: null, size: bytes.byteLength, download: async () => bytes }],
+      });
+      const dir = join(telegramFolder(), job!.id);
+      expect(await readdir(dir)).toEqual([`_${name}`]);
+      expect(new Uint8Array(await readFile(join(dir, `_${name}`)))).toEqual(bytes);
+      expect(outcomes[0]).toMatchObject({ received: true, path: join(dir, `_${name}`) });
+    },
+  );
+
+  // CLOCK$ n'est dans aucune liste de Microsoft : il garde son nom, et son
+  // écriture réelle (sur la CI Windows aussi) laisse bien le fichier et ses octets.
+  it.each(['CLOCK$', 'clock$.txt', 'conin$x.txt'])(
+    'a name Windows does not resolve to a device (%j) keeps its name, and its bytes land on disk',
+    async (name) => {
+      const [job] = await db
+        .insert(agentJobs)
+        .values({
+          entityId: seed.entityId,
+          agentId: seed.agentId,
+          channel: 'telegram',
+          task: 't',
+          chatId: '4',
+          status: 'pending',
+        })
+        .returning({ id: agentJobs.id });
+      const bytes = new Uint8Array(Buffer.from(`content of ${name}`));
+      await receiveInboundFiles({
+        db: db as unknown as RunnerDeps['db'],
+        jobId: job!.id,
+        entityId: seed.entityId,
+        channel: 'telegram',
+        text: 't',
+        files: [{ name, mediaType: null, size: bytes.byteLength, download: async () => bytes }],
+      });
+      const dir = join(telegramFolder(), job!.id);
+      expect(await readdir(dir)).toEqual([name]);
+      expect(new Uint8Array(await readFile(join(dir, name)))).toEqual(bytes);
+    },
+  );
+
+  it('a file already in the folder under the same name is not overwritten', async () => {
+    const [job] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'telegram',
+        task: 't',
+        chatId: '2',
+        status: 'pending',
+      })
+      .returning({ id: agentJobs.id });
+    const dir = join(telegramFolder(), job!.id);
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, 'notes.txt'), 'already here');
+    await receiveInboundFiles({
+      db: db as unknown as RunnerDeps['db'],
+      jobId: job!.id,
+      entityId: seed.entityId,
+      channel: 'telegram',
+      text: 't',
+      files: [
+        {
+          name: 'NOTES.txt',
+          mediaType: 'text/plain',
+          size: 3,
+          download: async () => new Uint8Array(Buffer.from('new')),
+        },
+      ],
+    });
+    expect(await readFile(join(dir, 'notes.txt'), 'utf8')).toBe('already here');
+    const names = await readdir(dir);
+    expect(names).toHaveLength(2);
+    const added = names.find((n) => n !== 'notes.txt')!;
+    expect(await readFile(join(dir, added), 'utf8')).toBe('new');
+  });
+});
+
+/** The body the Anthropic builder sends for these messages; nothing is downloaded. */
+async function wireBody(messages: ModelMessage[]): Promise<string> {
+  const bodies: string[] = [];
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (typeof init?.body !== 'string')
+        throw new Error(`a download was attempted: ${String(input)}`);
+      bodies.push(init.body);
+      return new Response(JSON.stringify({ error: { message: 'stub' } }), { status: 400 });
+    }),
+  );
+  try {
+    await createLlmClient({ provider: 'anthropic', model: 'claude-sonnet-5', apiKey: 'k' })
+      .generateText({ system: 's', messages })
+      .catch(() => undefined);
+  } finally {
+    vi.unstubAllGlobals();
+  }
+  const body = bodies[0];
+  if (body === undefined) throw new Error('no request was sent');
+  return body;
+}
+
+describe('safeFileName — a name every OS accepts, as close to the original as possible', () => {
+  it.each([
+    ['Facture EDF.pdf', 'application/pdf', 'Facture EDF.pdf'],
+    ['Résumé été.docx', null, 'Résumé été.docx'],
+    // Un nom ne remonte jamais l'arborescence.
+    ['../../etc/passwd', null, 'passwd'],
+    ['..\\..\\Windows\\win.ini', null, 'win.ini'],
+    ['a<b>c:d"e|f?g*h.txt', null, 'a_b_c_d_e_f_g_h.txt'],
+    ['trailing dots...', null, 'trailing dots'],
+    ['CON', null, '_CON'],
+    ['nul.txt', null, '_nul.txt'],
+    ['com1.pdf', null, '_com1.pdf'],
+    ['console.log', null, 'console.log'],
+    // Windows retire l'espace avant le point : ces noms SONT des périphériques (revue de #902).
+    ['con .txt', null, '_con .txt'],
+    ['nul .pdf', null, '_nul .pdf'],
+    ['aux .mp3', null, '_aux .mp3'],
+    ['com1 .docx', null, '_com1 .docx'],
+    ['LPT¹.txt', null, '_LPT¹.txt'],
+    ['conin$.log', null, '_conin$.log'],
+    ['conout$ .txt', null, '_conout$ .txt'],
+    ['CONOUT$', null, '_CONOUT$'],
+    ['conin$x.txt', null, 'conin$x.txt'],
+    ['CLOCK$', null, 'CLOCK$'],
+    ['context .txt', null, 'context .txt'],
+    ['', 'image/jpeg', 'image.jpg'],
+    [null, 'audio/ogg', 'audio.ogg'],
+    [null, null, 'file'],
+    ['..', null, 'file'],
+    ['scan', 'image/png', 'scan.png'],
+    ['invoice‮fdp.exe', null, 'invoicefdp.exe'],
+    ['a\u0000b\nc.txt', null, 'abc.txt'],
+  ])('%j (%s) → %j', (raw, type, expected) => {
+    expect(safeFileName(raw, type)).toBe(expected);
+  });
+
+  it('cuts a long name to 150 UTF-8 bytes, keeping its extension and whole characters', () => {
+    const name = safeFileName(`${'é'.repeat(200)}.pdf`, null);
+    expect(name.endsWith('.pdf')).toBe(true);
+    expect(Buffer.byteLength(name, 'utf8')).toBeLessThanOrEqual(150);
+    expect(name).toBe(`${'é'.repeat(73)}.pdf`);
+  });
+});
+
+describe('pruneInboundFolder / pruneJobMediaFiles — a folder per job (#899)', () => {
+  it('keeps the folder of a live job and of a name it did not write; removes an old finished one', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'nodal-inbound-prune-'));
+    try {
+      const [live] = await db
+        .insert(agentJobs)
+        .values({
+          entityId: seed.entityId,
+          agentId: seed.agentId,
+          channel: 'telegram',
+          task: 'l',
+          status: 'pending',
+        })
+        .returning({ id: agentJobs.id });
+      const [done] = await db
+        .insert(agentJobs)
+        .values({
+          entityId: seed.entityId,
+          agentId: seed.agentId,
+          channel: 'telegram',
+          task: 'd',
+          status: 'completed',
+        })
+        .returning({ id: agentJobs.id });
+      const old = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000);
+      for (const name of [live!.id, done!.id, 'Classement']) {
+        await mkdir(join(dir, name));
+        await writeFile(join(dir, name, 'x.pdf'), 'x');
+        await utimes(join(dir, name), old, old);
+      }
+
+      await pruneInboundFolder(dir, db as unknown as RunnerDeps['db']);
+
+      expect((await readdir(dir)).sort()).toEqual([live!.id, 'Classement'].sort());
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('the retention cron removes the folder of a pruned job with its files', async () => {
+    const cronRoot = await mkdtemp(join(tmpdir(), 'nodal-inbound-cron-'));
+    const old = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000);
+    try {
+      const pruned = '11111111-1111-4111-8111-111111111111';
+      const kept = '22222222-2222-4222-8222-222222222222';
+      const chat = join(cronRoot, 'entity-1', 'shared', 'telegram', '42');
+      for (const id of [pruned, kept]) {
+        await mkdir(join(chat, id), { recursive: true });
+        await writeFile(join(chat, id, 'a.pdf'), 'a');
+        await writeFile(join(chat, id, 'b.ogg'), 'b');
+        // Past the 30 days their note promised (#911).
+        await utimes(join(chat, id), old, old);
+      }
+
+      const result = await pruneJobMediaFiles(cronRoot, [pruned]);
+
+      expect(result.filesDeleted).toBe(2);
+      expect(await readdir(chat)).toEqual([kept]);
+      expect((await readdir(join(chat, kept))).sort()).toEqual(['a.pdf', 'b.ogg']);
+    } finally {
+      await rm(cronRoot, { recursive: true, force: true });
+    }
+  });
+});
+
+// #910 : les fichiers reçus vivent sous <shared>/<canal>/<jobId>/ (Discord :
+// <shared>/discord/<jobId>.<ext>), et ce qui a été écrit avant, un niveau plus
+// bas sous l'adresse de la conversation, se vide toujours.
+//
+// Mutations vérifiées : `pruneInboundFolder` qui ne descend plus dans les
+// sous-dossiers → « the old conversation folders » rougit ; le cron qui ne lit
+// plus les entrées du dossier du canal lui-même → « the retention cron, both
+// layouts » rougit.
+describe('the inbound folder of a channel, keyed by job, and the layout before it (#910) @cap:parler-par-canal-externe/moteur', () => {
+  async function jobWith(status: string): Promise<string> {
+    const [row] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'telegram',
+        task: 't',
+        status,
+      })
+      .returning({ id: agentJobs.id });
+    return row!.id;
+  }
+  const old = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000);
+  async function oldFolder(path: string): Promise<void> {
+    await mkdir(path, { recursive: true });
+    await writeFile(join(path, 'x.pdf'), 'x');
+    await utimes(path, old, old);
+  }
+  async function oldFile(path: string): Promise<void> {
+    await writeFile(path, 'x');
+    await utimes(path, old, old);
+  }
+
+  it('the old conversation folders are pruned like the channel folder, and nothing deeper', async () => {
+    const channel = await mkdtemp(join(tmpdir(), 'nodal-inbound-channel-'));
+    try {
+      const live = await jobWith('pending');
+      const done = await jobWith('completed');
+      const alsoDone = await jobWith('failed');
+      const deepDone = await jobWith('completed');
+      // Le dossier du canal (depuis #910).
+      await oldFolder(join(channel, done));
+      await oldFolder(join(channel, live));
+      // Un fil d'avant #910, avec ses deux formes d'entrée, et un dossier de l'agent.
+      const chat = join(channel, '4242');
+      await mkdir(chat);
+      await oldFolder(join(chat, alsoDone));
+      await oldFile(join(chat, `${done}.jpg`));
+      await oldFolder(join(chat, live));
+      await oldFolder(join(chat, 'Archives', deepDone));
+
+      await pruneInboundFolder(channel, db as unknown as RunnerDeps['db']);
+
+      expect((await readdir(channel)).sort()).toEqual(['4242', live].sort());
+      expect((await readdir(chat)).sort()).toEqual(['Archives', live].sort());
+      expect(await readdir(join(chat, 'Archives'))).toEqual([deepDone]);
+    } finally {
+      await rm(channel, { recursive: true, force: true });
+    }
+  });
+
+  // Revue de #911 (P2) : le dossier du canal tient toutes ses conversations.
+  // Une borne au nombre qui supprimait les plus anciennes y effaçait le fichier
+  // non déplacé d'une AUTRE conversation avant les 30 jours promis.
+  // Échec d'abord sur 871fc36d : la borne au nombre efface le fichier de A.
+  // Mutations vérifiées : aucun refus à l'entrée → rouge (B reçoit, sans le
+  // dire) ; la place comptée sur tout le canal au lieu de la conversation →
+  // rouge (A est refusé).
+  it('a busy conversation never deletes another one’s promised file; its own next file is refused, and said', async () => {
+    const folder = telegramFolder();
+    await mkdir(folder, { recursive: true });
+    const jobFor = async (chatId: string) => {
+      const [row] = await db
+        .insert(agentJobs)
+        .values({
+          entityId: seed.entityId,
+          agentId: seed.agentId,
+          channel: 'telegram',
+          chatId,
+          task: 't',
+          status: 'completed',
+        })
+        .returning({ id: agentJobs.id });
+      return row!.id;
+    };
+    // A : un fichier reçu il y a deux jours, son job fini, jamais déplacé.
+    const aJob = await jobFor(String(CHAT));
+    await mkdir(join(folder, aJob));
+    await writeFile(join(folder, aJob, 'facture.pdf'), 'A');
+    const twoDaysAgo = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
+    await utimes(join(folder, aJob), twoDaysAgo, twoDaysAgo);
+    // B : le groupe, 200 fichiers d'hier.
+    const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const bJobs = await db
+      .insert(agentJobs)
+      .values(
+        Array.from({ length: 200 }, (_, i) => ({
+          entityId: seed.entityId,
+          agentId: seed.agentId,
+          channel: 'telegram' as const,
+          chatId: '-100777',
+          task: `b ${i}`,
+          status: 'completed' as const,
+        })),
+      )
+      .returning({ id: agentJobs.id });
+    // En parallèle : 600 opérations de disque à la suite dépassaient la minute
+    // sur le runner Windows de la CI.
+    await Promise.all(
+      bJobs.map(async ({ id }) => {
+        await mkdir(join(folder, id));
+        await writeFile(join(folder, id, 'scan.pdf'), 'B');
+        await utimes(join(folder, id), yesterday, yesterday);
+      }),
+    );
+
+    telegramFiles.set('b-201', INVOICE);
+    const inB = await deliver(
+      update(
+        {
+          caption: '@nodal_bot encore',
+          document: { file_id: 'b-201', file_name: 'b201.pdf', mime_type: 'application/pdf' },
+        },
+        { id: -100777, type: 'group' },
+      ),
+    );
+    // Rien de promis n'est effacé, ni chez A, ni chez B…
+    expect(await readFile(join(folder, aJob, 'facture.pdf'), 'utf8')).toBe('A');
+    const bLeft = await Promise.all(bJobs.map(({ id }) => readdir(join(folder, id))));
+    expect(bLeft).toEqual(bJobs.map(() => ['scan.pdf']));
+    // … et le fichier de trop est dit au modèle, avec sa raison.
+    expect(inB.parts[1]!.text).toContain('NOT received');
+    expect(inB.parts[1]!.text).toContain('already has 200 received files under shared/telegram/');
+
+    telegramFiles.set('a-2', INVOICE);
+    const inA = await deliver(
+      update({
+        caption: 'et celui-ci',
+        document: { file_id: 'a-2', file_name: 'a2.pdf', mime_type: 'application/pdf' },
+      }),
+    );
+    expect(inA.parts[1]!.text).toContain(`Saved at shared/telegram/${inA.jobId}/a2.pdf`);
+    expect(await readFile(join(folder, inA.jobId, 'a2.pdf'))).toEqual(INVOICE);
+
+    await Promise.all(
+      [{ id: aJob }, ...bJobs].map(({ id }) =>
+        rm(join(folder, id), { recursive: true, force: true }),
+      ),
+    );
+  }, 180_000);
+
+  // Revue de #911 (P2) : les fils d'avant #910 portent l'adresse de leur
+  // conversation, que le modèle lit comme un handle. Au démarrage, leurs
+  // entrées de job remontent dans le dossier du canal.
+  // Mutation vérifiée : `moveLegacyInboundFolders` qui ne déplace rien →
+  // rouge (« legacy folder listed then read »).
+  it('the pre-#910 conversation folders move up at boot; a folder an agent made stays', async () => {
+    await db.delete(channelAllowedConversations);
+    await db.insert(channelAllowedConversations).values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      channel: 'discord',
+      conversationId: DISCORD_CHANNEL,
+      kind: 'channel',
+      status: 'active',
+    });
+    const telegram = telegramFolder();
+    const discord = join(root, seed.entityId, 'shared', 'discord');
+    const legacy = join(telegram, String(CHAT));
+    const legacyDiscord = join(discord, DISCORD_CHANNEL);
+    const archives = join(telegram, 'Archives');
+    const jobA = '33333333-3333-4333-8333-333333333333';
+    const jobB = '44444444-4444-4444-8444-444444444444';
+    const jobC = '55555555-5555-4555-8555-555555555555';
+    const jobD = '66666666-6666-4666-8666-666666666666';
+    await mkdir(join(legacy, jobA), { recursive: true });
+    await writeFile(join(legacy, jobA, 'ancien.pdf'), 'a');
+    await writeFile(join(legacy, `${jobB}.jpg`), 'b');
+    await utimes(join(legacy, `${jobB}.jpg`), old, old);
+    await writeFile(join(legacy, 'notes.txt'), 'not a job entry');
+    await mkdir(legacyDiscord, { recursive: true });
+    await writeFile(join(legacyDiscord, `${jobC}.png`), 'c');
+    await mkdir(join(archives, jobD), { recursive: true });
+    await writeFile(join(archives, jobD, 'garde.pdf'), 'd');
+
+    const result = await moveLegacyInboundFolders(db as unknown as RunnerDeps['db'], root);
+
+    expect(result.moved).toBe(3);
+    expect(await readFile(join(telegram, jobA, 'ancien.pdf'), 'utf8')).toBe('a');
+    expect(await readFile(join(telegram, `${jobB}.jpg`), 'utf8')).toBe('b');
+    // La date suit le fichier : son délai de 30 jours court toujours.
+    expect((await stat(join(telegram, `${jobB}.jpg`))).mtimeMs).toBe(old.getTime());
+    expect(await readFile(join(discord, `${jobC}.png`), 'utf8')).toBe('c');
+    await expect(readdir(legacyDiscord)).rejects.toMatchObject({ code: 'ENOENT' });
+    // Ce qui n'est pas une entrée de job reste, et le fil avec lui (c'est dit).
+    expect(await readdir(legacy)).toEqual(['notes.txt']);
+    expect(result.left).toEqual([legacy]);
+    // Un dossier dont le nom n'est pas une adresse connue n'est pas un fil.
+    expect(await readdir(join(archives, jobD))).toEqual(['garde.pdf']);
+
+    // Idempotent.
+    expect((await moveLegacyInboundFolders(db as unknown as RunnerDeps['db'], root)).moved).toBe(0);
+
+    for (const p of [legacy, archives, join(telegram, jobA), join(telegram, `${jobB}.jpg`)]) {
+      await rm(p, { recursive: true, force: true });
+    }
+    await rm(discord, { recursive: true, force: true });
+  });
+
+  it('the retention cron, both layouts: a pruned job leaves nothing, at either level', async () => {
+    const cronRoot = await mkdtemp(join(tmpdir(), 'nodal-inbound-cron-'));
+    try {
+      const pruned = '11111111-1111-4111-8111-111111111111';
+      const kept = '22222222-2222-4222-8222-222222222222';
+      const shared = join(cronRoot, 'entity-1', 'shared');
+      const legacyChat = join(shared, 'telegram', '42');
+      const legacyChannel = join(shared, 'discord', '998877');
+      for (const id of [pruned, kept]) {
+        await mkdir(join(shared, 'telegram', id), { recursive: true });
+        await writeFile(join(shared, 'telegram', id, 'a.pdf'), 'a');
+        await mkdir(join(legacyChat, id), { recursive: true });
+        await writeFile(join(legacyChat, id, 'b.pdf'), 'b');
+        await mkdir(legacyChannel, { recursive: true });
+        await writeFile(join(shared, 'discord', `${id}.png`), 'p');
+        await writeFile(join(legacyChannel, `${id}.png`), 'p');
+        for (const p of [
+          join(shared, 'telegram', id),
+          join(legacyChat, id),
+          join(shared, 'discord', `${id}.png`),
+          join(legacyChannel, `${id}.png`),
+        ]) {
+          await utimes(p, old, old);
+        }
+      }
+
+      const result = await pruneJobMediaFiles(cronRoot, [pruned]);
+
+      expect(result.filesDeleted).toBe(4);
+      expect((await readdir(join(shared, 'telegram'))).sort()).toEqual(['42', kept].sort());
+      expect(await readdir(join(shared, 'telegram', kept))).toEqual(['a.pdf']);
+      expect(await readdir(legacyChat)).toEqual([kept]);
+      expect((await readdir(join(shared, 'discord'))).sort()).toEqual(
+        ['998877', `${kept}.png`].sort(),
+      );
+      expect(await readdir(legacyChannel)).toEqual([`${kept}.png`]);
+    } finally {
+      await rm(cronRoot, { recursive: true, force: true });
+    }
+  });
+});
+
+// ─── #910 : le chemin que lit le MODÈLE est celui du disque ───────────────────
+//
+// Le 31/10, le PDF était écrit sous shared/telegram/<chat id>/<jobId>/, et le
+// modèle lisait shared/telegram/conv_<handle>/<jobId>/ : la frontière vers le
+// fournisseur (`addressedByHandle`, #824) remplace chaque identifiant de
+// conversation connu par son handle dans TOUT ce que le modèle lit, et rien ne
+// relit les entrées des outils. Trois `file_read` en « File not found ».
+//
+// Le parcours entier, pour chaque canal qui écrit des fichiers reçus : la
+// réception réelle, puis la requête TELLE QUE LE FOURNISSEUR LA REÇOIT (la vraie
+// frontière, au-dessus d'un client qui ne fait que la garder), puis les VRAIS
+// outils fichiers (registre, `executeTool`, dossiers du run), appelés avec
+// exactement le chemin que le modèle a lu.
+//
+// Mutation vérifiée : remettre l'adresse de la conversation dans le chemin
+// (`inboundFolder` et `workspaceFolder`, ou le dossier de Discord) → chaque cas
+// rougit, sur « File not found ».
+
+const DISCORD_CHANNEL = '998877665544332211';
+
+/**
+ * Un message Discord privé (DM) de bout en bout, comme le gateway le traite :
+ * `handleDiscordMessage` (la base de test), puis la réception des fichiers
+ * HORS transaction, son échec seulement journalisé — la séquence exacte de
+ * `gateway.ts`. Le CDN de Discord est le `fetch` donné.
+ */
+async function deliverDiscord(
+  content: string,
+  attachments: DiscordInboundAttachment[],
+  cdn: (url: string) => Promise<Response>,
+) {
+  const result = await handleDiscordMessage({
+    message: {
+      channelId: DISCORD_CHANNEL,
+      channelType: 'dm',
+      content,
+      author: { id: 'u-910', bot: false, username: 'quentin', globalName: 'Quentin' },
+      mentionedUserIds: [],
+      attachments,
+    },
+    receivingAgentId: seed.agentId,
+    receivingAgentEntityId: seed.entityId,
+    receivingAgentBotUserId: 'bot-910',
+    tx: db as unknown as RunnerDeps['db'],
+  });
+  expect(result.jobId).toBeDefined();
+  const jobId = result.jobId!;
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (input: RequestInfo | URL) => cdn(String(input))),
+  );
+  try {
+    if (result.files) {
+      await attachDiscordFiles({
+        jobId,
+        entityId: seed.entityId,
+        inbound: result.files,
+        db: db as unknown as RunnerDeps['db'],
+      }).catch((err: unknown) => {
+        console.warn(`test gateway: inbound files attach failed: ${String(err)}`);
+      });
+    }
+  } finally {
+    vi.unstubAllGlobals();
+  }
+  const [job] = await db.select().from(agentJobs).where(eq(agentJobs.id, jobId));
+  return { jobId, job: job! };
+}
+
+/** Un vrai PDF d'une page : `file_read` le passe au modèle tel quel (#905). */
+const INVOICE = buildTestPdf([{ text: 'Facture EDF 2026' }]);
+
+/**
+ * Le chemin d'une image qu'un modèle ne voit pas, dans sa note
+ * (`visionRoutingNote`) : « saved at » une fois, puis le chemin (#913 ; la
+ * note disait « saved at saved at »).
+ */
+const ROUTING_NOTE_PATH = /IMAGE \(saved at ((?!saved at ).+?)\)\. It was not passed to you/;
+
+/** La requête que le fournisseur reçoit : `hydrateForLlm` puis la frontière des handles. */
+async function requestAsTheProviderGetsIt(
+  messages: ModelMessage[],
+  input: ModelAttachmentInput,
+): Promise<{ system: string; text: string }> {
+  const sent: Array<{ system?: unknown; messages?: unknown }> = [];
+  const provider = {
+    config: { provider: 'anthropic', model: 'mock' },
+    capabilities: {},
+    generateText: async (args: { system?: unknown; messages?: unknown }) => {
+      sent.push(args);
+      return { text: 'ok' };
+    },
+    generateObject: async () => {
+      throw new Error('not used');
+    },
+    streamText: () => {
+      throw new Error('not used');
+    },
+  } as unknown as NodalLlmClient;
+  const client = addressedByHandle(provider, db as unknown as AnyDrizzleDb, {
+    entityId: seed.entityId,
+  });
+  await client.generateText({
+    // Le prompt d'un job de canal nomme sa conversation : il prouve que la
+    // frontière a bien réécrit CETTE requête.
+    system: `Conversation telegram ${CHAT}, discord ${DISCORD_CHANNEL}.`,
+    messages: await hydrateForLlm(messages, input, new Map()),
+  });
+  const request = sent[0]!;
+  return { system: String(request.system), text: JSON.stringify(request.messages) };
+}
+
+/** Un vrai outil du registre, par le vrai seam, dans les dossiers du run. */
+async function callFileTool(
+  jobId: string,
+  name: string,
+  input: Record<string, unknown>,
+  autonomy?: 'fully_autonomous',
+): Promise<{ output: { ok: boolean; reason?: string }; attached: string[] }> {
+  const registry = createToolRegistry();
+  registerBuiltins(registry);
+  const tool = registry.get(name);
+  if (!tool) throw new Error(`no tool ${name}`);
+  const { workspaces } = await resolveRunWorkspaces(
+    db as unknown as AnyDrizzleDb,
+    seed.agentId,
+    seed.entityId,
+  );
+  const ctx: ToolContext = {
+    jobId,
+    agentId: seed.agentId,
+    entityId: seed.entityId,
+    db: db as unknown as ToolContext['db'],
+    jobChatId: String(CHAT),
+    turn: 1,
+    workspaces,
+    // Un modèle qui prend les images et les PDF : `file_read` les lui passe (#905).
+    modelInput: { image: { sees: true }, pdf: { sees: true } },
+  };
+  const res = await executeTool(tool, input as never, ctx, {
+    approvalRules: [],
+    ...(autonomy ? { autonomy } : {}),
+    onApprovalRequired: async () => {},
+  });
+  if (res.outcome !== 'success') throw new Error(`${name}: ${JSON.stringify(res)}`);
+  return {
+    output: res.output as { ok: boolean; reason?: string },
+    // Les octets passés au modèle, en base64.
+    attached: (res.attachments ?? []).map((a) => a.data),
+  };
+}
+
+/** Les deux chemins que la note d'un fichier reçu donne au modèle (le JSON de la requête). */
+function pathsTheModelReads(requestText: string): { workspacePath: string; absolutePath: string } {
+  // Jusqu'à la phrase qui suit : un nom peut lui-même contenir « ). ».
+  const m = /Saved at (.+?) for the file tools \(absolute path: (.+?)\)\. Files left under/.exec(
+    requestText,
+  );
+  if (!m) throw new Error(`no file note in the request: ${requestText}`);
+  // Les chemins sont lus dans du JSON : un antislash Windows y est doublé.
+  const unjson = (s: string) => JSON.parse(`"${s}"`) as string;
+  return { workspacePath: unjson(m[1]!), absolutePath: unjson(m[2]!) };
+}
+
+describe('a received file opens at the path the model is given (#910) @cap:parler-par-canal-externe/moteur', () => {
+  beforeEach(async () => {
+    await db.delete(channelAllowedConversations);
+    await db.insert(channelAllowedConversations).values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      channel: 'discord',
+      conversationId: DISCORD_CHANNEL,
+      kind: 'channel',
+      status: 'active',
+    });
+  });
+
+  it.each([
+    {
+      chat: { id: CHAT, type: 'private' as const },
+      caption: 'Range moi ça',
+      fileName: 'Facture EDF.pdf',
+    },
+    {
+      chat: { id: -100777, type: 'group' as const },
+      caption: '@nodal_bot range le',
+      fileName: 'Facture EDF.pdf',
+    },
+    // Revue de #911 : un nom qui porte une adresse connue (celle du chat, ou
+    // celle d'un autre) passait la frontière réécrit, et le modèle ne
+    // trouvait pas le fichier.
+    {
+      chat: { id: CHAT, type: 'private' as const },
+      caption: 'Range moi ça',
+      fileName: `${CHAT}.pdf`,
+    },
+    {
+      chat: { id: -100777, type: 'group' as const },
+      caption: '@nodal_bot range le',
+      fileName: `Relevé ${CHAT} (oct).pdf`,
+    },
+  ])(
+    'Telegram $chat.type chat, file $fileName: file_read and file_move succeed on exactly the paths the model read',
+    async ({ chat, caption, fileName }) => {
+      telegramFiles.set('doc-910', INVOICE);
+      const { jobId, job } = await deliver(
+        update(
+          {
+            caption,
+            document: {
+              file_id: 'doc-910',
+              file_name: fileName,
+              mime_type: 'application/pdf',
+            },
+          },
+          chat,
+        ),
+      );
+
+      const request = await requestAsTheProviderGetsIt(job.messages as ModelMessage[], {
+        image: { sees: true },
+        pdf: { sees: true },
+      });
+      // La frontière a réécrit cette requête : l'adresse du chat est partie.
+      const handle = await conversationHandleFor(db as unknown as AnyDrizzleDb, {
+        entityId: seed.entityId,
+        channel: 'telegram',
+        conversationId: String(CHAT),
+      });
+      expect(request.system).toContain(handle);
+      expect(request.system).not.toContain(String(CHAT));
+
+      const { workspacePath, absolutePath } = pathsTheModelReads(request.text);
+
+      // Le PDF arrive au modèle : ses octets, ceux du disque.
+      for (const path of [workspacePath, absolutePath]) {
+        const read = await callFileTool(jobId, 'file_read', { path });
+        expect(read.output.reason ?? null).toBeNull();
+        expect(read.output).toMatchObject({ ok: true });
+        expect(read.attached).toEqual([INVOICE.toString('base64')]);
+      }
+
+      const classement = join(root, seed.entityId, 'shared', 'Classement');
+      const copied = await callFileTool(jobId, 'file_move', {
+        source: workspacePath,
+        destination: 'shared/Classement/copie.pdf',
+        copy: true,
+        create_dirs: true,
+      });
+      expect(copied.output.reason ?? null).toBeNull();
+      expect(copied.output).toMatchObject({ ok: true, operation: 'copied' });
+      expect(await readFile(join(classement, 'copie.pdf'))).toEqual(INVOICE);
+
+      // Le fichier reçu est une écriture de CE job (#913) : le déplacer, dans
+      // l'autonomie par défaut, ne demande à personne.
+      const moved = await callFileTool(jobId, 'file_move', {
+        source: workspacePath,
+        destination: 'shared/Classement/Facture EDF.pdf',
+      });
+      expect(moved.output.reason ?? null).toBeNull();
+      expect(moved.output).toMatchObject({ ok: true, operation: 'moved' });
+      expect(await readFile(join(classement, 'Facture EDF.pdf'))).toEqual(INVOICE);
+      await rm(classement, { recursive: true });
+
+      // Et ce chemin est celui du dossier du job, sans adresse de conversation ;
+      // un nom qui en portait une est écrit tel que le modèle le lit.
+      const onDisk = fileName.replace(String(CHAT), handle);
+      expect(workspacePath).toBe(`shared/telegram/${jobId}/${onDisk}`);
+    },
+  );
+
+  it('a pre-#910 folder, moved at boot: what file_list shows the model, file_read opens', async () => {
+    const [done] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'telegram',
+        chatId: String(CHAT),
+        task: 'ancien',
+        status: 'completed',
+      })
+      .returning({ id: agentJobs.id });
+    const legacy = join(telegramFolder(), String(CHAT), done!.id);
+    await mkdir(legacy, { recursive: true });
+    await writeFile(join(legacy, 'ancien.pdf'), INVOICE);
+
+    await moveLegacyInboundFolders(db as unknown as RunnerDeps['db'], root);
+
+    const listed = await callFileTool(done!.id, 'file_list', {
+      path: 'shared/telegram',
+      recursive: true,
+    });
+    // Le résultat de l'outil, tel que le modèle le lit au tour suivant.
+    const request = await requestAsTheProviderGetsIt(
+      [{ role: 'user', content: JSON.stringify(listed.output) }],
+      { image: { sees: true }, pdf: { sees: true } },
+    );
+    const shown = JSON.parse(JSON.parse(request.text)[0].content) as {
+      entries: Array<{ name: string }>;
+    };
+    const entry = shown.entries.find((e) => e.name.endsWith('/ancien.pdf'));
+    expect(entry).toBeDefined();
+
+    const read = await callFileTool(done!.id, 'file_read', { path: `shared/${entry!.name}` });
+    expect(read.output.reason ?? null).toBeNull();
+    expect(read.attached).toEqual([INVOICE.toString('base64')]);
+    await rm(join(telegramFolder(), done!.id), { recursive: true, force: true });
+    await rm(join(telegramFolder(), String(CHAT)), { recursive: true, force: true });
+  });
+
+  it('Telegram photo for a model that does not see: the routing note names a path the file tools open', async () => {
+    telegramFiles.set('photo-910', JPEG);
+    const { jobId, job } = await deliver(
+      update({ caption: 'regarde', photo: [{ file_id: 'photo-910', width: 9, height: 9 }] }),
+    );
+    const request = await requestAsTheProviderGetsIt(job.messages as ModelMessage[], {
+      image: { sees: false, reason: 'this model does not take images' },
+      pdf: { sees: true },
+    });
+    const m = ROUTING_NOTE_PATH.exec(request.text);
+    expect(m).not.toBeNull();
+    const noted = JSON.parse(`"${m![1]!}"`) as string;
+    // Le modèle qui ne voit pas en fait un fichier : une copie par le chemin de la note.
+    // (`file_read` d'une image, pour lui, dit « image, not read » : il ne lit pas d'image.)
+    const copied = await callFileTool(jobId, 'file_move', {
+      source: noted,
+      destination: 'shared/Classement/',
+      copy: true,
+      create_dirs: true,
+    });
+    expect(copied.output.reason ?? null).toBeNull();
+    expect(copied.output).toMatchObject({ ok: true, operation: 'copied' });
+    const classement = join(root, seed.entityId, 'shared', 'Classement');
+    const [kept] = await readdir(classement);
+    expect(new Uint8Array(await readFile(join(classement, kept!)))).toEqual(JPEG);
+    await rm(classement, { recursive: true });
+    expect(noted).toBe(join(telegramFolder(), jobId, 'image.jpg'));
+  });
+
+  it('Discord image for a model that does not see: the routing note names a path the file tools open', async () => {
+    const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
+    const { jobId, job: delivered } = await deliverDiscord(
+      'regarde',
+      [
+        {
+          url: 'https://cdn.discordapp.test/a.png',
+          contentType: 'image/png',
+          size: PNG.byteLength,
+          name: 'a.png',
+        },
+      ],
+      async () => new Response(PNG, { status: 200 }),
+    );
+    const job = delivered;
+    const request = await requestAsTheProviderGetsIt(job.messages as ModelMessage[], {
+      image: { sees: false, reason: 'this model does not take images' },
+      pdf: { sees: true },
+    });
+    const discordHandle = await conversationHandleFor(db as unknown as AnyDrizzleDb, {
+      entityId: seed.entityId,
+      channel: 'discord',
+      conversationId: DISCORD_CHANNEL,
+    });
+    expect(request.system).toContain(discordHandle);
+
+    const m = ROUTING_NOTE_PATH.exec(request.text);
+    expect(m).not.toBeNull();
+    const noted = JSON.parse(`"${m![1]!}"`) as string;
+    // Le modèle qui ne voit pas en fait un fichier : une copie par le chemin de la note.
+    // (`file_read` d'une image, pour lui, dit « image, not read » : il ne lit pas d'image.)
+    const copied = await callFileTool(jobId, 'file_move', {
+      source: noted,
+      destination: 'shared/Classement/',
+      copy: true,
+      create_dirs: true,
+    });
+    expect(copied.output.reason ?? null).toBeNull();
+    expect(copied.output).toMatchObject({ ok: true, operation: 'copied' });
+    const classement = join(root, seed.entityId, 'shared', 'Classement');
+    const [kept] = await readdir(classement);
+    expect(new Uint8Array(await readFile(join(classement, kept!)))).toEqual(PNG);
+    await rm(classement, { recursive: true });
+    expect(noted).toBe(join(root, seed.entityId, 'shared', 'discord', jobId, 'a.png'));
+  });
+
+  // Revue de #911, passe 2 (P2) : Discord avait sa propre réception, dont les
+  // refus (boîte pleine, téléchargement en échec, fichier trop gros) levaient
+  // une erreur que le gateway ne faisait que journaliser : le modèle répondait
+  // sans savoir qu'une image avait été envoyée, et la personne la croyait
+  // arrivée. Par la réception commune, chacun devient la même partie
+  // « NOT received » que sur Telegram, avec sa raison.
+  // Mutations vérifiées : le refus de Discord remis en `throw` avant la
+  // réception commune (le gateway le journalise) → « inbox full » rouge ;
+  // l'image trop grosse de nouveau écartée par le handler → « over the cap » rouge.
+  it.each([
+    {
+      case: 'inbox full',
+      size: 3,
+      cdn: async () => new Response(new Uint8Array([0x89, 0x50, 0x4e, 0x47]), { status: 200 }),
+      full: true,
+      reason: 'already has 200 received files under shared/discord/',
+    },
+    {
+      case: 'download failed',
+      size: 3,
+      cdn: async () => new Response('gone', { status: 404 }),
+      full: false,
+      reason: 'Discord answered HTTP 404 to its download',
+    },
+    {
+      case: 'over the cap',
+      size: 11 * 1024 * 1024,
+      cdn: async (): Promise<Response> => {
+        throw new Error('test: an image over the cap is never fetched');
+      },
+      full: false,
+      reason: 'Nodal takes Discord files up to 10.0 MiB, and this one is 11.0 MiB',
+    },
+  ])(
+    'Discord, $case: the model is told the image was NOT received, and why',
+    async ({ size, cdn, full, reason }) => {
+      const discord = join(root, seed.entityId, 'shared', 'discord');
+      const filled: string[] = [];
+      if (full) {
+        const rows = await db
+          .insert(agentJobs)
+          .values(
+            Array.from({ length: 200 }, (_, i) => ({
+              entityId: seed.entityId,
+              agentId: seed.agentId,
+              channel: 'discord' as const,
+              chatId: DISCORD_CHANNEL,
+              task: `d ${i}`,
+              status: 'completed' as const,
+            })),
+          )
+          .returning({ id: agentJobs.id });
+        await mkdir(discord, { recursive: true });
+        await Promise.all(
+          rows.map(async ({ id }) => {
+            filled.push(id);
+            await mkdir(join(discord, id));
+            await writeFile(join(discord, id, 'x.png'), 'x');
+          }),
+        );
+      }
+
+      const { job } = await deliverDiscord(
+        'tiens',
+        [
+          {
+            url: 'https://cdn.discordapp.test/p.png',
+            contentType: 'image/png',
+            size,
+            name: 'p.png',
+          },
+        ],
+        cdn,
+      );
+
+      const request = await requestAsTheProviderGetsIt(job.messages as ModelMessage[], {
+        image: { sees: true },
+        pdf: { sees: true },
+      });
+      const shown = JSON.parse(request.text) as Array<{ role: string; content: unknown }>;
+      expect(shown).toHaveLength(1);
+      expect(shown[0]!.content).toEqual([
+        { type: 'text', text: 'tiens' },
+        {
+          type: 'text',
+          text:
+            `[A file sent with this message was NOT received: "p.png" (image/png, ` +
+            `${size === 3 ? '3 B' : '11.0 MiB'}). Reason: ${
+              full
+                ? 'this conversation already has 200 received files under shared/discord/ from ' +
+                  'the last 30 days that were not moved; moving or deleting some of them makes room'
+                : reason
+            }. Tell the user it did not arrive.]`,
+        },
+      ]);
+      expect(request.text).toContain(reason);
+      await Promise.all(
+        filled.map((id) => rm(join(discord, id), { recursive: true, force: true })),
+      );
+    },
+    180_000,
+  );
+});
+
+/** Un outil du registre par le vrai seam, son résultat tel quel (une approbation comprise). */
+async function runFileTool(
+  jobId: string,
+  name: string,
+  input: Record<string, unknown>,
+  autonomy?: 'fully_autonomous',
+) {
+  const registry = createToolRegistry();
+  registerBuiltins(registry);
+  const tool = registry.get(name);
+  if (!tool) throw new Error(`no tool ${name}`);
+  const { workspaces } = await resolveRunWorkspaces(
+    db as unknown as AnyDrizzleDb,
+    seed.agentId,
+    seed.entityId,
+  );
+  return executeTool(
+    tool,
+    input as never,
+    {
+      jobId,
+      agentId: seed.agentId,
+      entityId: seed.entityId,
+      db: db as unknown as ToolContext['db'],
+      jobChatId: String(CHAT),
+      turn: 1,
+      workspaces,
+    },
+    // L'autonomie par défaut (`destructive_gate`), aucune règle : la porte décide seule.
+    { approvalRules: [], ...(autonomy ? { autonomy } : {}), onApprovalRequired: async () => {} },
+  );
+}
+
+const sha256 = (bytes: Uint8Array | string) => createHash('sha256').update(bytes).digest('hex');
+
+/** Les écritures que `constated_writes` porte pour un job : la porte d'écrasement les lit. */
+async function writesOf(jobId: string) {
+  return db
+    .select({
+      path: constatedWrites.path,
+      turn: constatedWrites.turn,
+      kind: constatedWrites.changeKind,
+      sha: constatedWrites.contentSha256,
+    })
+    .from(constatedWrites)
+    .where(eq(constatedWrites.jobId, jobId));
+}
+
+async function approvalsOf(jobId: string) {
+  return db.select().from(approvalRequests).where(eq(approvalRequests.jobId, jobId));
+}
+
+async function otherJob(): Promise<string> {
+  const [row] = await db
+    .insert(agentJobs)
+    .values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      channel: 'dashboard',
+      task: 'un autre run',
+    })
+    .returning({ id: agentJobs.id });
+  return row!.id;
+}
+
+// #913 : le PDF que le propriétaire envoie sur Telegram est rangé pour son job
+// par la réception, puis l'agent le range avec `file_move`, et une demande
+// d'approbation apparaissait alors que l'outil est autonome. La porte
+// d'écrasement du dossier partagé (#881) protège un fichier que « ce job n'a pas
+// écrit », et l'écriture de la réception n'était pas rangée dans
+// `constated_writes` : le fichier reçu POUR ce job comptait comme celui d'un
+// autre. Toute écriture que la plateforme fait pour un job est désormais rangée
+// comme la sienne, par le même rangement que ses outils.
+// Mutations vérifiées : `recordPlatformWrites` retiré de la réception → les
+// cas Telegram et Discord rouges (et le parcours #910, joué sans autonomie
+// complète) ; retiré de `saveToolAttachments` → le cas du fichier d'outil
+// rouge ; la porte qui croit toute ligne du job sans comparer l'empreinte →
+// « réécrit par un autre job » rouge.
+describe('a file received for a job is written by that job (#913) @cap:parler-par-canal-externe/moteur', () => {
+  beforeEach(async () => {
+    await db.delete(channelAllowedConversations);
+    await db.insert(channelAllowedConversations).values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      channel: 'discord',
+      conversationId: DISCORD_CHANNEL,
+      kind: 'channel',
+      status: 'active',
+    });
+  });
+
+  const classement = () => join(root, seed.entityId, 'shared', 'Classement');
+
+  it('Telegram: file_move of the received PDF, default autonomy, moves it without asking anyone', async () => {
+    telegramFiles.set('doc-913', INVOICE);
+    const { jobId, outcomes } = await deliver(
+      update({
+        caption: 'Range moi ça',
+        document: { file_id: 'doc-913', file_name: 'Facture.pdf', mime_type: 'application/pdf' },
+      }),
+    );
+    const received = outcomes[0]!;
+    if (!received.received) throw new Error(`not received: ${received.reason}`);
+    expect(await writesOf(jobId)).toEqual([
+      { path: await cheminConstate(received.path), turn: 0, kind: 'added', sha: sha256(INVOICE) },
+    ]);
+
+    const res = await runFileTool(jobId, 'file_move', {
+      source: received.workspacePath,
+      destination: 'shared/Classement/Facture.pdf',
+      create_dirs: true,
+      purpose: 'Ranger le fichier reçu.',
+    });
+
+    expect(res).toMatchObject({ outcome: 'success', output: { ok: true, operation: 'moved' } });
+    expect(await approvalsOf(jobId)).toEqual([]);
+    expect(await readFile(join(classement(), 'Facture.pdf'))).toEqual(INVOICE);
+    await expect(stat(received.path)).rejects.toThrow();
+    await rm(classement(), { recursive: true });
+  });
+
+  it('Discord: file_move of the received image, default autonomy, moves it without asking anyone', async () => {
+    const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 4, 5, 6]);
+    const { jobId, job } = await deliverDiscord(
+      'range la',
+      [
+        {
+          url: 'https://cdn.discordapp.test/scan.png',
+          contentType: 'image/png',
+          size: PNG.byteLength,
+          name: 'scan.png',
+        },
+      ],
+      async () => new Response(PNG, { status: 200 }),
+    );
+    const onDisk = join(root, seed.entityId, 'shared', 'discord', jobId, 'scan.png');
+    expect(JSON.stringify(job.messages)).toContain(`shared/discord/${jobId}/scan.png`);
+    expect(await writesOf(jobId)).toEqual([
+      { path: await cheminConstate(onDisk), turn: 0, kind: 'added', sha: sha256(PNG) },
+    ]);
+
+    const res = await runFileTool(jobId, 'file_move', {
+      source: `shared/discord/${jobId}/scan.png`,
+      destination: 'shared/Classement/scan.png',
+      create_dirs: true,
+      purpose: 'Ranger le fichier reçu.',
+    });
+
+    expect(res).toMatchObject({ outcome: 'success', output: { ok: true, operation: 'moved' } });
+    expect(await approvalsOf(jobId)).toEqual([]);
+    expect(new Uint8Array(await readFile(join(classement(), 'scan.png')))).toEqual(PNG);
+    await rm(classement(), { recursive: true });
+  });
+
+  it('a file a tool returned, saved by the runner for the job, is that job’s write too', async () => {
+    const jobId = await otherJob();
+    const shared = join(root, seed.entityId, 'shared');
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 9, 9]);
+    const [part] = await saveToolAttachments(
+      { db: db as unknown as AnyDrizzleDb, jobId },
+      toolImagesDir(shared, jobId),
+      'call-913',
+      [{ mediaType: 'image/png', data: Buffer.from(png).toString('base64') }],
+    );
+    const saved = join(toolImagesDir(shared, jobId), 'call-913-1.png');
+    expect(part).toEqual({ type: 'image-url', url: pathToFileURL(saved).href });
+    expect(await writesOf(jobId)).toEqual([
+      { path: await cheminConstate(saved), turn: 0, kind: 'added', sha: sha256(png) },
+    ]);
+
+    const res = await runFileTool(jobId, 'file_move', {
+      source: `shared/tools/${jobId}/call-913-1.png`,
+      destination: 'shared/Classement/',
+      create_dirs: true,
+      purpose: 'Ranger le fichier reçu.',
+    });
+
+    expect(res.outcome).toBe('success');
+    expect(await approvalsOf(jobId)).toEqual([]);
+    expect(new Uint8Array(await readFile(join(classement(), 'call-913-1.png')))).toEqual(png);
+    await rm(classement(), { recursive: true });
+    await rm(toolImagesDir(shared, jobId), { recursive: true, force: true });
+  });
+
+  it('a shared file another job wrote still waits for a person, and nothing moves', async () => {
+    telegramFiles.set('doc-913b', INVOICE);
+    const { jobId } = await deliver(
+      update({
+        caption: 'Range moi ça',
+        document: { file_id: 'doc-913b', file_name: 'Facture.pdf', mime_type: 'application/pdf' },
+      }),
+    );
+    const other = await otherJob();
+    const written = await callFileTool(other, 'file_write', {
+      path: 'shared/note-913.txt',
+      content: 'le travail d’un autre',
+    });
+    expect(written.output).toMatchObject({ ok: true });
+    const theirs = join(root, seed.entityId, 'shared', 'note-913.txt');
+
+    const res = await runFileTool(jobId, 'file_move', {
+      source: 'shared/note-913.txt',
+      destination: 'shared/Classement/',
+      create_dirs: true,
+      purpose: 'Ranger le fichier reçu.',
+    });
+
+    expect(res).toMatchObject({ outcome: 'awaiting_approval' });
+    expect((await approvalsOf(jobId)).map((a) => a.toolName)).toEqual(['file_move']);
+    expect(await readFile(theirs, 'utf8')).toBe('le travail d’un autre');
+    await rm(theirs);
+  });
+
+  it('a received file another job rewrote after the intake waits for a person, and nothing moves', async () => {
+    telegramFiles.set('doc-913c', INVOICE);
+    const { jobId, outcomes } = await deliver(
+      update({
+        caption: 'Range moi ça',
+        document: { file_id: 'doc-913c', file_name: 'Facture.pdf', mime_type: 'application/pdf' },
+      }),
+    );
+    const received = outcomes[0]!;
+    if (!received.received) throw new Error(`not received: ${received.reason}`);
+    // Un autre run réécrit le fichier reçu (sous une autonomie complète, pour
+    // que SA porte ne l'arrête pas) : le contenu n'est plus celui de la réception.
+    const other = await otherJob();
+    const rewritten = await callFileTool(
+      other,
+      'file_write',
+      { path: received.workspacePath, content: 'réécrit par un autre run' },
+      'fully_autonomous',
+    );
+    expect(rewritten.output).toMatchObject({ ok: true });
+
+    const res = await runFileTool(jobId, 'file_move', {
+      source: received.workspacePath,
+      destination: 'shared/Classement/',
+      create_dirs: true,
+      purpose: 'Ranger le fichier reçu.',
+    });
+
+    expect(res).toMatchObject({ outcome: 'awaiting_approval' });
+    expect((await approvalsOf(jobId)).map((a) => a.toolName)).toEqual(['file_move']);
+    expect(await readFile(received.path, 'utf8')).toBe('réécrit par un autre run');
+  });
+});

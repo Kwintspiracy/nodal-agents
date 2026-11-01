@@ -39,23 +39,35 @@ export type ToolEgress = 'none' | 'channel' | 'model-provider' | 'internet' | 'p
 // imports its argument type from the same place as the field itself.
 export type { MutationTarget, ToolCard, ToolCardPayload };
 
-// ─── Images for the model (`model-images.ts`) ─────────────────────────────────
+// ─── Files for the model: images and PDFs (`model-images.ts`) ────────────────
 
-/** An image for the model: its IANA type and its bytes, base64. */
-export interface ToolImage {
+/**
+ * A file for the model, handed with a tool's result: an image or a PDF
+ * document. Its IANA type and its bytes, base64. `pages`: a PDF's page count,
+ * which the request budget spends (a page counts as an image); absent for an
+ * image, which counts as one.
+ */
+export interface ToolAttachment {
   mediaType: string;
   data: string;
+  pages?: number;
 }
 
 /**
- * What the model of a job takes, said by the runner for every tool call:
- * `sees: true` when its model takes images as input, otherwise the reason it
- * does not, in words a tool result can carry.
+ * Whether the model of a job takes one kind of file, said by the runner for
+ * every tool call: `sees: true` when it does, otherwise the reason it does
+ * not, in words a tool result can carry.
  */
-export type ModelImageInput = { sees: true } | { sees: false; reason: string };
+export type ModelInputSupport = { sees: true } | { sees: false; reason: string };
 
-/** What became of one image a tool asked to attach. */
-export type ImageAttachOutcome = { attached: true } | { attached: false; reason: string };
+/** What the model of a job takes, per kind of file a tool can hand it. */
+export interface ModelAttachmentInput {
+  image: ModelInputSupport;
+  pdf: ModelInputSupport;
+}
+
+/** What became of one file a tool asked to attach. */
+export type ModelAttachOutcome = { attached: true } | { attached: false; reason: string };
 
 // ─── ToolContext ───────────────────────────────────────────────────────────────
 
@@ -295,6 +307,15 @@ export interface ToolContext {
    */
   reportWrittenContent?: (absPath: string, sha256: string) => void;
   /**
+   * CONFIRME qu'un outil vient de déplacer `source` vers `destination`, APRÈS
+   * l'avoir fait (#916, revue A de #919, passe 8). `MutationTarget.movesTo` est
+   * l'intention, déclarée avant l'appel ; ceci est le fait. Le seam ne tient un
+   * retrait pour un déplacement que si les deux sont là et que l'appel a
+   * rendu son résultat sans lever. Un outil qui ne l'appelle pas ne déplace
+   * rien, pour la vérification.
+   */
+  confirmMove?: (source: string, destination: string) => void;
+  /**
    * Rapporte l'empreinte (sha-256) des OCTETS qu'un outil vient de LIRE à
    * `absPath`, le chemin résolu qu'il a ouvert (le pendant de
    * `reportWrittenContent`). Le seam la range dans `tool_call_reads` : c'est
@@ -303,20 +324,20 @@ export interface ToolContext {
    */
   reportReadContent?: (absPath: string, sha256: string) => void;
   /**
-   * What the model this job's tool results go to takes: images or not, and
-   * why not. Set by the runner from the job's model; read by `executeTool`
-   * through `attachImage`, never by a tool. Absent: nothing says, and no image
-   * is passed (`admitModelImage`).
+   * What the model this job's tool results go to takes: images, PDFs, and why
+   * not. Set by the runner from the job's model; read by `executeTool`
+   * through `attachForModel`, never by a tool. Absent: nothing says, and no
+   * file is passed (`admitModelAttachment`).
    */
-  modelImageInput?: ModelImageInput;
+  modelInput?: ModelAttachmentInput;
   /**
-   * Hands an image to the model with THIS call's result (`model-images.ts`).
-   * Installed per call by `executeTool` on a derived context; returns whether
-   * the image will reach the model and, when it will not, why, so the tool can
-   * say it in its result. Absent outside the seam (a `tool.execute` called
-   * directly): a tool treats that as "not attached".
+   * Hands a file (an image, a PDF) to the model with THIS call's result
+   * (`model-images.ts`). Installed per call by `executeTool` on a derived
+   * context; returns whether the file will reach the model and, when it will
+   * not, why, so the tool can say it in its result. Absent outside the seam (a
+   * `tool.execute` called directly): a tool treats that as "not attached".
    */
-  attachImage?: (image: ToolImage) => ImageAttachOutcome;
+  attachForModel?: (attachment: ToolAttachment) => ModelAttachOutcome;
   /**
    * Pose une question à une personne PENDANT l'appel en cours, et attend sa
    * réponse — le chemin de l'élicitation MCP (`elicitation/create`, mode
@@ -877,10 +898,11 @@ export interface ApprovalRule {
 
 export type ToolExecutionResult =
   /**
-   * `images` — what the tool attached for the model (`ctx.attachImage`), in
-   * order, absent when it attached none. Never on the `tool_calls` row.
+   * `attachments` — what the tool attached for the model
+   * (`ctx.attachForModel`), in order, absent when it attached none. Never on
+   * the `tool_calls` row.
    */
-  | { outcome: 'success'; output: unknown; images?: ToolImage[] }
+  | { outcome: 'success'; output: unknown; attachments?: ToolAttachment[] }
   /**
    * `mayHaveDelivered` — set when a DELIVERY tool timed out after the request
    * was transmitted (DeliveryError.mayHaveDelivered): the message may well

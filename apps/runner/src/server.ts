@@ -43,6 +43,7 @@ import type { WhatsAppManagerHandle } from './channels/whatsapp/manager.ts';
 import { seedDefaultLlmKey } from './bootstrap/seed-llm-key.ts';
 import { migrateLlmKeysToEncrypted } from './bootstrap/migrate-llm-keys.ts';
 import { migratePlaintextSecretsToEncrypted } from './bootstrap/migrate-plaintext-secrets.ts';
+import { moveLegacyInboundFolders } from './channels/inbound-files.ts';
 import { backfillMemoryEmbeddings } from './bootstrap/backfill-embeddings.ts';
 import { backfillRegisteredProjects } from './bootstrap/backfill-registered-projects.ts';
 import { seedDefaultSkills } from './bootstrap/seed-default-skills.ts';
@@ -350,6 +351,15 @@ async function main(): Promise<void> {
   // run BEFORE the channel managers start below so no poller reads a row
   // mid-rewrite.
   await migratePlaintextSecretsToEncrypted(deps.db);
+
+  // One-shot, idempotent: the received files that the intake wrote before #910
+  // under shared/<channel>/<conversation address>/ move up to the channel's
+  // folder, before the channel managers start receiving. The model reads that
+  // address as its handle, and could not open what file_list showed it. A
+  // failure here is said and never blocks the boot.
+  await moveLegacyInboundFolders(deps.db).catch((e: unknown) => {
+    console.error('[runner] moving the pre-#910 inbound folders failed:', e);
+  });
 
   // One-shot: if the local entity has no entity_llm_keys rows yet, seed one
   // from env so existing agents keep working post-Brique-24 (idempotent).

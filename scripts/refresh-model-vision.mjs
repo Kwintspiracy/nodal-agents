@@ -7,12 +7,22 @@
 //   - models.dev   https://models.dev/api.json          → modalities.input
 // A model is "vision" when its input modalities include "image".
 //
+// It also prints PDF_MODEL_IDS: the vision models that take a PDF document as
+// input, read from the source of the ROUTE the catalog lists them under — an
+// `openrouter` id from OpenRouter ("file" in input_modalities: OpenRouter hands
+// the PDF to the model natively, docs/guides/overview/multimodal/pdfs), a
+// native id from models.dev's entry for that provider ("pdf" in
+// modalities.input). Never models.dev's bare id: a hundred gateways share it,
+// the last one read wins, and a gateway's answer says nothing of the route
+// Nodal calls. Vision is required too: a scanned page is an image, and a model
+// that takes files but not images reads none of it.
+//
 // Usage:
 //   node scripts/refresh-model-vision.mjs
 //
 // It reads the model ids already in MODEL_CATALOG (by scanning the source file),
-// reports each one's vision status from the live data, and prints a ready-to-paste
-// VISION_MODEL_IDS block. No network creds needed (both endpoints are public).
+// reports each one's vision status from the live data, and prints ready-to-paste
+// VISION_MODEL_IDS and PDF_MODEL_IDS blocks. No network creds needed (both endpoints are public).
 
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -25,8 +35,23 @@ const catalogPath = join(here, '..', 'packages', 'shared', 'src', 'model-catalog
 // models we ship in the picker and therefore want capabilities for.
 const src = readFileSync(catalogPath, 'utf8');
 const catalogIds = [...src.matchAll(/modelId:\s*'([^']+)'/g)].map((m) => m[1]);
+// The route of each id: the provider section (`  anthropic: [`) it sits under.
+const catalogStart = src.indexOf('export const MODEL_CATALOG');
+const sections = [...src.matchAll(/^ {2}([a-z][\w-]*): \[/gm)]
+  .filter((m) => m.index > catalogStart)
+  .map((m) => ({ provider: m[1], at: m.index }));
+const routeOf = new Map(
+  [...src.matchAll(/modelId:\s*'([^']+)'/g)].map((m) => [
+    m[1],
+    sections.filter((s) => s.at < m.index).at(-1)?.provider,
+  ]),
+);
+// models.dev names a provider differently from the catalog only here.
+const MODELS_DEV_PROVIDER = { moonshot: 'moonshotai' };
 
 const hasImage = (mods) => Array.isArray(mods) && mods.map(String).includes('image');
+const hasAny = (mods, kinds) =>
+  Array.isArray(mods) && mods.map(String).some((m) => kinds.includes(m));
 
 async function fetchJson(url) {
   const res = await fetch(url, { headers: { 'User-Agent': 'nodal-agents-model-refresh' } });
@@ -55,7 +80,9 @@ try {
 
 // models.dev: provider → models → model → modalities.input. Index by the bare
 // model id AND by `<provider>/<id>` so native + namespaced forms both resolve.
+// `mdByProvider` keeps only the second, for the PDF list.
 const mdVision = new Map();
+const mdByProvider = new Map();
 try {
   const md = await fetchJson('https://models.dev/api.json');
   for (const [provider, p] of Object.entries(md)) {
@@ -63,6 +90,7 @@ try {
       const mods = model.modalities?.input ?? [];
       mdVision.set(id, mods);
       mdVision.set(`${provider}/${id}`, mods);
+      mdByProvider.set(`${provider}/${id}`, mods);
     }
   }
   console.log(`models.dev: ${mdVision.size} entries`);
@@ -121,3 +149,26 @@ if (failures.length > 0) {
 
 console.log('\n── Vision-capable (paste into VISION_MODEL_IDS) ──');
 console.log(vision.map((id) => `  '${id}',`).join('\n'));
+
+// PDF documents: a vision model whose own route says it takes PDFs.
+const pdf = [];
+const pdfUnresolved = [];
+for (const id of vision) {
+  const route = routeOf.get(id);
+  const mods =
+    route === 'openrouter'
+      ? orVision.get(id)
+      : mdByProvider.get(`${MODELS_DEV_PROVIDER[route] ?? route}/${id}`);
+  if (mods === undefined) pdfUnresolved.push(`${id} (${route})`);
+  else if (hasAny(mods, route === 'openrouter' ? ['file'] : ['pdf'])) pdf.push(id);
+}
+console.log('\n── PDF documents (paste into PDF_MODEL_IDS) ──');
+console.log(pdf.map((id) => `  '${id}',`).join('\n'));
+if (pdfUnresolved.length > 0) {
+  // Left out, so read as "not known to take PDFs" — the conservative answer,
+  // and the one the runner says (`modelPdfInputFor`). Said, never dropped.
+  console.warn(
+    `\nNot in the PDF list: no source for their route says what they take:\n` +
+      pdfUnresolved.map((id) => `  - ${id}`).join('\n'),
+  );
+}

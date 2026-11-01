@@ -1,4 +1,4 @@
-// photo-attach.test.ts — attachInboundPhoto only writes the image onto a job
+// photo-attach.test.ts — attachInboundFiles only writes the image onto a job
 // that is STILL pending (G1). If the worker/cron already claimed the job, the
 // out-of-txn photo attach must not clobber the in-flight transcript.
 
@@ -29,7 +29,10 @@ vi.mock('node:fs/promises', async (importOriginal) => {
   };
 });
 
-import { attachInboundPhoto } from '../../telegram/handler.ts';
+import { attachInboundFiles } from '../../telegram/handler.ts';
+
+/** The largest size of a Telegram photo, as handleTelegramUpdate describes it. */
+const PHOTO = { fileId: 'f1', name: null, mediaType: 'image/jpeg', size: null };
 
 let db: TestDb;
 let seed: { userId: string; entityId: string; agentId: string };
@@ -64,14 +67,14 @@ async function messagesOf(jobId: string): Promise<unknown> {
   return row?.messages;
 }
 
-describe('attachInboundPhoto — conditional on pending (G1)', () => {
+describe('attachInboundFiles — conditional on pending (G1)', () => {
   it('attaches the image when the job is still pending', async () => {
     const jobId = await makeJob('pending');
-    await attachInboundPhoto({
+    await attachInboundFiles({
       jobId,
       entityId: seed.entityId,
       botToken: '123:fake',
-      photo: { fileId: 'f1', chatId: '77', text: 'a photo' },
+      inbound: { text: 'a photo', files: [PHOTO] },
       db: db as unknown as RunnerDeps['db'],
     });
 
@@ -85,11 +88,11 @@ describe('attachInboundPhoto — conditional on pending (G1)', () => {
     const jobId = await makeJob('processing');
     const before = JSON.stringify(await messagesOf(jobId));
 
-    await attachInboundPhoto({
+    await attachInboundFiles({
       jobId,
       entityId: seed.entityId,
       botToken: '123:fake',
-      photo: { fileId: 'f1', chatId: '77', text: 'a photo' },
+      inbound: { text: 'a photo', files: [PHOTO] },
       db: db as unknown as RunnerDeps['db'],
     });
 

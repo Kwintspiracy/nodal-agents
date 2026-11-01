@@ -147,7 +147,7 @@ describe('multi-workspace routing', () => {
     await writeFile(join(WORKSPACE, 'a.md'), 'notes content');
     const r = await fileReadTool.execute({ path: 'notes/a.md' }, ctxMulti());
     expect(r.ok).toBe(true);
-    if (!r.ok || 'image' in r) throw new Error('expected a text read');
+    if (!r.ok || !('content' in r)) throw new Error('expected a text read');
     expect(r.content).toBe('notes content');
   });
 
@@ -155,7 +155,7 @@ describe('multi-workspace routing', () => {
     await writeFile(join(WORKSPACE2, 'x.ts'), 'code content');
     const r = await fileReadTool.execute({ path: 'code/x.ts' }, ctxMulti());
     expect(r.ok).toBe(true);
-    if (!r.ok || 'image' in r) throw new Error('expected a text read');
+    if (!r.ok || !('content' in r)) throw new Error('expected a text read');
     expect(r.content).toBe('code content');
   });
 
@@ -177,7 +177,7 @@ describe('multi-workspace routing', () => {
     };
     const r = await fileReadTool.execute({ path: 'a.md' }, ctx);
     expect(r.ok).toBe(true);
-    if (!r.ok || 'image' in r) throw new Error('expected a text read');
+    if (!r.ok || !('content' in r)) throw new Error('expected a text read');
     expect(r.content).toBe('single ws content');
   });
 
@@ -247,7 +247,7 @@ describe('file_read', () => {
     await writeFile(join(WORKSPACE, 'a.txt'), 'line1\nline2\nline3');
     const r = await fileReadTool.execute({ path: 'ws/a.txt' }, ctxWith(WORKSPACE));
     expect(r.ok).toBe(true);
-    if (!r.ok || 'image' in r) throw new Error('expected a text read');
+    if (!r.ok || !('content' in r)) throw new Error('expected a text read');
     expect(r.content).toBe('line1\nline2\nline3');
     expect(r.total_lines).toBe(3);
     expect(r.start_line).toBe(1);
@@ -263,7 +263,7 @@ describe('file_read', () => {
       ctxWith(WORKSPACE),
     );
     expect(r.ok).toBe(true);
-    if (!r.ok || 'image' in r) throw new Error('expected a text read');
+    if (!r.ok || !('content' in r)) throw new Error('expected a text read');
     expect(r.content.split('\n')).toEqual([
       'line50',
       'line51',

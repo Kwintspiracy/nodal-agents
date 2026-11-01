@@ -47,10 +47,31 @@ export function addressedByHandle(
   scope: ConversationScope,
 ): NodalLlmClient {
   return {
-    config: client.config,
-    capabilities: client.capabilities,
-    generateText: (async (args, opts) =>
-      client.generateText(await forModel(db, scope, args), opts)) as NodalLlmClient['generateText'],
+    // Read through, never copied: a failover chain's `config` is the model
+    // SERVING (packages/llm/src/failover.ts), and every reader of it — the
+    // files a request carries, the cost cap, the context window — must see
+    // it move (review of #905, pass 1: a copy froze the primary for the job).
+    get config() {
+      return client.config;
+    },
+    get capabilities() {
+      return client.capabilities;
+    },
+    generateText: (async (args, opts) => {
+      // The messages built for the link that serves (`messagesForModel`, #903)
+      // cross the same boundary as the call's own.
+      const forLink = opts?.messagesForModel;
+      return client.generateText(
+        await forModel(db, scope, args),
+        forLink
+          ? {
+              ...opts,
+              messagesForModel: async (config) =>
+                (await forModel(db, scope, { messages: await forLink(config) })).messages,
+            }
+          : opts,
+      );
+    }) as NodalLlmClient['generateText'],
     generateObject: (async (args) =>
       client.generateObject(await forModel(db, scope, args))) as NodalLlmClient['generateObject'],
     streamText: () => {

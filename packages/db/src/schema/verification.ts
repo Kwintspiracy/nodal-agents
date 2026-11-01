@@ -109,6 +109,25 @@ export const jobDeliverableVerificationState = pgTable(
      * promesse ne se présume pas.
      */
     declared: boolean('declared').notNull().default(false),
+    /**
+     * Un appel de CE job a-t-il RETIRÉ ce livrable du disque ? (issue #916,
+     * migration 0155)
+     *
+     * Posé par le seam d'exécution sur une transition CONSTATÉE autour d'un
+     * appel du job : l'adresse était là avant, elle n'y est plus après. Levé
+     * par la transition inverse. Jamais déduit : un fichier qui disparaît hors
+     * des appels du job garde `false`, et sa preuve reste `exists` — rouge.
+     * Seule une ligne retirée ET déclarée déplacée (`moved_to_key`) est
+     * prouvée par son absence (`apps/runner/src/verification/removed.ts`).
+     */
+    removed: boolean('removed').notNull().default(false),
+    /**
+     * La clé de la destination où l'appel qui a retiré ce livrable l'avait
+     * DÉCLARÉ déplacé (`MutationTarget.movesTo`), quand elle retrouve une ligne
+     * d'état du même job (issue #916, migration 0155). NULL pour tout autre
+     * retrait : la preuve reste `exists`, rouge.
+     */
+    movedToKey: text('moved_to_key'),
     /** DecisionStatus — l'état lisible affiché à l'owner. */
     decisionStatus: text('decision_status').notNull(),
     /** Empreinte de la dernière commande de preuve exécutée (diagnostic, pas le hash d'approbation). */

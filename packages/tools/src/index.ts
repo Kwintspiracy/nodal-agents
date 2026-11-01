@@ -20,17 +20,29 @@ export type {
   UserInputResponse,
 } from './types';
 
-// Images a tool hands to the model with its result: one rule for every tool
-// (file_read on an image file, an MCP server's image block).
+// Files (images, PDFs) a tool hands to the model with its result: one rule for every tool
+// (file_read on an image or a PDF, an MCP server's image block).
 export {
   MODEL_IMAGE_MEDIA_TYPES,
   MAX_MODEL_IMAGE_BYTES,
-  admitModelImage,
+  MAX_MODEL_PDF_BYTES,
+  PDF_MEDIA_TYPE,
+  admitModelAttachment,
+  attachmentKind,
+  attachmentUnits,
   base64DecodedBytes,
+  countPdfPages,
   formatBytes,
+  isPdf,
+  sniffAttachmentMediaType,
   sniffImageMediaType,
 } from './model-images';
-export type { ToolImage, ModelImageInput, ImageAttachOutcome } from './model-images';
+export type {
+  ToolAttachment,
+  ModelAttachmentInput,
+  ModelInputSupport,
+  ModelAttachOutcome,
+} from './model-images';
 
 // Intention de mutation (plan « Vérifier & Corriger ») — posée au seam
 // d'exécution ; exportée pour les surfaces qui n'y passent PAS (le runtime CLI
@@ -301,6 +313,9 @@ export type { RoutineLintResult } from './builtin/meta-ops/routine-lint';
 // its workspace list with this label and the D1 overwrite gate keys off it —
 // exported so the two sides can never drift apart.
 export { SHARED_WORKSPACE_LABEL } from './builtin/file-ops/workspace';
+// The one rule for a Windows device name: the file tools' guard and the names
+// the runner gives the files a person sends (#899).
+export { windowsDeviceName } from './builtin/file-ops/workspace';
 export {
   resolveWorkspaceList,
   resolveRunWorkspaces,
@@ -313,7 +328,11 @@ export {
 export type { WorkspaceEntry } from './builtin/file-ops/workspace-list';
 export { workspacesRoot } from './builtin/file-ops/workspaces-root';
 export { toolsNamedButAbsent } from './personality-tools';
-export { cheminConstate } from './verification/record-constat';
+export {
+  cheminConstate,
+  PLATFORM_WRITE_TURN,
+  recordPlatformWrites,
+} from './verification/record-constat';
 // Le périmètre de processus d'un job (#750) : un connecteur qui lance un
 // programme par `runCli` (wrangler) le range dans le job, comme `code_task`.
 export { jobProcessScope, openProcessScope, type JobProcessScope } from '@nodal-agents/sandbox';
