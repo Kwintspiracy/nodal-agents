@@ -180,6 +180,23 @@ describe('file-filing skill', () => {
         e.indexOf('When no folder fits, put a proposal'),
       );
     });
+
+    // Review of #925, pass 1 (P2): "move every clear place without a question"
+    // met the empty case on a fresh install, where the real tree could make a
+    // place look clear while the owner has written no folder yet. With nothing
+    // written, no place is clear; only a destination the person named is.
+    it('says no place is clear while "Your folders" is empty, except a destination the person named', () => {
+      const e = emptyCase();
+      expect(e).toContain(
+        'While it is empty, no place is clear except a destination the person named.',
+      );
+      expect(e, 'the question covers only the files without a named destination').toContain(
+        'one question covering the files with no named destination',
+      );
+      expect(e, 'a file with a named destination is filed with no question').toContain(
+        'then file there and ask nothing',
+      );
+    });
   });
 
   it('an unreadable document is never filed on its name, unless the person named the place', () => {

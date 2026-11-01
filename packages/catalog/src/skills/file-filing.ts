@@ -56,7 +56,7 @@ How to put documents where they belong. The folders are the owner's: they are wr
 7. **Report** when you are done: each file and where it now is, and each file you left in place with the reason.
 
 ## When "Your folders" is empty
-If the section below names no folder (it is blank, or holds only its placeholder line, the one starting "(Not filled in yet."), you do not know this person's tree, and the placeholder's example is not a folder. Ask where each kind of document goes (one question covering the files at hand), unless the person named the destination in the request: then file there and ask nothing. Either way, tell the person they can write it once in this skill (Skills -> File filing -> "Your folders") so they are not asked again.
+If the section below names no folder (it is blank, or holds only its placeholder line, the one starting "(Not filled in yet."), you do not know this person's tree, and the placeholder's example is not a folder. While it is empty, no place is clear except a destination the person named. Ask where each kind of document goes (one question covering the files with no named destination), unless the person named the destination in the request: then file there and ask nothing. Either way, tell the person they can write it once in this skill (Skills -> File filing -> "Your folders") so they are not asked again.
 
 ${FILE_FILING_FOLDERS_HEADING}
 ${FILE_FILING_PLACEHOLDER}
