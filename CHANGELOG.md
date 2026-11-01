@@ -17,7 +17,7 @@ on Telegram, or an image on Discord, now reaches it, and the platform records it
 as that job's own. An agent can move a file, read a PDF the way it reads an
 image, and file a document with a method that ships with Nodal. Settings →
 Safety shows the sandbox as it is on your machine and lets you set it. A job
-started through the MCP server can finally be read back. Seventeen pull requests,
+started through the MCP server can finally be read back. Eighteen pull requests,
 three database migrations.
 
 **Upgrading: what changes for you**
@@ -121,13 +121,25 @@ three database migrations.
   is still only recorded, not passed on. (#905)
 - **A "File filing" skill ships with Nodal.** It is a method, not a tree: where a
   document goes comes from a "Your folders" section that you fill in on the
-  skills screen. The method tells an agent to read a document before placing it,
-  to ask when it cannot, to give a plan and wait for your go when several files
-  or an unclear place are involved, to name a file that has no meaningful name
-  `YYYY-MM-DD Subject`, never to replace a file (a second one becomes "(2)") and
-  never to delete, and to report every file moved and every file left in place,
-  with the reason. It loads only when you ask to file, sort or put something
-  away. Assign it to the agents that file your documents. (#895)
+  skills screen. The method tells an agent to read a document before placing it
+  and to ask when it cannot. Every file whose place is clear is moved without a
+  question, however many files there are: fifteen documents with fifteen clear
+  places are filed in one go. Only the files whose place is not clear go into a
+  single question, with a plan for them and a proposal. While "Your folders" is
+  empty, no place is clear, except a destination you named in the request. The
+  method also names a file that has no meaningful name `YYYY-MM-DD Subject`,
+  never replaces a file (a second one becomes "(2)"), never deletes, and reports
+  every file moved and every file left in place, with the reason. It loads only
+  when you ask to file, sort or put something away. Assign it to the agents that
+  file your documents. (#895, #925)
+- **If you edited the skill, your copy keeps the text it had.** Nodal never
+  overwrites a skill you changed: on an upgrade it refreshes only the default
+  text that "Reset to default" restores. Filling in "Your folders" is such an
+  edit, so a copy that carries your folders still asks for your go when several
+  files are involved, as the first version of the method said. To get the rule
+  above, copy that sentence in by hand, or use "Reset to default", which also
+  removes your folders. A copy you never edited is updated at the next start.
+  (#925)
 
 **The sandbox, in Settings → Safety**
 
