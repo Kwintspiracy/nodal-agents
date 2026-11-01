@@ -288,10 +288,13 @@ page. If the section asks you to start Nodal with `nodal-agents up`, the web
 was started some other way and does not know the command: it shows none rather
 than a guess.
 
-The client gets exactly one tool, `run_task`: it creates a **tracked job** for
+The client gets exactly two tools. `run_task` creates a **tracked job** for
 your workspace's root agent (or a chosen agent by slug) and returns the job id
 immediately. The work itself runs asynchronously through the normal loop —
-the agent's own tools, approval rules, budgets, and delegation. A client that
+the agent's own tools, approval rules, budgets, and delegation. `get_task` reads
+the job back with that id (read-only): its status, the agent's result, its
+deliverables and anything waiting for you, which you still answer on the
+dashboard. It can wait up to 60 seconds for the run to finish. A client that
 must not land anywhere else can state the workspace it expects
 (`expectedWorkspaceId`): if the server serves another one, the call is refused
 before any job is created.
