@@ -103,6 +103,7 @@ import type { DecisionStatus, JobResultKind } from '@nodal-agents/shared';
 import { readProofRepairAttempts } from '@nodal-agents/shared';
 import { resolveRunWorkspaces, withJobFolder } from '@nodal-agents/tools';
 import { getVerifier } from '../verification/registry.ts';
+import { removedDeliverableVerifier } from '../verification/removed.ts';
 import { buildRepairBrief } from '../verification/repair-brief.ts';
 import type { RepairBriefCommand } from '../verification/repair-brief.ts';
 import type {
@@ -859,6 +860,8 @@ export async function finalizeJobSuccess(
         displayPathSnapshot: jobDeliverableVerificationState.displayPathSnapshot,
         repairAttempts: jobDeliverableVerificationState.repairAttempts,
         declared: jobDeliverableVerificationState.declared,
+        removed: jobDeliverableVerificationState.removed,
+        movedToKey: jobDeliverableVerificationState.movedToKey,
       })
       .from(jobDeliverableVerificationState)
       .where(eq(jobDeliverableVerificationState.jobId, jobId));
@@ -874,7 +877,23 @@ export async function finalizeJobSuccess(
 
     const plans: DeliverablePlan[] = [];
     for (const state of ordered) {
-      const verifier = resolveVerifier(state.deliverableType);
+      // Un livrable qu'un appel de ce job a RETIRÉ (#916) : absence attendue
+      // s'il a été DÉCLARÉ déplacé vers un livrable de CE job, retrouvé ici
+      // parmi ses lignes ; sinon la règle de main, `exists`, rouge, dite
+      // « retiré par ce run » (`verification/removed.ts`). Un livrable PROMIS
+      // (`return_result.deliverables`) se prouve comme une promesse.
+      const typed = resolveVerifier(state.deliverableType);
+      const destination =
+        state.movedToKey === null
+          ? undefined
+          : states.find((s) => s.id !== state.id && s.canonicalKey === state.movedToKey);
+      const verifier =
+        state.removed && !state.declared
+          ? removedDeliverableVerifier(
+              typed,
+              destination ? (destination.displayPathSnapshot ?? destination.canonicalKey) : null,
+            )
+          : typed;
       if (state.dirtyGeneration === null) {
         throw new Error(
           `${VERIFY_STATE_GENERATION_MISSING}: ${state.deliverableType} ${state.canonicalKey}`,
