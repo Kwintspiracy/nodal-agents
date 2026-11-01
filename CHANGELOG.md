@@ -74,7 +74,8 @@ two database migrations.
   the reason. Other kinds of file on Discord, and files on Slack and WhatsApp,
   are not received yet. (#911)
 - **The path the agent is shown is the path that exists.** A received file now
-  lives in `shared/<channel>/<job>/<name>`. It first lived under the
+  lives in the shared folder, under the channel (`shared/telegram`,
+  `shared/discord`), in a folder named after the job. It first lived under the
   conversation, and the model saw that conversation's handle where the folder
   carried the real chat number, so `file_read` answered "File not found" and the
   agent could not file the document. Folders of the first layout are cleaned up
