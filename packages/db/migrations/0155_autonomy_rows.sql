@@ -23,15 +23,18 @@
 --    espace d'avant cette migration. Un espace créé après n'a rien d'avant à
 --    reprendre : la colonne porte `now()` par défaut, posé APRÈS l'ajout pour
 --    que les lignes existantes restent à NULL.
+--
+-- Rejouable (les tests qui rejouent les migrations depuis 0137 le font) :
+-- chaque instruction tient sur une base qui l'a déjà reçue.
 ALTER TABLE approval_rules
-  ADD COLUMN condition_folder text
+  ADD COLUMN IF NOT EXISTS condition_folder text
   GENERATED ALWAYS AS (COALESCE(condition_json->>'workspacePath', '')) STORED;
 
-ALTER TABLE approval_rules DROP CONSTRAINT approval_rules_entity_agent_tool_unique;
+ALTER TABLE approval_rules DROP CONSTRAINT IF EXISTS approval_rules_entity_agent_tool_unique;
 
 ALTER TABLE approval_rules
   ADD CONSTRAINT approval_rules_entity_agent_tool_unique
   UNIQUE NULLS NOT DISTINCT (entity_id, agent_id, tool_name, condition_folder);
 
-ALTER TABLE entities ADD COLUMN autonomy_rows_written_at timestamptz;
+ALTER TABLE entities ADD COLUMN IF NOT EXISTS autonomy_rows_written_at timestamptz;
 ALTER TABLE entities ALTER COLUMN autonomy_rows_written_at SET DEFAULT now();
