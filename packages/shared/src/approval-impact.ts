@@ -163,7 +163,7 @@ export function computeApprovalImpactLine(
         ? `Copies "${str(input['source'])}" to "${str(input['destination'])}", overwriting ` +
             'the existing file there in the shared workspace.'
         : `Moves "${str(input['source'])}" to "${str(input['destination'])}", replacing or ` +
-            'removing a file in the shared workspace that this run did not write.';
+            'removing a file in the shared workspace that this agent did not create.';
     case 'run_command': {
       const cmd = input['command'];
       return typeof cmd === 'string' && cmd.trim().length > 0

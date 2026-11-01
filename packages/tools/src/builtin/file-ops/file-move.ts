@@ -238,7 +238,7 @@ async function assertStillOurs(ctx: ToolContext, destroyed: readonly string[]): 
       throw new WorkspaceError(
         'shared_file_changed',
         `Nothing was moved: "${basename(path)}" in the shared folder changed since this ` +
-          'call was allowed, and it is no longer content this run wrote. Call again: the owner ' +
+          'call was allowed, and it is no longer content this agent wrote. Call again: the owner ' +
           'will be asked first.',
       );
     }
@@ -298,8 +298,9 @@ export const fileMoveTool: ToolDefinition<typeof FileMoveInputSchema, FileMoveOu
     );
   },
   // La porte d'écrasement de `file_write`, sur chaque fichier que l'appel
-  // DÉTRUIT (`destroyedBy`) : un fichier existant du dossier partagé que ce run
-  // n'a pas écrit ne se remplace pas, et ne se retire pas, sans personne. Un
+  // DÉTRUIT (`destroyedBy`) : un fichier existant du dossier partagé que cet
+  // agent n'a pas écrit (dans ce run ou un autre, #917) ne se remplace pas, et
+  // ne se retire pas, sans le réglage « shared file ». Un
   // fichier neuf, ou un dossier de l'agent, ne demande rien : l'instantané le
   // défait.
   replacesSharedFile: async (input, ctx) => {

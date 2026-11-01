@@ -198,7 +198,7 @@ describe('computeApprovalImpactLine — file_move : le geste, puis l’écraseme
         destination: 'shared/inbox/',
       }),
     ).toBe(
-      'Moves "docs/scan.pdf" to "shared/inbox/", replacing or removing a file in the shared workspace that this run did not write.',
+      'Moves "docs/scan.pdf" to "shared/inbox/", replacing or removing a file in the shared workspace that this agent did not create.',
     );
   });
 

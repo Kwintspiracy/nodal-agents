@@ -351,7 +351,7 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
   // person (tool row Ask first) is only made stricter by a Block.
   //
   // `sharedFileUnattended`: the setting is not Autonomous and this call passed
-  // it with nobody asked (a new file, or one this job wrote). The write asks
+  // it with nobody asked (a new file, or one this agent wrote). The write asks
   // the same question again right before replacing the file (#505,
   // `atomic-write.ts`): it may have changed in between.
   let sharedFileUnattended = false;

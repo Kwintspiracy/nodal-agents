@@ -21,6 +21,7 @@ import type { TestDb } from '@nodal-agents/db/test-utils';
 import { eq } from '@nodal-agents/db';
 import {
   agentJobs,
+  agents,
   approvalRequests,
   channelAllowedConversations,
   constatedWrites,
@@ -1539,17 +1540,35 @@ async function approvalsOf(jobId: string) {
   return db.select().from(approvalRequests).where(eq(approvalRequests.jobId, jobId));
 }
 
-async function otherJob(): Promise<string> {
+/** Un run de `agentId` (l'agent du test par défaut). */
+async function jobOf(agentId: string = seed.agentId): Promise<string> {
   const [row] = await db
     .insert(agentJobs)
     .values({
       entityId: seed.entityId,
-      agentId: seed.agentId,
+      agentId,
       channel: 'dashboard',
       task: 'un autre run',
     })
     .returning({ id: agentJobs.id });
   return row!.id;
+}
+
+/**
+ * Un run d'un AUTRE agent du même espace. Depuis #917, la porte protège le
+ * travail d'un autre AGENT : un autre run du même agent écrit pour lui.
+ */
+async function otherJob(): Promise<string> {
+  const [agent] = await db
+    .insert(agents)
+    .values({
+      entityId: seed.entityId,
+      name: 'Another Agent',
+      slug: `another-agent-${Date.now()}-${Math.random()}`,
+      personality: 'You are another agent.',
+    })
+    .returning({ id: agents.id });
+  return jobOf(agent!.id);
 }
 
 // #913 : le PDF que le propriétaire envoie sur Telegram est rangé pour son job
@@ -1638,6 +1657,35 @@ describe('a file received for a job is written by that job (#913) @cap:parler-pa
     expect(res).toMatchObject({ outcome: 'success', output: { ok: true, operation: 'moved' } });
     expect(await approvalsOf(jobId)).toEqual([]);
     expect(new Uint8Array(await readFile(join(classement(), 'scan.png')))).toEqual(PNG);
+    await rm(classement(), { recursive: true });
+  });
+
+  // #917, décision A : la réception écrit pour l'AGENT du job. Le run suivant
+  // du même agent range le fichier reçu sans demander à personne.
+  it('Telegram: a later run of the same agent moves the received PDF without asking anyone', async () => {
+    telegramFiles.set('doc-917', INVOICE);
+    const { jobId, outcomes } = await deliver(
+      update({
+        caption: 'Garde moi ça',
+        document: { file_id: 'doc-917', file_name: 'Devis.pdf', mime_type: 'application/pdf' },
+      }),
+    );
+    const received = outcomes[0]!;
+    if (!received.received) throw new Error(`not received: ${received.reason}`);
+
+    const later = await jobOf();
+    expect(later).not.toBe(jobId);
+    const res = await runFileTool(later, 'file_move', {
+      source: received.workspacePath,
+      destination: 'shared/Classement/Devis.pdf',
+      create_dirs: true,
+      purpose: 'Ranger le fichier reçu.',
+    });
+
+    expect(res).toMatchObject({ outcome: 'success', output: { ok: true, operation: 'moved' } });
+    expect(await approvalsOf(later)).toEqual([]);
+    expect(await readFile(join(classement(), 'Devis.pdf'))).toEqual(INVOICE);
+    await expect(stat(received.path)).rejects.toThrow();
     await rm(classement(), { recursive: true });
   });
 

@@ -11,7 +11,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { currentContentWrittenByJob } from '../verification/record-constat';
+import { currentContentWrittenByAgentOf } from '../verification/record-constat';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 
 let dir: string;
@@ -28,6 +28,7 @@ const sha = (s: string) => createHash('sha256').update(s).digest('hex');
 function baseQuiLaissePasser(pendant: () => Promise<void>, lignes: unknown[]): AnyDrizzleDb {
   const chaine = {
     from: () => chaine,
+    leftJoin: () => chaine,
     where: () => chaine,
     orderBy: async () => {
       await pendant();
@@ -37,23 +38,25 @@ function baseQuiLaissePasser(pendant: () => Promise<void>, lignes: unknown[]): A
   return { select: () => chaine } as unknown as AnyDrizzleDb;
 }
 
-describe('currentContentWrittenByJob reads the disk last (#505) @cap:travailler-sur-des-fichiers/moteur', () => {
+describe('currentContentWrittenByAgentOf reads the disk last (#505) @cap:travailler-sur-des-fichiers/moteur', () => {
   it('a file changed while the records are being read is not ours', async () => {
     const path = join(dir, 'take.txt');
     await writeFile(path, 'mine');
     const db = baseQuiLaissePasser(
       () => writeFile(path, 'someone else'),
-      [{ jobId: 'job-a', sha: sha('mine') }],
+      [{ agentId: 'agent-a', owner: 'agent-a', sha: sha('mine') }],
     );
 
-    expect(await currentContentWrittenByJob(db, 'job-a', path)).toBe(false);
+    expect(await currentContentWrittenByAgentOf(db, 'job-a', path)).toBe(false);
   });
 
-  it('an unchanged file whose last record is this job’s is ours', async () => {
+  it('an unchanged file whose last record is this agent’s is ours', async () => {
     const path = join(dir, 'still.txt');
     await writeFile(path, 'mine');
-    const db = baseQuiLaissePasser(async () => {}, [{ jobId: 'job-a', sha: sha('mine') }]);
+    const db = baseQuiLaissePasser(async () => {}, [
+      { agentId: 'agent-a', owner: 'agent-a', sha: sha('mine') },
+    ]);
 
-    expect(await currentContentWrittenByJob(db, 'job-a', path)).toBe(true);
+    expect(await currentContentWrittenByAgentOf(db, 'job-a', path)).toBe(true);
   });
 });

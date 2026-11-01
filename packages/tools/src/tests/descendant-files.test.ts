@@ -8,7 +8,7 @@
 // prouve rien (revue de #589) : un fichier supprimé puis recréé, remplacé au
 // même chemin, ou la sortie d'un autre run déclarée par l'enfant, n'est pas ce
 // que le délégué a produit. La preuve est celle que la plateforme emploie déjà
-// (currentContentWrittenByJob, filesTheChildWrote) : l'empreinte, ou, pour une
+// (currentContentWrittenByAgentOf, filesTheChildWrote) : l'empreinte, ou, pour une
 // écriture que personne n'a pu empreindre, la date de modification dans la
 // fenêtre du run du délégué.
 //

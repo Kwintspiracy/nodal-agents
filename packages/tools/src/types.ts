@@ -698,11 +698,11 @@ export interface ToolDefinition<TInput extends z.ZodTypeAny, TOutput> {
   reportsHarnessWrites?: boolean;
   /**
    * Whether THIS call would replace or remove an existing file of the shared
-   * workspace that this job did not write (D1, #505). Declared by every tool
+   * workspace that this agent did not write (D1, #505). Declared by every tool
    * that can (file_write, file_edit, file_move, generate_speech), and judged by
    * the gate under the agent's shared-file SETTING
    * (`REPLACE_SHARED_FILE_SETTING`, #917), whatever the tool's own row says:
-   * the stricter of the two decides. A brand-new file, a file this job wrote,
+   * the stricter of the two decides. A brand-new file, a file this agent wrote,
    * or a workspace the owner attached answers false.
    *
    * Until #917 this was `computeApproval`, consulted only when no rule named
