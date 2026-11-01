@@ -128,6 +128,13 @@ export const jobDeliverableVerificationState = pgTable(
      * contenu retiré : la finalisation ne lit rien d'autre. NULL hors retrait.
      */
     removedSize: bigint('removed_size', { mode: 'number' }),
+    /**
+     * L'empreinte de l'adresse vue AVANT l'appel qui l'a retirée (revue A de
+     * #919, passe 6) : QUEL contenu a été retiré, pris au moment du retrait,
+     * jamais reconstruit depuis l'historique des constats. NULL hors retrait,
+     * ou quand la sonde n'a pas pu la prendre (hors borne, un dossier).
+     */
+    removedSha256: text('removed_sha256'),
     /** DecisionStatus — l'état lisible affiché à l'owner. */
     decisionStatus: text('decision_status').notNull(),
     /** Empreinte de la dernière commande de preuve exécutée (diagnostic, pas le hash d'approbation). */

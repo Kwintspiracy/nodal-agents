@@ -68,21 +68,24 @@
 //      identité ;
 //  21. une écriture dont aucun fait ne dit le contenu : rouge, et
 //      `VERIFICATION_RESCUE_IDENTITY_UNKNOWN` est journalisé ;
-//  22. une chaîne dont les pas n'ont pas d'identité connue : suivie par la
-//      chaîne, lue, et la source est verte ;
+//  22. (retiré à la passe 6 : il n'y a plus de chaîne à suivre) ;
 //  23. une copie par `file_move`, puis la source effacée : verte — la
 //      destination a l'empreinte d'APRÈS l'appel (revue A de #919, passe 5) ;
 //  24. une source réécrite entre l'instantané du seam et le déplacement, une
 //      copie de l'ancien contenu ailleurs, puis la destination effacée :
 //      rouge — l'identité est ce qui est arrivé, pas ce qui était parti.
 //
-// L'IDENTITÉ INCONNUE (tests 16, 21, 22). Depuis la passe 5, tout constat
-// garde l'empreinte d'APRÈS qu'il a lue : cible nommée, harnais, git,
-// checkpoint. Le seul chemin de production qui laisse encore une ligne sans
-// empreinte est une lecture qui échoue au constat (un fichier verrouillé, un
-// droit retiré) — impossible à provoquer de façon portable ici, Windows
-// compris. Ces trois tests posent donc cet état en base (`sansIdentite`), et
-// le disent.
+//  25. un message efface puis réécrit l'adresse, un tour suivant la retire :
+//      rouge — l'identité retirée est prise au retrait, pas dans l'historique
+//      que l'upsert du tour réécrit (revue A de #919, passe 6, P1) ;
+//  26. un message écrit puis déplace : vert (passe 6, P2) ;
+//  27. un message écrit puis efface : rouge ;
+//  28. un message écrit puis efface avec un outil, une copie ailleurs : vert ;
+//  29. un fichier reçu que le job n'a jamais écrit, effacé à la demande de la
+//      personne : vert (cas a — l'écriture de la plateforme ne compte pas).
+//
+// L'IDENTITÉ INCONNUE (test 21) passe par un chemin réel : la borne de la
+// sonde d'avant, injectée à 0 octet pour l'appel qui retire.
 //
 // Mutations vérifiées : la liste est dans la PR #919, avec les tests que
 // chacune fait rougir.
@@ -96,14 +99,12 @@ import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import {
   agentJobs,
-  constatedWrites,
   entities,
   jobDeliverableVerificationState,
   verificationRuns,
   and,
   asc,
   eq,
-  inArray,
 } from '@nodal-agents/db';
 import { normalizePath } from '@nodal-agents/shared';
 import {
@@ -190,7 +191,7 @@ function ctx(): ToolContext {
 }
 
 const opts = (): ExecuteOptions => ({
-  approvalRules: ['file_write', 'file_move', 'run_command'].map(
+  approvalRules: ['file_write', 'file_edit', 'file_move', 'run_command'].map(
     (toolName): ApprovalRule => ({
       id: `rule-${toolName}`,
       toolName,
@@ -202,9 +203,22 @@ const opts = (): ExecuteOptions => ({
   onApprovalRequired: async () => {},
 });
 
-async function call(name: string, input: Record<string, unknown>): Promise<void> {
-  turn += 1;
-  const res = await executeTool(tool(name), input, ctx(), opts());
+/**
+ * Un appel d'outil du job. `memeTour` : un autre appel du MÊME message du
+ * modèle (le runner donne un tour par message, partagé par ses appels).
+ */
+async function call(
+  name: string,
+  input: Record<string, unknown>,
+  o: { memeTour?: boolean; removalProbeMaxBytes?: number } = {},
+): Promise<void> {
+  if (!o.memeTour) turn += 1;
+  const res = await executeTool(tool(name), input, ctx(), {
+    ...opts(),
+    ...(o.removalProbeMaxBytes === undefined
+      ? {}
+      : { removalProbeMaxBytes: o.removalProbeMaxBytes }),
+  });
   expect(res.outcome === 'error' ? res.error : res.outcome, `${name} n’a pas abouti`).toBe(
     'success',
   );
@@ -216,8 +230,11 @@ async function call(name: string, input: Record<string, unknown>): Promise<void>
 }
 
 /** Une commande Node, portable : les guillemets doubles valent pour cmd.exe comme pour /bin/sh. */
-async function shell(script: string): Promise<void> {
-  await call('run_command', { purpose: 'test', command: `node -e "${script}"` });
+async function shell(
+  script: string,
+  o: { memeTour?: boolean; removalProbeMaxBytes?: number } = {},
+): Promise<void> {
+  await call('run_command', { purpose: 'test', command: `node -e "${script}"` }, o);
 }
 
 async function finalize(
@@ -229,25 +246,6 @@ async function finalize(
     { jobId, resultKind: 'prose', repairTurn, result: 'fait' },
     { log: () => {}, ...(rescueLimits ? { rescueLimits } : {}) },
   );
-}
-
-/**
- * Rend INCONNUE l'identité des constats de ces fichiers : l'état que laisse un
- * constat dont la lecture d'après a échoué (fichier verrouillé, droit retiré),
- * le seul chemin de production sans empreinte depuis la passe 5 de #919. Les
- * lignes restent ; seule l'empreinte observée tombe.
- */
-async function sansIdentite(noms: readonly string[]): Promise<void> {
-  const lignes = await db
-    .select({ id: constatedWrites.id, path: constatedWrites.path })
-    .from(constatedWrites)
-    .where(eq(constatedWrites.jobId, jobId));
-  const ids = lignes.filter((l) => noms.some((n) => l.path.endsWith(`/${n}`))).map((l) => l.id);
-  expect(ids.length, `aucun constat pour ${noms.join(', ')}`).toBeGreaterThan(0);
-  await db
-    .update(constatedWrites)
-    .set({ observedSha256: null })
-    .where(inArray(constatedWrites.id, ids));
 }
 
 /** Les lignes `[verification] <code>` journalisées pendant `fn`. */
@@ -392,7 +390,7 @@ describe('un livrable retiré par le job (#916) @cap:verifier-un-livrable/moteur
     expect(await rouges()).toEqual([]);
   });
 
-  it('6. un fichier reçu déplacé puis effacé : source verte (écrite par la plateforme), destination rouge', async () => {
+  it('6. un fichier reçu déplacé puis effacé : son contenu est perdu par le run, la source comme la destination sont rouges', async () => {
     const source = join(ws, 'recu.txt');
     const octets = Buffer.from('recu\n');
     await writeFile(source, octets);
@@ -402,9 +400,13 @@ describe('un livrable retiré par le job (#916) @cap:verifier-un-livrable/moteur
 
     await finalize();
 
+    // Le contenu reçu porte son identité sur la ligne du DÉPLACEMENT (l'empreinte
+    // d'après de la destination) : le run l'a déplacé, puis effacé partout.
+    // Changé à la passe 6 de #919 : la source était verte quand le sauvetage
+    // reconstruisait l'auteur depuis l'historique des constats.
     const src = await constats(source);
     expect(src.state.removed).toBe(true);
-    expect(src.verdicts).toEqual([`${REMOVED_PROOF_COMMAND}:green`]);
+    expect(src.verdicts).toEqual(['exists:red']);
     const dst = await constats(join(ws, 'classe.txt'));
     expect(dst.state.removed).toBe(true);
     expect(dst.verdicts).toEqual(['exists:red']);
@@ -573,22 +575,18 @@ describe('un livrable retiré par le job (#916) @cap:verifier-un-livrable/moteur
     expect(c.runs[0]).toMatchObject({ command: 'exists', verdict: 'green' });
   });
 
-  it('16. un petit brouillon rangé au tour où naissent de gros fichiers : ils ne sont pas lus', async () => {
+  it('16. une copie remplacée depuis par un gros fichier : la taille l’écarte, la vraie copie sauve', async () => {
     const source = join(ws, 'draft.md');
-    await mkdir(join(ws, 'final'), { recursive: true });
     await call('file_write', { path: 'draft.md', content: '# Draft\n' });
-    // UN appel : le brouillon déplacé, et trois fichiers de 400 Ko écrits.
-    await shell(
-      `const f=require('fs');f.renameSync('draft.md','final/draft.md');` +
-        `for(const n of [1,2,3])f.writeFileSync('big'+n+'.bin',Buffer.alloc(400000,n))`,
-    );
-    // Les gros fichiers que le constat n'a pas pu lire : leur identité
-    // inconnue en fait des candidats « nés au tour du retrait », et seul le
-    // filtre de taille les écarte de la lecture.
-    await sansIdentite(['big1.bin', 'big2.bin', 'big3.bin']);
+    await call('file_write', { path: 'copy1.md', content: '# Draft\n' });
+    await call('file_write', { path: 'copy2.md', content: '# Draft\n' });
+    // Hors du job, `copy1.md` devient un fichier de 1,2 Mo : son constat dit
+    // encore qu'il portait le brouillon, sa taille dit que non.
+    await writeFile(join(ws, 'copy1.md'), Buffer.alloc(1_200_000, 1));
+    await shell(`require('fs').rmSync('draft.md')`);
 
-    // Un plafond que les trois gros fichiers dépasseraient (1,2 Mo > 1 Mo) :
-    // s'ils entraient dans la lecture, la ligne serait rouge et le code dit.
+    // Un plafond que `copy1.md` dépasserait : s'il entrait dans la lecture, la
+    // ligne serait rouge et le code dit.
     const plafond: RescueLimits = { maxFiles: 4, maxBytes: 1_000_000 };
     const atteints = await journal('VERIFICATION_RESCUE_CAP_REACHED', () =>
       finalize('unsupported', plafond),
@@ -671,51 +669,23 @@ describe('un livrable retiré par le job (#916) @cap:verifier-un-livrable/moteur
     expect(r.verdicts).toEqual(['exists:red']);
   });
 
-  it('21. une écriture dont aucun fait ne dit le contenu : rouge, et c’est dit', async () => {
+  it('21. un retrait dont la sonde n’a pas pu prendre l’empreinte : rouge, et c’est dit', async () => {
     const u = join(ws, 'u.md');
     await call('file_write', { path: 'u.md', content: 'U' });
-    // Une écriture dont le constat n'a pas pu lire le contenu (fichier
-    // verrouillé au moment du constat) : sa ligne, telle qu'elle reste.
-    const [ecrite] = await db
-      .select({ path: constatedWrites.path })
-      .from(constatedWrites)
-      .where(eq(constatedWrites.jobId, jobId));
-    if (!ecrite) throw new Error('aucun constat pour u.md');
-    await db.insert(constatedWrites).values({
-      jobId,
-      turn: turn + 100,
-      path: ecrite.path,
-      changeKind: 'modified',
-      constatedBy: 'disk',
-      contentSha256: null,
-      observedSha256: null,
-    });
-    await shell(`require('fs').rmSync('u.md')`);
+    // La borne de la sonde d'avant (64 Mio par défaut), ramenée à 0 octet pour
+    // cet appel : le fichier est vu, son contenu n'est pas lu.
+    await shell(`require('fs').rmSync('u.md')`, { removalProbeMaxBytes: 0 });
 
     const dits = await journal('VERIFICATION_RESCUE_IDENTITY_UNKNOWN', () => finalize());
 
     const r = await constats(u);
     expect(r.state.removed).toBe(true);
+    expect(r.state.removedSha256).toBeNull();
     expect(r.verdicts).toEqual(['exists:red']);
     expect(dits).toHaveLength(1);
     expect(dits[0]).toContain(`row=${r.state.id}`);
   });
 
-  it('22. une chaîne dont les pas n’ont pas d’identité connue : suivie, et la source est verte', async () => {
-    const source = join(ws, 'report.md');
-    await mkdir(join(ws, 'final'), { recursive: true });
-    await call('file_write', { path: 'report.md', content: 'R' });
-    await shell(`require('fs').renameSync('report.md','tmp.md')`);
-    await shell(`require('fs').renameSync('tmp.md','final/report.md')`);
-    // Les deux pas, que le constat n'a pas pu lire.
-    await sansIdentite(['tmp.md', 'final/report.md']);
-
-    await finalize();
-
-    expect(await rouges()).toEqual([]);
-    const r = await constats(source);
-    expect(r.verdicts).toEqual([`${REMOVED_PROOF_COMMAND}:green`]);
-  });
   it('23. une copie par file_move, puis la source effacée : la source est verte', async () => {
     const a = join(ws, 'a.md');
     await call('file_write', { path: 'a.md', content: 'X' });
@@ -763,5 +733,91 @@ describe('un livrable retiré par le job (#916) @cap:verifier-un-livrable/moteur
     expect(r.state.removed).toBe(true);
     // `new1` n'est nulle part ; `copy.md` porte `old1`, qui n'est jamais arrivé ici.
     expect(r.verdicts).toEqual(['exists:red']);
+  });
+
+  it('25. un message efface puis réécrit l’adresse, un tour suivant la retire : rouge', async () => {
+    // Le scénario P1 de la revue A, passe 6, à l'identique.
+    const a = join(ws, 'a.md');
+    await call('file_write', { path: 'a.md', content: 'A' });
+    await shell(`require('fs').rmSync('a.md')`);
+    await call('file_write', { path: 'a.md', content: 'B' }, { memeTour: true });
+    await shell(`require('fs').rmSync('a.md')`);
+
+    await finalize();
+
+    const r = await constats(a);
+    expect(r.state.removed).toBe(true);
+    expect(r.state.removedSha256).toBe(sha(Buffer.from('B')));
+    // B n'est nulle part.
+    expect(r.verdicts).toEqual(['exists:red']);
+  });
+
+  it('26. un message écrit puis déplace : la source est verte', async () => {
+    // Le scénario P2 de la revue A, passe 6, à l'identique.
+    const a = join(ws, 'a.md');
+    await mkdir(join(ws, 'final'), { recursive: true });
+    await call('file_write', { path: 'a.md', content: 'A' });
+    await call('file_move', { source: 'a.md', destination: 'final/a.md' }, { memeTour: true });
+
+    await finalize();
+
+    expect(await rouges()).toEqual([]);
+    const r = await constats(a);
+    expect(r.state.removed).toBe(true);
+    expect(r.verdicts).toEqual([`${REMOVED_PROOF_COMMAND}:green`]);
+  });
+
+  it('27. un message écrit puis efface : rouge', async () => {
+    const r0 = join(ws, 'r.md');
+    await call('file_write', { path: 'r.md', content: 'R' });
+    await shell(`require('fs').rmSync('r.md')`, { memeTour: true });
+
+    await finalize();
+
+    const r = await constats(r0);
+    expect(r.state.removed).toBe(true);
+    expect(r.verdicts).toEqual(['exists:red']);
+  });
+
+  it('28. un message écrit puis efface avec un outil, une copie ailleurs : vert', async () => {
+    const r0 = join(ws, 'r.md');
+    await call('file_write', { path: 'copie.md', content: 'R' });
+    await call('file_write', { path: 'r.md', content: 'R' });
+    await shell(`require('fs').rmSync('r.md')`, { memeTour: true });
+
+    await finalize();
+
+    expect(await rouges()).toEqual([]);
+    const r = await constats(r0);
+    expect(r.state.removed).toBe(true);
+    expect(r.verdicts).toEqual([`${REMOVED_PROOF_COMMAND}:green`]);
+  });
+
+  it('29. un fichier reçu que le job n’a jamais écrit, effacé à sa demande : vert (cas a)', async () => {
+    // Le fichier reçu (écrit par la plateforme au tour 0), visé par un appel
+    // qui n'écrit rien — une édition dont le texte n'est pas trouvé : la ligne
+    // d'état existe, le job n'y a rien produit. Puis la personne demande de
+    // l'effacer.
+    const recu = join(ws, 'recu.txt');
+    const octets = Buffer.from('recu');
+    await writeFile(recu, octets);
+    await recordPlatformWrites({ db, jobId, files: [{ path: recu, sha256: sha(octets) }] });
+    turn += 1;
+    const edit = await executeTool(
+      tool('file_edit'),
+      { path: 'recu.txt', old_string: 'absent', new_string: 'x' },
+      ctx(),
+      opts(),
+    );
+    expect(edit.outcome).toBe('success');
+    await shell(`require('fs').rmSync('recu.txt')`);
+
+    await finalize();
+
+    expect(await rouges()).toEqual([]);
+    const r = await constats(recu);
+    expect(r.state.removed).toBe(true);
+    expect(r.state.removedSha256).toBe(sha(octets));
+    expect(r.verdicts).toEqual([`${REMOVED_PROOF_COMMAND}:green`]);
   });
 });

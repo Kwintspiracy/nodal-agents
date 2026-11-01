@@ -260,7 +260,13 @@ async function rangerConstats(input: ConstatsARanger): Promise<number> {
       target: [constatedWrites.jobId, constatedWrites.turn, constatedWrites.path],
       set: {
         contentSha256: sql`excluded.content_sha256`,
-        observedSha256: sql`excluded.observed_sha256`,
+        // L'identité OBSERVÉE ne s'efface pas (#919, revue A passe 6) : elle dit
+        // le dernier contenu que le constat a vu à ce chemin pendant ce tour,
+        // même si un appel suivant du même message l'a retiré. Sans elle, un
+        // `file_write` puis un `rm` dans un message perdaient la trace que le
+        // job avait écrit ce contenu. `content_sha256` (la propriété) garde sa
+        // règle d'avant, intacte.
+        observedSha256: sql`coalesce(excluded.observed_sha256, ${constatedWrites.observedSha256})`,
       },
     });
   return values.length;

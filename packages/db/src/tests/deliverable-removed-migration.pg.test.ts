@@ -59,15 +59,20 @@ describe('migration 0155_deliverable_removed @cap:verifier-un-livrable/moteur', 
         sql`INSERT INTO agent_jobs (entity_id, agent_id, channel, task)
             VALUES (${e[0]!.id}, ${a[0]!.id}, 'api', 't') RETURNING id`,
       );
-      const s = await rows<{ removed: boolean; removed_size: string | null }>(
+      const s = await rows<{
+        removed: boolean;
+        removed_size: string | null;
+        removed_sha256: string | null;
+      }>(
         db,
         sql`INSERT INTO job_deliverable_verification_state
               (job_id, deliverable_type, canonical_key, dirty_generation, decision_status)
             VALUES (${j[0]!.id}, 'document', 'd:/ws/a.md', 1, 'dirty')
-            RETURNING removed, removed_size`,
+            RETURNING removed, removed_size, removed_sha256`,
       );
       expect(s[0]!.removed).toBe(false);
       expect(s[0]!.removed_size).toBeNull();
+      expect(s[0]!.removed_sha256).toBeNull();
       // L'empreinte observée d'un constat (passe 4) : NULL pour une ligne
       // écrite sans elle.
       const c = await rows<{ observed_sha256: string | null }>(

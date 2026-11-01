@@ -24,81 +24,57 @@
 // PR #919, passe 1). « Le job l'a retiré » ne suffit pas : un `file_write
 // rapport.md` suivi d'un `run_command` de nettoyage qui l'efface finissait vert
 // sur l'absence, sans réparation, rapport perdu — là où main le rendait rouge
-// et rouvrait le run. Les lignes non promises sont le filet de #509 pour ce
-// que les outils de fichiers écrivent. Trois cas, décidés par
-// `rescuedRemovals`, sans rien savoir d'un outil ni d'un type :
+// et rouvrait le run.
 //
-//   a. le job n'a jamais écrit de contenu à cette adresse : il a retiré un
-//      fichier qu'il n'a pas créé (la forme de #916). Absence verte ;
-//   b. il y a écrit un contenu, et ce contenu existe encore à une autre adresse
-//      du job (un déplacement, un renommage, par n'importe quel outil) :
-//      absence verte pour la source ;
-//   c. il y a écrit un contenu, et ce contenu n'est plus nulle part : la preuve
-//      du type, donc `exists`, donc rouge — comme sur main, réparation
-//      comprise. Un fichier temporaire que le job crée puis efface est donc
-//      rouge, comme sur main : c'est la conséquence de la règle, pas un cas.
+// QUEL CONTENU A ÉTÉ RETIRÉ : PRIS AU MOMENT DU RETRAIT (revue A, passe 6).
+// Les passes 1 à 5 le reconstruisaient depuis l'HISTORIQUE des constats, et cet
+// historique est réécrit par tour (une ligne par (job, tour, chemin), #227) :
+// chaque passe y a trouvé un trou de plus. La sonde d'avant l'appel range
+// l'empreinte de ce qu'elle voit avec le retrait (`removed_sha256`, à côté de
+// `removed_size`) : l'instantané du seam pour une cible nommée, une lecture
+// bornée pour ce qu'un appel qui vise un dossier peut effacer sans le nommer
+// (`packages/tools/src/verification/removed.ts`). Le sauvetage n'a plus ni
+// chaîne à suivre, ni tour à rapprocher, ni `renamed_from`, ni « dernière
+// écriture » à chercher. Trois cas, sans rien savoir d'un outil ni d'un type :
 //
-// « LE JOB A ÉCRIT » se lit dans `constated_writes`, la source qu'utilise déjà
-// la porte d'écrasement (`currentContentWrittenByJob`), et SEULEMENT sur les
-// tours de ses appels d'outils : l'écriture que la PLATEFORME fait pour le job
-// (`PLATFORM_WRITE_TURN`, un fichier reçu par un canal, #918) n'est pas un
-// travail du job. C'est la copie d'un message que la personne a encore dans son
-// canal ; l'effacer à sa demande n'est pas perdre ce que le run a produit.
-// Reçu puis déplacé dans un dossier : vert dans les deux lectures (cas a ou b).
+//   a. aucune ligne de constat du job, hors tour de la plateforme, ne porte
+//      cette identité (`content_sha256` ou `observed_sha256`) : le job n'a
+//      jamais écrit ce contenu — il a retiré un fichier qu'il n'a pas produit
+//      (la forme de #916). Absence verte ;
+//   b. une ligne de constat du job, à un AUTRE chemin, porte cette identité, et
+//      le contenu réel de ce chemin, haché, l'égale encore : il a été déplacé
+//      ou copié. Absence verte ;
+//   c. sinon : la preuve du type, donc `exists`, donc rouge — comme sur main,
+//      réparation comprise. Un fichier temporaire que le job crée puis efface
+//      est rouge, comme sur main : c'est la conséquence de la règle.
 //
-// Un fichier qui existait avant le job et que le job a MODIFIÉ puis effacé
-// relève du cas c quand la modification n'est plus nulle part : ce que le run
-// a écrit est perdu, et c'est ce que la preuve doit dire.
+// Et quand la sonde n'a pas pu prendre l'empreinte (hors borne, un dossier,
+// une lecture refusée) : rouge, et c'est dit
+// (`VERIFICATION_RESCUE_IDENTITY_UNKNOWN`). Jamais deviné.
 //
-// OÙ LE CONTENU PEUT ÊTRE ALLÉ — LES CANDIDATS, LUS DANS LES FAITS RANGÉS, JAMAIS
-// UN BALAYAGE (revue A de la PR #919, passes 2 et 3). La première version
-// lisait et hachait en entier CHAQUE chemin constaté du job, pour chaque ligne
-// retirée, verrou du job tenu : un job de médias à dix sorties de 300 Mo qui
-// rangeait un brouillon lisait 3 Go au moment où la personne attend.
+// LE TOUR DE LA PLATEFORME (`PLATFORM_WRITE_TURN`, un fichier reçu, #918) ne
+// compte pas comme une écriture du job au cas a : c'est la copie d'un message
+// que la personne a encore dans son canal ; l'effacer à sa demande n'est pas
+// perdre ce que le run a produit. Un fichier reçu que le job DÉPLACE porte en
+// revanche son identité sur la ligne du déplacement (l'empreinte d'après de la
+// destination) : s'il est ensuite effacé partout, ce contenu-là est perdu par
+// le run, et la source comme la destination sont rouges.
 //
-// LA CHAÎNE. Un contenu peut avoir fait plusieurs pas (`mv a b`, puis
-// `mv b c`, ou deux `file_move`). On la suit dans les `constated_writes` du
-// job, sans rien lire sur le disque, à partir de l'adresse retirée et des tours
-// où elle a été constatée `deleted`. Une ligne de constat est un pas de la
-// chaîne quand :
-//
-//   - son empreinte RANGÉE est celle du contenu perdu (l'outil qui l'a écrit a
-//     rapporté ces octets-là) ;
-//   - elle porte `renamed_from` = un chemin déjà dans la chaîne (un renommage
-//     vu par git) ;
-//   - elle est apparue, sans empreinte rangée, au TOUR où un chemin de la
-//     chaîne a été retiré : un `file_move`, ou un `mv` de shell vu par
-//     l'instantané de checkpoint, crée sa destination dans l'appel qui retire
-//     sa source, et ne rapporte pas d'octets.
-//
-// Un pas que le constat montre lui-même retiré plus tard entre dans la chaîne
-// avec ses propres tours de retrait ; les autres sont les CANDIDATS. Chaque
-// ligne de constat est prise au plus une fois.
-//
-// LE FILTRE DE TAILLE. La sonde d'avant l'appel a vu la taille de l'adresse
-// retirée (`removed_size`). Un candidat n'est lu que si son `stat` rend cette
-// taille-là : un fichier d'une autre taille ne porte pas ces octets, et un
-// brouillon de 2 Ko ne fait plus lire un rendu de 300 Mo né au même tour.
+// LE FILTRE DE TAILLE. Un candidat n'est lu que si son `stat` rend la taille
+// vue au retrait (`removed_size`) : un fichier changé depuis son constat n'est
+// pas lu pour rien.
 //
 // LE PLAFOND. Ce qu'une finalisation hache est borné : `RESCUE_LIMITS`, en
-// fichiers et en octets, cumulés sur toutes les lignes retirées. La décision se
-// prend AVANT de lire, sur les candidats d'une ligne qui ont passé le filtre de
-// taille : s'ils dépassent ce qui reste, la ligne n'est pas sauvée — elle garde
-// la preuve de son type, donc son rouge — et c'est dit
-// (`VERIFICATION_RESCUE_CAP_REACHED`). Jamais une lecture partielle, jamais un
-// repli muet.
+// fichiers et en octets, cumulés sur toutes les lignes retirées, décidé AVANT
+// de lire. Au-delà, la ligne garde son rouge et c'est dit
+// (`VERIFICATION_RESCUE_CAP_REACHED`). Une lecture qui échoue se DIT
+// (`VERIFICATION_RESCUE_UNREADABLE`) et ne sauve rien.
 //
-// Un candidat est lu EN FLUX (une empreinte, pas un tampon), une seule fois par
-// finalisation. Une lecture qui échoue se DIT (`VERIFICATION_RESCUE_UNREADABLE`)
-// et ne sauve rien. Ce qui n'est pas dans la chaîne n'est jamais ouvert : un
-// shell qui déplace hors de tout constat reste au cas c, rouge.
-//
-// LA BORNE, pour une finalisation, en ce que le job a produit :
-//   - aucune ligne retirée non promise : un `select`, rien d'autre ;
-//   - sinon : un `select` des constats du job (R lignes), la chaîne en
-//     O(R × longueur de la chaîne) en mémoire, un `stat` par candidat distinct,
-//     et au plus `maxFiles` lectures et `maxBytes` octets hachés — chaque
-//     lecture d'un fichier qui a la taille exacte du contenu retiré.
+// LA BORNE, pour une finalisation : aucune ligne retirée non promise, un
+// `select` ; sinon un `select` des constats du job, un `stat` par chemin
+// candidat distinct, et au plus `maxFiles` lectures et `maxBytes` octets — chaque
+// lecture sur un fichier dont un constat du job a dit qu'il portait exactement
+// ce contenu, et qui a encore sa taille.
 //
 // HORS DU VERROU : `rescuedRemovals` tourne AVANT la transaction 1 de la
 // finalisation, qui ne fait que relire sa réponse. Voir `finalize.ts` pour ce
@@ -108,7 +84,7 @@ import { createReadStream } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { stat } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
-import { and, constatedWrites, desc, eq, jobDeliverableVerificationState } from '@nodal-agents/db';
+import { and, constatedWrites, eq, jobDeliverableVerificationState } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { PLATFORM_WRITE_TURN, cheminConstate } from '@nodal-agents/tools';
 import type {
@@ -242,76 +218,6 @@ async function tailleCandidat(path: string): Promise<number | null> {
   }
 }
 
-type Constat = {
-  readonly path: string;
-  readonly turn: number;
-  readonly changeKind: string;
-  readonly renamedFrom: string | null;
-  /** L'empreinte rapportée par l'écrivain (`content_sha256`). */
-  readonly sha: string | null;
-  /** L'empreinte que le constat a vue sur le disque (`observed_sha256`). */
-  readonly observed: string | null;
-};
-
-/**
- * L'IDENTITÉ du contenu qu'une écriture a laissé : un FAIT, ou rien (revue A
- * de #919, passes 4 et 5). L'empreinte que l'écrivain a rapportée, sinon celle
- * que le constat a lue sur le disque APRÈS l'appel (cible nommée, harnais,
- * git, instantané de checkpoint). Jamais une co-occurrence : un fichier retiré au
- * même tour n'est pas ce qui est arrivé ici, et un `renamed_from` de git est
- * un rapprochement par similarité, pas une identité (`mv a b && sed -i` à
- * taille égale le donne avec un autre contenu).
- */
-function identite(e: Constat): string | null {
-  return e.sha ?? e.observed;
-}
-
-/**
- * Les chemins où le contenu retiré de `ici` peut vivre encore : la chaîne de
- * l'en-tête, suivie dans les constats seuls. Aucune lecture de disque.
- */
-export function rescueCandidates(
-  ecritures: readonly Constat[],
-  ici: string,
-  perdu: string,
-  depuis: number,
-): ReadonlySet<string> {
-  const retraits = (path: string, apres: number): Set<number> =>
-    new Set(
-      ecritures
-        .filter((e) => e.path === path && e.changeKind === 'deleted' && e.turn >= apres)
-        .map((e) => e.turn),
-    );
-  const chaine = new Map<string, Set<number>>([[ici, retraits(ici, depuis)]]);
-  const file = [ici];
-  const pris = new Set<number>();
-  const candidats = new Set<string>();
-  while (file.length > 0) {
-    const chemin = file.shift() as string;
-    const tours = chaine.get(chemin) ?? new Set<number>();
-    for (const [i, e] of ecritures.entries()) {
-      if (pris.has(i) || e.changeKind === 'deleted' || chaine.has(e.path)) continue;
-      // Où CHERCHER : une heuristique bornée, qui ne coûte qu'une lecture —
-      // un candidat n'est vert que si son contenu RÉEL a l'identité perdue.
-      // Une écriture d'identité connue et différente n'est jamais un pas.
-      const id = identite(e);
-      const pas = id === perdu || (id === null && (e.renamedFrom === chemin || tours.has(e.turn)));
-      if (!pas) continue;
-      pris.add(i);
-      const plusTard = retraits(e.path, e.turn);
-      if (plusTard.size > 0) {
-        // Ce pas a lui-même été retiré : la chaîne continue depuis lui.
-        chaine.set(e.path, plusTard);
-        file.push(e.path);
-        candidats.delete(e.path);
-      } else {
-        candidats.add(e.path);
-      }
-    }
-  }
-  return candidats;
-}
-
 /**
  * Les lignes retirées du job dont AUCUN travail n'est perdu (cas a et b de
  * l'en-tête), avec la génération sale à laquelle la réponse a été prise.
@@ -332,6 +238,7 @@ export async function rescuedRemovals(
       displayPathSnapshot: jobDeliverableVerificationState.displayPathSnapshot,
       dirtyGeneration: jobDeliverableVerificationState.dirtyGeneration,
       removedSize: jobDeliverableVerificationState.removedSize,
+      removedSha256: jobDeliverableVerificationState.removedSha256,
     })
     .from(jobDeliverableVerificationState)
     .where(
@@ -347,14 +254,11 @@ export async function rescuedRemovals(
     .select({
       path: constatedWrites.path,
       turn: constatedWrites.turn,
-      changeKind: constatedWrites.changeKind,
-      renamedFrom: constatedWrites.renamedFrom,
       sha: constatedWrites.contentSha256,
       observed: constatedWrites.observedSha256,
     })
     .from(constatedWrites)
-    .where(eq(constatedWrites.jobId, jobId))
-    .orderBy(desc(constatedWrites.createdAt));
+    .where(eq(constatedWrites.jobId, jobId));
 
   // Un `stat` et au plus une lecture par chemin, toutes lignes confondues ; le
   // budget de la finalisation, consommé par chaque lecture faite.
@@ -373,31 +277,30 @@ export async function rescuedRemovals(
 
   for (const row of retirees) {
     if (row.dirtyGeneration === null) continue;
-    const address = row.displayPathSnapshot ?? row.canonicalKey;
-    if (!isAbsolute(address)) continue;
-    const ici = await cheminConstate(address);
-    const derniere = ecritures.find(
-      (e) => e.path === ici && e.turn !== PLATFORM_WRITE_TURN && e.changeKind !== 'deleted',
-    );
-    // Cas a : le job n'a rien écrit ici.
-    if (!derniere) {
-      out.set(row.id, row.dirtyGeneration);
-      continue;
-    }
-    // Le contenu perdu est un FAIT, ou il est inconnu — et alors la ligne garde
-    // son rouge, et c'est dit. Jamais deviné.
-    const perdu = identite(derniere);
-    if (perdu === null) {
+    const retire = row.removedSha256;
+    if (retire === null) {
       console.warn(
         `[verification] VERIFICATION_RESCUE_IDENTITY_UNKNOWN job=${jobId} row=${row.id} ` +
-          `reason=no_recorded_or_observed_sha turn=${derniere.turn}`,
+          `reason=no_sha_at_removal`,
       );
       continue;
     }
+    const address = row.displayPathSnapshot ?? row.canonicalKey;
+    const ici = isAbsolute(address) ? await cheminConstate(address) : address;
+    const porteurs = ecritures.filter(
+      (e) => e.turn !== PLATFORM_WRITE_TURN && (e.sha === retire || e.observed === retire),
+    );
+    // Cas a : le job n'a jamais écrit ce contenu.
+    if (porteurs.length === 0) {
+      out.set(row.id, row.dirtyGeneration);
+      continue;
+    }
 
-    // Les candidats qui ont la taille du contenu retiré — sans rien lire.
+    // Cas b : les AUTRES chemins où un constat du job a vu ce contenu, qui ont
+    // encore la taille du contenu retiré — sans rien lire.
     const aLire: { path: string; size: number }[] = [];
-    for (const c of rescueCandidates(ecritures, ici, perdu, derniere.turn)) {
+    for (const c of new Set(porteurs.map((e) => e.path))) {
+      if (c === ici) continue;
       const size = await taille(c);
       if (size === null) continue;
       if (row.removedSize !== null && size !== row.removedSize) continue;
@@ -420,9 +323,7 @@ export async function rescuedRemovals(
         fichiersLus += 1;
         octetsLus += c.size;
       }
-      // Cas b : le contenu que le job a écrit ici existe encore ailleurs.
-      const lu = lues.get(c.path);
-      if (lu === perdu) {
+      if (lues.get(c.path) === retire) {
         out.set(row.id, row.dirtyGeneration);
         break;
       }

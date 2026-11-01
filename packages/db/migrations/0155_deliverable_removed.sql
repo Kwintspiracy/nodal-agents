@@ -34,3 +34,11 @@ ALTER TABLE job_deliverable_verification_state
 -- constat n'a rien pu lire.
 ALTER TABLE constated_writes
   ADD COLUMN IF NOT EXISTS observed_sha256 text;
+
+-- removed_sha256 — l'empreinte de l'adresse vue AVANT l'appel qui l'a retirée
+-- (revue A de la PR #919, passe 6) : QUEL contenu a été retiré, pris au moment
+-- du retrait. Le sauvetage ne le reconstruit plus depuis l'historique des
+-- constats, que l'upsert par tour réécrit. NULL hors retrait, ou quand la
+-- sonde n'a pas pu la prendre.
+ALTER TABLE job_deliverable_verification_state
+  ADD COLUMN IF NOT EXISTS removed_sha256 text;

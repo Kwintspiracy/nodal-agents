@@ -31,8 +31,10 @@
 // l'appel ; elle ne sait pas qui a tenu la gomme.
 //
 // LE PRIX : une lecture des lignes d'état du job et deux `stat` par livrable,
-// pour chaque appel mutant d'un job. Les livrables d'un job se comptent sur les
-// doigts ; aucun contenu n'est lu — seule l'existence est la question.
+// pour chaque appel mutant d'un job. L'EMPREINTE d'avant (ce qui sera retiré,
+// revue A de #919, passe 6) est gratuite pour une cible nommée — l'instantané
+// du seam l'a prise ; pour les autres livrables, seul un appel qui vise un
+// dossier les fait hacher, dans `REMOVAL_PROBE_MAX_BYTES` par appel.
 //
 // POURQUOI IL NE LÈVE JAMAIS : appelé dans le `finally` qui entoure
 // `tool.execute` (`execute.ts`). Une panne ici se DIT par un code et ne pose
@@ -44,16 +46,33 @@ import { stat } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
 import { jobDeliverableVerificationState, eq } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
+import { normalizePath } from '@nodal-agents/shared';
+import { fingerprint, type FileFingerprint, type FileSnapshot } from './observed';
+
+/**
+ * Ce que la sonde d'avant accepte de hacher, par appel, pour les livrables que
+ * l'appel ne NOMME pas (revue A de #919, passe 6).
+ *
+ * L'identité de ce qu'un appel retire se prend AU MOMENT DU RETRAIT : juste
+ * avant l'appel, sur le disque. Pour une cible nommée (la source d'un
+ * `file_move`), l'instantané du seam l'a déjà prise : gratuit. Un livrable que
+ * l'appel ne nomme pas ne peut être retiré que par un appel qui vise un
+ * DOSSIER (un shell, un harnais) : seuls ceux-là le font hacher, et dans cette
+ * borne. 64 Mio se lisent en une fraction de seconde ; au-delà, l'identité
+ * reste inconnue — un retrait en sera rouge, et le dira à la finalisation
+ * (`VERIFICATION_RESCUE_IDENTITY_UNKNOWN`).
+ */
+export const REMOVAL_PROBE_MAX_BYTES = 64 * 1024 * 1024;
 
 /**
  * Trois réponses, pas deux : un `stat` refusé ne dit rien de l'existence. La
- * TAILLE vue avant l'appel est gardée (revue A de #919, passe 3) : rangée avec
- * le retrait (`removed_size`), elle borne ce que la finalisation acceptera de
- * lire pour retrouver le contenu ailleurs — un fichier d'une autre taille ne
- * peut pas porter ces octets-là.
+ * TAILLE et l'EMPREINTE vues avant l'appel sont gardées : rangées avec le
+ * retrait (`removed_size`, `removed_sha256`), elles disent QUEL contenu a été
+ * retiré. `sha256` est `null` quand elle n'a pas été prise (hors borne, un
+ * dossier, une lecture refusée).
  */
 type Presence =
-  | { readonly kind: 'present'; readonly size: number }
+  | { readonly kind: 'present'; readonly size: number; readonly sha256: string | null }
   | { readonly kind: 'absent' }
   | { readonly kind: 'unknown' };
 
@@ -66,7 +85,7 @@ export type DeliverablePresence = ReadonlyMap<
 async function presence(address: string): Promise<Presence> {
   try {
     const s = await stat(address);
-    return { kind: 'present', size: s.size };
+    return { kind: 'present', size: s.size, sha256: null };
   } catch (error) {
     const code = (error as NodeJS.ErrnoException | null)?.code;
     // `ENOTDIR` : un segment du chemin n'est plus un dossier, donc ce chemin
@@ -89,10 +108,21 @@ function addressOf(row: {
   return isAbsolute(address) ? address : null;
 }
 
-/** La sonde d'AVANT l'appel : chaque livrable du job, présent ou absent. */
+/** Ce que la sonde d'avant sait déjà, et ce qu'elle a le droit de lire. */
+export interface RemovalProbeOptions {
+  /** L'instantané des cibles NOMMÉES de l'appel, déjà pris par le seam. */
+  readonly connues: FileSnapshot;
+  /** L'appel vise-t-il un dossier ? Seul un tel appel retire ce qu'il ne nomme pas. */
+  readonly hacherLesAutres: boolean;
+  /** Le plafond d'octets hachés pour les livrables non nommés. */
+  readonly maxBytes: number;
+}
+
+/** La sonde d'AVANT l'appel : chaque livrable du job, présent ou absent, et son contenu. */
 export async function probeJobDeliverables(
   db: AnyDrizzleDb,
   jobId: string | undefined,
+  options: RemovalProbeOptions,
 ): Promise<DeliverablePresence> {
   const out = new Map<string, { address: string; presence: Presence }>();
   if (!jobId) return out;
@@ -105,10 +135,28 @@ export async function probeJobDeliverables(
       })
       .from(jobDeliverableVerificationState)
       .where(eq(jobDeliverableVerificationState.jobId, jobId));
+    let budget = options.maxBytes;
+    // L'instantané est rangé sous le chemin de la CIBLE, la ligne d'état sous
+    // son chemin d'affichage : la même adresse, deux orthographes.
+    const connues = new Map<string, FileFingerprint>();
+    for (const [chemin, f] of options.connues) connues.set(normalizePath(chemin), f);
     for (const row of rows) {
       const address = addressOf(row);
       if (address === null) continue;
-      out.set(row.id, { address, presence: await presence(address) });
+      let p = await presence(address);
+      if (p.kind === 'present') {
+        const connue = connues.get(normalizePath(address));
+        if (connue?.kind === 'file') {
+          p = { ...p, sha256: connue.sha256 };
+        } else if (options.hacherLesAutres && p.size <= budget) {
+          const f = await fingerprint(address);
+          if (f.kind === 'file') {
+            budget -= p.size;
+            p = { ...p, sha256: f.sha256 };
+          }
+        }
+      }
+      out.set(row.id, { address, presence: p });
     }
   } catch (err) {
     console.error(
@@ -120,10 +168,11 @@ export async function probeJobDeliverables(
 }
 
 /**
- * La sonde d'APRÈS, et ce qu'elle range : `removed = true` et la taille vue
- * avant (`removed_size`) sur chaque livrable passé de présent à absent pendant
- * l'appel ; `removed = false`, sans taille, sur chaque livrable revenu. Une
- * adresse inconnue d'un côté ou de l'autre ne pose rien.
+ * La sonde d'APRÈS, et ce qu'elle range : `removed = true`, la taille et
+ * l'empreinte vues avant (`removed_size`, `removed_sha256`) sur chaque
+ * livrable passé de présent à absent pendant l'appel ; `removed = false`, sans
+ * taille ni empreinte, sur chaque livrable revenu. Une adresse inconnue d'un
+ * côté ou de l'autre ne pose rien.
  *
  * Rend les identifiants des lignes réellement marquées retirées — ce qui rend
  * la règle observable en test plutôt que muette.
@@ -137,15 +186,19 @@ export async function recordObservedRemovals(
   const marques: string[] = [];
   for (const [id, { address, presence: avant }] of before) {
     const apres = await presence(address);
-    let set: { removed: boolean; removedSize: number | null } | null = null;
+    let set: {
+      removed: boolean;
+      removedSize: number | null;
+      removedSha256: string | null;
+    } | null = null;
     if (avant.kind === 'present' && apres.kind === 'absent') {
-      set = { removed: true, removedSize: avant.size };
+      set = { removed: true, removedSize: avant.size, removedSha256: avant.sha256 };
     } else if (avant.kind === 'absent' && apres.kind === 'present') {
-      set = { removed: false, removedSize: null };
+      set = { removed: false, removedSize: null, removedSha256: null };
     }
     if (set === null) continue;
     try {
-      // Une ligne par livrable : chacun porte SA taille.
+      // Une ligne par livrable : chacun porte SA taille et SON empreinte.
       const rows = await db
         .update(jobDeliverableVerificationState)
         .set({ ...set, updatedAt: new Date() })

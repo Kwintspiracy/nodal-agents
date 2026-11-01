@@ -86,7 +86,11 @@ import {
 } from './verification/record-constat';
 import { recordToolCallReads } from './verification/tool-call-reads';
 import { recordToolCallWrites } from './verification/tool-call-writes';
-import { probeJobDeliverables, recordObservedRemovals } from './verification/removed';
+import {
+  REMOVAL_PROBE_MAX_BYTES,
+  probeJobDeliverables,
+  recordObservedRemovals,
+} from './verification/removed';
 import { admitModelAttachment, type ToolAttachment } from './model-images';
 import { attachProductionToProject } from './projects/attach';
 import { loadDeclaredCodeRoots, projectRootPredicate } from './projects/declared';
@@ -814,7 +818,13 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
   // l'intention vient de poser comprises : ce qu'un appel RETIRE (la source
   // d'un `file_move`, un `rm` dans le `cwd` d'un shell) n'est pas un livrable
   // qui doit exister. Voir `verification/removed.ts`.
-  const presenceAvant = mutationTargets ? await probeJobDeliverables(ctx.db, ctx.jobId) : null;
+  const presenceAvant = mutationTargets
+    ? await probeJobDeliverables(ctx.db, ctx.jobId, {
+        connues: filesBefore ?? new Map(),
+        hacherLesAutres: mutationTargets.some((t) => t.kind === 'dir'),
+        maxBytes: opts.removalProbeMaxBytes ?? REMOVAL_PROBE_MAX_BYTES,
+      })
+    : null;
   // Et, pour un harnais, les lignes vivantes que ce job porte DÉJÀ : elles
   // bornent à CE run la lecture d'après (revue C de la PR #196, passe 2). Sans
   // elles, un second `code_task` dans le même dossier héritait des lignes du
