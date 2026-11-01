@@ -37,14 +37,23 @@
 //   9. un fichier que le job retire puis réécrit redevient un livrable qui doit
 //      exister : `removed` levé, `exists` vert ;
 //  10. un fichier retiré que l'agent a PROMIS (`declared`) se prouve comme une
-//      promesse : `exists`, rouge.
+//      promesse : `exists`, rouge ;
+//  11. un job aux sorties lourdes qui range un brouillon : la source est verte,
+//      et aucune sortie qui n'est pas un candidat n'est ouverte — une sortie
+//      rendue illisible ne change rien et ne fait rien journaliser (revue A de
+//      #919, passe 2 : plus de balayage de tous les chemins constatés) ;
+//  12. le contenu perdu posé, HORS du job, à un chemin que le job a écrit avec
+//      un AUTRE contenu : ce chemin n'est pas un candidat, le retrait reste
+//      rouge — le sauvetage ne vient que des faits rangés ;
+//  13. une copie que le job a écrite (empreinte rangée), puis l'original
+//      effacé : l'original est vert par son absence.
 //
 // Mutations vérifiées : la liste est dans la PR #919, avec les tests que
 // chacune fait rougir.
 
-import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest';
 import { createHash } from 'node:crypto';
-import { mkdtemp, mkdir, rm, writeFile, stat } from 'node:fs/promises';
+import { chmod, mkdtemp, mkdir, rm, writeFile, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
@@ -396,5 +405,67 @@ describe('un livrable retiré par le job (#916) @cap:verifier-un-livrable/moteur
     expect(src.state.removed).toBe(true);
     expect(src.state.decisionStatus).toBe('red');
     expect(src.verdicts).toEqual(['exists:red']);
+  });
+
+  it('11. sorties lourdes et un brouillon rangé : la source est verte, aucune autre sortie n’est ouverte', async () => {
+    const lourd = 'x'.repeat(1000 * 1000);
+    const sorties = ['out-1.txt', 'out-2.txt', 'out-3.txt'];
+    for (const [n, nom] of sorties.entries()) {
+      await call('file_write', { path: nom, content: `${n}${lourd}` });
+    }
+    await mkdir(join(ws, 'final'), { recursive: true });
+    await call('file_write', { path: 'draft.md', content: '# Draft\n' });
+    await call('file_move', { source: 'draft.md', destination: 'final/draft.md' });
+    // Une sortie qu'on ne PEUT PAS lire (sous Linux et macOS : aucun droit ;
+    // sous Windows, `chmod` ne retire pas la lecture et le test 12 porte seul
+    // la preuve que les non-candidats ne sont pas lus).
+    const illisible = join(ws, 'out-1.txt');
+    await chmod(illisible, 0o000);
+    const avertissements = vi.spyOn(console, 'warn');
+    try {
+      await finalize();
+    } finally {
+      await chmod(illisible, 0o644);
+    }
+    const lus = avertissements.mock.calls
+      .map((c) => String(c[0]))
+      .filter((l) => l.includes('VERIFICATION_RESCUE_UNREADABLE'));
+    avertissements.mockRestore();
+
+    const src = await constats(join(ws, 'draft.md'));
+    expect(src.state.removed).toBe(true);
+    expect(src.verdicts).toEqual([`${REMOVED_PROOF_COMMAND}:green`]);
+    expect(lus, 'une sortie qui n’est pas un candidat a été ouverte').toEqual([]);
+  });
+
+  it('12. le contenu perdu posé hors du job à un chemin que le job a écrit autrement : rouge', async () => {
+    const rapport = join(ws, 'report.md');
+    await call('file_write', { path: 'report.md', content: '# Report\n' });
+    await call('file_write', { path: 'notes.md', content: '# Notes\n' });
+    // Une personne recopie le rapport dans les notes : le job n'a pas écrit ça.
+    await writeFile(join(ws, 'notes.md'), '# Report\n');
+    await shell(`require('fs').rmSync('report.md')`);
+
+    await finalize();
+
+    const f = await constats(rapport);
+    expect(f.state.removed).toBe(true);
+    expect(f.verdicts).toEqual(['exists:red']);
+  });
+
+  it('13. une copie écrite par le job, puis l’original effacé : l’original est vert par son absence', async () => {
+    const original = join(ws, 'report.md');
+    await call('file_write', { path: 'report.md', content: '# Report\n' });
+    // Le même contenu, rapporté par l'outil : son empreinte rangée le désigne.
+    await mkdir(join(ws, 'archive'), { recursive: true });
+    await call('file_write', { path: 'archive/report.md', content: '# Report\n' });
+    await shell(`require('fs').rmSync('report.md')`);
+
+    await finalize();
+
+    expect(await rouges()).toEqual([]);
+    const f = await constats(original);
+    expect(f.state.removed).toBe(true);
+    expect(f.verdicts).toEqual([`${REMOVED_PROOF_COMMAND}:green`]);
   });
 });

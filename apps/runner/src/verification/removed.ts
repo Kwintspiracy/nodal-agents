@@ -26,7 +26,7 @@
 // sur l'absence, sans réparation, rapport perdu — là où main le rendait rouge
 // et rouvrait le run. Les lignes non promises sont le filet de #509 pour ce
 // que les outils de fichiers écrivent. Trois cas, décidés par
-// `removalLosesWork`, sans rien savoir d'un outil ni d'un type :
+// `rescuedRemovals`, sans rien savoir d'un outil ni d'un type :
 //
 //   a. le job n'a jamais écrit de contenu à cette adresse : il a retiré un
 //      fichier qu'il n'a pas créé (la forme de #916). Absence verte ;
@@ -50,18 +50,44 @@
 // relève du cas c quand la modification n'est plus nulle part : ce que le run
 // a écrit est perdu, et c'est ce que la preuve doit dire.
 //
-// « Une autre adresse du job » : les autres lignes d'état du job ET les
-// chemins de ses `constated_writes`. Un `mv` de shell n'ouvre aucune ligne
-// d'état pour sa destination ; c'est le constat (git, ou l'instantané de
-// checkpoint hors dépôt) qui la nomme. Un shell qui déplace un fichier hors de
-// tout ce qui est constaté reste au cas c : rouge, faute de pouvoir montrer le
-// contenu ailleurs.
+// OÙ LE CONTENU PEUT ÊTRE ALLÉ — LES CANDIDATS, LUS DANS LES FAITS RANGÉS, JAMAIS
+// UN BALAYAGE (revue A de la PR #919, passe 2). La première version lisait et
+// hachait en entier CHAQUE chemin constaté du job, pour chaque ligne retirée,
+// verrou du job tenu : un job de médias à dix sorties de 300 Mo qui rangeait un
+// brouillon lisait 3 Go au moment où la personne attend. Un fichier n'est lu que
+// si les `constated_writes` du job en font un candidat :
+//
+//   - son empreinte RANGÉE est celle du contenu perdu (l'outil qui l'a écrit a
+//     rapporté ces octets-là) ;
+//   - il porte `renamed_from` = l'adresse retirée (un renommage vu par git) ;
+//   - il est apparu, sans empreinte rangée, au TOUR même où l'adresse a été
+//     retirée (le `deleted` constaté) : un `file_move`, ou un `mv` de shell vu
+//     par l'instantané de checkpoint, crée sa destination dans l'appel qui
+//     retire sa source, et ne rapporte pas d'octets.
+//
+// Un candidat est d'abord `stat`é (un fichier, là), puis lu EN FLUX une seule
+// fois par finalisation, toutes lignes retirées confondues. Aucun autre fichier
+// n'est ouvert. Ce qui n'a pas d'empreinte rangée et n'est pas né au tour du
+// retrait n'est pas un candidat : rouge, faute de fait qui le désigne — un shell
+// qui déplace hors de tout constat reste au cas c. Une lecture de candidat qui
+// échoue se DIT (`VERIFICATION_RESCUE_UNREADABLE`) et ne sauve rien.
+//
+// LA BORNE, pour une finalisation : un `select` des lignes retirées, un
+// `select` des constats du job, puis au plus un `stat` et une lecture complète
+// par CHEMIN CANDIDAT distinct — jamais par chemin constaté, jamais par ligne
+// retirée. Sans ligne retirée non promise, aucun constat n'est lu.
+//
+// HORS DU VERROU : `rescuedRemovals` tourne AVANT la transaction 1 de la
+// finalisation, qui ne fait que relire sa réponse. Voir `finalize.ts` pour ce
+// qui garde la réponse juste entre les deux.
 
+import { createReadStream } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { stat } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
-import { constatedWrites, desc, eq } from '@nodal-agents/db';
+import { and, constatedWrites, desc, eq, jobDeliverableVerificationState } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
-import { PLATFORM_WRITE_TURN, cheminConstate, fingerprint } from '@nodal-agents/tools';
+import { PLATFORM_WRITE_TURN, cheminConstate } from '@nodal-agents/tools';
 import type {
   DeliverableVerifier,
   LoadedConfig,
@@ -152,48 +178,113 @@ export function removedDeliverableVerifier(base: DeliverableVerifier): Deliverab
   };
 }
 
+/** L'empreinte d'un candidat, lue en flux : `null` quand il n'est pas un fichier là. */
+async function empreinteCandidat(path: string): Promise<string | null> {
+  try {
+    const s = await stat(path);
+    if (!s.isFile()) return null;
+  } catch {
+    return null;
+  }
+  try {
+    const hash = createHash('sha256');
+    for await (const chunk of createReadStream(path)) hash.update(chunk as Buffer);
+    return hash.digest('hex');
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException | null)?.code ?? 'UNKNOWN';
+    console.warn(`[verification] VERIFICATION_RESCUE_UNREADABLE path=${path} code=${code}`);
+    return null;
+  }
+}
+
 /**
- * Retirer ce livrable a-t-il PERDU un travail du job ? (cas c de l'en-tête)
+ * Les lignes retirées du job dont AUCUN travail n'est perdu (cas a et b de
+ * l'en-tête), avec la génération sale à laquelle la réponse a été prise.
  *
- * `address` est l'adresse retirée ; `otherAddresses`, celles des autres lignes
- * d'état du job. Lit `constated_writes` (la dernière écriture du job à cette
- * adresse, hors tour de la plateforme) puis le disque (l'empreinte actuelle des
- * autres adresses du job). Une écriture sans empreinte (un shell qui écrit
- * sans rapporter ses octets) ne peut pas être retrouvée ailleurs : perdue.
+ * Appelée hors transaction, avant le verrou du job. Une ligne absente de la
+ * réponse garde la preuve de son type — le sens prudent.
  */
-export async function removalLosesWork(
-  tx: AnyDrizzleDb,
+export async function rescuedRemovals(
+  db: AnyDrizzleDb,
   jobId: string,
-  address: string,
-  otherAddresses: readonly string[],
-): Promise<boolean> {
-  const ici = await cheminConstate(address);
-  const ecritures = await tx
+): Promise<ReadonlyMap<string, number>> {
+  const out = new Map<string, number>();
+  const retirees = await db
+    .select({
+      id: jobDeliverableVerificationState.id,
+      canonicalKey: jobDeliverableVerificationState.canonicalKey,
+      displayPathSnapshot: jobDeliverableVerificationState.displayPathSnapshot,
+      dirtyGeneration: jobDeliverableVerificationState.dirtyGeneration,
+    })
+    .from(jobDeliverableVerificationState)
+    .where(
+      and(
+        eq(jobDeliverableVerificationState.jobId, jobId),
+        eq(jobDeliverableVerificationState.removed, true),
+        eq(jobDeliverableVerificationState.declared, false),
+      ),
+    );
+  if (retirees.length === 0) return out;
+
+  const ecritures = await db
     .select({
       path: constatedWrites.path,
       turn: constatedWrites.turn,
       changeKind: constatedWrites.changeKind,
+      renamedFrom: constatedWrites.renamedFrom,
       sha: constatedWrites.contentSha256,
     })
     .from(constatedWrites)
     .where(eq(constatedWrites.jobId, jobId))
     .orderBy(desc(constatedWrites.createdAt));
-  const derniere = ecritures.find(
-    (e) => e.path === ici && e.turn !== PLATFORM_WRITE_TURN && e.changeKind !== 'deleted',
-  );
-  // Cas a : le job n'a rien écrit ici.
-  if (!derniere) return false;
-  if (derniere.sha === null) return true;
-  const ailleurs = new Set<string>();
-  for (const a of otherAddresses) {
-    if (isAbsolute(a)) ailleurs.add(await cheminConstate(a));
+
+  // Une lecture par chemin candidat et par finalisation, toutes lignes confondues.
+  const lues = new Map<string, Promise<string | null>>();
+  const lire = (path: string): Promise<string | null> => {
+    let p = lues.get(path);
+    if (!p) {
+      p = empreinteCandidat(path);
+      lues.set(path, p);
+    }
+    return p;
+  };
+
+  for (const row of retirees) {
+    if (row.dirtyGeneration === null) continue;
+    const address = row.displayPathSnapshot ?? row.canonicalKey;
+    if (!isAbsolute(address)) continue;
+    const ici = await cheminConstate(address);
+    const derniere = ecritures.find(
+      (e) => e.path === ici && e.turn !== PLATFORM_WRITE_TURN && e.changeKind !== 'deleted',
+    );
+    // Cas a : le job n'a rien écrit ici.
+    if (!derniere) {
+      out.set(row.id, row.dirtyGeneration);
+      continue;
+    }
+    // Un contenu dont l'empreinte n'a pas été rangée ne se retrouve nulle part.
+    const perdu = derniere.sha;
+    if (perdu === null) continue;
+    // Le tour où l'adresse a été retirée, quand un constat l'a vu.
+    const retrait = ecritures.find((e) => e.path === ici && e.changeKind === 'deleted');
+    const candidats = new Set<string>();
+    for (const e of ecritures) {
+      if (e.path === ici || e.changeKind === 'deleted') continue;
+      if (
+        e.sha === perdu ||
+        e.renamedFrom === ici ||
+        (e.sha === null && retrait !== undefined && e.turn === retrait.turn)
+      ) {
+        candidats.add(e.path);
+      }
+    }
+    for (const c of candidats) {
+      // Cas b : le contenu que le job a écrit ici existe encore ailleurs.
+      if ((await lire(c)) === perdu) {
+        out.set(row.id, row.dirtyGeneration);
+        break;
+      }
+    }
   }
-  for (const e of ecritures) ailleurs.add(e.path);
-  ailleurs.delete(ici);
-  for (const autre of ailleurs) {
-    const f = await fingerprint(autre);
-    // Cas b : le contenu que le job a écrit ici existe encore ailleurs.
-    if (f.kind === 'file' && f.sha256 === derniere.sha) return false;
-  }
-  return true;
+  return out;
 }

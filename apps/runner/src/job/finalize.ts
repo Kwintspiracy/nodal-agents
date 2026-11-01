@@ -103,7 +103,7 @@ import type { DecisionStatus, JobResultKind } from '@nodal-agents/shared';
 import { readProofRepairAttempts } from '@nodal-agents/shared';
 import { resolveRunWorkspaces, withJobFolder } from '@nodal-agents/tools';
 import { getVerifier } from '../verification/registry.ts';
-import { removalLosesWork, removedDeliverableVerifier } from '../verification/removed.ts';
+import { removedDeliverableVerifier, rescuedRemovals } from '../verification/removed.ts';
 import { buildRepairBrief } from '../verification/repair-brief.ts';
 import type { RepairBriefCommand } from '../verification/repair-brief.ts';
 import type {
@@ -803,6 +803,25 @@ export async function finalizeJobSuccess(
     decisions: [],
   };
 
+  // ─── Avant le verrou : ce qu'un retrait a perdu (#919, revue A passe 2) ─────
+  //
+  // Lire des fichiers pour savoir si un contenu retiré existe encore ailleurs
+  // se fait ICI, hors de toute transaction : sous le verrou du job, ces
+  // lectures (bornées, mais un candidat peut peser des centaines de Mo)
+  // retiendraient la finalisation au moment où la personne attend.
+  //
+  // CE QUI GARDE LA RÉPONSE JUSTE ENTRE LES DEUX. Elle porte la génération
+  // sale de chaque ligne au moment où elle a été prise : une écriture du job
+  // entre cette lecture et le verrou monte la génération, la réponse ne
+  // s'applique plus, et la ligne garde la preuve de son type (le sens prudent).
+  // Une ligne retirée qui n'est pas dans la réponse — posée après elle — garde
+  // aussi la preuve de son type. Une fois choisie, la preuve d'absence porte
+  // l'état de l'adresse dans son manifeste, relu en transaction 2 : un fichier
+  // qui revient la rend périmée. Ce qui n'est PAS regardé de nouveau : le
+  // candidat qui portait le contenu, si un AUTRE écrivain l'efface entre cette
+  // lecture et la preuve — une fenêtre de la durée de la finalisation.
+  const sauvees = await rescuedRemovals(db, jobId);
+
   // ─── Transaction 1 : verrous, lecture, capture de G ───────────────────────
   const opened = await db.transaction(async (tx): Promise<OpenedJob | null> => {
     const jobRows = await tx
@@ -885,16 +904,7 @@ export async function finalizeJobSuccess(
       // preuve de son type, donc son rouge et sa réparation.
       const typed = resolveVerifier(state.deliverableType);
       const absenceSuffit =
-        state.removed &&
-        !state.declared &&
-        !(await removalLosesWork(
-          tx,
-          jobId,
-          state.displayPathSnapshot ?? state.canonicalKey,
-          states
-            .filter((s) => s.id !== state.id)
-            .map((s) => s.displayPathSnapshot ?? s.canonicalKey),
-        ));
+        state.removed && !state.declared && sauvees.get(state.id) === state.dirtyGeneration;
       const verifier = absenceSuffit ? removedDeliverableVerifier(typed) : typed;
       if (state.dirtyGeneration === null) {
         throw new Error(
