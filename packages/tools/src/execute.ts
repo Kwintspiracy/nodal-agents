@@ -86,6 +86,7 @@ import {
 } from './verification/record-constat';
 import { recordToolCallReads } from './verification/tool-call-reads';
 import { recordToolCallWrites } from './verification/tool-call-writes';
+import { probeJobDeliverables, recordObservedRemovals } from './verification/removed';
 import { admitModelAttachment, type ToolAttachment } from './model-images';
 import { attachProductionToProject } from './projects/attach';
 import { loadDeclaredCodeRoots, projectRootPredicate } from './projects/declared';
@@ -809,6 +810,10 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
   // seule façon de constater, après, qu'il a réellement écrit. Une cible
   // dossier n'est pas prise — elle ne crédite plus rien, voir `observed.ts`.
   const filesBefore = mutationTargets ? await snapshotFileTargets(mutationTargets) : null;
+  // Et la PRÉSENCE de chaque livrable du job (#916), les lignes que
+  // l'intention vient de poser comprises : ce qu'un appel RETIRE n'est une
+  // absence attendue que s'il l'a déclaré déplacé. Voir `verification/removed.ts`.
+  const presenceAvant = mutationTargets ? await probeJobDeliverables(ctx.db, ctx.jobId) : null;
   // Et, pour un harnais, les lignes vivantes que ce job porte DÉJÀ : elles
   // bornent à CE run la lecture d'après (revue C de la PR #196, passe 2). Sans
   // elles, un second `code_task` dans le même dossier héritait des lignes du
@@ -830,6 +835,12 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
   // Les empreintes des octets que l'outil LIT (le pendant des écritures) :
   // rangées dans `tool_call_reads` une fois la ligne d'audit écrite.
   const contenusLus = new Map<string, string>();
+  // Les déplacements que l'outil CONFIRME avoir faits, source → destination
+  // (#916) : le fait qui répond à l'intention `movesTo`.
+  const deplacementsFaits = new Map<string, string>();
+  // L'outil a-t-il RENDU son résultat ? Un appel qui lève, expire ou est
+  // interrompu ne fait d'aucun retrait un déplacement, confirmé ou non.
+  let outilARendu = false;
   // Les fichiers (images, PDF) que CET APPEL donne au modèle (`model-images.ts`) :
   // admis par la règle unique, rendus avec le résultat, jamais posés sur la ligne.
   const attachmentsForModel: ToolAttachment[] = [];
@@ -839,6 +850,7 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
     ...(porteLaisseePasserSansPersonne ? { sharedOverwriteUnattended: true } : {}),
     reportWrittenContent: (absPath, sha256) => contenusEcrits.set(absPath, sha256),
     reportReadContent: (absPath, sha256) => contenusLus.set(absPath, sha256),
+    confirmMove: (source, destination) => deplacementsFaits.set(source, destination),
     attachForModel: (attachment) => {
       const outcome = admitModelAttachment(ctx.modelInput, attachment, attachmentsForModel);
       if (outcome.attached) attachmentsForModel.push(attachment);
@@ -928,6 +940,7 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
     let output: TOutput;
     try {
       output = await tool.execute(validatedInput, execCtx);
+      outilARendu = true;
     } catch (err) {
       // Only an exception out of the tool's OWN execute() is the tool's text
       // (`raisedByTool`, read by the catch below). Everything after — the
@@ -950,6 +963,16 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
           targets: mutationTargets,
           before: filesBefore,
           written: contenusEcrits,
+        });
+      }
+      // Ce que CET APPEL a retiré ou fait revenir parmi les livrables du job
+      // (#916), réussi ou non : c'est la transition constatée qui compte, et
+      // le déplacement que l'appel avait déclaré. Ne lève jamais.
+      if (presenceAvant && mutationTargets) {
+        await recordObservedRemovals(ctx.db, ctx.jobId, presenceAvant, {
+          targets: mutationTargets,
+          deplacementsFaits: outilARendu ? deplacementsFaits : new Map(),
+          workspaceRoots: (ctx.workspaces ?? []).map((w) => w.path),
         });
       }
       if (mutationDeliverables.length > 0) {
