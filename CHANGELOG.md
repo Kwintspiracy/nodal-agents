@@ -17,8 +17,8 @@ on Telegram, or an image on Discord, now reaches it, and the platform records it
 as that job's own. An agent can move a file, read a PDF the way it reads an
 image, and file a document with a method that ships with Nodal. Settings →
 Safety shows the sandbox as it is on your machine and lets you set it. A job
-started through the MCP server can finally be read back. Sixteen pull requests,
-two database migrations.
+started through the MCP server can finally be read back. Seventeen pull requests,
+three database migrations.
 
 **Upgrading: what changes for you**
 
@@ -28,7 +28,7 @@ two database migrations.
   `sandbox: { confined: false, code: "SANDBOX_NOT_IMPLEMENTED" }`. The new
   Sandbox section says so in plain words and disables its controls on those
   systems. (#877)
-- **Two database migrations (0153 and 0154)**, applied on the next start:
+- **Three database migrations (0153 to 0155)**, applied on the next start:
   - 0153 adds two columns to your workspace: the sandbox switch (on, the value
     the runner already applied) and your changes to the allowed folders (none).
     Nothing changes for anyone until they use the new section.
@@ -37,6 +37,9 @@ two database migrations.
     for everyone, with its folder condition) is copied to `file_move`. A
     read-only agent that blocks `file_write` therefore cannot move files the day
     it upgrades. A rule you had already set on `file_move` is kept. (#881)
+  - 0155 adds two columns to the table that holds the proof of each file a job
+    must deliver, so that a move can be told from a deletion (`removed` and
+    `moved_to_key`). Both start empty and nothing is rewritten. (#919)
 - **An agent that answers in prose is done.** A job turn that ends without a
   tool call is the job's answer, and the second model call that used to check it
   is gone. You get the answer sooner, and the agent no longer repeats an action
@@ -97,6 +100,16 @@ two database migrations.
   templates stay read-only: they can be copied, not moved away. Known limit: the
   delivered-files list shows a move between two folders of a workspace by its
   new name only. (#881)
+- **A file the agent moved is no longer checked at its old place.** The check
+  of a job's deliverables used to ask the source of a `file_move` whether it
+  still existed, after the move had removed it: the destination was green, the
+  job was red, and the agent had to tell you that "the check fails because it
+  checks the old location". The old place is now proved as "moved to" the new
+  one, and the file that arrives is checked itself: if it disappears or changes
+  later, that check turns red. A move counts only when `file_move` confirms it
+  did it. A move that failed, a `mv` in a shell, a copy followed by a deletion
+  and an `rm` stay red, as before. A file that comes back to the old place turns
+  the check red again. (#919)
 - **A PDF reaches a model that can read one.** `file_read` hands a PDF to the
   model as the document, like an image, where it used to return undecodable
   text. A model that cannot read PDFs is told so, with its name, and never
