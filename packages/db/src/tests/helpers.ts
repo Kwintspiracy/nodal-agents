@@ -1202,6 +1202,7 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       constated_by text NOT NULL,
       renamed_from text,
       content_sha256 text,
+      observed_sha256 text,
       created_at timestamptz NOT NULL DEFAULT now(),
       CONSTRAINT constated_writes_job_turn_path_unique UNIQUE (job_id, turn, path),
       CONSTRAINT constated_writes_change_kind_check

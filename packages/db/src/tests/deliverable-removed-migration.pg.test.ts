@@ -68,6 +68,15 @@ describe('migration 0155_deliverable_removed @cap:verifier-un-livrable/moteur', 
       );
       expect(s[0]!.removed).toBe(false);
       expect(s[0]!.removed_size).toBeNull();
+      // L'empreinte observée d'un constat (passe 4) : NULL pour une ligne
+      // écrite sans elle.
+      const c = await rows<{ observed_sha256: string | null }>(
+        db,
+        sql`INSERT INTO constated_writes (job_id, turn, path, change_kind, constated_by)
+            VALUES (${j[0]!.id}, 1, 'd:/ws/a.md', 'added', 'disk')
+            RETURNING observed_sha256`,
+      );
+      expect(c[0]!.observed_sha256).toBeNull();
     } finally {
       await close();
     }

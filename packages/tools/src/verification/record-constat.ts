@@ -228,6 +228,9 @@ async function rangerConstats(input: ConstatsARanger): Promise<number> {
       constatedBy: l.constatedBy,
       renamedFrom: l.renamedFrom ?? null,
       contentSha256: empreinte,
+      // Ce que le constat a VU (#919) : l'identité du contenu, jamais une
+      // propriété — la porte d'écrasement lit `contentSha256` seul.
+      observedSha256: l.kind === 'deleted' ? null : (l.observedSha256 ?? null),
     });
   }
   // Le même fichier réécrit dans le MÊME tour reste une ligne (l'unicité de
@@ -238,7 +241,10 @@ async function rangerConstats(input: ConstatsARanger): Promise<number> {
     .values(values)
     .onConflictDoUpdate({
       target: [constatedWrites.jobId, constatedWrites.turn, constatedWrites.path],
-      set: { contentSha256: sql`excluded.content_sha256` },
+      set: {
+        contentSha256: sql`excluded.content_sha256`,
+        observedSha256: sql`excluded.observed_sha256`,
+      },
     });
   return values.length;
 }

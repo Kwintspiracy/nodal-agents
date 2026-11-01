@@ -56,7 +56,20 @@
 //      dans le budget de lecture — avec un plafond qu'ils dépasseraient, aucun
 //      plafond n'est atteint (preuve par le résultat, sur toute plateforme) ;
 //  17. un candidat au-delà du plafond : la ligne garde son rouge, et le code
-//      `VERIFICATION_RESCUE_CAP_REACHED` est journalisé.
+//      `VERIFICATION_RESCUE_CAP_REACHED` est journalisé ;
+//  18. une commande qui efface `keep.bin` et renomme `payload.md` sur l'adresse,
+//      une copie de `keep.bin` vivante à la même taille : rouge — le contenu
+//      perdu est un FAIT (l'empreinte vue par le constat), jamais « un des
+//      fichiers retirés au même tour » (revue A de #919, passe 4, P1) ;
+//  19. un cycle de renommages a → b → a → c : la source est verte — l'identité
+//      se lit sur l'écriture elle-même, pas en remontant par chemin (P2) ;
+//  20. un déplacement qui modifie le fichier à taille égale, avec une copie de
+//      l'original ailleurs : rouge — ni le tour ni la similarité ne sont une
+//      identité ;
+//  21. une écriture dont aucun fait ne dit le contenu : rouge, et
+//      `VERIFICATION_RESCUE_IDENTITY_UNKNOWN` est journalisé ;
+//  22. une chaîne dont les pas n'ont pas d'identité connue (un harnais) :
+//      suivie par la chaîne, lue, et la source est verte.
 //
 // Mutations vérifiées : la liste est dans la PR #919, avec les tests que
 // chacune fait rougir.
@@ -70,12 +83,14 @@ import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import {
   agentJobs,
+  constatedWrites,
   entities,
   jobDeliverableVerificationState,
   verificationRuns,
   and,
   asc,
   eq,
+  inArray,
 } from '@nodal-agents/db';
 import { normalizePath } from '@nodal-agents/shared';
 import {
@@ -201,6 +216,25 @@ async function finalize(
     { jobId, resultKind: 'prose', repairTurn, result: 'fait' },
     { log: () => {}, ...(rescueLimits ? { rescueLimits } : {}) },
   );
+}
+
+/**
+ * Rend INCONNUE l'identité des constats de ces fichiers : ce que laisse un
+ * écrivain qui nomme ses chemins sans en rapporter les octets, et qu'aucun
+ * constat n'a lus (le harnais d'un `code_task`). Les lignes restent ; seule
+ * l'empreinte observée tombe.
+ */
+async function sansIdentite(noms: readonly string[]): Promise<void> {
+  const lignes = await db
+    .select({ id: constatedWrites.id, path: constatedWrites.path })
+    .from(constatedWrites)
+    .where(eq(constatedWrites.jobId, jobId));
+  const ids = lignes.filter((l) => noms.some((n) => l.path.endsWith(`/${n}`))).map((l) => l.id);
+  expect(ids.length, `aucun constat pour ${noms.join(', ')}`).toBeGreaterThan(0);
+  await db
+    .update(constatedWrites)
+    .set({ observedSha256: null })
+    .where(inArray(constatedWrites.id, ids));
 }
 
 /** Les lignes `[verification] <code>` journalisées pendant `fn`. */
@@ -535,6 +569,10 @@ describe('un livrable retiré par le job (#916) @cap:verifier-un-livrable/moteur
       `const f=require('fs');f.renameSync('draft.md','final/draft.md');` +
         `for(const n of [1,2,3])f.writeFileSync('big'+n+'.bin',Buffer.alloc(400000,n))`,
     );
+    // Les gros fichiers écrits par un écrivain qui n'en dit pas le contenu :
+    // leur identité inconnue en fait des candidats « nés au tour du retrait »,
+    // et seul le filtre de taille les écarte de la lecture.
+    await sansIdentite(['big1.bin', 'big2.bin', 'big3.bin']);
 
     // Un plafond que les trois gros fichiers dépasseraient (1,2 Mo > 1 Mo) :
     // s'ils entraient dans la lecture, la ligne serait rouge et le code dit.
@@ -564,5 +602,105 @@ describe('un livrable retiré par le job (#916) @cap:verifier-un-livrable/moteur
     expect(src.verdicts).toEqual(['exists:red']);
     expect(atteints).toHaveLength(1);
     expect(atteints[0]).toContain(`row=${src.state.id}`);
+  });
+  it('18. une commande qui efface un fichier ET en renomme un autre sur l’adresse : la copie de l’effacé ne sauve rien', async () => {
+    // Le scénario P1 de la revue A, passe 4, à l'identique.
+    const rapport = join(ws, 'report.md');
+    await call('file_write', { path: 'report.md', content: 'R0' });
+    await call('file_write', { path: 'keep.bin', content: 'K'.repeat(32) });
+    await call('file_write', { path: 'keep-copy.bin', content: 'K'.repeat(32) });
+    await call('file_write', { path: 'payload.md', content: 'P'.repeat(32) });
+    await shell(
+      `const f=require('fs');f.unlinkSync('keep.bin');f.renameSync('payload.md','report.md')`,
+    );
+    await shell(`require('fs').rmSync('report.md')`);
+
+    await finalize();
+
+    const f = await constats(rapport);
+    expect(f.state.removed).toBe(true);
+    expect(f.state.removedSize).toBe(32);
+    // P n'est plus nulle part : rouge, quelle que soit la taille de K.
+    expect(f.verdicts).toEqual(['exists:red']);
+  });
+
+  it('19. un cycle de renommages a → b → a → c : la source est verte', async () => {
+    // Le scénario P2 de la revue A, passe 4, à l'identique.
+    const a = join(ws, 'a.md');
+    await call('file_write', { path: 'a.md', content: 'X' });
+    await shell(`require('fs').renameSync('a.md','b.md')`);
+    await shell(`require('fs').renameSync('b.md','a.md')`);
+    await shell(`require('fs').renameSync('a.md','c.md')`);
+
+    await finalize();
+
+    expect(await rouges()).toEqual([]);
+    const r = await constats(a);
+    expect(r.state.removed).toBe(true);
+    expect(r.verdicts).toEqual([`${REMOVED_PROOF_COMMAND}:green`]);
+  });
+
+  it('20. un déplacement qui modifie à taille égale, une copie de l’original ailleurs : rouge', async () => {
+    const b = join(ws, 'b.md');
+    await call('file_write', { path: 'a.md', content: 'aaaa' });
+    await call('file_write', { path: 'copy.md', content: 'aaaa' });
+    await call('file_write', { path: 'b.md', content: 'zzzz' });
+    // `mv a.md b.md && sed -i …` : même taille, autre contenu.
+    await shell(`const f=require('fs');f.renameSync('a.md','b.md');f.writeFileSync('b.md','bbbb')`);
+    await shell(`require('fs').rmSync('b.md')`);
+
+    await finalize();
+
+    const r = await constats(b);
+    expect(r.state.removed).toBe(true);
+    expect(r.state.removedSize).toBe(4);
+    // `bbbb` n'est nulle part ; `copy.md` porte `aaaa`, qui n'est pas ce qui a été perdu.
+    expect(r.verdicts).toEqual(['exists:red']);
+  });
+
+  it('21. une écriture dont aucun fait ne dit le contenu : rouge, et c’est dit', async () => {
+    const u = join(ws, 'u.md');
+    await call('file_write', { path: 'u.md', content: 'U' });
+    // Un écrivain qui ne rapporte pas ses octets et qu'aucun constat n'a lus
+    // (un harnais, par exemple) : sa ligne de constat, telle qu'il la laisse.
+    const [ecrite] = await db
+      .select({ path: constatedWrites.path })
+      .from(constatedWrites)
+      .where(eq(constatedWrites.jobId, jobId));
+    if (!ecrite) throw new Error('aucun constat pour u.md');
+    await db.insert(constatedWrites).values({
+      jobId,
+      turn: turn + 100,
+      path: ecrite.path,
+      changeKind: 'modified',
+      constatedBy: 'disk',
+      contentSha256: null,
+      observedSha256: null,
+    });
+    await shell(`require('fs').rmSync('u.md')`);
+
+    const dits = await journal('VERIFICATION_RESCUE_IDENTITY_UNKNOWN', () => finalize());
+
+    const r = await constats(u);
+    expect(r.state.removed).toBe(true);
+    expect(r.verdicts).toEqual(['exists:red']);
+    expect(dits).toHaveLength(1);
+    expect(dits[0]).toContain(`row=${r.state.id}`);
+  });
+
+  it('22. une chaîne dont les pas n’ont pas d’identité connue : suivie, et la source est verte', async () => {
+    const source = join(ws, 'report.md');
+    await mkdir(join(ws, 'final'), { recursive: true });
+    await call('file_write', { path: 'report.md', content: 'R' });
+    await shell(`require('fs').renameSync('report.md','tmp.md')`);
+    await shell(`require('fs').renameSync('tmp.md','final/report.md')`);
+    // Les deux pas laissés par un écrivain qui ne dit pas le contenu.
+    await sansIdentite(['tmp.md', 'final/report.md']);
+
+    await finalize();
+
+    expect(await rouges()).toEqual([]);
+    const r = await constats(source);
+    expect(r.verdicts).toEqual([`${REMOVED_PROOF_COMMAND}:green`]);
   });
 });

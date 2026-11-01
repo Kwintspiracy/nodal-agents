@@ -247,8 +247,24 @@ type Constat = {
   readonly turn: number;
   readonly changeKind: string;
   readonly renamedFrom: string | null;
+  /** L'empreinte rapportée par l'écrivain (`content_sha256`). */
   readonly sha: string | null;
+  /** L'empreinte que le constat a vue sur le disque (`observed_sha256`). */
+  readonly observed: string | null;
 };
+
+/**
+ * L'IDENTITÉ du contenu qu'une écriture a laissé : un FAIT, ou rien (revue A
+ * de #919, passe 4). L'empreinte que l'écrivain a rapportée, sinon celle que
+ * le constat a vue sur le disque (git, l'instantané de checkpoint, ou la
+ * source d'un `file_move`). Jamais une co-occurrence : un fichier retiré au
+ * même tour n'est pas ce qui est arrivé ici, et un `renamed_from` de git est
+ * un rapprochement par similarité, pas une identité (`mv a b && sed -i` à
+ * taille égale le donne avec un autre contenu).
+ */
+function identite(e: Constat): string | null {
+  return e.sha ?? e.observed;
+}
 
 /**
  * Les chemins où le contenu retiré de `ici` peut vivre encore : la chaîne de
@@ -257,7 +273,7 @@ type Constat = {
 export function rescueCandidates(
   ecritures: readonly Constat[],
   ici: string,
-  perdus: ReadonlySet<string>,
+  perdu: string,
   depuis: number,
 ): ReadonlySet<string> {
   const retraits = (path: string, apres: number): Set<number> =>
@@ -275,10 +291,11 @@ export function rescueCandidates(
     const tours = chaine.get(chemin) ?? new Set<number>();
     for (const [i, e] of ecritures.entries()) {
       if (pris.has(i) || e.changeKind === 'deleted' || chaine.has(e.path)) continue;
-      const pas =
-        (e.sha !== null && perdus.has(e.sha)) ||
-        e.renamedFrom === chemin ||
-        (e.sha === null && tours.has(e.turn));
+      // Où CHERCHER : une heuristique bornée, qui ne coûte qu'une lecture —
+      // un candidat n'est vert que si son contenu RÉEL a l'identité perdue.
+      // Une écriture d'identité connue et différente n'est jamais un pas.
+      const id = identite(e);
+      const pas = id === perdu || (id === null && (e.renamedFrom === chemin || tours.has(e.turn)));
       if (!pas) continue;
       pris.add(i);
       const plusTard = retraits(e.path, e.turn);
@@ -293,44 +310,6 @@ export function rescueCandidates(
     }
   }
   return candidats;
-}
-
-/**
- * Les empreintes que le contenu de `path` peut avoir eues à sa dernière
- * écriture avant le tour `avant` — sans rien lire.
- *
- * L'empreinte rangée quand l'écrivain l'a rapportée. Sinon (un `file_move`, un
- * `mv` de shell ne rapportent pas d'octets), celles du contenu qui est ARRIVÉ
- * là : les chemins retirés au tour de cette écriture et `renamed_from`, en
- * remontant. C'est ce qui sauve le pas intermédiaire d'une chaîne de
- * `file_move` (a → b → c) : `b` n'a pas d'empreinte rangée, mais il portait
- * celle de `a`. Le tour de la plateforme compte ici : on cherche l'IDENTITÉ
- * d'un contenu, pas qui l'a écrit. Plusieurs retraits au même tour donnent
- * plusieurs empreintes possibles, toutes acceptées : un appel qui déplace deux
- * fichiers ne dit pas lequel va où.
- */
-export function contenusPossibles(
-  ecritures: readonly Constat[],
-  path: string,
-  avant: number,
-  vus: Set<string> = new Set(),
-): ReadonlySet<string> {
-  const out = new Set<string>();
-  if (vus.has(path)) return out;
-  vus.add(path);
-  const w = ecritures.find((e) => e.path === path && e.changeKind !== 'deleted' && e.turn <= avant);
-  if (!w) return out;
-  if (w.sha !== null) return new Set([w.sha]);
-  const sources = new Set<string>(
-    ecritures
-      .filter((e) => e.changeKind === 'deleted' && e.turn === w.turn && e.path !== path)
-      .map((e) => e.path),
-  );
-  if (w.renamedFrom !== null) sources.add(w.renamedFrom);
-  for (const source of sources) {
-    for (const sha of contenusPossibles(ecritures, source, w.turn, vus)) out.add(sha);
-  }
-  return out;
 }
 
 /**
@@ -371,6 +350,7 @@ export async function rescuedRemovals(
       changeKind: constatedWrites.changeKind,
       renamedFrom: constatedWrites.renamedFrom,
       sha: constatedWrites.contentSha256,
+      observed: constatedWrites.observedSha256,
     })
     .from(constatedWrites)
     .where(eq(constatedWrites.jobId, jobId))
@@ -404,16 +384,20 @@ export async function rescuedRemovals(
       out.set(row.id, row.dirtyGeneration);
       continue;
     }
-    // Un contenu dont l'empreinte n'a pas été rangée ne se retrouve nulle part.
-    const perdus =
-      derniere.sha !== null
-        ? new Set([derniere.sha])
-        : contenusPossibles(ecritures, ici, derniere.turn);
-    if (perdus.size === 0) continue;
+    // Le contenu perdu est un FAIT, ou il est inconnu — et alors la ligne garde
+    // son rouge, et c'est dit. Jamais deviné.
+    const perdu = identite(derniere);
+    if (perdu === null) {
+      console.warn(
+        `[verification] VERIFICATION_RESCUE_IDENTITY_UNKNOWN job=${jobId} row=${row.id} ` +
+          `reason=no_recorded_or_observed_sha turn=${derniere.turn}`,
+      );
+      continue;
+    }
 
     // Les candidats qui ont la taille du contenu retiré — sans rien lire.
     const aLire: { path: string; size: number }[] = [];
-    for (const c of rescueCandidates(ecritures, ici, perdus, derniere.turn)) {
+    for (const c of rescueCandidates(ecritures, ici, perdu, derniere.turn)) {
       const size = await taille(c);
       if (size === null) continue;
       if (row.removedSize !== null && size !== row.removedSize) continue;
@@ -438,7 +422,7 @@ export async function rescuedRemovals(
       }
       // Cas b : le contenu que le job a écrit ici existe encore ailleurs.
       const lu = lues.get(c.path);
-      if (lu !== null && lu !== undefined && perdus.has(lu)) {
+      if (lu === perdu) {
         out.set(row.id, row.dirtyGeneration);
         break;
       }

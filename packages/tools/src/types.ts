@@ -307,6 +307,14 @@ export interface ToolContext {
    */
   reportWrittenContent?: (absPath: string, sha256: string) => void;
   /**
+   * Rapporte qu'un outil vient de poser à `destination` les octets EXACTS de
+   * `source`, sans en écrire d'autres (un déplacement, une copie : #919). Le
+   * seam en tire l'identité du contenu arrivé, l'empreinte de `source` prise
+   * avant l'appel, et la range comme EMPREINTE OBSERVÉE — jamais comme
+   * contenu écrit par ce job : la porte d'écrasement ne change pas.
+   */
+  reportMovedContent?: (destination: string, source: string) => void;
+  /**
    * Rapporte l'empreinte (sha-256) des OCTETS qu'un outil vient de LIRE à
    * `absPath`, le chemin résolu qu'il a ouvert (le pendant de
    * `reportWrittenContent`). Le seam la range dans `tool_call_reads` : c'est
