@@ -298,7 +298,7 @@ async function currentRule(
         d.eq(d.approvalRules.agentId, agentId),
         d.eq(d.approvalRules.toolName, toolName),
         // La ligne de l'outil, pas une ligne de dossier : les deux coexistent
-        // depuis #917 (0155).
+        // depuis #917 (0156).
         d.eq(d.approvalRules.conditionFolder, ''),
       ),
     );

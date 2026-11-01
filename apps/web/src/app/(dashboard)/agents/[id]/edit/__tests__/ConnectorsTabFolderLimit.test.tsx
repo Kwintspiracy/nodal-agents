@@ -1,6 +1,6 @@
 // ConnectorsTabFolderLimit.test.tsx — issue #401, puis #917 : faire confiance à
 // un serveur MCP depuis l'onglet Connectors écrit la ligne du serveur, et ne
-// touche jamais une ligne confinée à un dossier (elles coexistent, 0155).
+// touche jamais une ligne confinée à un dossier (elles coexistent, 0156).
 //
 // Assertions sur le texte rendu et sur l'objet envoyé à l'action, jamais sur un
 // compteur d'appels (invariant #5).

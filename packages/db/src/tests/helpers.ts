@@ -87,7 +87,7 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       -- mirrors migration 0153
       sandbox_enabled boolean NOT NULL DEFAULT true,
       sandbox_folders jsonb NOT NULL DEFAULT '{"added":[],"removed":[]}',
-      -- mirrors migration 0155
+      -- mirrors migration 0156
       autonomy_rows_written_at timestamptz DEFAULT now()
     );
 
@@ -513,7 +513,7 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       tool_name text NOT NULL,
       action text NOT NULL CHECK (action IN ('auto_approve','require_approval','block')),
       condition_json jsonb DEFAULT '{}',
-      -- mirrors migration 0155
+      -- mirrors migration 0156
       condition_folder text GENERATED ALWAYS AS (COALESCE(condition_json->>'workspacePath', '')) STORED,
       created_at timestamptz DEFAULT now(),
       updated_at timestamptz DEFAULT now(),

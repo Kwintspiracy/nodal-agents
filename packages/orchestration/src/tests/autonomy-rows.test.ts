@@ -53,7 +53,7 @@ async function workspace(level: AutonomyLevel, written: boolean): Promise<string
       name: 'W',
       slug: uniq('w'),
       rootGrants: { ...DEFAULT_ROOT_GRANTS, autonomy: level },
-      // A workspace created after 0155 is born written; one from before is NULL.
+      // A workspace created after 0156 is born written; one from before is NULL.
       autonomyRowsWrittenAt: written ? new Date() : null,
     })
     .returning();

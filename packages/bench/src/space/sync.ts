@@ -191,7 +191,7 @@ export const APPROVAL_RULE_POLICY = {
   toolName: 'copy',
   action: 'copy',
   conditionJson: 'copy',
-  // Colonne GÉNÉRÉE depuis condition_json (0155) : jamais écrite.
+  // Colonne GÉNÉRÉE depuis condition_json (0156) : jamais écrite.
   conditionFolder: 'own',
   createdAt: 'own',
   updatedAt: 'own',

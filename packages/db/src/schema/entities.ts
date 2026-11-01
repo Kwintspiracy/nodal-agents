@@ -82,8 +82,8 @@ export const entities = pgTable(
     /**
      * L'heure à laquelle les lignes d'autonomie manquantes des agents de cet
      * espace ont été écrites avec la valeur que l'écran montrait avant #917
-     * (migration 0155). NULL : pas encore fait, l'état de tout espace d'avant
-     * 0155 ; le runner le fait à son démarrage (`writeAutonomyRowsAtBoot`,
+     * (migration 0156). NULL : pas encore fait, l'état de tout espace d'avant
+     * 0156 ; le runner le fait à son démarrage (`writeAutonomyRowsAtBoot`,
      * @nodal-agents/orchestration). Un espace créé après naît avec `now()` :
      * il n'a rien d'avant à reprendre. Une ligne nouvelle prend alors la
      * valeur du niveau d'autonomie.

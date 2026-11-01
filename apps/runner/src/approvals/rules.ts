@@ -25,7 +25,7 @@ export async function getApprovalRule(db: RunnerDeps['db'], t: RuleTarget): Prom
         eq(approvalRules.entityId, t.entityId),
         eq(approvalRules.agentId, t.agentId),
         eq(approvalRules.toolName, t.toolName),
-        // La ligne de l'outil, pas une ligne de dossier (#917, 0155).
+        // La ligne de l'outil, pas une ligne de dossier (#917, 0156).
         eq(approvalRules.conditionFolder, ''),
       ),
     )

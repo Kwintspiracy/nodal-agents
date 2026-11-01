@@ -1,4 +1,4 @@
-// autonomy-rows-migration.pg.test.ts — migration 0155 contre un VRAI Postgres.
+// autonomy-rows-migration.pg.test.ts — migration 0156 contre un VRAI Postgres.
 //
 // CE QUE CELA PROUVE (#917) : un agent tient UNE ligne d'autonomie par outil,
 // et une ligne confinée à un dossier (« Approve for this project », #346) vit À
@@ -73,7 +73,7 @@ async function ligne(
 }
 
 const MIGRATION = fileURLToPath(
-  new URL('../../migrations/0155_autonomy_rows.sql', import.meta.url),
+  new URL('../../migrations/0156_autonomy_rows.sql', import.meta.url),
 );
 
 /** The constraint a refused insert names, read off the driver's error under drizzle's wrapper. */
@@ -87,7 +87,7 @@ async function refusedBy(p: Promise<unknown>): Promise<string> {
   return 'not refused';
 }
 
-describe('migration 0155_autonomy_rows @cap:regler-autonomie/moteur', () => {
+describe('migration 0156_autonomy_rows @cap:regler-autonomie/moteur', () => {
   it('starts a real Postgres and applies the REAL migrations — red if the binary is missing, not skipped', async () => {
     pg = await startRealPostgres();
     await runMigrations(pg.url, { patchVectorAsText: true });
@@ -170,7 +170,7 @@ describe('migration 0155_autonomy_rows @cap:regler-autonomie/moteur', () => {
     }
   });
 
-  it('a workspace created after 0155 is born written: it has nothing from before to keep', async () => {
+  it('a workspace created after 0156 is born written: it has nothing from before to keep', async () => {
     const { db, close } = createClient(harness().url, { max: 1 });
     try {
       const e = await espace(db, `before-${Date.now()}`);
@@ -179,7 +179,7 @@ describe('migration 0155_autonomy_rows @cap:regler-autonomie/moteur', () => {
         sql`SELECT autonomy_rows_written_at FROM entities WHERE id = ${e}`,
       );
       // Inserted after the migrations ran: the column's default applies. The
-      // rows that existed when 0155 ran stayed NULL (ADD COLUMN, then the
+      // rows that existed when 0156 ran stayed NULL (ADD COLUMN, then the
       // default), which is what makes the first boot keep their screen.
       expect(r?.autonomy_rows_written_at).not.toBeNull();
     } finally {
@@ -187,10 +187,10 @@ describe('migration 0155_autonomy_rows @cap:regler-autonomie/moteur', () => {
     }
   });
 
-  it('a workspace that existed when 0155 ran stays NULL: its first boot keeps what its screen showed', async () => {
+  it('a workspace that existed when 0156 ran stays NULL: its first boot keeps what its screen showed', async () => {
     const { db, close } = createClient(harness().url, { max: 1 });
     try {
-      // The column as it stood before 0155, then the migration's two
+      // The column as it stood before 0156, then the migration's two
       // statements for it, replayed from the file itself.
       await db.execute(sql`ALTER TABLE entities DROP COLUMN autonomy_rows_written_at`);
       const before = await espace(db, `old-${Date.now()}`);
@@ -221,6 +221,6 @@ describe('migration 0155_autonomy_rows @cap:regler-autonomie/moteur', () => {
     const journal = (await import('../../migrations/meta/_journal.json', {
       with: { type: 'json' },
     })) as { default: { entries: Array<{ idx: number; tag: string }> } };
-    expect(journal.default.entries.map((e) => e.tag)).toContain('0155_autonomy_rows');
+    expect(journal.default.entries.map((e) => e.tag)).toContain('0156_autonomy_rows');
   });
 });

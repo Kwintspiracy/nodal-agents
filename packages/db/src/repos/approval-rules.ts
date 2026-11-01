@@ -11,7 +11,7 @@
 //
 //   - une ligne CONFINÉE À UN DOSSIER (« Approve for this project », #346) :
 //     elle vaut dans ce dossier, la ligne de l'outil partout ailleurs. Elles
-//     coexistent (contrainte d'unicité sur le dossier, migration 0155) ; écrire
+//     coexistent (contrainte d'unicité sur le dossier, migration 0156) ; écrire
 //     l'une ne touche jamais l'autre. Le garde « une permission partout
 //     n'élargit jamais en silence une règle de dossier » n'a donc plus d'objet :
 //     la règle de dossier reste en place, et l'écran la montre à part ;

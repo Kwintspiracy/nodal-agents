@@ -171,7 +171,7 @@ describe('setRunCommandRuleAction @cap:assigner-outils/moteur', () => {
     expect(await rule()).toEqual({ action: 'block', conditionJson: {} });
   });
 
-  // #917 : la ligne de dossier vit À CÔTÉ de la ligne de l'outil (0155).
+  // #917 : la ligne de dossier vit À CÔTÉ de la ligne de l'outil (0156).
   // Écrire la ligne de l'outil, dans n'importe quel sens, ne la touche pas.
   it('une ligne de dossier n’est ni remplacée ni élargie : la ligne de l’outil s’écrit à côté', async () => {
     const { setRunCommandRuleAction } = await import('../actions.ts');
