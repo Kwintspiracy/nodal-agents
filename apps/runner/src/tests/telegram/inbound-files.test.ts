@@ -1530,6 +1530,11 @@ async function otherJob(): Promise<string> {
 // `constated_writes` : le fichier reçu POUR ce job comptait comme celui d'un
 // autre. Toute écriture que la plateforme fait pour un job est désormais rangée
 // comme la sienne, par le même rangement que ses outils.
+// Mutations vérifiées : `recordPlatformWrites` retiré de la réception → les
+// cas Telegram et Discord rouges (et le parcours #910, joué sans autonomie
+// complète) ; retiré de `saveToolAttachments` → le cas du fichier d'outil
+// rouge ; la porte qui croit toute ligne du job sans comparer l'empreinte →
+// « réécrit par un autre job » rouge.
 describe('a file received for a job is written by that job (#913) @cap:parler-par-canal-externe/moteur', () => {
   beforeEach(async () => {
     await db.delete(channelAllowedConversations);
