@@ -63,6 +63,15 @@ export interface MutationTarget {
    * de le cacher.
    */
   readonly scope?: 'addressed' | 'precaution';
+  /**
+   * Ce fichier, l'appel le DÉPLACE vers ce chemin (#916) : ses octets y
+   * arrivent tels quels, et il ne reste rien à l'adresse d'origine. Déclaré
+   * par l'outil qui le sait (`file_move`), jamais deviné : un livrable observé
+   * retiré par l'appel n'est une absence attendue que si l'appel l'avait
+   * déclaré déplacé, vers une destination qui est elle-même un livrable du
+   * job, jugée par sa propre ligne. Absent ⇒ l'appel ne déplace rien.
+   */
+  readonly movesTo?: string;
 }
 
 /** Un projet touché : sa clé d'identité, et le chemin à afficher. */
