@@ -1098,8 +1098,7 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       produced boolean NOT NULL DEFAULT false,
       declared boolean NOT NULL DEFAULT false,
       removed boolean NOT NULL DEFAULT false,
-      removed_size bigint,
-      removed_sha256 text,
+      moved_to_key text,
       decision_status text NOT NULL
         CHECK (decision_status IN ('dirty','green','red','pending_approval','not_configured','infra_error')),
       command_hash_snapshot text,

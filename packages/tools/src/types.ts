@@ -866,12 +866,6 @@ export interface ExecuteOptions {
    * updating job status and polling. Returns void — execution stops here.
    */
   onApprovalRequired: (req: ApprovalGateRequest) => Promise<void>;
-  /**
-   * Le plafond d'octets que la sonde d'avant hache pour les livrables qu'un
-   * appel ne nomme pas (`REMOVAL_PROBE_MAX_BYTES` par défaut, #919) —
-   * injectable pour prouver la borne sans écrire 64 Mio en test.
-   */
-  removalProbeMaxBytes?: number;
 }
 
 // ─── Approval rule shape (mirrors shared ApprovalRule) ────────────────────────

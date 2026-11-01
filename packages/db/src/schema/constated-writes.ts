@@ -54,14 +54,6 @@ export const constatedWrites = pgTable(
      * NULL pour une suppression ou un fichier illisible.
      */
     contentSha256: text('content_sha256'),
-    /**
-     * L'empreinte du contenu que le CONSTAT a lu sur le disque APRÈS l'appel
-     * (migration 0155, #919), pour toute source : cible nommée ou harnais,
-     * git, instantané de checkpoint. Jamais une empreinte prise avant.
-     * L'IDENTITÉ d'un contenu, jamais une propriété : la porte d'écrasement
-     * ne lit que `content_sha256`. NULL quand le constat n'a rien pu lire.
-     */
-    observedSha256: text('observed_sha256'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [

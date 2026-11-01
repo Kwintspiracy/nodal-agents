@@ -81,16 +81,12 @@ import {
 } from './verification/git-constat';
 import {
   fusionnerConstats,
-  constatSurDisque,
+  kindSurDisque,
   recordConstatedWrites,
 } from './verification/record-constat';
 import { recordToolCallReads } from './verification/tool-call-reads';
 import { recordToolCallWrites } from './verification/tool-call-writes';
-import {
-  REMOVAL_PROBE_MAX_BYTES,
-  probeJobDeliverables,
-  recordObservedRemovals,
-} from './verification/removed';
+import { probeJobDeliverables, recordObservedRemovals } from './verification/removed';
 import { admitModelAttachment, type ToolAttachment } from './model-images';
 import { attachProductionToProject } from './projects/attach';
 import { loadDeclaredCodeRoots, projectRootPredicate } from './projects/declared';
@@ -815,16 +811,9 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
   // dossier n'est pas prise — elle ne crédite plus rien, voir `observed.ts`.
   const filesBefore = mutationTargets ? await snapshotFileTargets(mutationTargets) : null;
   // Et la PRÉSENCE de chaque livrable du job (#916), les lignes que
-  // l'intention vient de poser comprises : ce qu'un appel RETIRE (la source
-  // d'un `file_move`, un `rm` dans le `cwd` d'un shell) n'est pas un livrable
-  // qui doit exister. Voir `verification/removed.ts`.
-  const presenceAvant = mutationTargets
-    ? await probeJobDeliverables(ctx.db, ctx.jobId, {
-        connues: filesBefore ?? new Map(),
-        hacherLesAutres: mutationTargets.some((t) => t.kind === 'dir'),
-        maxBytes: opts.removalProbeMaxBytes ?? REMOVAL_PROBE_MAX_BYTES,
-      })
-    : null;
+  // l'intention vient de poser comprises : ce qu'un appel RETIRE n'est une
+  // absence attendue que s'il l'a déclaré déplacé. Voir `verification/removed.ts`.
+  const presenceAvant = mutationTargets ? await probeJobDeliverables(ctx.db, ctx.jobId) : null;
   // Et, pour un harnais, les lignes vivantes que ce job porte DÉJÀ : elles
   // bornent à CE run la lecture d'après (revue C de la PR #196, passe 2). Sans
   // elles, un second `code_task` dans le même dossier héritait des lignes du
@@ -969,9 +958,14 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
         });
       }
       // Ce que CET APPEL a retiré ou fait revenir parmi les livrables du job
-      // (#916), réussi ou non : un appel qui échoue a pu effacer à moitié, et
-      // c'est la transition constatée qui compte. Ne lève jamais.
-      if (presenceAvant) await recordObservedRemovals(ctx.db, ctx.jobId, presenceAvant);
+      // (#916), réussi ou non : c'est la transition constatée qui compte, et
+      // le déplacement que l'appel avait déclaré. Ne lève jamais.
+      if (presenceAvant && mutationTargets) {
+        await recordObservedRemovals(ctx.db, ctx.jobId, presenceAvant, {
+          targets: mutationTargets,
+          workspaceRoots: (ctx.workspaces ?? []).map((w) => w.path),
+        });
+      }
       if (mutationDeliverables.length > 0) {
         try {
           await bumpEpochsAfterWrite(ctx.db, ctx.entityId, mutationDeliverables);
@@ -1108,8 +1102,7 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
       // PR #227, constat 2).
       const disque: ConstatedWrite[] = [];
       for (const f of fichiersDisque) {
-        // Le genre ET l'empreinte d'APRÈS l'appel, lus une seule fois (#919).
-        disque.push(await constatSurDisque(f.path, filesBefore ?? new Map()));
+        disque.push({ path: f.path, kind: await kindSurDisque(f.path, filesBefore ?? new Map()) });
       }
       // Ce que l'instantané de checkpoint a vu dans un workspace hors dépôt
       // (#590) est un constat DISQUE : ce n'est pas git du projet qui l'a vu.

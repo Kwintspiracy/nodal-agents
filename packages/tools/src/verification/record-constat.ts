@@ -76,20 +76,15 @@ export interface LigneDeConstat extends ConstatedWrite {
  * la borne de `harness.ts`, redite ici : le constat disque est plus faible, et
  * c'est précisément pourquoi le constat par git existe.
  */
-export async function constatSurDisque(
+export async function kindSurDisque(
   path: string,
   before: FileSnapshot,
-): Promise<ConstatedWrite> {
+): Promise<ConstatedChangeKind> {
   const apres = await fingerprint(path);
-  if (apres.kind === 'absent') return { path, kind: 'deleted' };
+  if (apres.kind === 'absent') return 'deleted';
   const avant = before.get(path);
-  const kind: ConstatedChangeKind =
-    avant === undefined ? 'modified' : avant.kind === 'absent' ? 'added' : 'modified';
-  // L'empreinte d'APRÈS l'appel (#919), lue ici de toute façon pour décider du
-  // genre : l'identité exacte du contenu que le constat a vu, gratuite. Un
-  // fichier illisible n'en a pas — son identité reste inconnue, et c'est dit
-  // là où elle sert (`apps/runner/src/verification/removed.ts`).
-  return apres.kind === 'file' ? { path, kind, observedSha256: apres.sha256 } : { path, kind };
+  if (avant === undefined) return 'modified';
+  return avant.kind === 'absent' ? 'added' : 'modified';
 }
 
 /**
@@ -212,30 +207,20 @@ async function rangerConstats(input: ConstatsARanger): Promise<number> {
   for (const [chemin, sha] of input.contenusEcrits ?? []) {
     empreintes.set(await cheminConstate(chemin), sha);
   }
-  // Une ligne par chemin réel. Deux lignes du même appel pour le même chemin
-  // décrivent le MÊME état d'après (#919, revue A passe 5) : la première
-  // garde son genre et sa source (git avant disque, `fusionnerConstats`), et
-  // l'empreinte observée vient de n'importe laquelle des deux — jamais perdue
-  // parce qu'une ligne sans empreinte est arrivée la première.
-  const vues = new Map<string, { observedSha256: string | null }>();
+  const vus = new Set<string>();
   const values = [];
   for (const l of lignes) {
     // Le chemin RÉEL, pour que deux orthographes du même fichier ne fassent
     // pas deux lignes — voir `cheminConstate`.
     const path = await cheminConstate(l.path);
-    const deja = vues.get(path);
-    if (deja) {
-      if (deja.observedSha256 === null && l.kind !== 'deleted') {
-        deja.observedSha256 = l.observedSha256 ?? null;
-      }
-      continue;
-    }
+    if (vus.has(path)) continue;
+    vus.add(path);
     // L'empreinte de ce que l'outil a ÉCRIT (revue Codex de #505, passes 1 et
     // 2) : c'est elle que la porte d'écrasement compare au disque, jamais
     // l'ordre des lignes, ni une relecture du disque faite ici — un autre
     // écrivain a pu passer entre l'écriture et ce constat.
     const empreinte = l.kind === 'deleted' ? null : (empreintes.get(path) ?? null);
-    const ligne = {
+    values.push({
       jobId,
       turn,
       path,
@@ -243,12 +228,7 @@ async function rangerConstats(input: ConstatsARanger): Promise<number> {
       constatedBy: l.constatedBy,
       renamedFrom: l.renamedFrom ?? null,
       contentSha256: empreinte,
-      // Ce que le constat a VU après l'appel (#919) : l'identité du contenu,
-      // jamais une propriété — la porte d'écrasement lit `contentSha256` seul.
-      observedSha256: l.kind === 'deleted' ? null : (l.observedSha256 ?? null),
-    };
-    vues.set(path, ligne);
-    values.push(ligne);
+    });
   }
   // Le même fichier réécrit dans le MÊME tour reste une ligne (l'unicité de
   // #199), mais son empreinte suit la DERNIÈRE écriture : sinon la porte
@@ -258,16 +238,7 @@ async function rangerConstats(input: ConstatsARanger): Promise<number> {
     .values(values)
     .onConflictDoUpdate({
       target: [constatedWrites.jobId, constatedWrites.turn, constatedWrites.path],
-      set: {
-        contentSha256: sql`excluded.content_sha256`,
-        // L'identité OBSERVÉE ne s'efface pas (#919, revue A passe 6) : elle dit
-        // le dernier contenu que le constat a vu à ce chemin pendant ce tour,
-        // même si un appel suivant du même message l'a retiré. Sans elle, un
-        // `file_write` puis un `rm` dans un message perdaient la trace que le
-        // job avait écrit ce contenu. `content_sha256` (la propriété) garde sa
-        // règle d'avant, intacte.
-        observedSha256: sql`coalesce(excluded.observed_sha256, ${constatedWrites.observedSha256})`,
-      },
+      set: { contentSha256: sql`excluded.content_sha256` },
     });
   return values.length;
 }

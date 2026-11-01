@@ -1,6 +1,5 @@
-// removed-deliverable.test.ts — un livrable que le job a RETIRÉ n'est pas un
-// livrable qui doit exister, tant qu'aucun travail du job n'est perdu
-// (issue #916, revue A de la PR #919).
+// removed-deliverable.test.ts — un livrable que le job a DÉPLACÉ, et l'avait
+// déclaré, n'est pas un livrable qui doit exister (issue #916).
 //
 // LE DÉFAUT, vu sur la stack du propriétaire : un agent déplace un fichier reçu
 // dans un dossier de la personne. Le déplacement réussit, la destination est
@@ -8,91 +7,46 @@
 // parce que toute cible de mutation devient une ligne d'état, prouvée comme un
 // livrable produit.
 //
+// LA RÈGLE (forme réduite, PR #919) : un livrable retiré par un appel du job
+// est une absence attendue si, et seulement si, l'appel avait DÉCLARÉ son
+// déplacement (`MutationTarget.movesTo`) vers une destination qui retrouve une
+// ligne d'état du même job. Tout autre retrait garde la règle de main :
+// `exists`, rouge, dit « retiré par ce run ».
+//
 // CE QUE CE FICHIER PROUVE, par les VRAIS outils (`file_move`, `file_write`,
 // `run_command` du registre des builtins), le vrai seam (`executeTool`) et la
 // vraie finalisation, sur les lignes `verification_runs` et
 // `job_deliverable_verification_state` relues en base :
 //
-//   1. un fichier REÇU (écrit par la plateforme au tour 0) déplacé par
-//      `file_move` : la source n'a aucun rouge, son constat est
-//      `absent:removed-by-this-run`, vert, et la ligne porte `removed` ; la
-//      destination a ses trois constats verts ;
-//   2. un fichier que le job a ÉCRIT, puis effacé par un `run_command` de
-//      nettoyage : son travail est perdu, donc `exists`, rouge, et la
-//      réparation s'ouvre — comme sur main (revue A de #919, passe 1) ;
-//   3. un fichier que le job a écrit puis déplacé par `file_move` : la source
-//      est verte par son absence, la destination verte ;
-//   4. le même déplacement par `run_command` (un déplacement de shell, constaté
-//      par l'instantané de checkpoint) : même chose ;
-//   5. un fichier qui existait avant le job, qu'il n'a jamais écrit, effacé
-//      par `run_command` : aucun rouge ;
-//   6. un fichier reçu déplacé, puis sa destination effacée : la source (que
-//      le job n'a pas écrite, la plateforme l'a fait) est verte par son
-//      absence, la destination rouge — son contenu n'est plus nulle part ;
-//   7. un fichier écrit par le job puis effacé HORS de ses appels reste rouge,
-//      `exists` « not found » — la différence est l'observation autour de
-//      l'appel, jamais une supposition ;
-//   8. un fichier retiré par le job qui REVIENT hors de ses appels rougit sur
-//      le constat d'absence ;
-//   9. un fichier que le job retire puis réécrit redevient un livrable qui doit
-//      exister : `removed` levé, `exists` vert ;
-//  10. un fichier retiré que l'agent a PROMIS (`declared`) se prouve comme une
-//      promesse : `exists`, rouge ;
-//  11. un job aux sorties lourdes qui range un brouillon : la source est verte,
-//      et aucune sortie qui n'est pas un candidat n'est ouverte — une sortie
-//      rendue illisible ne change rien et ne fait rien journaliser (revue A de
-//      #919, passe 2 : plus de balayage de tous les chemins constatés) ;
-//  12. le contenu perdu posé, HORS du job, à un chemin que le job a écrit avec
-//      un AUTRE contenu : ce chemin n'est pas un candidat, le retrait reste
-//      rouge — le sauvetage ne vient que des faits rangés ;
-//  13. une copie que le job a écrite (empreinte rangée), puis l'original
-//      effacé : l'original est vert par son absence ;
-//  14. une chaîne de déplacements par commande (a → b, puis b → c) : la source
-//      est verte (revue A de #919, passe 3) ;
-//  15. la même chaîne par `file_move` : la source ET le pas intermédiaire sont
-//      verts ;
-//  16. un tour qui range un petit brouillon ET écrit de gros fichiers d'une
-//      autre taille : le brouillon est vert, et les gros fichiers n'entrent pas
-//      dans le budget de lecture — avec un plafond qu'ils dépasseraient, aucun
-//      plafond n'est atteint (preuve par le résultat, sur toute plateforme) ;
-//  17. un candidat au-delà du plafond : la ligne garde son rouge, et le code
-//      `VERIFICATION_RESCUE_CAP_REACHED` est journalisé ;
-//  18. une commande qui efface `keep.bin` et renomme `payload.md` sur l'adresse,
-//      une copie de `keep.bin` vivante à la même taille : rouge — le contenu
-//      perdu est un FAIT (l'empreinte vue par le constat), jamais « un des
-//      fichiers retirés au même tour » (revue A de #919, passe 4, P1) ;
-//  19. un cycle de renommages a → b → a → c : la source est verte — l'identité
-//      se lit sur l'écriture elle-même, pas en remontant par chemin (P2) ;
-//  20. un déplacement qui modifie le fichier à taille égale, avec une copie de
-//      l'original ailleurs : rouge — ni le tour ni la similarité ne sont une
-//      identité ;
-//  21. une écriture dont aucun fait ne dit le contenu : rouge, et
-//      `VERIFICATION_RESCUE_IDENTITY_UNKNOWN` est journalisé ;
-//  22. (retiré à la passe 6 : il n'y a plus de chaîne à suivre) ;
-//  23. une copie par `file_move`, puis la source effacée : verte — la
-//      destination a l'empreinte d'APRÈS l'appel (revue A de #919, passe 5) ;
-//  24. une source réécrite entre l'instantané du seam et le déplacement, une
-//      copie de l'ancien contenu ailleurs, puis la destination effacée :
-//      rouge — l'identité est ce qui est arrivé, pas ce qui était parti.
+//   1. le cas du propriétaire : un fichier REÇU (écrit par la plateforme au
+//      tour 0) rangé par `file_move` — source verte « déplacé vers X »,
+//      destination verte ;
+//   2. un fichier posé par un programme externe, rangé par `file_move` : idem ;
+//   3. un brouillon écrit par le job puis déplacé par `file_move` : vert ;
+//   4. une chaîne a → b → c par deux `file_move` : a et b verts, c vert ;
+//   5. la même chaîne, puis c effacé par un shell : la ligne de c est rouge,
+//      donc le run n'est pas vérifié ;
+//   6. un `mv` de shell : rouge, comme sur main ;
+//   7. une copie par `file_move`, puis la source effacée par un shell : rouge ;
+//   8. un fichier écrit par le job puis effacé par `rm` : rouge, et le run se
+//      répare ;
+//   9. les scénarios P1 des passes 4, 6 et 7 de la revue A : rouges ;
+//  10. la correspondance par chemin RÉEL : un dossier de l'agent attaché par un
+//      alias (jonction sous Windows, lien symbolique ailleurs) — la cible porte
+//      le chemin réel, la ligne d'état le chemin lexical — : vert ;
+//  11. un fichier effacé HORS des appels du job : rouge, `exists` « not found » ;
+//  12. un fichier déplacé qui revient hors des appels du job : rouge sur le
+//      constat d'absence ;
+//  13. un fichier déplacé puis réécrit par le job : la preuve du document ;
+//  14. un fichier déplacé que l'agent a PROMIS : `exists`, rouge ;
+//  15. un déplacement déclaré vers une destination qui ne retrouve aucune
+//      ligne « fichier » du job (elle tombe dans un projet de code) : rouge.
 //
-//  25. un message efface puis réécrit l'adresse, un tour suivant la retire :
-//      rouge — l'identité retirée est prise au retrait, pas dans l'historique
-//      que l'upsert du tour réécrit (revue A de #919, passe 6, P1) ;
-//  26. un message écrit puis déplace : vert (passe 6, P2) ;
-//  27. un message écrit puis efface : rouge ;
-//  28. un message écrit puis efface avec un outil, une copie ailleurs : vert ;
-//  29. un fichier reçu que le job n'a jamais écrit, effacé à la demande de la
-//      personne : vert (cas a — l'écriture de la plateforme ne compte pas).
-//
-// L'IDENTITÉ INCONNUE (test 21) passe par un chemin réel : la borne de la
-// sonde d'avant, injectée à 0 octet pour l'appel qui retire.
-//
-// Mutations vérifiées : la liste est dans la PR #919, avec les tests que
-// chacune fait rougir.
+// Les mutations vérifiées sont listées dans la PR #919.
 
-import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
 import { createHash } from 'node:crypto';
-import { chmod, mkdtemp, mkdir, rm, writeFile, stat } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, symlink, writeFile, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
@@ -115,15 +69,14 @@ import {
 } from '@nodal-agents/tools';
 import type { ApprovalRule, ExecuteOptions, ToolContext } from '@nodal-agents/tools';
 import { finalizeJobSuccess } from '../../job/finalize.ts';
-import { REMOVED_PROOF_COMMAND } from '../../verification/removed.ts';
-import type { RescueLimits } from '../../verification/removed.ts';
+import { MOVED_PROOF_COMMAND, REMOVED_PROOF_COMMAND } from '../../verification/removed.ts';
 
 let db: TestDb;
 let seed: { userId: string; entityId: string; agentId: string; jobId: string };
 let root: string;
 let ws: string;
 let jobId: string;
-/** Le tour du runner : un par appel, comme une boucle de travail. */
+/** Le tour du runner : un par message du modèle, partagé par ses appels. */
 let turn: number;
 
 const registry = createToolRegistry();
@@ -143,7 +96,7 @@ beforeAll(async () => {
   seed = await seedMinimal(db);
   // Les commandes de ce fichier effacent ou déplacent un fichier, rien de
   // plus : elles tournent hors du bac à sable de l'OS, sans conteneur (#876).
-  // Une réparation est possible : le test 2 prouve qu'elle s'ouvre.
+  // Une réparation est possible : le test 8 prouve qu'elle s'ouvre.
   await db
     .update(entities)
     .set({ sandboxEnabled: false, proofRepairAttempts: 1 })
@@ -173,7 +126,7 @@ afterEach(async () => {
   await rm(root, { recursive: true, force: true }).catch(() => undefined);
 });
 
-function ctx(): ToolContext {
+function ctx(workspace: string = ws): ToolContext {
   return {
     db,
     entityId: seed.entityId,
@@ -182,16 +135,15 @@ function ctx(): ToolContext {
     jobChatId: null,
     // Un dossier de l'agent, pas `shared` : la porte d'écrasement du partagé
     // n'est pas le sujet ici.
-    workspaces: [{ label: 'dossier', path: ws }],
-    // Le magasin d'instantanés, comme en production : c'est lui qui constate
-    // ce qu'un shell écrit hors de tout dépôt git (#590).
+    workspaces: [{ label: 'dossier', path: workspace }],
+    // Le magasin d'instantanés, comme en production.
     checkpointsRoot: join(root, 'checkpoints'),
     turn,
   } as unknown as ToolContext;
 }
 
 const opts = (): ExecuteOptions => ({
-  approvalRules: ['file_write', 'file_edit', 'file_move', 'run_command'].map(
+  approvalRules: ['file_write', 'file_move', 'run_command'].map(
     (toolName): ApprovalRule => ({
       id: `rule-${toolName}`,
       toolName,
@@ -205,20 +157,15 @@ const opts = (): ExecuteOptions => ({
 
 /**
  * Un appel d'outil du job. `memeTour` : un autre appel du MÊME message du
- * modèle (le runner donne un tour par message, partagé par ses appels).
+ * modèle. `workspace` : le dossier de l'agent, tel qu'il est attaché.
  */
 async function call(
   name: string,
   input: Record<string, unknown>,
-  o: { memeTour?: boolean; removalProbeMaxBytes?: number } = {},
+  o: { memeTour?: boolean; workspace?: string } = {},
 ): Promise<void> {
   if (!o.memeTour) turn += 1;
-  const res = await executeTool(tool(name), input, ctx(), {
-    ...opts(),
-    ...(o.removalProbeMaxBytes === undefined
-      ? {}
-      : { removalProbeMaxBytes: o.removalProbeMaxBytes }),
-  });
+  const res = await executeTool(tool(name), input, ctx(o.workspace), opts());
   expect(res.outcome === 'error' ? res.error : res.outcome, `${name} n’a pas abouti`).toBe(
     'success',
   );
@@ -230,33 +177,16 @@ async function call(
 }
 
 /** Une commande Node, portable : les guillemets doubles valent pour cmd.exe comme pour /bin/sh. */
-async function shell(
-  script: string,
-  o: { memeTour?: boolean; removalProbeMaxBytes?: number } = {},
-): Promise<void> {
+async function shell(script: string, o: { memeTour?: boolean } = {}): Promise<void> {
   await call('run_command', { purpose: 'test', command: `node -e "${script}"` }, o);
 }
 
-async function finalize(
-  repairTurn: 'supported' | 'unsupported' = 'unsupported',
-  rescueLimits?: RescueLimits,
-) {
+async function finalize(repairTurn: 'supported' | 'unsupported' = 'unsupported') {
   return finalizeJobSuccess(
     asDb(),
     { jobId, resultKind: 'prose', repairTurn, result: 'fait' },
-    { log: () => {}, ...(rescueLimits ? { rescueLimits } : {}) },
+    { log: () => {} },
   );
-}
-
-/** Les lignes `[verification] <code>` journalisées pendant `fn`. */
-async function journal(code: string, fn: () => Promise<unknown>): Promise<string[]> {
-  const espion = vi.spyOn(console, 'warn');
-  try {
-    await fn();
-    return espion.mock.calls.map((c) => String(c[0])).filter((l) => l.includes(code));
-  } finally {
-    espion.mockRestore();
-  }
 }
 
 /** Les constats de la preuve, par fichier (le chemin d'affichage, comme la page). */
@@ -285,6 +215,10 @@ async function constats(path: string) {
   return { state, runs, verdicts: runs.map((r) => `${r.command}:${r.verdict}`) };
 }
 
+/** Le constat d'un déplacement vers `dest`, tel que la page du run le montre. */
+const deplaceVers = (dest: string, verdict: 'green' | 'red' = 'green') =>
+  `${MOVED_PROOF_COMMAND} ${normalizePath(dest)}:${verdict}`;
+
 function sha(octets: Buffer): string {
   return createHash('sha256').update(octets).digest('hex');
 }
@@ -295,9 +229,10 @@ async function rouges() {
   return runs.filter((r) => r.verdict !== 'green').map((r) => `${r.command}: ${r.stderrTail}`);
 }
 
-describe('un livrable retiré par le job (#916) @cap:verifier-un-livrable/moteur', () => {
-  it('1. file_move d’un fichier reçu : la source n’a aucun rouge, la destination est verte', async () => {
+describe('un livrable déplacé par le job, déclaré (#916) @cap:verifier-un-livrable/moteur', () => {
+  it('1. le cas du propriétaire : un fichier reçu rangé par file_move — source et destination vertes', async () => {
     const source = join(ws, 'recu', 'image.jpg');
+    const dest = join(ws, 'Medical', 'scan.jpg');
     await mkdir(join(ws, 'recu'), { recursive: true });
     await mkdir(join(ws, 'Medical'), { recursive: true });
     // Un JPEG : l'en-tête que la preuve d'un document vérifie.
@@ -314,38 +249,30 @@ describe('un livrable retiré par le job (#916) @cap:verifier-un-livrable/moteur
     expect(await rouges()).toEqual([]);
     const src = await constats(source);
     expect(src.state.removed).toBe(true);
+    expect(src.state.movedToKey).not.toBeNull();
     expect(src.state.decisionStatus).toBe('green');
-    expect(src.runs).toEqual([
-      { command: REMOVED_PROOF_COMMAND, verdict: 'green', stderrTail: '' },
-    ]);
-    const dst = await constats(join(ws, 'Medical', 'scan.jpg'));
+    expect(src.verdicts).toEqual([deplaceVers(dest)]);
+    const dst = await constats(dest);
+    expect(dst.state.canonicalKey).toBe(src.state.movedToKey);
     expect(dst.state.removed).toBe(false);
-    expect(dst.state.decisionStatus).toBe('green');
     expect(dst.verdicts).toEqual(['exists:green', 'not-empty:green', 'well-formed:jpeg:green']);
   });
 
-  it('2. un fichier que le job a écrit, effacé par une commande, reste rouge et le run se répare', async () => {
-    const fichier = join(ws, 'report.md');
-    await call('file_write', { path: 'report.md', content: '# Report\n' });
-    // La commande ne NOMME pas le fichier comme cible : elle vise son dossier.
-    await shell(`require('fs').rmSync('report.md')`);
-    expect(await stat(fichier).catch(() => null), 'la commande n’a rien effacé').toBeNull();
+  it('2. un fichier posé par un programme externe, rangé par file_move : vert', async () => {
+    const source = join(ws, 'export.txt');
+    // Écrit hors de tout appel du job : un autre programme l'a posé là.
+    await writeFile(source, 'export');
+    await call('file_move', { source: 'export.txt', destination: 'range.txt' });
 
-    const out = await finalize('supported');
+    await finalize();
 
-    // Le travail du job est perdu : la preuve du document, et son rouge.
-    const f = await constats(fichier);
-    expect(f.state.removed).toBe(true);
-    expect(f.state.decisionStatus).toBe('red');
-    expect(f.verdicts).toEqual(['exists:red']);
-    expect(f.runs[0]!.stderrTail).toContain('not found');
-    // Et le run est rouvert pour le réécrire.
-    expect(out.kind).toBe('repair_due');
-    expect(out.repair?.keys).toContain(f.state.canonicalKey);
+    expect(await rouges()).toEqual([]);
+    expect((await constats(source)).verdicts).toEqual([deplaceVers(join(ws, 'range.txt'))]);
   });
 
-  it('3. file_move d’un fichier que le job a écrit : la source est verte par son absence', async () => {
+  it('3. un brouillon écrit par le job puis déplacé par file_move : vert', async () => {
     const source = join(ws, 'draft.md');
+    const dest = join(ws, 'final', 'draft.md');
     await mkdir(join(ws, 'final'), { recursive: true });
     await call('file_write', { path: 'draft.md', content: '# Draft\n' });
     await call('file_move', { source: 'draft.md', destination: 'final/draft.md' });
@@ -353,66 +280,154 @@ describe('un livrable retiré par le job (#916) @cap:verifier-un-livrable/moteur
     await finalize();
 
     expect(await rouges()).toEqual([]);
-    const src = await constats(source);
-    expect(src.state.removed).toBe(true);
-    expect(src.verdicts).toEqual([`${REMOVED_PROOF_COMMAND}:green`]);
-    const dst = await constats(join(ws, 'final', 'draft.md'));
-    expect(dst.state.decisionStatus).toBe('green');
-    expect(dst.runs[0]).toMatchObject({ command: 'exists', verdict: 'green' });
+    expect((await constats(source)).verdicts).toEqual([deplaceVers(dest)]);
+    expect((await constats(dest)).runs[0]).toMatchObject({ command: 'exists', verdict: 'green' });
   });
 
-  it('4. le même déplacement par une commande : la source est verte par son absence', async () => {
+  it('4. une chaîne a → b → c par deux file_move : vert', async () => {
+    await call('file_write', { path: 'a.md', content: '# A\n' });
+    await call('file_move', { source: 'a.md', destination: 'b.md' });
+    await call('file_move', { source: 'b.md', destination: 'c.md' });
+
+    await finalize();
+
+    expect(await rouges()).toEqual([]);
+    expect((await constats(join(ws, 'a.md'))).verdicts).toEqual([deplaceVers(join(ws, 'b.md'))]);
+    expect((await constats(join(ws, 'b.md'))).verdicts).toEqual([deplaceVers(join(ws, 'c.md'))]);
+    expect((await constats(join(ws, 'c.md'))).runs[0]).toMatchObject({
+      command: 'exists',
+      verdict: 'green',
+    });
+  });
+
+  it('5. la même chaîne, puis c effacé par un shell : la ligne de c est rouge, le run n’est pas vérifié', async () => {
+    await call('file_write', { path: 'a.md', content: '# A\n' });
+    await call('file_move', { source: 'a.md', destination: 'b.md' });
+    await call('file_move', { source: 'b.md', destination: 'c.md' });
+    await shell(`require('fs').rmSync('c.md')`);
+
+    const out = await finalize();
+
+    const c = await constats(join(ws, 'c.md'));
+    expect(c.state.removed).toBe(true);
+    expect(c.state.decisionStatus).toBe('red');
+    expect(c.verdicts).toEqual([`${REMOVED_PROOF_COMMAND}:red`]);
+    expect(out.kind).not.toBe('completed');
+  });
+
+  it('6. un mv de shell : rouge, comme sur main', async () => {
     const source = join(ws, 'draft.md');
     await mkdir(join(ws, 'final'), { recursive: true });
     await call('file_write', { path: 'draft.md', content: '# Draft\n' });
     await shell(`require('fs').renameSync('draft.md','final/draft.md')`);
-    expect(await stat(source).catch(() => null), 'la commande n’a rien déplacé').toBeNull();
+
+    await finalize();
+
+    const r = await constats(source);
+    expect(r.state.removed).toBe(true);
+    expect(r.state.movedToKey).toBeNull();
+    expect(r.verdicts).toEqual([`${REMOVED_PROOF_COMMAND}:red`]);
+    expect(r.runs[0]!.stderrTail).toContain('declared no move');
+  });
+
+  it('7. une copie par file_move, puis la source effacée par un shell : rouge', async () => {
+    await call('file_write', { path: 'a.md', content: 'X' });
+    await call('file_move', { source: 'a.md', destination: 'b.md', copy: true });
+    await shell(`require('fs').rmSync('a.md')`);
+
+    await finalize();
+
+    expect((await constats(join(ws, 'a.md'))).verdicts).toEqual([`${REMOVED_PROOF_COMMAND}:red`]);
+  });
+
+  it('8. un fichier écrit par le job puis effacé par rm : rouge, et le run se répare', async () => {
+    const fichier = join(ws, 'report.md');
+    await call('file_write', { path: 'report.md', content: '# Report\n' });
+    await shell(`require('fs').rmSync('report.md')`);
+
+    const out = await finalize('supported');
+
+    const f = await constats(fichier);
+    expect(f.state.removed).toBe(true);
+    expect(f.state.decisionStatus).toBe('red');
+    expect(f.verdicts).toEqual([`${REMOVED_PROOF_COMMAND}:red`]);
+    expect(out.kind).toBe('repair_due');
+    expect(out.repair?.keys).toContain(f.state.canonicalKey);
+  });
+
+  it('9a. passe 4, P1 : effacer un fichier et en renommer un autre sur l’adresse, puis rm : rouge', async () => {
+    await call('file_write', { path: 'report.md', content: 'R0' });
+    await call('file_write', { path: 'keep.bin', content: 'K'.repeat(32) });
+    await call('file_write', { path: 'keep-copy.bin', content: 'K'.repeat(32) });
+    await call('file_write', { path: 'payload.md', content: 'P'.repeat(32) });
+    await shell(
+      `const f=require('fs');f.unlinkSync('keep.bin');f.renameSync('payload.md','report.md')`,
+    );
+    await shell(`require('fs').rmSync('report.md')`);
+
+    await finalize();
+
+    expect((await constats(join(ws, 'report.md'))).verdicts).toEqual([
+      `${REMOVED_PROOF_COMMAND}:red`,
+    ]);
+  });
+
+  it('9b. passe 6, P1 : un message efface puis réécrit l’adresse, un tour suivant la retire : rouge', async () => {
+    await call('file_write', { path: 'a.md', content: 'A' });
+    await shell(`require('fs').rmSync('a.md')`);
+    await call('file_write', { path: 'a.md', content: 'B' }, { memeTour: true });
+    await shell(`require('fs').rmSync('a.md')`);
+
+    await finalize();
+
+    expect((await constats(join(ws, 'a.md'))).verdicts).toEqual([`${REMOVED_PROOF_COMMAND}:red`]);
+  });
+
+  it('9c. passe 7, P1 : écrit, réécrit par un shell hors de tout constat, puis rm : rouge', async () => {
+    await call('file_write', { path: 'notes.log', content: 'A' });
+    await shell(`require('fs').writeFileSync('notes.log','B')`);
+    await shell(`require('fs').rmSync('notes.log')`);
+
+    await finalize();
+
+    expect((await constats(join(ws, 'notes.log'))).verdicts).toEqual([
+      `${REMOVED_PROOF_COMMAND}:red`,
+    ]);
+  });
+
+  it('10. un dossier attaché par un alias : la destination est retrouvée par le chemin réel, vert', async () => {
+    // L'alias : une jonction sous Windows (pas de droit d'administrateur), un
+    // lien symbolique ailleurs. La cible porte le chemin RÉEL résolu par
+    // l'outil, la ligne d'état le chemin lexical de l'alias — la même adresse
+    // sous deux orthographes, comme un nom court 8.3 (le rouge de la CI
+    // Windows sur 182c2c39).
+    const alias = join(root, 'alias');
+    await symlink(ws, alias, process.platform === 'win32' ? 'junction' : 'dir');
+    await mkdir(join(ws, 'final'), { recursive: true });
+    await call('file_write', { path: 'draft.md', content: '# Draft\n' }, { workspace: alias });
+    await call(
+      'file_move',
+      { source: 'draft.md', destination: 'final/draft.md' },
+      { workspace: alias },
+    );
 
     await finalize();
 
     expect(await rouges()).toEqual([]);
-    const src = await constats(source);
-    expect(src.state.removed).toBe(true);
-    expect(src.state.decisionStatus).toBe('green');
-    expect(src.verdicts).toEqual([`${REMOVED_PROOF_COMMAND}:green`]);
+    const [src] = await db
+      .select()
+      .from(jobDeliverableVerificationState)
+      .where(
+        and(
+          eq(jobDeliverableVerificationState.jobId, jobId),
+          eq(jobDeliverableVerificationState.removed, true),
+        ),
+      );
+    expect(src?.movedToKey).not.toBeNull();
+    expect(src?.decisionStatus).toBe('green');
   });
 
-  it('5. un fichier d’avant le job, jamais écrit par lui, effacé par une commande : aucun rouge', async () => {
-    const fichier = join(ws, 'ancien.md');
-    await writeFile(fichier, '# Ancien\n');
-    await shell(`require('fs').rmSync('ancien.md')`);
-    expect(await stat(fichier).catch(() => null)).toBeNull();
-
-    await finalize();
-
-    // La commande vise son dossier : ce fichier n'est le livrable d'aucune
-    // ligne d'état, et rien de ce que le job a produit n'est perdu.
-    expect(await rouges()).toEqual([]);
-  });
-
-  it('6. un fichier reçu déplacé puis effacé : son contenu est perdu par le run, la source comme la destination sont rouges', async () => {
-    const source = join(ws, 'recu.txt');
-    const octets = Buffer.from('recu\n');
-    await writeFile(source, octets);
-    await recordPlatformWrites({ db, jobId, files: [{ path: source, sha256: sha(octets) }] });
-    await call('file_move', { source: 'recu.txt', destination: 'classe.txt' });
-    await shell(`require('fs').rmSync('classe.txt')`);
-
-    await finalize();
-
-    // Le contenu reçu porte son identité sur la ligne du DÉPLACEMENT (l'empreinte
-    // d'après de la destination) : le run l'a déplacé, puis effacé partout.
-    // Changé à la passe 6 de #919 : la source était verte quand le sauvetage
-    // reconstruisait l'auteur depuis l'historique des constats.
-    const src = await constats(source);
-    expect(src.state.removed).toBe(true);
-    expect(src.verdicts).toEqual(['exists:red']);
-    const dst = await constats(join(ws, 'classe.txt'));
-    expect(dst.state.removed).toBe(true);
-    expect(dst.verdicts).toEqual(['exists:red']);
-  });
-
-  it('7. un fichier écrit par le job puis effacé HORS de ses appels reste rouge', async () => {
+  it('11. un fichier écrit par le job puis effacé HORS de ses appels reste rouge', async () => {
     const fichier = join(ws, 'rapport.md');
     await call('file_write', { path: 'rapport.md', content: '# Rapport\n' });
     // Une personne, un autre processus : aucun appel du job autour.
@@ -422,12 +437,11 @@ describe('un livrable retiré par le job (#916) @cap:verifier-un-livrable/moteur
 
     const f = await constats(fichier);
     expect(f.state.removed).toBe(false);
-    expect(f.state.decisionStatus).toBe('red');
     expect(f.verdicts).toEqual(['exists:red']);
     expect(f.runs[0]!.stderrTail).toContain('not found');
   });
 
-  it('8. un fichier retiré par le job qui revient HORS de ses appels rougit sur son absence', async () => {
+  it('12. un fichier déplacé qui revient HORS des appels du job : rouge sur le constat d’absence', async () => {
     const source = join(ws, 'a.md');
     await writeFile(source, 'a');
     await call('file_move', { source: 'a.md', destination: 'b.md' });
@@ -436,13 +450,11 @@ describe('un livrable retiré par le job (#916) @cap:verifier-un-livrable/moteur
     await finalize();
 
     const src = await constats(source);
-    expect(src.state.removed).toBe(true);
-    expect(src.state.decisionStatus).toBe('red');
-    expect(src.verdicts).toEqual([`${REMOVED_PROOF_COMMAND}:red`]);
+    expect(src.verdicts).toEqual([deplaceVers(join(ws, 'b.md'), 'red')]);
     expect(src.runs[0]!.stderrTail).toContain('exists again');
   });
 
-  it('9. un fichier que le job retire puis réécrit redevient un livrable qui doit exister', async () => {
+  it('13. un fichier déplacé puis réécrit par le job : la preuve du document', async () => {
     const source = join(ws, 'note.md');
     await writeFile(source, 'v1');
     await call('file_move', { source: 'note.md', destination: 'archive.md' });
@@ -453,12 +465,11 @@ describe('un livrable retiré par le job (#916) @cap:verifier-un-livrable/moteur
     expect(await rouges()).toEqual([]);
     const src = await constats(source);
     expect(src.state.removed).toBe(false);
-    // La preuve d'un document, pas celle d'une absence.
+    expect(src.state.movedToKey).toBeNull();
     expect(src.runs[0]).toMatchObject({ command: 'exists', verdict: 'green' });
-    expect(src.runs.map((r) => r.command)).not.toContain(REMOVED_PROOF_COMMAND);
   });
 
-  it('10. un fichier retiré que l’agent a PROMIS se prouve comme une promesse : rouge', async () => {
+  it('14. un fichier déplacé que l’agent a PROMIS se prouve comme une promesse : rouge', async () => {
     const source = join(ws, 'promis.md');
     await writeFile(source, 'x');
     await call('file_move', { source: 'promis.md', destination: 'ailleurs.md' });
@@ -475,349 +486,23 @@ describe('un livrable retiré par le job (#916) @cap:verifier-un-livrable/moteur
 
     await finalize();
 
-    const src = await constats(source);
-    expect(src.state.removed).toBe(true);
-    expect(src.state.decisionStatus).toBe('red');
-    expect(src.verdicts).toEqual(['exists:red']);
+    expect((await constats(source)).verdicts).toEqual(['exists:red']);
   });
 
-  it('11. sorties lourdes et un brouillon rangé : la source est verte, aucune autre sortie n’est ouverte', async () => {
-    const lourd = 'x'.repeat(1000 * 1000);
-    const sorties = ['out-1.txt', 'out-2.txt', 'out-3.txt'];
-    for (const [n, nom] of sorties.entries()) {
-      await call('file_write', { path: nom, content: `${n}${lourd}` });
-    }
-    await mkdir(join(ws, 'final'), { recursive: true });
-    await call('file_write', { path: 'draft.md', content: '# Draft\n' });
-    await call('file_move', { source: 'draft.md', destination: 'final/draft.md' });
-    // Une sortie qu'on ne PEUT PAS lire (sous Linux et macOS : aucun droit ;
-    // sous Windows, `chmod` ne retire pas la lecture et le test 12 porte seul
-    // la preuve que les non-candidats ne sont pas lus).
-    const illisible = join(ws, 'out-1.txt');
-    await chmod(illisible, 0o000);
-    const avertissements = vi.spyOn(console, 'warn');
-    try {
-      await finalize();
-    } finally {
-      await chmod(illisible, 0o644);
-    }
-    const lus = avertissements.mock.calls
-      .map((c) => String(c[0]))
-      .filter((l) => l.includes('VERIFICATION_RESCUE_UNREADABLE'));
-    avertissements.mockRestore();
-
-    const src = await constats(join(ws, 'draft.md'));
-    expect(src.state.removed).toBe(true);
-    expect(src.verdicts).toEqual([`${REMOVED_PROOF_COMMAND}:green`]);
-    expect(lus, 'une sortie qui n’est pas un candidat a été ouverte').toEqual([]);
-  });
-
-  it('12. le contenu perdu posé hors du job à un chemin que le job a écrit autrement : rouge', async () => {
-    const rapport = join(ws, 'report.md');
-    await call('file_write', { path: 'report.md', content: '# Report\n' });
+  it('15. un déplacement déclaré vers une destination sans ligne « fichier » du job : rouge, comme sur main', async () => {
+    // La destination tombe dans un projet de code : son livrable est le
+    // PROJET (une autre clé), pas ce fichier. La condition 2 n'est pas réunie.
+    const source = join(ws, 'notes.md');
+    await mkdir(join(ws, 'app'), { recursive: true });
+    await writeFile(join(ws, 'app', 'package.json'), '{"name":"app"}');
     await call('file_write', { path: 'notes.md', content: '# Notes\n' });
-    // Une personne recopie le rapport dans les notes : le job n'a pas écrit ça.
-    await writeFile(join(ws, 'notes.md'), '# Report\n');
-    await shell(`require('fs').rmSync('report.md')`);
+    await call('file_move', { source: 'notes.md', destination: 'app/notes.md' });
 
     await finalize();
 
-    const f = await constats(rapport);
-    expect(f.state.removed).toBe(true);
-    expect(f.verdicts).toEqual(['exists:red']);
-  });
-
-  it('13. une copie écrite par le job, puis l’original effacé : l’original est vert par son absence', async () => {
-    const original = join(ws, 'report.md');
-    await call('file_write', { path: 'report.md', content: '# Report\n' });
-    // Le même contenu, rapporté par l'outil : son empreinte rangée le désigne.
-    await mkdir(join(ws, 'archive'), { recursive: true });
-    await call('file_write', { path: 'archive/report.md', content: '# Report\n' });
-    await shell(`require('fs').rmSync('report.md')`);
-
-    await finalize();
-
-    expect(await rouges()).toEqual([]);
-    const f = await constats(original);
-    expect(f.state.removed).toBe(true);
-    expect(f.verdicts).toEqual([`${REMOVED_PROOF_COMMAND}:green`]);
-  });
-
-  it('14. une chaîne de déplacements par commande : la source est verte', async () => {
-    const source = join(ws, 'report.md');
-    await mkdir(join(ws, 'final'), { recursive: true });
-    await call('file_write', { path: 'report.md', content: '# Report\n' });
-    await shell(`require('fs').renameSync('report.md','tmp.md')`);
-    await shell(`require('fs').renameSync('tmp.md','final/report.md')`);
-
-    await finalize();
-
-    expect(await rouges()).toEqual([]);
-    const src = await constats(source);
-    expect(src.state.removed).toBe(true);
-    expect(src.verdicts).toEqual([`${REMOVED_PROOF_COMMAND}:green`]);
-  });
-
-  it('15. la même chaîne par file_move : la source et le pas intermédiaire sont verts', async () => {
-    await call('file_write', { path: 'a.md', content: '# A\n' });
-    await call('file_move', { source: 'a.md', destination: 'b.md' });
-    await call('file_move', { source: 'b.md', destination: 'c.md' });
-
-    await finalize();
-
-    expect(await rouges()).toEqual([]);
-    for (const nom of ['a.md', 'b.md']) {
-      const r = await constats(join(ws, nom));
-      expect(r.state.removed, nom).toBe(true);
-      expect(r.verdicts, nom).toEqual([`${REMOVED_PROOF_COMMAND}:green`]);
-    }
-    const c = await constats(join(ws, 'c.md'));
-    expect(c.runs[0]).toMatchObject({ command: 'exists', verdict: 'green' });
-  });
-
-  it('16. une copie remplacée depuis par un gros fichier : la taille l’écarte, la vraie copie sauve', async () => {
-    const source = join(ws, 'draft.md');
-    await call('file_write', { path: 'draft.md', content: '# Draft\n' });
-    await call('file_write', { path: 'copy1.md', content: '# Draft\n' });
-    await call('file_write', { path: 'copy2.md', content: '# Draft\n' });
-    // Hors du job, `copy1.md` devient un fichier de 1,2 Mo : son constat dit
-    // encore qu'il portait le brouillon, sa taille dit que non.
-    await writeFile(join(ws, 'copy1.md'), Buffer.alloc(1_200_000, 1));
-    await shell(`require('fs').rmSync('draft.md')`);
-
-    // Un plafond que `copy1.md` dépasserait : s'il entrait dans la lecture, la
-    // ligne serait rouge et le code dit.
-    const plafond: RescueLimits = { maxFiles: 4, maxBytes: 1_000_000 };
-    const atteints = await journal('VERIFICATION_RESCUE_CAP_REACHED', () =>
-      finalize('unsupported', plafond),
-    );
-
-    expect(atteints).toEqual([]);
-    const src = await constats(source);
-    expect(src.state.removed).toBe(true);
-    expect(src.state.removedSize).toBe(Buffer.byteLength('# Draft\n'));
-    expect(src.verdicts).toEqual([`${REMOVED_PROOF_COMMAND}:green`]);
-  });
-
-  it('17. au-delà du plafond : la ligne garde son rouge et le code est journalisé', async () => {
-    const source = join(ws, 'draft.md');
-    await mkdir(join(ws, 'final'), { recursive: true });
-    await call('file_write', { path: 'draft.md', content: '# Draft\n' });
-    await call('file_move', { source: 'draft.md', destination: 'final/draft.md' });
-
-    const atteints = await journal('VERIFICATION_RESCUE_CAP_REACHED', () =>
-      finalize('unsupported', { maxFiles: 8, maxBytes: 1 }),
-    );
-
-    const src = await constats(source);
-    expect(src.verdicts).toEqual(['exists:red']);
-    expect(atteints).toHaveLength(1);
-    expect(atteints[0]).toContain(`row=${src.state.id}`);
-  });
-  it('18. une commande qui efface un fichier ET en renomme un autre sur l’adresse : la copie de l’effacé ne sauve rien', async () => {
-    // Le scénario P1 de la revue A, passe 4, à l'identique.
-    const rapport = join(ws, 'report.md');
-    await call('file_write', { path: 'report.md', content: 'R0' });
-    await call('file_write', { path: 'keep.bin', content: 'K'.repeat(32) });
-    await call('file_write', { path: 'keep-copy.bin', content: 'K'.repeat(32) });
-    await call('file_write', { path: 'payload.md', content: 'P'.repeat(32) });
-    await shell(
-      `const f=require('fs');f.unlinkSync('keep.bin');f.renameSync('payload.md','report.md')`,
-    );
-    await shell(`require('fs').rmSync('report.md')`);
-
-    await finalize();
-
-    const f = await constats(rapport);
-    expect(f.state.removed).toBe(true);
-    expect(f.state.removedSize).toBe(32);
-    // P n'est plus nulle part : rouge, quelle que soit la taille de K.
-    expect(f.verdicts).toEqual(['exists:red']);
-  });
-
-  it('19. un cycle de renommages a → b → a → c : la source est verte', async () => {
-    // Le scénario P2 de la revue A, passe 4, à l'identique.
-    const a = join(ws, 'a.md');
-    await call('file_write', { path: 'a.md', content: 'X' });
-    await shell(`require('fs').renameSync('a.md','b.md')`);
-    await shell(`require('fs').renameSync('b.md','a.md')`);
-    await shell(`require('fs').renameSync('a.md','c.md')`);
-
-    await finalize();
-
-    expect(await rouges()).toEqual([]);
-    const r = await constats(a);
+    const r = await constats(source);
     expect(r.state.removed).toBe(true);
-    expect(r.verdicts).toEqual([`${REMOVED_PROOF_COMMAND}:green`]);
-  });
-
-  it('20. un déplacement qui modifie à taille égale, une copie de l’original ailleurs : rouge', async () => {
-    const b = join(ws, 'b.md');
-    await call('file_write', { path: 'a.md', content: 'aaaa' });
-    await call('file_write', { path: 'copy.md', content: 'aaaa' });
-    await call('file_write', { path: 'b.md', content: 'zzzz' });
-    // `mv a.md b.md && sed -i …` : même taille, autre contenu.
-    await shell(`const f=require('fs');f.renameSync('a.md','b.md');f.writeFileSync('b.md','bbbb')`);
-    await shell(`require('fs').rmSync('b.md')`);
-
-    await finalize();
-
-    const r = await constats(b);
-    expect(r.state.removed).toBe(true);
-    expect(r.state.removedSize).toBe(4);
-    // `bbbb` n'est nulle part ; `copy.md` porte `aaaa`, qui n'est pas ce qui a été perdu.
-    expect(r.verdicts).toEqual(['exists:red']);
-  });
-
-  it('21. un retrait dont la sonde n’a pas pu prendre l’empreinte : rouge, et c’est dit', async () => {
-    const u = join(ws, 'u.md');
-    await call('file_write', { path: 'u.md', content: 'U' });
-    // La borne de la sonde d'avant (64 Mio par défaut), ramenée à 0 octet pour
-    // cet appel : le fichier est vu, son contenu n'est pas lu.
-    await shell(`require('fs').rmSync('u.md')`, { removalProbeMaxBytes: 0 });
-
-    const dits = await journal('VERIFICATION_RESCUE_IDENTITY_UNKNOWN', () => finalize());
-
-    const r = await constats(u);
-    expect(r.state.removed).toBe(true);
-    expect(r.state.removedSha256).toBeNull();
-    expect(r.verdicts).toEqual(['exists:red']);
-    expect(dits).toHaveLength(1);
-    expect(dits[0]).toContain(`row=${r.state.id}`);
-  });
-
-  it('23. une copie par file_move, puis la source effacée : la source est verte', async () => {
-    const a = join(ws, 'a.md');
-    await call('file_write', { path: 'a.md', content: 'X' });
-    await call('file_move', { source: 'a.md', destination: 'b.md', copy: true });
-    await shell(`require('fs').rmSync('a.md')`);
-
-    await finalize();
-
-    expect(await rouges()).toEqual([]);
-    const r = await constats(a);
-    expect(r.state.removed).toBe(true);
-    expect(r.verdicts).toEqual([`${REMOVED_PROOF_COMMAND}:green`]);
-  });
-
-  it('24. une source réécrite entre l’instantané et le déplacement : l’ancien contenu ne sauve pas la destination', async () => {
-    const dest = join(ws, 'dest.md');
-    await call('file_write', { path: 'src.md', content: 'old1' });
-    await call('file_write', { path: 'copy.md', content: 'old1' });
-    // La destination est un livrable du job avant le déplacement.
-    await call('file_write', { path: 'dest.md', content: 'zzzz' });
-    // LA COURSE, au seul point où elle peut tomber : après l'instantané du
-    // seam (pris avant `tool.execute`), avant le `rename` de l'outil. Le
-    // déplacement lui-même est le vrai `file_move`, rien d'autre ne change.
-    const vrai = tool('file_move');
-    const enCourse = {
-      ...vrai,
-      execute: async (input: unknown, c: ToolContext) => {
-        await writeFile(join(ws, 'src.md'), 'new1');
-        return vrai.execute(input as never, c);
-      },
-    } as typeof vrai;
-    turn += 1;
-    const res = await executeTool(
-      enCourse,
-      { source: 'src.md', destination: 'dest.md' },
-      ctx(),
-      opts(),
-    );
-    expect(res.outcome).toBe('success');
-    await shell(`require('fs').rmSync('dest.md')`);
-
-    await finalize();
-
-    const r = await constats(dest);
-    expect(r.state.removed).toBe(true);
-    // `new1` n'est nulle part ; `copy.md` porte `old1`, qui n'est jamais arrivé ici.
-    expect(r.verdicts).toEqual(['exists:red']);
-  });
-
-  it('25. un message efface puis réécrit l’adresse, un tour suivant la retire : rouge', async () => {
-    // Le scénario P1 de la revue A, passe 6, à l'identique.
-    const a = join(ws, 'a.md');
-    await call('file_write', { path: 'a.md', content: 'A' });
-    await shell(`require('fs').rmSync('a.md')`);
-    await call('file_write', { path: 'a.md', content: 'B' }, { memeTour: true });
-    await shell(`require('fs').rmSync('a.md')`);
-
-    await finalize();
-
-    const r = await constats(a);
-    expect(r.state.removed).toBe(true);
-    expect(r.state.removedSha256).toBe(sha(Buffer.from('B')));
-    // B n'est nulle part.
-    expect(r.verdicts).toEqual(['exists:red']);
-  });
-
-  it('26. un message écrit puis déplace : la source est verte', async () => {
-    // Le scénario P2 de la revue A, passe 6, à l'identique.
-    const a = join(ws, 'a.md');
-    await mkdir(join(ws, 'final'), { recursive: true });
-    await call('file_write', { path: 'a.md', content: 'A' });
-    await call('file_move', { source: 'a.md', destination: 'final/a.md' }, { memeTour: true });
-
-    await finalize();
-
-    expect(await rouges()).toEqual([]);
-    const r = await constats(a);
-    expect(r.state.removed).toBe(true);
-    expect(r.verdicts).toEqual([`${REMOVED_PROOF_COMMAND}:green`]);
-  });
-
-  it('27. un message écrit puis efface : rouge', async () => {
-    const r0 = join(ws, 'r.md');
-    await call('file_write', { path: 'r.md', content: 'R' });
-    await shell(`require('fs').rmSync('r.md')`, { memeTour: true });
-
-    await finalize();
-
-    const r = await constats(r0);
-    expect(r.state.removed).toBe(true);
-    expect(r.verdicts).toEqual(['exists:red']);
-  });
-
-  it('28. un message écrit puis efface avec un outil, une copie ailleurs : vert', async () => {
-    const r0 = join(ws, 'r.md');
-    await call('file_write', { path: 'copie.md', content: 'R' });
-    await call('file_write', { path: 'r.md', content: 'R' });
-    await shell(`require('fs').rmSync('r.md')`, { memeTour: true });
-
-    await finalize();
-
-    expect(await rouges()).toEqual([]);
-    const r = await constats(r0);
-    expect(r.state.removed).toBe(true);
-    expect(r.verdicts).toEqual([`${REMOVED_PROOF_COMMAND}:green`]);
-  });
-
-  it('29. un fichier reçu que le job n’a jamais écrit, effacé à sa demande : vert (cas a)', async () => {
-    // Le fichier reçu (écrit par la plateforme au tour 0), visé par un appel
-    // qui n'écrit rien — une édition dont le texte n'est pas trouvé : la ligne
-    // d'état existe, le job n'y a rien produit. Puis la personne demande de
-    // l'effacer.
-    const recu = join(ws, 'recu.txt');
-    const octets = Buffer.from('recu');
-    await writeFile(recu, octets);
-    await recordPlatformWrites({ db, jobId, files: [{ path: recu, sha256: sha(octets) }] });
-    turn += 1;
-    const edit = await executeTool(
-      tool('file_edit'),
-      { path: 'recu.txt', old_string: 'absent', new_string: 'x' },
-      ctx(),
-      opts(),
-    );
-    expect(edit.outcome).toBe('success');
-    await shell(`require('fs').rmSync('recu.txt')`);
-
-    await finalize();
-
-    expect(await rouges()).toEqual([]);
-    const r = await constats(recu);
-    expect(r.state.removed).toBe(true);
-    expect(r.state.removedSha256).toBe(sha(octets));
-    expect(r.verdicts).toEqual([`${REMOVED_PROOF_COMMAND}:green`]);
+    expect(r.state.movedToKey).not.toBeNull();
+    expect(r.verdicts).toEqual([`${REMOVED_PROOF_COMMAND}:red`]);
   });
 });

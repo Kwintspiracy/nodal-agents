@@ -417,9 +417,6 @@ function ligne(path: string, entree: GitStatusEntry): ConstatedWrite {
     path,
     kind,
     ...(entree.renamedFrom !== undefined ? { renamedFrom: entree.renamedFrom } : {}),
-    // L'empreinte d'APRÈS, déjà prise pour décider qu'il y a eu écriture : le
-    // contenu exact que ce constat a vu, gratuit (#919).
-    ...(entree.fingerprint.kind === 'file' ? { observedSha256: entree.fingerprint.sha256 } : {}),
   };
 }
 

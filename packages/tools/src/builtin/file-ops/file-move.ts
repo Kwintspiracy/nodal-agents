@@ -294,6 +294,10 @@ export const fileMoveTool: ToolDefinition<typeof FileMoveInputSchema, FileMoveOu
         kind: 'file' as const,
         path,
         deliverableType: await deliverableTypeForWrittenFile(ctx, path),
+        // La source d'un DÉPLACEMENT déclare où vont ses octets (#916) : son
+        // absence après l'appel est attendue, si la destination est un
+        // livrable du job. Une copie ne retire rien, et ne déclare rien.
+        ...(path === paths.source ? { movesTo: paths.destination } : {}),
       })),
     );
   },

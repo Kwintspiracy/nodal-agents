@@ -40,7 +40,6 @@ import {
   text,
   uuid,
   integer,
-  bigint,
   boolean,
   timestamp,
   index,
@@ -118,23 +117,17 @@ export const jobDeliverableVerificationState = pgTable(
      * appel du job : l'adresse était là avant, elle n'y est plus après. Levé
      * par la transition inverse. Jamais déduit : un fichier qui disparaît hors
      * des appels du job garde `false`, et sa preuve reste `exists` — rouge.
-     * Une ligne `removed` que l'agent n'a pas promise (`declared`) est prouvée
-     * par son ABSENCE (`apps/runner/src/verification/removed.ts`).
+     * Seule une ligne retirée ET déclarée déplacée (`moved_to_key`) est
+     * prouvée par son absence (`apps/runner/src/verification/removed.ts`).
      */
     removed: boolean('removed').notNull().default(false),
     /**
-     * La taille de l'adresse vue AVANT l'appel qui l'a retirée (revue A de
-     * #919, passe 3). Seul un fichier de cette taille peut encore porter le
-     * contenu retiré : la finalisation ne lit rien d'autre. NULL hors retrait.
+     * La clé de la destination où l'appel qui a retiré ce livrable l'avait
+     * DÉCLARÉ déplacé (`MutationTarget.movesTo`), quand elle retrouve une ligne
+     * d'état du même job (issue #916, migration 0155). NULL pour tout autre
+     * retrait : la preuve reste `exists`, rouge.
      */
-    removedSize: bigint('removed_size', { mode: 'number' }),
-    /**
-     * L'empreinte de l'adresse vue AVANT l'appel qui l'a retirée (revue A de
-     * #919, passe 6) : QUEL contenu a été retiré, pris au moment du retrait,
-     * jamais reconstruit depuis l'historique des constats. NULL hors retrait,
-     * ou quand la sonde n'a pas pu la prendre (hors borne, un dossier).
-     */
-    removedSha256: text('removed_sha256'),
+    movedToKey: text('moved_to_key'),
     /** DecisionStatus — l'état lisible affiché à l'owner. */
     decisionStatus: text('decision_status').notNull(),
     /** Empreinte de la dernière commande de preuve exécutée (diagnostic, pas le hash d'approbation). */

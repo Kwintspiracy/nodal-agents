@@ -38,7 +38,7 @@ describe('migration 0155_deliverable_removed @cap:verifier-un-livrable/moteur', 
     await runMigrations(pg.url, { patchVectorAsText: true });
   }, 120_000);
 
-  it('a state row written without the columns reads removed = false, removed_size = null', async () => {
+  it('a state row written without the columns reads removed = false, moved_to_key = null', async () => {
     const { db, close } = createClient(harness().url);
     try {
       const u = await rows<{ id: string }>(
@@ -59,29 +59,15 @@ describe('migration 0155_deliverable_removed @cap:verifier-un-livrable/moteur', 
         sql`INSERT INTO agent_jobs (entity_id, agent_id, channel, task)
             VALUES (${e[0]!.id}, ${a[0]!.id}, 'api', 't') RETURNING id`,
       );
-      const s = await rows<{
-        removed: boolean;
-        removed_size: string | null;
-        removed_sha256: string | null;
-      }>(
+      const s = await rows<{ removed: boolean; moved_to_key: string | null }>(
         db,
         sql`INSERT INTO job_deliverable_verification_state
               (job_id, deliverable_type, canonical_key, dirty_generation, decision_status)
             VALUES (${j[0]!.id}, 'document', 'd:/ws/a.md', 1, 'dirty')
-            RETURNING removed, removed_size, removed_sha256`,
+            RETURNING removed, moved_to_key`,
       );
       expect(s[0]!.removed).toBe(false);
-      expect(s[0]!.removed_size).toBeNull();
-      expect(s[0]!.removed_sha256).toBeNull();
-      // L'empreinte observée d'un constat (passe 4) : NULL pour une ligne
-      // écrite sans elle.
-      const c = await rows<{ observed_sha256: string | null }>(
-        db,
-        sql`INSERT INTO constated_writes (job_id, turn, path, change_kind, constated_by)
-            VALUES (${j[0]!.id}, 1, 'd:/ws/a.md', 'added', 'disk')
-            RETURNING observed_sha256`,
-      );
-      expect(c[0]!.observed_sha256).toBeNull();
+      expect(s[0]!.moved_to_key).toBeNull();
     } finally {
       await close();
     }
