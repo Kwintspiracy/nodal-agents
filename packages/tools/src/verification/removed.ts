@@ -46,8 +46,8 @@ import { stat } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
 import { jobDeliverableVerificationState, eq } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
-import { normalizePath } from '@nodal-agents/shared';
 import { fingerprint, type FileFingerprint, type FileSnapshot } from './observed';
+import { cheminConstate } from './record-constat';
 
 /**
  * Ce que la sonde d'avant accepte de hacher, par appel, pour les livrables que
@@ -136,16 +136,18 @@ export async function probeJobDeliverables(
       .from(jobDeliverableVerificationState)
       .where(eq(jobDeliverableVerificationState.jobId, jobId));
     let budget = options.maxBytes;
-    // L'instantané est rangé sous le chemin de la CIBLE, la ligne d'état sous
-    // son chemin d'affichage : la même adresse, deux orthographes.
+    // L'instantané est rangé sous le chemin RÉEL de la cible, la ligne d'état
+    // sous son chemin d'affichage, rebasé sur la racine lexicale : la même
+    // adresse, deux orthographes (un nom court 8.3 sous Windows, une jonction).
+    // Les deux sont ramenées au chemin réel, la règle de `cheminConstate`.
     const connues = new Map<string, FileFingerprint>();
-    for (const [chemin, f] of options.connues) connues.set(normalizePath(chemin), f);
+    for (const [chemin, f] of options.connues) connues.set(await cheminConstate(chemin), f);
     for (const row of rows) {
       const address = addressOf(row);
       if (address === null) continue;
       let p = await presence(address);
       if (p.kind === 'present') {
-        const connue = connues.get(normalizePath(address));
+        const connue = connues.get(await cheminConstate(address));
         if (connue?.kind === 'file') {
           p = { ...p, sha256: connue.sha256 };
         } else if (options.hacherLesAutres && p.size <= budget) {
