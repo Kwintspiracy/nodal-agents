@@ -86,6 +86,7 @@ import {
 } from './verification/record-constat';
 import { recordToolCallReads } from './verification/tool-call-reads';
 import { recordToolCallWrites } from './verification/tool-call-writes';
+import { probeJobDeliverables, recordObservedRemovals } from './verification/removed';
 import { admitModelAttachment, type ToolAttachment } from './model-images';
 import { attachProductionToProject } from './projects/attach';
 import { loadDeclaredCodeRoots, projectRootPredicate } from './projects/declared';
@@ -809,6 +810,11 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
   // seule façon de constater, après, qu'il a réellement écrit. Une cible
   // dossier n'est pas prise — elle ne crédite plus rien, voir `observed.ts`.
   const filesBefore = mutationTargets ? await snapshotFileTargets(mutationTargets) : null;
+  // Et la PRÉSENCE de chaque livrable du job (#916), les lignes que
+  // l'intention vient de poser comprises : ce qu'un appel RETIRE (la source
+  // d'un `file_move`, un `rm` dans le `cwd` d'un shell) n'est pas un livrable
+  // qui doit exister. Voir `verification/removed.ts`.
+  const presenceAvant = mutationTargets ? await probeJobDeliverables(ctx.db, ctx.jobId) : null;
   // Et, pour un harnais, les lignes vivantes que ce job porte DÉJÀ : elles
   // bornent à CE run la lecture d'après (revue C de la PR #196, passe 2). Sans
   // elles, un second `code_task` dans le même dossier héritait des lignes du
@@ -952,6 +958,10 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
           written: contenusEcrits,
         });
       }
+      // Ce que CET APPEL a retiré ou fait revenir parmi les livrables du job
+      // (#916), réussi ou non : un appel qui échoue a pu effacer à moitié, et
+      // c'est la transition constatée qui compte. Ne lève jamais.
+      if (presenceAvant) await recordObservedRemovals(ctx.db, ctx.jobId, presenceAvant);
       if (mutationDeliverables.length > 0) {
         try {
           await bumpEpochsAfterWrite(ctx.db, ctx.entityId, mutationDeliverables);

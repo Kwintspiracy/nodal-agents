@@ -103,6 +103,7 @@ import type { DecisionStatus, JobResultKind } from '@nodal-agents/shared';
 import { readProofRepairAttempts } from '@nodal-agents/shared';
 import { resolveRunWorkspaces, withJobFolder } from '@nodal-agents/tools';
 import { getVerifier } from '../verification/registry.ts';
+import { removedDeliverableVerifier } from '../verification/removed.ts';
 import { buildRepairBrief } from '../verification/repair-brief.ts';
 import type { RepairBriefCommand } from '../verification/repair-brief.ts';
 import type {
@@ -859,6 +860,7 @@ export async function finalizeJobSuccess(
         displayPathSnapshot: jobDeliverableVerificationState.displayPathSnapshot,
         repairAttempts: jobDeliverableVerificationState.repairAttempts,
         declared: jobDeliverableVerificationState.declared,
+        removed: jobDeliverableVerificationState.removed,
       })
       .from(jobDeliverableVerificationState)
       .where(eq(jobDeliverableVerificationState.jobId, jobId));
@@ -874,7 +876,12 @@ export async function finalizeJobSuccess(
 
     const plans: DeliverablePlan[] = [];
     for (const state of ordered) {
-      const verifier = resolveVerifier(state.deliverableType);
+      // Un livrable qu'un appel de ce job a RETIRÉ (#916) se prouve par son
+      // absence, quel que soit son type (`verification/removed.ts`). Sauf
+      // s'il est PROMIS : l'agent l'a nommé dans `return_result.deliverables`,
+      // c'est une promesse qu'il existe, et elle se prouve comme telle.
+      const typed = resolveVerifier(state.deliverableType);
+      const verifier = state.removed && !state.declared ? removedDeliverableVerifier(typed) : typed;
       if (state.dirtyGeneration === null) {
         throw new Error(
           `${VERIFY_STATE_GENERATION_MISSING}: ${state.deliverableType} ${state.canonicalKey}`,
