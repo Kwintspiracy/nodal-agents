@@ -1,5 +1,6 @@
 // removed-deliverable.test.ts — un livrable que le job a RETIRÉ n'est pas un
-// livrable qui doit exister (issue #916).
+// livrable qui doit exister, tant qu'aucun travail du job n'est perdu
+// (issue #916, revue A de la PR #919).
 //
 // LE DÉFAUT, vu sur la stack du propriétaire : un agent déplace un fichier reçu
 // dans un dossier de la personne. Le déplacement réussit, la destination est
@@ -12,30 +13,37 @@
 // vraie finalisation, sur les lignes `verification_runs` et
 // `job_deliverable_verification_state` relues en base :
 //
-//   1. une source déplacée par `file_move` n'a aucun rouge : son constat est
-//      `absent:removed-by-this-run`, vert, et la ligne porte `removed` ;
-//      la destination a ses trois constats verts ;
-//   2. un fichier écrit par le job puis effacé par un `run_command` (que rien
-//      n'a nommé : la commande vise son dossier) : même chose ;
-//   3. un fichier écrit par le job puis effacé HORS de ses appels reste rouge,
+//   1. un fichier REÇU (écrit par la plateforme au tour 0) déplacé par
+//      `file_move` : la source n'a aucun rouge, son constat est
+//      `absent:removed-by-this-run`, vert, et la ligne porte `removed` ; la
+//      destination a ses trois constats verts ;
+//   2. un fichier que le job a ÉCRIT, puis effacé par un `run_command` de
+//      nettoyage : son travail est perdu, donc `exists`, rouge, et la
+//      réparation s'ouvre — comme sur main (revue A de #919, passe 1) ;
+//   3. un fichier que le job a écrit puis déplacé par `file_move` : la source
+//      est verte par son absence, la destination verte ;
+//   4. le même déplacement par `run_command` (un déplacement de shell, constaté
+//      par l'instantané de checkpoint) : même chose ;
+//   5. un fichier qui existait avant le job, qu'il n'a jamais écrit, effacé
+//      par `run_command` : aucun rouge ;
+//   6. un fichier reçu déplacé, puis sa destination effacée : la source (que
+//      le job n'a pas écrite, la plateforme l'a fait) est verte par son
+//      absence, la destination rouge — son contenu n'est plus nulle part ;
+//   7. un fichier écrit par le job puis effacé HORS de ses appels reste rouge,
 //      `exists` « not found » — la différence est l'observation autour de
 //      l'appel, jamais une supposition ;
-//   4. un fichier retiré par le job qui REVIENT hors de ses appels rougit sur
+//   8. un fichier retiré par le job qui REVIENT hors de ses appels rougit sur
 //      le constat d'absence ;
-//   5. un fichier que le job retire puis réécrit redevient un livrable qui doit
+//   9. un fichier que le job retire puis réécrit redevient un livrable qui doit
 //      exister : `removed` levé, `exists` vert ;
-//   6. un fichier retiré que l'agent a PROMIS (`declared`) se prouve comme une
+//  10. un fichier retiré que l'agent a PROMIS (`declared`) se prouve comme une
 //      promesse : `exists`, rouge.
 //
-// Mutations vérifiées (chacune fait rougir les tests nommés) :
-//   - `recordObservedRemovals` retiré d'`execute.ts` → 1, 2, 4, 6 ;
-//   - `probeJobDeliverables` qui ne rend rien → 1, 2, 4, 6 ;
-//   - `removedDeliverableVerifier` jamais choisi dans `finalize.ts` → 1, 2, 4 ;
-//   - `&& !state.declared` retiré de `finalize.ts` → 6 ;
-//   - la levée (`absent -> present`) retirée de `removed.ts` → 5 ;
-//   - le constat d'absence vert sur un fichier présent → 4.
+// Mutations vérifiées : la liste est dans la PR #919, avec les tests que
+// chacune fait rougir.
 
 import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
+import { createHash } from 'node:crypto';
 import { mkdtemp, mkdir, rm, writeFile, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -51,7 +59,12 @@ import {
   eq,
 } from '@nodal-agents/db';
 import { normalizePath } from '@nodal-agents/shared';
-import { createToolRegistry, executeTool, registerBuiltins } from '@nodal-agents/tools';
+import {
+  createToolRegistry,
+  executeTool,
+  recordPlatformWrites,
+  registerBuiltins,
+} from '@nodal-agents/tools';
 import type { ApprovalRule, ExecuteOptions, ToolContext } from '@nodal-agents/tools';
 import { finalizeJobSuccess } from '../../job/finalize.ts';
 import { REMOVED_PROOF_COMMAND } from '../../verification/removed.ts';
@@ -61,6 +74,8 @@ let seed: { userId: string; entityId: string; agentId: string; jobId: string };
 let root: string;
 let ws: string;
 let jobId: string;
+/** Le tour du runner : un par appel, comme une boucle de travail. */
+let turn: number;
 
 const registry = createToolRegistry();
 registerBuiltins(registry);
@@ -77,9 +92,13 @@ beforeAll(async () => {
   const spun = await spinUpTestDb();
   db = spun.db;
   seed = await seedMinimal(db);
-  // La commande de ce fichier efface un fichier, rien de plus : elle tourne
-  // hors du bac à sable de l'OS, sans conteneur (#876).
-  await db.update(entities).set({ sandboxEnabled: false }).where(eq(entities.id, seed.entityId));
+  // Les commandes de ce fichier effacent ou déplacent un fichier, rien de
+  // plus : elles tournent hors du bac à sable de l'OS, sans conteneur (#876).
+  // Une réparation est possible : le test 2 prouve qu'elle s'ouvre.
+  await db
+    .update(entities)
+    .set({ sandboxEnabled: false, proofRepairAttempts: 1 })
+    .where(eq(entities.id, seed.entityId));
 });
 
 beforeEach(async () => {
@@ -98,6 +117,7 @@ beforeEach(async () => {
     .returning({ id: agentJobs.id });
   if (!job) throw new Error('job insert failed');
   jobId = job.id;
+  turn = 0;
 });
 
 afterEach(async () => {
@@ -114,7 +134,10 @@ function ctx(): ToolContext {
     // Un dossier de l'agent, pas `shared` : la porte d'écrasement du partagé
     // n'est pas le sujet ici.
     workspaces: [{ label: 'dossier', path: ws }],
-    turn: 1,
+    // Le magasin d'instantanés, comme en production : c'est lui qui constate
+    // ce qu'un shell écrit hors de tout dépôt git (#590).
+    checkpointsRoot: join(root, 'checkpoints'),
+    turn,
   } as unknown as ToolContext;
 }
 
@@ -132,6 +155,7 @@ const opts = (): ExecuteOptions => ({
 });
 
 async function call(name: string, input: Record<string, unknown>): Promise<void> {
+  turn += 1;
   const res = await executeTool(tool(name), input, ctx(), opts());
   expect(res.outcome === 'error' ? res.error : res.outcome, `${name} n’a pas abouti`).toBe(
     'success',
@@ -143,10 +167,15 @@ async function call(name: string, input: Record<string, unknown>): Promise<void>
   }
 }
 
-async function finalize() {
+/** Une commande Node, portable : les guillemets doubles valent pour cmd.exe comme pour /bin/sh. */
+async function shell(script: string): Promise<void> {
+  await call('run_command', { purpose: 'test', command: `node -e "${script}"` });
+}
+
+async function finalize(repairTurn: 'supported' | 'unsupported' = 'unsupported') {
   return finalizeJobSuccess(
     asDb(),
-    { jobId, resultKind: 'prose', repairTurn: 'unsupported', result: 'fait' },
+    { jobId, resultKind: 'prose', repairTurn, result: 'fait' },
     { log: () => {} },
   );
 }
@@ -174,7 +203,11 @@ async function constats(path: string) {
       and(eq(verificationRuns.jobId, jobId), eq(verificationRuns.canonicalKey, state.canonicalKey)),
     )
     .orderBy(asc(verificationRuns.commandRank));
-  return { state, runs };
+  return { state, runs, verdicts: runs.map((r) => `${r.command}:${r.verdict}`) };
+}
+
+function sha(octets: Buffer): string {
+  return createHash('sha256').update(octets).digest('hex');
 }
 
 /** Tous les rouges du job, toutes lignes confondues. */
@@ -184,12 +217,15 @@ async function rouges() {
 }
 
 describe('un livrable retiré par le job (#916) @cap:verifier-un-livrable/moteur', () => {
-  it('file_move : la source n’a aucun rouge, la destination est verte, la source est dite retirée', async () => {
+  it('1. file_move d’un fichier reçu : la source n’a aucun rouge, la destination est verte', async () => {
     const source = join(ws, 'recu', 'image.jpg');
     await mkdir(join(ws, 'recu'), { recursive: true });
     await mkdir(join(ws, 'Medical'), { recursive: true });
     // Un JPEG : l'en-tête que la preuve d'un document vérifie.
-    await writeFile(source, Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46]));
+    const octets = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46]);
+    await writeFile(source, octets);
+    // L'écriture de l'accueil des fichiers reçus (#918), au tour de la plateforme.
+    await recordPlatformWrites({ db, jobId, files: [{ path: source, sha256: sha(octets) }] });
 
     await call('file_move', { source: 'recu/image.jpg', destination: 'Medical/scan.jpg' });
     expect(await stat(source).catch(() => null), 'le fichier n’a pas quitté sa source').toBeNull();
@@ -206,36 +242,94 @@ describe('un livrable retiré par le job (#916) @cap:verifier-un-livrable/moteur
     const dst = await constats(join(ws, 'Medical', 'scan.jpg'));
     expect(dst.state.removed).toBe(false);
     expect(dst.state.decisionStatus).toBe('green');
-    expect(dst.runs.map((r) => `${r.command}:${r.verdict}`)).toEqual([
-      'exists:green',
-      'not-empty:green',
-      'well-formed:jpeg:green',
-    ]);
+    expect(dst.verdicts).toEqual(['exists:green', 'not-empty:green', 'well-formed:jpeg:green']);
   });
 
-  it('run_command : un fichier que le job a écrit, puis effacé par une commande, est dit retiré', async () => {
-    const fichier = join(ws, 'brouillon.md');
-    await call('file_write', { path: 'brouillon.md', content: '# Brouillon\n' });
+  it('2. un fichier que le job a écrit, effacé par une commande, reste rouge et le run se répare', async () => {
+    const fichier = join(ws, 'report.md');
+    await call('file_write', { path: 'report.md', content: '# Report\n' });
     // La commande ne NOMME pas le fichier comme cible : elle vise son dossier.
-    // Les guillemets doubles valent pour cmd.exe comme pour /bin/sh.
-    await call('run_command', {
-      purpose: 'effacer le brouillon',
-      command: `node -e "require('fs').rmSync('brouillon.md')"`,
-    });
+    await shell(`require('fs').rmSync('report.md')`);
     expect(await stat(fichier).catch(() => null), 'la commande n’a rien effacé').toBeNull();
+
+    const out = await finalize('supported');
+
+    // Le travail du job est perdu : la preuve du document, et son rouge.
+    const f = await constats(fichier);
+    expect(f.state.removed).toBe(true);
+    expect(f.state.decisionStatus).toBe('red');
+    expect(f.verdicts).toEqual(['exists:red']);
+    expect(f.runs[0]!.stderrTail).toContain('not found');
+    // Et le run est rouvert pour le réécrire.
+    expect(out.kind).toBe('repair_due');
+    expect(out.repair?.keys).toContain(f.state.canonicalKey);
+  });
+
+  it('3. file_move d’un fichier que le job a écrit : la source est verte par son absence', async () => {
+    const source = join(ws, 'draft.md');
+    await mkdir(join(ws, 'final'), { recursive: true });
+    await call('file_write', { path: 'draft.md', content: '# Draft\n' });
+    await call('file_move', { source: 'draft.md', destination: 'final/draft.md' });
 
     await finalize();
 
     expect(await rouges()).toEqual([]);
-    const f = await constats(fichier);
-    expect(f.state.removed).toBe(true);
-    expect(f.state.decisionStatus).toBe('green');
-    expect(f.runs.map((r) => `${r.command}:${r.verdict}`)).toEqual([
-      `${REMOVED_PROOF_COMMAND}:green`,
-    ]);
+    const src = await constats(source);
+    expect(src.state.removed).toBe(true);
+    expect(src.verdicts).toEqual([`${REMOVED_PROOF_COMMAND}:green`]);
+    const dst = await constats(join(ws, 'final', 'draft.md'));
+    expect(dst.state.decisionStatus).toBe('green');
+    expect(dst.runs[0]).toMatchObject({ command: 'exists', verdict: 'green' });
   });
 
-  it('un fichier écrit par le job puis effacé HORS de ses appels reste rouge', async () => {
+  it('4. le même déplacement par une commande : la source est verte par son absence', async () => {
+    const source = join(ws, 'draft.md');
+    await mkdir(join(ws, 'final'), { recursive: true });
+    await call('file_write', { path: 'draft.md', content: '# Draft\n' });
+    await shell(`require('fs').renameSync('draft.md','final/draft.md')`);
+    expect(await stat(source).catch(() => null), 'la commande n’a rien déplacé').toBeNull();
+
+    await finalize();
+
+    expect(await rouges()).toEqual([]);
+    const src = await constats(source);
+    expect(src.state.removed).toBe(true);
+    expect(src.state.decisionStatus).toBe('green');
+    expect(src.verdicts).toEqual([`${REMOVED_PROOF_COMMAND}:green`]);
+  });
+
+  it('5. un fichier d’avant le job, jamais écrit par lui, effacé par une commande : aucun rouge', async () => {
+    const fichier = join(ws, 'ancien.md');
+    await writeFile(fichier, '# Ancien\n');
+    await shell(`require('fs').rmSync('ancien.md')`);
+    expect(await stat(fichier).catch(() => null)).toBeNull();
+
+    await finalize();
+
+    // La commande vise son dossier : ce fichier n'est le livrable d'aucune
+    // ligne d'état, et rien de ce que le job a produit n'est perdu.
+    expect(await rouges()).toEqual([]);
+  });
+
+  it('6. un fichier reçu déplacé puis effacé : source verte (écrite par la plateforme), destination rouge', async () => {
+    const source = join(ws, 'recu.txt');
+    const octets = Buffer.from('recu\n');
+    await writeFile(source, octets);
+    await recordPlatformWrites({ db, jobId, files: [{ path: source, sha256: sha(octets) }] });
+    await call('file_move', { source: 'recu.txt', destination: 'classe.txt' });
+    await shell(`require('fs').rmSync('classe.txt')`);
+
+    await finalize();
+
+    const src = await constats(source);
+    expect(src.state.removed).toBe(true);
+    expect(src.verdicts).toEqual([`${REMOVED_PROOF_COMMAND}:green`]);
+    const dst = await constats(join(ws, 'classe.txt'));
+    expect(dst.state.removed).toBe(true);
+    expect(dst.verdicts).toEqual(['exists:red']);
+  });
+
+  it('7. un fichier écrit par le job puis effacé HORS de ses appels reste rouge', async () => {
     const fichier = join(ws, 'rapport.md');
     await call('file_write', { path: 'rapport.md', content: '# Rapport\n' });
     // Une personne, un autre processus : aucun appel du job autour.
@@ -246,13 +340,11 @@ describe('un livrable retiré par le job (#916) @cap:verifier-un-livrable/moteur
     const f = await constats(fichier);
     expect(f.state.removed).toBe(false);
     expect(f.state.decisionStatus).toBe('red');
-    expect(f.runs).toHaveLength(1);
-    expect(f.runs[0]!.command).toBe('exists');
-    expect(f.runs[0]!.verdict).toBe('red');
+    expect(f.verdicts).toEqual(['exists:red']);
     expect(f.runs[0]!.stderrTail).toContain('not found');
   });
 
-  it('un fichier retiré par le job qui revient HORS de ses appels rougit sur son absence', async () => {
+  it('8. un fichier retiré par le job qui revient HORS de ses appels rougit sur son absence', async () => {
     const source = join(ws, 'a.md');
     await writeFile(source, 'a');
     await call('file_move', { source: 'a.md', destination: 'b.md' });
@@ -263,13 +355,11 @@ describe('un livrable retiré par le job (#916) @cap:verifier-un-livrable/moteur
     const src = await constats(source);
     expect(src.state.removed).toBe(true);
     expect(src.state.decisionStatus).toBe('red');
-    expect(src.runs).toHaveLength(1);
-    expect(src.runs[0]!.command).toBe(REMOVED_PROOF_COMMAND);
-    expect(src.runs[0]!.verdict).toBe('red');
+    expect(src.verdicts).toEqual([`${REMOVED_PROOF_COMMAND}:red`]);
     expect(src.runs[0]!.stderrTail).toContain('exists again');
   });
 
-  it('un fichier que le job retire puis réécrit redevient un livrable qui doit exister', async () => {
+  it('9. un fichier que le job retire puis réécrit redevient un livrable qui doit exister', async () => {
     const source = join(ws, 'note.md');
     await writeFile(source, 'v1');
     await call('file_move', { source: 'note.md', destination: 'archive.md' });
@@ -285,7 +375,7 @@ describe('un livrable retiré par le job (#916) @cap:verifier-un-livrable/moteur
     expect(src.runs.map((r) => r.command)).not.toContain(REMOVED_PROOF_COMMAND);
   });
 
-  it('un fichier retiré que l’agent a PROMIS se prouve comme une promesse : rouge', async () => {
+  it('10. un fichier retiré que l’agent a PROMIS se prouve comme une promesse : rouge', async () => {
     const source = join(ws, 'promis.md');
     await writeFile(source, 'x');
     await call('file_move', { source: 'promis.md', destination: 'ailleurs.md' });
@@ -305,6 +395,6 @@ describe('un livrable retiré par le job (#916) @cap:verifier-un-livrable/moteur
     const src = await constats(source);
     expect(src.state.removed).toBe(true);
     expect(src.state.decisionStatus).toBe('red');
-    expect(src.runs.map((r) => `${r.command}:${r.verdict}`)).toEqual(['exists:red']);
+    expect(src.verdicts).toEqual(['exists:red']);
   });
 });

@@ -19,8 +19,49 @@
 // nom de type (T13(c)).
 //
 // LE CONSTAT N'A PAS DE POUVOIR : il ne lance rien, il fait un `stat`.
+//
+// L'ABSENCE N'EST VERTE QUE SI AUCUN TRAVAIL DU JOB N'EST PERDU (revue A de la
+// PR #919, passe 1). « Le job l'a retiré » ne suffit pas : un `file_write
+// rapport.md` suivi d'un `run_command` de nettoyage qui l'efface finissait vert
+// sur l'absence, sans réparation, rapport perdu — là où main le rendait rouge
+// et rouvrait le run. Les lignes non promises sont le filet de #509 pour ce
+// que les outils de fichiers écrivent. Trois cas, décidés par
+// `removalLosesWork`, sans rien savoir d'un outil ni d'un type :
+//
+//   a. le job n'a jamais écrit de contenu à cette adresse : il a retiré un
+//      fichier qu'il n'a pas créé (la forme de #916). Absence verte ;
+//   b. il y a écrit un contenu, et ce contenu existe encore à une autre adresse
+//      du job (un déplacement, un renommage, par n'importe quel outil) :
+//      absence verte pour la source ;
+//   c. il y a écrit un contenu, et ce contenu n'est plus nulle part : la preuve
+//      du type, donc `exists`, donc rouge — comme sur main, réparation
+//      comprise. Un fichier temporaire que le job crée puis efface est donc
+//      rouge, comme sur main : c'est la conséquence de la règle, pas un cas.
+//
+// « LE JOB A ÉCRIT » se lit dans `constated_writes`, la source qu'utilise déjà
+// la porte d'écrasement (`currentContentWrittenByJob`), et SEULEMENT sur les
+// tours de ses appels d'outils : l'écriture que la PLATEFORME fait pour le job
+// (`PLATFORM_WRITE_TURN`, un fichier reçu par un canal, #918) n'est pas un
+// travail du job. C'est la copie d'un message que la personne a encore dans son
+// canal ; l'effacer à sa demande n'est pas perdre ce que le run a produit.
+// Reçu puis déplacé dans un dossier : vert dans les deux lectures (cas a ou b).
+//
+// Un fichier qui existait avant le job et que le job a MODIFIÉ puis effacé
+// relève du cas c quand la modification n'est plus nulle part : ce que le run
+// a écrit est perdu, et c'est ce que la preuve doit dire.
+//
+// « Une autre adresse du job » : les autres lignes d'état du job ET les
+// chemins de ses `constated_writes`. Un `mv` de shell n'ouvre aucune ligne
+// d'état pour sa destination ; c'est le constat (git, ou l'instantané de
+// checkpoint hors dépôt) qui la nomme. Un shell qui déplace un fichier hors de
+// tout ce qui est constaté reste au cas c : rouge, faute de pouvoir montrer le
+// contenu ailleurs.
 
 import { stat } from 'node:fs/promises';
+import { isAbsolute } from 'node:path';
+import { constatedWrites, desc, eq } from '@nodal-agents/db';
+import type { AnyDrizzleDb } from '@nodal-agents/db';
+import { PLATFORM_WRITE_TURN, cheminConstate, fingerprint } from '@nodal-agents/tools';
 import type {
   DeliverableVerifier,
   LoadedConfig,
@@ -109,4 +150,50 @@ export function removedDeliverableVerifier(base: DeliverableVerifier): Deliverab
       };
     },
   };
+}
+
+/**
+ * Retirer ce livrable a-t-il PERDU un travail du job ? (cas c de l'en-tête)
+ *
+ * `address` est l'adresse retirée ; `otherAddresses`, celles des autres lignes
+ * d'état du job. Lit `constated_writes` (la dernière écriture du job à cette
+ * adresse, hors tour de la plateforme) puis le disque (l'empreinte actuelle des
+ * autres adresses du job). Une écriture sans empreinte (un shell qui écrit
+ * sans rapporter ses octets) ne peut pas être retrouvée ailleurs : perdue.
+ */
+export async function removalLosesWork(
+  tx: AnyDrizzleDb,
+  jobId: string,
+  address: string,
+  otherAddresses: readonly string[],
+): Promise<boolean> {
+  const ici = await cheminConstate(address);
+  const ecritures = await tx
+    .select({
+      path: constatedWrites.path,
+      turn: constatedWrites.turn,
+      changeKind: constatedWrites.changeKind,
+      sha: constatedWrites.contentSha256,
+    })
+    .from(constatedWrites)
+    .where(eq(constatedWrites.jobId, jobId))
+    .orderBy(desc(constatedWrites.createdAt));
+  const derniere = ecritures.find(
+    (e) => e.path === ici && e.turn !== PLATFORM_WRITE_TURN && e.changeKind !== 'deleted',
+  );
+  // Cas a : le job n'a rien écrit ici.
+  if (!derniere) return false;
+  if (derniere.sha === null) return true;
+  const ailleurs = new Set<string>();
+  for (const a of otherAddresses) {
+    if (isAbsolute(a)) ailleurs.add(await cheminConstate(a));
+  }
+  for (const e of ecritures) ailleurs.add(e.path);
+  ailleurs.delete(ici);
+  for (const autre of ailleurs) {
+    const f = await fingerprint(autre);
+    // Cas b : le contenu que le job a écrit ici existe encore ailleurs.
+    if (f.kind === 'file' && f.sha256 === derniere.sha) return false;
+  }
+  return true;
 }

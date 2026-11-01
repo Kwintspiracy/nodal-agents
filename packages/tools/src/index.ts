@@ -333,6 +333,9 @@ export {
   PLATFORM_WRITE_TURN,
   recordPlatformWrites,
 } from './verification/record-constat';
+// L'empreinte d'un fichier (trois états) : la preuve d'un livrable retiré
+// (#916) cherche par elle si le contenu que le job a écrit existe encore.
+export { fingerprint } from './verification/observed';
 // Le périmètre de processus d'un job (#750) : un connecteur qui lance un
 // programme par `runCli` (wrangler) le range dans le job, comme `code_task`.
 export { jobProcessScope, openProcessScope, type JobProcessScope } from '@nodal-agents/sandbox';

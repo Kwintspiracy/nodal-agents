@@ -103,7 +103,7 @@ import type { DecisionStatus, JobResultKind } from '@nodal-agents/shared';
 import { readProofRepairAttempts } from '@nodal-agents/shared';
 import { resolveRunWorkspaces, withJobFolder } from '@nodal-agents/tools';
 import { getVerifier } from '../verification/registry.ts';
-import { removedDeliverableVerifier } from '../verification/removed.ts';
+import { removalLosesWork, removedDeliverableVerifier } from '../verification/removed.ts';
 import { buildRepairBrief } from '../verification/repair-brief.ts';
 import type { RepairBriefCommand } from '../verification/repair-brief.ts';
 import type {
@@ -880,8 +880,22 @@ export async function finalizeJobSuccess(
       // absence, quel que soit son type (`verification/removed.ts`). Sauf
       // s'il est PROMIS : l'agent l'a nommé dans `return_result.deliverables`,
       // c'est une promesse qu'il existe, et elle se prouve comme telle.
+      // Et seulement si aucun travail du job n'est perdu (revue A de #919) :
+      // un contenu que le job a écrit là et qui n'est plus nulle part garde la
+      // preuve de son type, donc son rouge et sa réparation.
       const typed = resolveVerifier(state.deliverableType);
-      const verifier = state.removed && !state.declared ? removedDeliverableVerifier(typed) : typed;
+      const absenceSuffit =
+        state.removed &&
+        !state.declared &&
+        !(await removalLosesWork(
+          tx,
+          jobId,
+          state.displayPathSnapshot ?? state.canonicalKey,
+          states
+            .filter((s) => s.id !== state.id)
+            .map((s) => s.displayPathSnapshot ?? s.canonicalKey),
+        ));
+      const verifier = absenceSuffit ? removedDeliverableVerifier(typed) : typed;
       if (state.dirtyGeneration === null) {
         throw new Error(
           `${VERIFY_STATE_GENERATION_MISSING}: ${state.deliverableType} ${state.canonicalKey}`,
