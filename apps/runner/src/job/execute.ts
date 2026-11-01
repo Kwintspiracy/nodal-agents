@@ -3155,6 +3155,7 @@ async function runJobTracked(
     }
     try {
       const kept = await saveToolAttachments(
+        { db, jobId: jobId as string },
         toolImagesDir(sharedWorkspacePath, jobId as string),
         toolCallId,
         result.attachments,

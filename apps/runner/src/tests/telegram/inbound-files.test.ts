@@ -7,6 +7,7 @@
 // (la base de test) puis attachInboundFiles. Seul le Bot API est remplacé
 // (getTelegramFile) ; le disque est un vrai dossier temporaire.
 
+import { createHash } from 'node:crypto';
 import { mkdtemp, readFile, readdir, rm, mkdir, stat, writeFile, utimes } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -20,13 +21,16 @@ import type { TestDb } from '@nodal-agents/db/test-utils';
 import { eq } from '@nodal-agents/db';
 import {
   agentJobs,
+  approvalRequests,
   channelAllowedConversations,
+  constatedWrites,
   conversationHandleFor,
   conversations,
   telegramAllowedChats,
 } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import {
+  cheminConstate,
   createToolRegistry,
   executeTool,
   registerBuiltins,
@@ -37,7 +41,7 @@ import {
 import type { ModelAttachmentInput, ToolContext } from '@nodal-agents/tools';
 import type { TelegramUpdate } from '@nodal-agents/delivery';
 import type { RunnerDeps } from '../../deps.ts';
-import { hydrateForLlm } from '../../job/model-images.ts';
+import { hydrateForLlm, saveToolAttachments, toolImagesDir } from '../../job/model-images.ts';
 import { addressedByHandle } from '../../llm/addressed-by-handle.ts';
 
 // Provider calls leave through packages/llm's own transport (#609): routed to
@@ -1039,10 +1043,10 @@ const INVOICE = buildTestPdf([{ text: 'Facture EDF 2026' }]);
 
 /**
  * Le chemin d'une image qu'un modèle ne voit pas, dans sa note
- * (`visionRoutingNote`). La note dit aujourd'hui « saved at saved at » : la
- * phrase et son `where` portent chacun les mots.
+ * (`visionRoutingNote`) : « saved at » une fois, puis le chemin (#913 ; la
+ * note disait « saved at saved at »).
  */
-const ROUTING_NOTE_PATH = /IMAGE \((?:saved at )+(.+?)\)\. It was not passed to you/;
+const ROUTING_NOTE_PATH = /IMAGE \(saved at ((?!saved at ).+?)\)\. It was not passed to you/;
 
 /** La requête que le fournisseur reçoit : `hydrateForLlm` puis la frontière des handles. */
 async function requestAsTheProviderGetsIt(
@@ -1237,16 +1241,12 @@ describe('a received file opens at the path the model is given (#910) @cap:parle
       expect(copied.output).toMatchObject({ ok: true, operation: 'copied' });
       expect(await readFile(join(classement, 'copie.pdf'))).toEqual(INVOICE);
 
-      // Retirer un fichier du dossier partagé que le run n'a pas écrit passe
-      // par une personne (la porte d'écrasement, #881) : le déplacement est
-      // joué ici comme sous une autonomie complète, celle où la porte ne
-      // demande rien. Ce qu'il prouve est le chemin, pas la porte.
-      const moved = await callFileTool(
-        jobId,
-        'file_move',
-        { source: workspacePath, destination: 'shared/Classement/Facture EDF.pdf' },
-        'fully_autonomous',
-      );
+      // Le fichier reçu est une écriture de CE job (#913) : le déplacer, dans
+      // l'autonomie par défaut, ne demande à personne.
+      const moved = await callFileTool(jobId, 'file_move', {
+        source: workspacePath,
+        destination: 'shared/Classement/Facture EDF.pdf',
+      });
       expect(moved.output.reason ?? null).toBeNull();
       expect(moved.output).toMatchObject({ ok: true, operation: 'moved' });
       expect(await readFile(join(classement, 'Facture EDF.pdf'))).toEqual(INVOICE);
@@ -1476,4 +1476,251 @@ describe('a received file opens at the path the model is given (#910) @cap:parle
     },
     180_000,
   );
+});
+
+/** Un outil du registre par le vrai seam, son résultat tel quel (une approbation comprise). */
+async function runFileTool(
+  jobId: string,
+  name: string,
+  input: Record<string, unknown>,
+  autonomy?: 'fully_autonomous',
+) {
+  const registry = createToolRegistry();
+  registerBuiltins(registry);
+  const tool = registry.get(name);
+  if (!tool) throw new Error(`no tool ${name}`);
+  const { workspaces } = await resolveRunWorkspaces(
+    db as unknown as AnyDrizzleDb,
+    seed.agentId,
+    seed.entityId,
+  );
+  return executeTool(
+    tool,
+    input as never,
+    {
+      jobId,
+      agentId: seed.agentId,
+      entityId: seed.entityId,
+      db: db as unknown as ToolContext['db'],
+      jobChatId: String(CHAT),
+      turn: 1,
+      workspaces,
+    },
+    // L'autonomie par défaut (`destructive_gate`), aucune règle : la porte décide seule.
+    { approvalRules: [], ...(autonomy ? { autonomy } : {}), onApprovalRequired: async () => {} },
+  );
+}
+
+const sha256 = (bytes: Uint8Array | string) => createHash('sha256').update(bytes).digest('hex');
+
+/** Les écritures que `constated_writes` porte pour un job : la porte d'écrasement les lit. */
+async function writesOf(jobId: string) {
+  return db
+    .select({
+      path: constatedWrites.path,
+      turn: constatedWrites.turn,
+      kind: constatedWrites.changeKind,
+      sha: constatedWrites.contentSha256,
+    })
+    .from(constatedWrites)
+    .where(eq(constatedWrites.jobId, jobId));
+}
+
+async function approvalsOf(jobId: string) {
+  return db.select().from(approvalRequests).where(eq(approvalRequests.jobId, jobId));
+}
+
+async function otherJob(): Promise<string> {
+  const [row] = await db
+    .insert(agentJobs)
+    .values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      channel: 'dashboard',
+      task: 'un autre run',
+    })
+    .returning({ id: agentJobs.id });
+  return row!.id;
+}
+
+// #913 : le PDF que le propriétaire envoie sur Telegram est rangé pour son job
+// par la réception, puis l'agent le range avec `file_move`, et une demande
+// d'approbation apparaissait alors que l'outil est autonome. La porte
+// d'écrasement du dossier partagé (#881) protège un fichier que « ce job n'a pas
+// écrit », et l'écriture de la réception n'était pas rangée dans
+// `constated_writes` : le fichier reçu POUR ce job comptait comme celui d'un
+// autre. Toute écriture que la plateforme fait pour un job est désormais rangée
+// comme la sienne, par le même rangement que ses outils.
+// Mutations vérifiées : `recordPlatformWrites` retiré de la réception → les
+// cas Telegram et Discord rouges (et le parcours #910, joué sans autonomie
+// complète) ; retiré de `saveToolAttachments` → le cas du fichier d'outil
+// rouge ; la porte qui croit toute ligne du job sans comparer l'empreinte →
+// « réécrit par un autre job » rouge.
+describe('a file received for a job is written by that job (#913) @cap:parler-par-canal-externe/moteur', () => {
+  beforeEach(async () => {
+    await db.delete(channelAllowedConversations);
+    await db.insert(channelAllowedConversations).values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      channel: 'discord',
+      conversationId: DISCORD_CHANNEL,
+      kind: 'channel',
+      status: 'active',
+    });
+  });
+
+  const classement = () => join(root, seed.entityId, 'shared', 'Classement');
+
+  it('Telegram: file_move of the received PDF, default autonomy, moves it without asking anyone', async () => {
+    telegramFiles.set('doc-913', INVOICE);
+    const { jobId, outcomes } = await deliver(
+      update({
+        caption: 'Range moi ça',
+        document: { file_id: 'doc-913', file_name: 'Facture.pdf', mime_type: 'application/pdf' },
+      }),
+    );
+    const received = outcomes[0]!;
+    if (!received.received) throw new Error(`not received: ${received.reason}`);
+    expect(await writesOf(jobId)).toEqual([
+      { path: await cheminConstate(received.path), turn: 0, kind: 'added', sha: sha256(INVOICE) },
+    ]);
+
+    const res = await runFileTool(jobId, 'file_move', {
+      source: received.workspacePath,
+      destination: 'shared/Classement/Facture.pdf',
+      create_dirs: true,
+      purpose: 'Ranger le fichier reçu.',
+    });
+
+    expect(res).toMatchObject({ outcome: 'success', output: { ok: true, operation: 'moved' } });
+    expect(await approvalsOf(jobId)).toEqual([]);
+    expect(await readFile(join(classement(), 'Facture.pdf'))).toEqual(INVOICE);
+    await expect(stat(received.path)).rejects.toThrow();
+    await rm(classement(), { recursive: true });
+  });
+
+  it('Discord: file_move of the received image, default autonomy, moves it without asking anyone', async () => {
+    const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 4, 5, 6]);
+    const { jobId, job } = await deliverDiscord(
+      'range la',
+      [
+        {
+          url: 'https://cdn.discordapp.test/scan.png',
+          contentType: 'image/png',
+          size: PNG.byteLength,
+          name: 'scan.png',
+        },
+      ],
+      async () => new Response(PNG, { status: 200 }),
+    );
+    const onDisk = join(root, seed.entityId, 'shared', 'discord', jobId, 'scan.png');
+    expect(JSON.stringify(job.messages)).toContain(`shared/discord/${jobId}/scan.png`);
+    expect(await writesOf(jobId)).toEqual([
+      { path: await cheminConstate(onDisk), turn: 0, kind: 'added', sha: sha256(PNG) },
+    ]);
+
+    const res = await runFileTool(jobId, 'file_move', {
+      source: `shared/discord/${jobId}/scan.png`,
+      destination: 'shared/Classement/scan.png',
+      create_dirs: true,
+      purpose: 'Ranger le fichier reçu.',
+    });
+
+    expect(res).toMatchObject({ outcome: 'success', output: { ok: true, operation: 'moved' } });
+    expect(await approvalsOf(jobId)).toEqual([]);
+    expect(new Uint8Array(await readFile(join(classement(), 'scan.png')))).toEqual(PNG);
+    await rm(classement(), { recursive: true });
+  });
+
+  it('a file a tool returned, saved by the runner for the job, is that job’s write too', async () => {
+    const jobId = await otherJob();
+    const shared = join(root, seed.entityId, 'shared');
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 9, 9]);
+    const [part] = await saveToolAttachments(
+      { db: db as unknown as AnyDrizzleDb, jobId },
+      toolImagesDir(shared, jobId),
+      'call-913',
+      [{ mediaType: 'image/png', data: Buffer.from(png).toString('base64') }],
+    );
+    const saved = join(toolImagesDir(shared, jobId), 'call-913-1.png');
+    expect(part).toEqual({ type: 'image-url', url: pathToFileURL(saved).href });
+    expect(await writesOf(jobId)).toEqual([
+      { path: await cheminConstate(saved), turn: 0, kind: 'added', sha: sha256(png) },
+    ]);
+
+    const res = await runFileTool(jobId, 'file_move', {
+      source: `shared/tools/${jobId}/call-913-1.png`,
+      destination: 'shared/Classement/',
+      create_dirs: true,
+      purpose: 'Ranger le fichier reçu.',
+    });
+
+    expect(res.outcome).toBe('success');
+    expect(await approvalsOf(jobId)).toEqual([]);
+    expect(new Uint8Array(await readFile(join(classement(), 'call-913-1.png')))).toEqual(png);
+    await rm(classement(), { recursive: true });
+    await rm(toolImagesDir(shared, jobId), { recursive: true, force: true });
+  });
+
+  it('a shared file another job wrote still waits for a person, and nothing moves', async () => {
+    telegramFiles.set('doc-913b', INVOICE);
+    const { jobId } = await deliver(
+      update({
+        caption: 'Range moi ça',
+        document: { file_id: 'doc-913b', file_name: 'Facture.pdf', mime_type: 'application/pdf' },
+      }),
+    );
+    const other = await otherJob();
+    const written = await callFileTool(other, 'file_write', {
+      path: 'shared/note-913.txt',
+      content: 'le travail d’un autre',
+    });
+    expect(written.output).toMatchObject({ ok: true });
+    const theirs = join(root, seed.entityId, 'shared', 'note-913.txt');
+
+    const res = await runFileTool(jobId, 'file_move', {
+      source: 'shared/note-913.txt',
+      destination: 'shared/Classement/',
+      create_dirs: true,
+      purpose: 'Ranger le fichier reçu.',
+    });
+
+    expect(res).toMatchObject({ outcome: 'awaiting_approval' });
+    expect((await approvalsOf(jobId)).map((a) => a.toolName)).toEqual(['file_move']);
+    expect(await readFile(theirs, 'utf8')).toBe('le travail d’un autre');
+    await rm(theirs);
+  });
+
+  it('a received file another job rewrote after the intake waits for a person, and nothing moves', async () => {
+    telegramFiles.set('doc-913c', INVOICE);
+    const { jobId, outcomes } = await deliver(
+      update({
+        caption: 'Range moi ça',
+        document: { file_id: 'doc-913c', file_name: 'Facture.pdf', mime_type: 'application/pdf' },
+      }),
+    );
+    const received = outcomes[0]!;
+    if (!received.received) throw new Error(`not received: ${received.reason}`);
+    // Un autre run réécrit le fichier reçu (sous une autonomie complète, pour
+    // que SA porte ne l'arrête pas) : le contenu n'est plus celui de la réception.
+    const other = await otherJob();
+    const rewritten = await callFileTool(
+      other,
+      'file_write',
+      { path: received.workspacePath, content: 'réécrit par un autre run' },
+      'fully_autonomous',
+    );
+    expect(rewritten.output).toMatchObject({ ok: true });
+
+    const res = await runFileTool(jobId, 'file_move', {
+      source: received.workspacePath,
+      destination: 'shared/Classement/',
+      create_dirs: true,
+      purpose: 'Ranger le fichier reçu.',
+    });
+
+    expect(res).toMatchObject({ outcome: 'awaiting_approval' });
+    expect((await approvalsOf(jobId)).map((a) => a.toolName)).toEqual(['file_move']);
+    expect(await readFile(received.path, 'utf8')).toBe('réécrit par un autre run');
+  });
 });
