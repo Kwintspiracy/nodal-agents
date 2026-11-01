@@ -40,7 +40,12 @@
 //  13. un fichier déplacé puis réécrit par le job : la preuve du document ;
 //  14. un fichier déplacé que l'agent a PROMIS : `exists`, rouge ;
 //  15. un déplacement déclaré vers une destination qui ne retrouve aucune
-//      ligne « fichier » du job (elle tombe dans un projet de code) : rouge.
+//      ligne « fichier » du job (elle tombe dans un projet de code) : rouge ;
+//  16. la source effacée par un autre acteur entre la sonde et le `rename` :
+//      l'outil échoue (`ok:false`), rien n'est confirmé, la source est rouge
+//      (revue A de #919, passe 8) ;
+//  17. un appel qui lève après un déplacement confirmé : rouge — seul un appel
+//      qui a rendu son résultat fait d'un retrait un déplacement.
 //
 // Les mutations vérifiées sont listées dans la PR #919.
 
@@ -503,6 +508,69 @@ describe('un livrable déplacé par le job, déclaré (#916) @cap:verifier-un-li
     const r = await constats(source);
     expect(r.state.removed).toBe(true);
     expect(r.state.movedToKey).not.toBeNull();
+    expect(r.verdicts).toEqual([`${REMOVED_PROOF_COMMAND}:red`]);
+  });
+
+  it('16. la source effacée par un autre acteur entre la sonde et le rename : l’outil échoue, la source est rouge', async () => {
+    // Le scénario P2 de la revue A, passe 8, à l'identique : la destination est
+    // un livrable qui existe déjà, et le `rename` échoue sur ENOENT.
+    const x = join(ws, 'x.md');
+    await call('file_write', { path: 'x.md', content: '# X\n' });
+    await call('file_write', { path: 'report.md', content: '# Report\n' });
+    // LA COURSE, au seul point où elle peut tomber : après la sonde d'avant du
+    // seam (prise avant `tool.execute`), avant le `rename` de l'outil. Le
+    // déplacement lui-même est le vrai `file_move`.
+    const vrai = tool('file_move');
+    const enCourse = {
+      ...vrai,
+      execute: async (input: unknown, c: ToolContext) => {
+        await rm(x);
+        return vrai.execute(input as never, c);
+      },
+    } as typeof vrai;
+    turn += 1;
+    const res = await executeTool(
+      enCourse,
+      { source: 'x.md', destination: 'report.md' },
+      ctx(),
+      opts(),
+    );
+    expect(res.outcome).toBe('success');
+    expect((res as { output: { ok: boolean } }).output.ok, 'le déplacement n’a pas échoué').toBe(
+      false,
+    );
+
+    await finalize();
+
+    const r = await constats(x);
+    expect(r.state.removed).toBe(true);
+    expect(r.state.movedToKey).toBeNull();
+    expect(r.verdicts).toEqual([`${REMOVED_PROOF_COMMAND}:red`]);
+  });
+
+  it('17. un appel qui lève après un déplacement confirmé : la source est rouge', async () => {
+    const a = join(ws, 'a.md');
+    await call('file_write', { path: 'a.md', content: '# A\n' });
+    // Le vrai `file_move` déplace et confirme, puis l'appel lève : un appel qui
+    // n'a pas rendu son résultat ne fait d'aucun retrait un déplacement.
+    const vrai = tool('file_move');
+    const quiLeve = {
+      ...vrai,
+      execute: async (input: unknown, c: ToolContext) => {
+        await vrai.execute(input as never, c);
+        throw new Error('panne après le déplacement');
+      },
+    } as typeof vrai;
+    turn += 1;
+    const res = await executeTool(quiLeve, { source: 'a.md', destination: 'b.md' }, ctx(), opts());
+    expect(res.outcome).toBe('error');
+    expect(await stat(a).catch(() => null), 'le fichier n’a pas été déplacé').toBeNull();
+
+    await finalize();
+
+    const r = await constats(a);
+    expect(r.state.removed).toBe(true);
+    expect(r.state.movedToKey).toBeNull();
     expect(r.verdicts).toEqual([`${REMOVED_PROOF_COMMAND}:red`]);
   });
 });

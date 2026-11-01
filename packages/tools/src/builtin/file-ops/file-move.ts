@@ -353,6 +353,8 @@ export const fileMoveTool: ToolDefinition<typeof FileMoveInputSchema, FileMoveOu
       try {
         await assertStillOurs(ctx, destroyed);
         await rename(source, destination);
+        // Le déplacement est FAIT : il se confirme maintenant, jamais avant (#916).
+        ctx.confirmMove?.(source, destination);
       } catch (err) {
         // Deux volumes (un autre disque, un partage monté) : un renommage n'y
         // traverse pas. Le déplacement se fait alors en deux temps, copie puis
@@ -361,6 +363,8 @@ export const fileMoveTool: ToolDefinition<typeof FileMoveInputSchema, FileMoveOu
         await copyIntoPlace(ctx, source, destination, destroyed);
         try {
           await unlink(source);
+          // Copié PUIS supprimé : le déplacement est fait (#916).
+          ctx.confirmMove?.(source, destination);
         } catch (unlinkErr) {
           // La copie a eu lieu, la suppression non : les DEUX fichiers
           // existent, et l'agent doit le savoir, jamais croire à un

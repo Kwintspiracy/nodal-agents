@@ -307,6 +307,15 @@ export interface ToolContext {
    */
   reportWrittenContent?: (absPath: string, sha256: string) => void;
   /**
+   * CONFIRME qu'un outil vient de déplacer `source` vers `destination`, APRÈS
+   * l'avoir fait (#916, revue A de #919, passe 8). `MutationTarget.movesTo` est
+   * l'intention, déclarée avant l'appel ; ceci est le fait. Le seam ne tient un
+   * retrait pour un déplacement que si les deux sont là et que l'appel a
+   * rendu son résultat sans lever. Un outil qui ne l'appelle pas ne déplace
+   * rien, pour la vérification.
+   */
+  confirmMove?: (source: string, destination: string) => void;
+  /**
    * Rapporte l'empreinte (sha-256) des OCTETS qu'un outil vient de LIRE à
    * `absPath`, le chemin résolu qu'il a ouvert (le pendant de
    * `reportWrittenContent`). Le seam la range dans `tool_call_reads` : c'est

@@ -835,6 +835,12 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
   // Les empreintes des octets que l'outil LIT (le pendant des écritures) :
   // rangées dans `tool_call_reads` une fois la ligne d'audit écrite.
   const contenusLus = new Map<string, string>();
+  // Les déplacements que l'outil CONFIRME avoir faits, source → destination
+  // (#916) : le fait qui répond à l'intention `movesTo`.
+  const deplacementsFaits = new Map<string, string>();
+  // L'outil a-t-il RENDU son résultat ? Un appel qui lève, expire ou est
+  // interrompu ne fait d'aucun retrait un déplacement, confirmé ou non.
+  let outilARendu = false;
   // Les fichiers (images, PDF) que CET APPEL donne au modèle (`model-images.ts`) :
   // admis par la règle unique, rendus avec le résultat, jamais posés sur la ligne.
   const attachmentsForModel: ToolAttachment[] = [];
@@ -844,6 +850,7 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
     ...(porteLaisseePasserSansPersonne ? { sharedOverwriteUnattended: true } : {}),
     reportWrittenContent: (absPath, sha256) => contenusEcrits.set(absPath, sha256),
     reportReadContent: (absPath, sha256) => contenusLus.set(absPath, sha256),
+    confirmMove: (source, destination) => deplacementsFaits.set(source, destination),
     attachForModel: (attachment) => {
       const outcome = admitModelAttachment(ctx.modelInput, attachment, attachmentsForModel);
       if (outcome.attached) attachmentsForModel.push(attachment);
@@ -933,6 +940,7 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
     let output: TOutput;
     try {
       output = await tool.execute(validatedInput, execCtx);
+      outilARendu = true;
     } catch (err) {
       // Only an exception out of the tool's OWN execute() is the tool's text
       // (`raisedByTool`, read by the catch below). Everything after — the
@@ -963,6 +971,7 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
       if (presenceAvant && mutationTargets) {
         await recordObservedRemovals(ctx.db, ctx.jobId, presenceAvant, {
           targets: mutationTargets,
+          deplacementsFaits: outilARendu ? deplacementsFaits : new Map(),
           workspaceRoots: (ctx.workspaces ?? []).map((w) => w.path),
         });
       }

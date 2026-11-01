@@ -13,7 +13,10 @@
 // seulement si,
 //   1. l'appel avait DÉCLARÉ le déplacement de ce chemin vers une destination
 //      (`MutationTarget.movesTo`, une donnée que l'outil porte — jamais un test
-//      sur son nom) ;
+//      sur son nom), ET l'outil l'a CONFIRMÉ après l'avoir fait
+//      (`ToolContext.confirmMove`), dans un appel qui a rendu son résultat
+//      sans lever (revue A de #919, passe 8 : une intention n'est pas un fait,
+//      un `rename` qui échoue ne déplace rien) ;
 //   2. cette destination retrouve une ligne d'état du MÊME job, par la règle de
 //      clé de l'intention (`fileDeliverableKey`) : elle est alors jugée par sa
 //      propre preuve, et tout ce qui lui arrive ensuite la fait rougir, elle.
@@ -115,8 +118,14 @@ export async function probeJobDeliverables(
 
 /** Ce que l'appel a déclaré, pour juger un retrait. */
 export interface RemovalContext {
-  /** Les cibles de mutation de l'appel — celles qui portent `movesTo`. */
+  /** Les cibles de mutation de l'appel — celles qui portent `movesTo` (l'intention). */
   readonly targets: readonly MutationTarget[];
+  /**
+   * Les déplacements que l'outil a CONFIRMÉS après les avoir faits, source →
+   * destination (`ToolContext.confirmMove`) — vide quand l'appel a levé (le
+   * fait). Sans confirmation, une intention n'est rien (revue A, passe 8).
+   */
+  readonly deplacementsFaits: ReadonlyMap<string, string>;
   /** Les racines des dossiers du job : la règle de clé de l'intention. */
   readonly workspaceRoots: readonly string[];
 }
@@ -138,6 +147,11 @@ async function destinationDeclaree(address: string, ctx: RemovalContext): Promis
   for (const t of ctx.targets) {
     if (t.kind !== 'file' || t.movesTo === undefined) continue;
     if ((await cheminConstate(t.path)) !== ici) continue;
+    // L'intention ne vaut fait que si l'outil a confirmé CE déplacement-là.
+    const fait = ctx.deplacementsFaits.get(t.path);
+    if (fait === undefined || (await cheminConstate(fait)) !== (await cheminConstate(t.movesTo))) {
+      return null;
+    }
     return fileDeliverableKey(t.movesTo, ctx.workspaceRoots, 'document');
   }
   return null;
