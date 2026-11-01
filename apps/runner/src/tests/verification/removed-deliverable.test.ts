@@ -68,8 +68,21 @@
 //      identité ;
 //  21. une écriture dont aucun fait ne dit le contenu : rouge, et
 //      `VERIFICATION_RESCUE_IDENTITY_UNKNOWN` est journalisé ;
-//  22. une chaîne dont les pas n'ont pas d'identité connue (un harnais) :
-//      suivie par la chaîne, lue, et la source est verte.
+//  22. une chaîne dont les pas n'ont pas d'identité connue : suivie par la
+//      chaîne, lue, et la source est verte ;
+//  23. une copie par `file_move`, puis la source effacée : verte — la
+//      destination a l'empreinte d'APRÈS l'appel (revue A de #919, passe 5) ;
+//  24. une source réécrite entre l'instantané du seam et le déplacement, une
+//      copie de l'ancien contenu ailleurs, puis la destination effacée :
+//      rouge — l'identité est ce qui est arrivé, pas ce qui était parti.
+//
+// L'IDENTITÉ INCONNUE (tests 16, 21, 22). Depuis la passe 5, tout constat
+// garde l'empreinte d'APRÈS qu'il a lue : cible nommée, harnais, git,
+// checkpoint. Le seul chemin de production qui laisse encore une ligne sans
+// empreinte est une lecture qui échoue au constat (un fichier verrouillé, un
+// droit retiré) — impossible à provoquer de façon portable ici, Windows
+// compris. Ces trois tests posent donc cet état en base (`sansIdentite`), et
+// le disent.
 //
 // Mutations vérifiées : la liste est dans la PR #919, avec les tests que
 // chacune fait rougir.
@@ -219,10 +232,10 @@ async function finalize(
 }
 
 /**
- * Rend INCONNUE l'identité des constats de ces fichiers : ce que laisse un
- * écrivain qui nomme ses chemins sans en rapporter les octets, et qu'aucun
- * constat n'a lus (le harnais d'un `code_task`). Les lignes restent ; seule
- * l'empreinte observée tombe.
+ * Rend INCONNUE l'identité des constats de ces fichiers : l'état que laisse un
+ * constat dont la lecture d'après a échoué (fichier verrouillé, droit retiré),
+ * le seul chemin de production sans empreinte depuis la passe 5 de #919. Les
+ * lignes restent ; seule l'empreinte observée tombe.
  */
 async function sansIdentite(noms: readonly string[]): Promise<void> {
   const lignes = await db
@@ -569,9 +582,9 @@ describe('un livrable retiré par le job (#916) @cap:verifier-un-livrable/moteur
       `const f=require('fs');f.renameSync('draft.md','final/draft.md');` +
         `for(const n of [1,2,3])f.writeFileSync('big'+n+'.bin',Buffer.alloc(400000,n))`,
     );
-    // Les gros fichiers écrits par un écrivain qui n'en dit pas le contenu :
-    // leur identité inconnue en fait des candidats « nés au tour du retrait »,
-    // et seul le filtre de taille les écarte de la lecture.
+    // Les gros fichiers que le constat n'a pas pu lire : leur identité
+    // inconnue en fait des candidats « nés au tour du retrait », et seul le
+    // filtre de taille les écarte de la lecture.
     await sansIdentite(['big1.bin', 'big2.bin', 'big3.bin']);
 
     // Un plafond que les trois gros fichiers dépasseraient (1,2 Mo > 1 Mo) :
@@ -661,8 +674,8 @@ describe('un livrable retiré par le job (#916) @cap:verifier-un-livrable/moteur
   it('21. une écriture dont aucun fait ne dit le contenu : rouge, et c’est dit', async () => {
     const u = join(ws, 'u.md');
     await call('file_write', { path: 'u.md', content: 'U' });
-    // Un écrivain qui ne rapporte pas ses octets et qu'aucun constat n'a lus
-    // (un harnais, par exemple) : sa ligne de constat, telle qu'il la laisse.
+    // Une écriture dont le constat n'a pas pu lire le contenu (fichier
+    // verrouillé au moment du constat) : sa ligne, telle qu'elle reste.
     const [ecrite] = await db
       .select({ path: constatedWrites.path })
       .from(constatedWrites)
@@ -694,7 +707,7 @@ describe('un livrable retiré par le job (#916) @cap:verifier-un-livrable/moteur
     await call('file_write', { path: 'report.md', content: 'R' });
     await shell(`require('fs').renameSync('report.md','tmp.md')`);
     await shell(`require('fs').renameSync('tmp.md','final/report.md')`);
-    // Les deux pas laissés par un écrivain qui ne dit pas le contenu.
+    // Les deux pas, que le constat n'a pas pu lire.
     await sansIdentite(['tmp.md', 'final/report.md']);
 
     await finalize();
@@ -702,5 +715,53 @@ describe('un livrable retiré par le job (#916) @cap:verifier-un-livrable/moteur
     expect(await rouges()).toEqual([]);
     const r = await constats(source);
     expect(r.verdicts).toEqual([`${REMOVED_PROOF_COMMAND}:green`]);
+  });
+  it('23. une copie par file_move, puis la source effacée : la source est verte', async () => {
+    const a = join(ws, 'a.md');
+    await call('file_write', { path: 'a.md', content: 'X' });
+    await call('file_move', { source: 'a.md', destination: 'b.md', copy: true });
+    await shell(`require('fs').rmSync('a.md')`);
+
+    await finalize();
+
+    expect(await rouges()).toEqual([]);
+    const r = await constats(a);
+    expect(r.state.removed).toBe(true);
+    expect(r.verdicts).toEqual([`${REMOVED_PROOF_COMMAND}:green`]);
+  });
+
+  it('24. une source réécrite entre l’instantané et le déplacement : l’ancien contenu ne sauve pas la destination', async () => {
+    const dest = join(ws, 'dest.md');
+    await call('file_write', { path: 'src.md', content: 'old1' });
+    await call('file_write', { path: 'copy.md', content: 'old1' });
+    // La destination est un livrable du job avant le déplacement.
+    await call('file_write', { path: 'dest.md', content: 'zzzz' });
+    // LA COURSE, au seul point où elle peut tomber : après l'instantané du
+    // seam (pris avant `tool.execute`), avant le `rename` de l'outil. Le
+    // déplacement lui-même est le vrai `file_move`, rien d'autre ne change.
+    const vrai = tool('file_move');
+    const enCourse = {
+      ...vrai,
+      execute: async (input: unknown, c: ToolContext) => {
+        await writeFile(join(ws, 'src.md'), 'new1');
+        return vrai.execute(input as never, c);
+      },
+    } as typeof vrai;
+    turn += 1;
+    const res = await executeTool(
+      enCourse,
+      { source: 'src.md', destination: 'dest.md' },
+      ctx(),
+      opts(),
+    );
+    expect(res.outcome).toBe('success');
+    await shell(`require('fs').rmSync('dest.md')`);
+
+    await finalize();
+
+    const r = await constats(dest);
+    expect(r.state.removed).toBe(true);
+    // `new1` n'est nulle part ; `copy.md` porte `old1`, qui n'est jamais arrivé ici.
+    expect(r.verdicts).toEqual(['exists:red']);
   });
 });

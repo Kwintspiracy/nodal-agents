@@ -47,8 +47,9 @@ export interface ConstatedWrite {
   /** Le nom d'avant, pour un renommage seulement. */
   readonly renamedFrom?: string | null;
   /**
-   * L'empreinte (sha-256) du contenu que le CONSTAT a vu sur le disque après
-   * l'écriture — pas celle qu'un écrivain a rapportée (#919). Elle dit
+   * L'empreinte (sha-256) du contenu que le CONSTAT a lu sur le disque APRÈS
+   * l'appel, quelle que soit la source du constat — jamais une empreinte prise
+   * avant, ni celle qu'un écrivain a rapportée (#919). Elle dit
    * l'IDENTITÉ d'un contenu, jamais qu'un job en est l'auteur : la porte
    * d'écrasement ne la lit pas. Absente quand le constat n'a rien lu.
    */

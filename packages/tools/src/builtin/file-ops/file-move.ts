@@ -344,10 +344,6 @@ export const fileMoveTool: ToolDefinition<typeof FileMoveInputSchema, FileMoveOu
       if (input.create_dirs) await mkdir(dirname(destination), { recursive: true });
       if (input.copy) {
         await copyIntoPlace(ctx, source, destination, destroyed);
-        // Les octets de la destination SONT ceux de la source : un fait que
-        // seul cet outil connaît, rangé comme identité (#919), pas comme
-        // contenu écrit par ce run.
-        ctx.reportMovedContent?.(destination, source);
         return { ok: true, operation: 'copied', source, destination, bytes };
       }
       try {
@@ -375,7 +371,6 @@ export const fileMoveTool: ToolDefinition<typeof FileMoveInputSchema, FileMoveOu
           };
         }
       }
-      ctx.reportMovedContent?.(destination, source);
       return { ok: true, operation: 'moved', source, destination, bytes };
     } catch (err) {
       if (err instanceof WorkspaceError) return { ok: false, reason: err.message };

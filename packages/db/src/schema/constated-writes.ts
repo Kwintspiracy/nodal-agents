@@ -55,11 +55,11 @@ export const constatedWrites = pgTable(
      */
     contentSha256: text('content_sha256'),
     /**
-     * L'empreinte du contenu que le CONSTAT a vu après l'écriture (migration
-     * 0155, #919) : prise par git ou l'instantané de checkpoint, ou celle de
-     * la source d'un déplacement fait par un outil. L'IDENTITÉ d'un contenu,
-     * jamais une propriété : la porte d'écrasement ne lit que
-     * `content_sha256`. NULL quand le constat n'a rien lu.
+     * L'empreinte du contenu que le CONSTAT a lu sur le disque APRÈS l'appel
+     * (migration 0155, #919), pour toute source : cible nommée ou harnais,
+     * git, instantané de checkpoint. Jamais une empreinte prise avant.
+     * L'IDENTITÉ d'un contenu, jamais une propriété : la porte d'écrasement
+     * ne lit que `content_sha256`. NULL quand le constat n'a rien pu lire.
      */
     observedSha256: text('observed_sha256'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),

@@ -255,9 +255,9 @@ type Constat = {
 
 /**
  * L'IDENTITÉ du contenu qu'une écriture a laissé : un FAIT, ou rien (revue A
- * de #919, passe 4). L'empreinte que l'écrivain a rapportée, sinon celle que
- * le constat a vue sur le disque (git, l'instantané de checkpoint, ou la
- * source d'un `file_move`). Jamais une co-occurrence : un fichier retiré au
+ * de #919, passes 4 et 5). L'empreinte que l'écrivain a rapportée, sinon celle
+ * que le constat a lue sur le disque APRÈS l'appel (cible nommée, harnais,
+ * git, instantané de checkpoint). Jamais une co-occurrence : un fichier retiré au
  * même tour n'est pas ce qui est arrivé ici, et un `renamed_from` de git est
  * un rapprochement par similarité, pas une identité (`mv a b && sed -i` à
  * taille égale le donne avec un autre contenu).

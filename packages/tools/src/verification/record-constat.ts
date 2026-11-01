@@ -76,15 +76,20 @@ export interface LigneDeConstat extends ConstatedWrite {
  * la borne de `harness.ts`, redite ici : le constat disque est plus faible, et
  * c'est précisément pourquoi le constat par git existe.
  */
-export async function kindSurDisque(
+export async function constatSurDisque(
   path: string,
   before: FileSnapshot,
-): Promise<ConstatedChangeKind> {
+): Promise<ConstatedWrite> {
   const apres = await fingerprint(path);
-  if (apres.kind === 'absent') return 'deleted';
+  if (apres.kind === 'absent') return { path, kind: 'deleted' };
   const avant = before.get(path);
-  if (avant === undefined) return 'modified';
-  return avant.kind === 'absent' ? 'added' : 'modified';
+  const kind: ConstatedChangeKind =
+    avant === undefined ? 'modified' : avant.kind === 'absent' ? 'added' : 'modified';
+  // L'empreinte d'APRÈS l'appel (#919), lue ici de toute façon pour décider du
+  // genre : l'identité exacte du contenu que le constat a vu, gratuite. Un
+  // fichier illisible n'en a pas — son identité reste inconnue, et c'est dit
+  // là où elle sert (`apps/runner/src/verification/removed.ts`).
+  return apres.kind === 'file' ? { path, kind, observedSha256: apres.sha256 } : { path, kind };
 }
 
 /**
@@ -207,20 +212,30 @@ async function rangerConstats(input: ConstatsARanger): Promise<number> {
   for (const [chemin, sha] of input.contenusEcrits ?? []) {
     empreintes.set(await cheminConstate(chemin), sha);
   }
-  const vus = new Set<string>();
+  // Une ligne par chemin réel. Deux lignes du même appel pour le même chemin
+  // décrivent le MÊME état d'après (#919, revue A passe 5) : la première
+  // garde son genre et sa source (git avant disque, `fusionnerConstats`), et
+  // l'empreinte observée vient de n'importe laquelle des deux — jamais perdue
+  // parce qu'une ligne sans empreinte est arrivée la première.
+  const vues = new Map<string, { observedSha256: string | null }>();
   const values = [];
   for (const l of lignes) {
     // Le chemin RÉEL, pour que deux orthographes du même fichier ne fassent
     // pas deux lignes — voir `cheminConstate`.
     const path = await cheminConstate(l.path);
-    if (vus.has(path)) continue;
-    vus.add(path);
+    const deja = vues.get(path);
+    if (deja) {
+      if (deja.observedSha256 === null && l.kind !== 'deleted') {
+        deja.observedSha256 = l.observedSha256 ?? null;
+      }
+      continue;
+    }
     // L'empreinte de ce que l'outil a ÉCRIT (revue Codex de #505, passes 1 et
     // 2) : c'est elle que la porte d'écrasement compare au disque, jamais
     // l'ordre des lignes, ni une relecture du disque faite ici — un autre
     // écrivain a pu passer entre l'écriture et ce constat.
     const empreinte = l.kind === 'deleted' ? null : (empreintes.get(path) ?? null);
-    values.push({
+    const ligne = {
       jobId,
       turn,
       path,
@@ -228,10 +243,12 @@ async function rangerConstats(input: ConstatsARanger): Promise<number> {
       constatedBy: l.constatedBy,
       renamedFrom: l.renamedFrom ?? null,
       contentSha256: empreinte,
-      // Ce que le constat a VU (#919) : l'identité du contenu, jamais une
-      // propriété — la porte d'écrasement lit `contentSha256` seul.
+      // Ce que le constat a VU après l'appel (#919) : l'identité du contenu,
+      // jamais une propriété — la porte d'écrasement lit `contentSha256` seul.
       observedSha256: l.kind === 'deleted' ? null : (l.observedSha256 ?? null),
-    });
+    };
+    vues.set(path, ligne);
+    values.push(ligne);
   }
   // Le même fichier réécrit dans le MÊME tour reste une ligne (l'unicité de
   // #199), mais son empreinte suit la DERNIÈRE écriture : sinon la porte

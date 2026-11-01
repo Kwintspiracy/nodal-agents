@@ -81,7 +81,7 @@ import {
 } from './verification/git-constat';
 import {
   fusionnerConstats,
-  kindSurDisque,
+  constatSurDisque,
   recordConstatedWrites,
 } from './verification/record-constat';
 import { recordToolCallReads } from './verification/tool-call-reads';
@@ -836,9 +836,6 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
   // Les empreintes des octets que l'outil LIT (le pendant des écritures) :
   // rangées dans `tool_call_reads` une fois la ligne d'audit écrite.
   const contenusLus = new Map<string, string>();
-  // Ce qu'un outil a DÉPLACÉ ou COPIÉ, destination → source (#919) : l'identité
-  // du contenu arrivé est l'empreinte de la source prise avant l'appel.
-  const deplaces = new Map<string, string>();
   // Les fichiers (images, PDF) que CET APPEL donne au modèle (`model-images.ts`) :
   // admis par la règle unique, rendus avec le résultat, jamais posés sur la ligne.
   const attachmentsForModel: ToolAttachment[] = [];
@@ -848,7 +845,6 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
     ...(porteLaisseePasserSansPersonne ? { sharedOverwriteUnattended: true } : {}),
     reportWrittenContent: (absPath, sha256) => contenusEcrits.set(absPath, sha256),
     reportReadContent: (absPath, sha256) => contenusLus.set(absPath, sha256),
-    reportMovedContent: (destination, source) => deplaces.set(destination, source),
     attachForModel: (attachment) => {
       const outcome = admitModelAttachment(ctx.modelInput, attachment, attachmentsForModel);
       if (outcome.attached) attachmentsForModel.push(attachment);
@@ -1102,15 +1098,8 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
       // PR #227, constat 2).
       const disque: ConstatedWrite[] = [];
       for (const f of fichiersDisque) {
-        // L'identité d'un contenu déplacé par l'outil : l'empreinte de sa
-        // source, prise AVANT l'appel par l'instantané ci-dessus (#919).
-        const source = deplaces.get(f.path);
-        const avant = source === undefined ? undefined : filesBefore?.get(source);
-        disque.push({
-          path: f.path,
-          kind: await kindSurDisque(f.path, filesBefore ?? new Map()),
-          ...(avant?.kind === 'file' ? { observedSha256: avant.sha256 } : {}),
-        });
+        // Le genre ET l'empreinte d'APRÈS l'appel, lus une seule fois (#919).
+        disque.push(await constatSurDisque(f.path, filesBefore ?? new Map()));
       }
       // Ce que l'instantané de checkpoint a vu dans un workspace hors dépôt
       // (#590) est un constat DISQUE : ce n'est pas git du projet qui l'a vu.

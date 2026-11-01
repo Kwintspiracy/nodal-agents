@@ -25,10 +25,12 @@ ALTER TABLE job_deliverable_verification_state
   ADD COLUMN IF NOT EXISTS removed_size bigint;
 
 -- constated_writes.observed_sha256 — l'empreinte du contenu que le CONSTAT a
--- vu après l'écriture (revue A de la PR #919, passe 4) : celle que git ou
--- l'instantané de checkpoint prend déjà pour décider qu'il y a eu écriture, ou
--- celle de la source d'un déplacement fait par `file_move`. Elle dit QUEL
--- contenu est arrivé là, jamais qu'un job l'a écrit : la porte d'écrasement
--- continue de ne lire que `content_sha256`. NULL quand le constat n'a rien lu.
+-- lu sur le disque APRÈS l'appel (revue A de la PR #919, passes 4 et 5), pour
+-- toute source de constat : la cible nommée ou le fichier de harnais
+-- (`constatSurDisque`), git, l'instantané de checkpoint — chacun la calcule
+-- déjà pour décider qu'il y a eu écriture. Jamais une empreinte prise avant.
+-- Elle dit QUEL contenu est là, jamais qu'un job l'a écrit : la porte
+-- d'écrasement continue de ne lire que `content_sha256`. NULL quand le
+-- constat n'a rien pu lire.
 ALTER TABLE constated_writes
   ADD COLUMN IF NOT EXISTS observed_sha256 text;
