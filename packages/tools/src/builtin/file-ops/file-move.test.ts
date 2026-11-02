@@ -6,11 +6,12 @@
 // constat relues en base, et sur le texte que l'agent reçoit — jamais sur un
 // compte d'appels.
 //
-// Deux pannes du système ne se provoquent pas sur une machine de test : un
-// renommage entre deux volumes (EXDEV) et un fichier tenu par un autre
-// programme (EBUSY sous Windows). `node:fs/promises` est donc doublé ici, et
-// seulement pour le chemin que le test désigne : tout le reste — le seam, les
-// fichiers temporaires, les autres tests — passe par le vrai module.
+// Trois pannes du système ne se provoquent pas sur une machine de test : un
+// renommage ou un lien entre deux volumes (EXDEV), un volume sans liens
+// physiques (FAT32, exFAT : EPERM) et un fichier tenu par un autre programme
+// (EBUSY sous Windows). `node:fs/promises` est donc doublé ici, et seulement
+// pour le chemin que le test désigne : tout le reste — le seam, les fichiers
+// temporaires, les autres tests — passe par le vrai module.
 
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest';
 
@@ -18,8 +19,20 @@ const panne = vi.hoisted(() => ({
   /** `rename(source, …)` lève ce code quand `source` est ce chemin. */
   renameFrom: null as string | null,
   renameCode: 'EXDEV',
+  /**
+   * `link(source, …)` lève `code` pour la première règle dont `from` est
+   * `source`, ou `'*'` (tout lien : un volume sans liens physiques).
+   */
+  link: [] as { from: string; code: string }[],
   /** `unlink(chemin)` lève EBUSY quand `chemin` est celui-ci. */
   unlinkOf: null as string | null,
+  /**
+   * Un AUTRE fichier qui arrive à ce chemin à l'instant exact où l'outil y pose
+   * le sien (juste avant le `link`, le `rename` ou la création exclusive qui
+   * le visent) : la fenêtre qu'une vérification suivie d'un renommage laisse
+   * ouverte, rendue déterministe. Une seule fois.
+   */
+  arrive: null as { path: string; content: string } | null,
   /** Les pannes réellement levées : un faux qui ne se déclenche pas ne prouve rien. */
   levees: [] as string[],
 }));
@@ -33,16 +46,37 @@ vi.mock('node:fs/promises', async (importOriginal) => {
     panne.levees.push(code);
     throw Object.assign(new Error(`${code}: simulated`), { code });
   };
+  const arrive = async (to: unknown): Promise<void> => {
+    const a = panne.arrive;
+    if (a === null || !meme(to, a.path)) return;
+    panne.arrive = null;
+    panne.levees.push('arrivée');
+    await actual.writeFile(a.path, a.content);
+  };
   return {
     ...actual,
-    rename: async (from: string, to: string) =>
-      meme(from, panne.renameFrom) ? leve(panne.renameCode) : actual.rename(from, to),
+    rename: async (from: string, to: string) => {
+      if (meme(from, panne.renameFrom)) return leve(panne.renameCode);
+      await arrive(to);
+      return actual.rename(from, to);
+    },
+    link: async (from: string, to: string) => {
+      const regle = panne.link.find((r) => r.from === '*' || meme(from, r.from));
+      if (regle) return leve(regle.code);
+      await arrive(to);
+      return actual.link(from, to);
+    },
+    open: async (path: string, flags?: string, mode?: number) => {
+      if (flags === 'wx') await arrive(path);
+      return actual.open(path, flags, mode);
+    },
     unlink: async (path: string) =>
       meme(path, panne.unlinkOf) ? leve('EBUSY') : actual.unlink(path),
   };
 });
 
 import {
+  link,
   mkdtemp,
   mkdir,
   readFile,
@@ -51,10 +85,11 @@ import {
   rm,
   stat,
   symlink,
+  utimes,
   writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { agentJobs, approvalRequests, constatedWrites, eq } from '@nodal-agents/db';
@@ -95,7 +130,9 @@ beforeEach(async () => {
 afterEach(async () => {
   panne.renameFrom = null;
   panne.renameCode = 'EXDEV';
+  panne.link = [];
   panne.unlinkOf = null;
+  panne.arrive = null;
   panne.levees = [];
   await rm(racine, { recursive: true, force: true }).catch(() => undefined);
 });
@@ -201,12 +238,32 @@ describe('file_move — déplacer et copier @cap:travailler-sur-des-fichiers/mot
     expect(await readFile(join(ARCHIVE, 'recus', 'a.pdf'))).toEqual(OCTETS);
   });
 
-  it('un fichier existant dans un dossier de l’agent est remplacé, sans approbation', async () => {
+  it('avec replace:true, un fichier existant dans un dossier de l’agent est remplacé, sans approbation', async () => {
     await writeFile(join(DOCS, 'v2.pdf'), OCTETS);
     await writeFile(join(ARCHIVE, 'rapport.pdf'), 'v1');
-    await deplacer({ source: 'docs/v2.pdf', destination: 'archive/rapport.pdf' });
+    const out = await deplacer({
+      source: 'docs/v2.pdf',
+      destination: 'archive/rapport.pdf',
+      replace: true,
+    });
+    expect(out.ok && out.operation).toBe('moved');
     expect(await readFile(join(ARCHIVE, 'rapport.pdf'))).toEqual(OCTETS);
     expect(await existe(join(DOCS, 'v2.pdf'))).toBe(false);
+  });
+
+  it('avec replace:true, une copie remplace aussi, et la source reste', async () => {
+    await writeFile(join(DOCS, 'v2.pdf'), OCTETS);
+    await writeFile(join(ARCHIVE, 'rapport.pdf'), 'v1');
+    const out = await deplacer({
+      source: 'docs/v2.pdf',
+      destination: 'archive/rapport.pdf',
+      copy: true,
+      replace: true,
+    });
+    expect(out.ok && out.operation).toBe('copied');
+    expect(await readFile(join(ARCHIVE, 'rapport.pdf'))).toEqual(OCTETS);
+    expect(await readFile(join(DOCS, 'v2.pdf'))).toEqual(OCTETS);
+    expect(await readdir(ARCHIVE)).toEqual(['rapport.pdf']);
   });
 
   it('un dossier comme source est refusé, et la raison le dit', async () => {
@@ -300,7 +357,12 @@ describe('file_move — la porte d’écrasement de file_write, sur la destinati
 
     const res = await executeTool(
       fileMoveTool,
-      { source: 'docs/scan.pdf', destination: 'shared/', purpose: 'Ranger le scan.' } as never,
+      {
+        source: 'docs/scan.pdf',
+        destination: 'shared/',
+        replace: true,
+        purpose: 'Ranger le scan.',
+      } as never,
       ctx(jobId),
       sansRegle,
     );
@@ -342,7 +404,7 @@ describe('file_move — la porte d’écrasement de file_write, sur la destinati
 
     const res = await executeTool(
       lent,
-      { source: 'docs/take.txt', destination: 'shared/take.txt' } as never,
+      { source: 'docs/take.txt', destination: 'shared/take.txt', replace: true } as never,
       ctx(jobId),
       sansRegle,
     );
@@ -479,26 +541,43 @@ describe('file_move — entre deux volumes, et un fichier tenu par un autre prog
   // renommage réel passait (constat de la CI Windows de #881).
   const sourceReelle = async (): Promise<string> => realpath(join(DOCS, 'scan.pdf'));
 
-  it('un renommage entre deux volumes (EXDEV) se fait en copie puis suppression', async () => {
+  it('un lien entre deux volumes (EXDEV) se fait en copie puis suppression, avec la date de la source', async () => {
     await writeFile(join(DOCS, 'scan.pdf'), OCTETS);
-    panne.renameFrom = await sourceReelle();
+    const date = new Date('2026-03-31T10:00:00Z');
+    await utimes(join(DOCS, 'scan.pdf'), date, date);
+    panne.link = [{ from: await sourceReelle(), code: 'EXDEV' }];
 
     const out = await deplacer({ source: 'docs/scan.pdf', destination: 'archive/' });
 
     expect(panne.levees).toEqual(['EXDEV']);
     expect(out.ok && out.operation).toBe('moved');
     expect(await readFile(join(ARCHIVE, 'scan.pdf'))).toEqual(OCTETS);
+    expect((await stat(join(ARCHIVE, 'scan.pdf'))).mtime.toISOString()).toBe(date.toISOString());
     expect(await existe(join(DOCS, 'scan.pdf'))).toBe(false);
     // Aucun fichier temporaire laissé derrière la copie.
     expect(await readdir(ARCHIVE)).toEqual(['scan.pdf']);
   });
 
-  it('une suppression ratée après la copie est DITE : les deux fichiers existent', async () => {
+  it('avec replace:true, un renommage entre deux volumes (EXDEV) se fait en copie puis suppression', async () => {
+    await writeFile(join(DOCS, 'scan.pdf'), OCTETS);
+    await writeFile(join(ARCHIVE, 'scan.pdf'), 'v1');
+    panne.renameFrom = await sourceReelle();
+
+    const out = await deplacer({ source: 'docs/scan.pdf', destination: 'archive/', replace: true });
+
+    expect(panne.levees).toEqual(['EXDEV']);
+    expect(out.ok && out.operation).toBe('moved');
+    expect(await readFile(join(ARCHIVE, 'scan.pdf'))).toEqual(OCTETS);
+    expect(await existe(join(DOCS, 'scan.pdf'))).toBe(false);
+    expect(await readdir(ARCHIVE)).toEqual(['scan.pdf']);
+  });
+
+  it('avec replace:true, une suppression ratée après la copie est DITE : les deux fichiers existent', async () => {
     await writeFile(join(DOCS, 'scan.pdf'), OCTETS);
     panne.renameFrom = await sourceReelle();
     panne.unlinkOf = await sourceReelle();
 
-    const out = await deplacer({ source: 'docs/scan.pdf', destination: 'archive/' });
+    const out = await deplacer({ source: 'docs/scan.pdf', destination: 'archive/', replace: true });
 
     expect(panne.levees).toEqual(['EXDEV', 'EBUSY']);
     expect(out.ok).toBe(false);
@@ -509,24 +588,69 @@ describe('file_move — entre deux volumes, et un fichier tenu par un autre prog
     expect(await readFile(join(DOCS, 'scan.pdf'))).toEqual(OCTETS);
   });
 
-  it('un fichier encore ouvert ailleurs (EBUSY) échoue avec sa raison, et rien ne bouge', async () => {
-    await writeFile(join(DOCS, 'scan.pdf'), OCTETS);
-    panne.renameFrom = await sourceReelle();
-    panne.renameCode = 'EBUSY';
+  // Sans replace, un déplacement qui ne peut pas retirer sa source retire ce
+  // qu'il a posé : rien n'a bougé, et la raison le dit — sur le même volume
+  // (un lien) comme entre deux volumes (une copie).
+  for (const cas of [
+    { nom: 'sur le même volume', link: [] as { from: string; code: string }[], levees: ['EBUSY'] },
+    {
+      nom: 'entre deux volumes',
+      link: [{ from: 'source', code: 'EXDEV' }],
+      levees: ['EXDEV', 'EBUSY'],
+    },
+  ]) {
+    it(`une source qui ne se retire pas (EBUSY) ${cas.nom} : rien ne bouge, et la raison le dit`, async () => {
+      await writeFile(join(DOCS, 'scan.pdf'), OCTETS);
+      const src = await sourceReelle();
+      panne.link = cas.link.map((r) => ({ ...r, from: src }));
+      panne.unlinkOf = src;
 
-    const out = await deplacer({ source: 'docs/scan.pdf', destination: 'archive/' });
+      const out = await deplacer({ source: 'docs/scan.pdf', destination: 'archive/' });
 
-    expect(panne.levees).toEqual(['EBUSY']);
-    expect(out).toEqual({
-      ok: false,
-      reason:
-        'Could not move "docs/scan.pdf" to "archive/" (EBUSY: EBUSY: simulated). The file may be ' +
-        'open in another program, still being written, or read-only. Call again once it is ' +
-        'complete and closed.',
+      expect(panne.levees).toEqual(cas.levees);
+      expect(out).toEqual({
+        ok: false,
+        reason:
+          'Could not move "docs/scan.pdf" to "archive/" (EBUSY: EBUSY: simulated). The file may be ' +
+          'open in another program, still being written, or read-only. Call again once it is ' +
+          'complete and closed.',
+      });
+      expect(await readFile(join(DOCS, 'scan.pdf'))).toEqual(OCTETS);
+      expect(await readdir(ARCHIVE)).toEqual([]);
     });
-    expect(await readFile(join(DOCS, 'scan.pdf'))).toEqual(OCTETS);
-    expect(await readdir(ARCHIVE)).toEqual([]);
-  });
+  }
+
+  for (const cas of [
+    { nom: 'sans replace (le lien)', replace: false },
+    { nom: 'avec replace:true (le renommage)', replace: true },
+  ]) {
+    it(`un fichier encore ouvert ailleurs (EBUSY) ${cas.nom} échoue avec sa raison, et rien ne bouge`, async () => {
+      await writeFile(join(DOCS, 'scan.pdf'), OCTETS);
+      if (cas.replace) {
+        panne.renameFrom = await sourceReelle();
+        panne.renameCode = 'EBUSY';
+      } else {
+        panne.link = [{ from: await sourceReelle(), code: 'EBUSY' }];
+      }
+
+      const out = await deplacer({
+        source: 'docs/scan.pdf',
+        destination: 'archive/',
+        replace: cas.replace,
+      });
+
+      expect(panne.levees).toEqual(['EBUSY']);
+      expect(out).toEqual({
+        ok: false,
+        reason:
+          'Could not move "docs/scan.pdf" to "archive/" (EBUSY: EBUSY: simulated). The file may be ' +
+          'open in another program, still being written, or read-only. Call again once it is ' +
+          'complete and closed.',
+      });
+      expect(await readFile(join(DOCS, 'scan.pdf'))).toEqual(OCTETS);
+      expect(await readdir(ARCHIVE)).toEqual([]);
+    });
+  }
 });
 
 describe('file_move — la carte du fil dit « moved A to B » @cap:travailler-sur-des-fichiers/moteur', () => {
@@ -552,5 +676,291 @@ describe('file_move — la carte du fil dit « moved A to B » @cap:travailler-s
         truncated: false,
       });
     }
+  });
+});
+
+// ─── #933 : jamais de remplacement sans `replace: true` ───────────────────────
+//
+// Deux jobs de rangement lancés en même temps ont posé deux documents sous le
+// même nom : les deux appels ont rendu `ok: true`, et l'un des documents a
+// disparu. Une liste du dossier faite avant ne protège pas un déplacement :
+// c'est l'outil qui refuse, en un seul geste du système.
+
+const DOC_A = Buffer.concat([OCTETS, Buffer.from(' document A')]);
+const DOC_B = Buffer.concat([OCTETS, Buffer.from(' document B, plus long')]);
+
+/** Le refus d'un nom pris : il nomme le fichier qui est là (chemin, taille, date). */
+async function refusNomPris(
+  out: FileMoveOutput,
+  verbe: 'moved' | 'copied',
+  chemin: string,
+): Promise<void> {
+  const reel = join(await realpath(dirname(chemin)), basename(chemin));
+  const st = await stat(chemin);
+  expect(out).toEqual({
+    ok: false,
+    reason:
+      `Nothing was ${verbe}: "${reel}" already exists (${String(st.size)} bytes, modified ` +
+      `${st.mtime.toISOString()}). file_move never replaces an existing file unless ` +
+      'replace:true is passed. Choose another name, or pass replace:true if replacing this ' +
+      'file is intended.',
+    existing: { path: reel, bytes: st.size, modified: st.mtime.toISOString() },
+  });
+}
+
+/** Aucun fichier temporaire ni réservation laissés dans le dossier. */
+async function seulement(dossier: string, noms: string[]): Promise<void> {
+  expect((await readdir(dossier)).sort()).toEqual([...noms].sort());
+}
+
+/**
+ * Deux appels EN MÊME TEMPS, de deux jobs, vers le même nom du dossier
+ * partagé : exactement un réussit, l'autre échoue en nommant le fichier là, et
+ * les deux documents existent encore — l'un à destination, l'autre à sa source.
+ */
+async function course(copy: boolean): Promise<void> {
+  await writeFile(join(DOCS, 'a.pdf'), DOC_A);
+  await writeFile(join(ARCHIVE, 'b.pdf'), DOC_B);
+  const [jobA, jobB] = [await jobNeuf(), await jobNeuf()];
+
+  const [outA, outB] = await Promise.all([
+    deplacer(
+      { source: 'docs/a.pdf', destination: 'shared/2026-03-31 Document.pdf', copy },
+      ctx(jobA),
+    ),
+    deplacer(
+      { source: 'archive/b.pdf', destination: 'shared/2026-03-31 Document.pdf', copy },
+      ctx(jobB),
+    ),
+  ]);
+
+  const reussis = [outA, outB].filter((o) => o.ok);
+  expect(reussis).toHaveLength(1);
+  const gagnantA = outA.ok;
+  const cible = join(SHARED, '2026-03-31 Document.pdf');
+  expect(await readFile(cible)).toEqual(gagnantA ? DOC_A : DOC_B);
+  await refusNomPris(gagnantA ? outB : outA, copy ? 'copied' : 'moved', cible);
+  // Le perdant est intact, à sa source.
+  if (gagnantA) expect(await readFile(join(ARCHIVE, 'b.pdf'))).toEqual(DOC_B);
+  else expect(await readFile(join(DOCS, 'a.pdf'))).toEqual(DOC_A);
+  // Le gagnant : déplacé, sa source est partie ; copié, elle reste.
+  const sourceGagnant = gagnantA ? join(DOCS, 'a.pdf') : join(ARCHIVE, 'b.pdf');
+  expect(await existe(sourceGagnant)).toBe(copy);
+  await seulement(SHARED, ['2026-03-31 Document.pdf']);
+}
+
+describe('file_move — un nom pris n’est jamais remplacé sans replace:true (#933) @cap:travailler-sur-des-fichiers/moteur', () => {
+  it('deux déplacements en même temps vers le même nom : un seul réussit, aucun document perdu', async () => {
+    await course(false);
+  });
+
+  it('deux copies en même temps vers le même nom : une seule réussit, aucun document perdu', async () => {
+    await course(true);
+  });
+
+  // La course rendue déterministe : un autre fichier arrive au nom à l'instant
+  // où l'outil pose le sien. Un geste atomique le refuse ; une vérification
+  // suivie d'un renommage l'écraserait.
+  for (const copy of [false, true]) {
+    it(`un fichier qui arrive au nom à l’instant de la pose n’est pas écrasé (${copy ? 'copie' : 'déplacement'})`, async () => {
+      await writeFile(join(DOCS, 'scan.pdf'), OCTETS);
+      const cible = join(await realpath(ARCHIVE), 'scan.pdf');
+      panne.arrive = { path: cible, content: 'arrivé entre-temps' };
+
+      const out = await deplacer({ source: 'docs/scan.pdf', destination: 'archive/', copy });
+
+      expect(panne.levees).toEqual(['arrivée']);
+      await refusNomPris(out, copy ? 'copied' : 'moved', cible);
+      expect(await readFile(cible, 'utf8')).toBe('arrivé entre-temps');
+      expect(await readFile(join(DOCS, 'scan.pdf'))).toEqual(OCTETS);
+      await seulement(ARCHIVE, ['scan.pdf']);
+    });
+  }
+
+  it('un nom pris dans un dossier de l’agent : refusé, la destination et la source intactes', async () => {
+    await writeFile(join(DOCS, 'v2.pdf'), OCTETS);
+    await writeFile(join(ARCHIVE, 'rapport.pdf'), 'v1');
+    const out = await deplacer({ source: 'docs/v2.pdf', destination: 'archive/rapport.pdf' });
+    await refusNomPris(out, 'moved', join(ARCHIVE, 'rapport.pdf'));
+    expect(await readFile(join(ARCHIVE, 'rapport.pdf'), 'utf8')).toBe('v1');
+    expect(await readFile(join(DOCS, 'v2.pdf'))).toEqual(OCTETS);
+    await seulement(ARCHIVE, ['rapport.pdf']);
+  });
+
+  it('une copie vers un nom pris : refusée, aucun temporaire laissé', async () => {
+    await writeFile(join(DOCS, 'v2.pdf'), OCTETS);
+    await writeFile(join(ARCHIVE, 'rapport.pdf'), 'v1');
+    const out = await deplacer({
+      source: 'docs/v2.pdf',
+      destination: 'archive/rapport.pdf',
+      copy: true,
+    });
+    await refusNomPris(out, 'copied', join(ARCHIVE, 'rapport.pdf'));
+    expect(await readFile(join(ARCHIVE, 'rapport.pdf'), 'utf8')).toBe('v1');
+    await seulement(ARCHIVE, ['rapport.pdf']);
+  });
+
+  it('un nom pris dans le dossier partagé : refusé tout de suite, sans demander personne', async () => {
+    // La porte d'écrasement ne demande plus rien pour une destination qu'un
+    // appel sans replace ne détruira jamais : une approbation suivie d'un
+    // refus serait une question pour rien.
+    const jobId = await jobNeuf();
+    await writeFile(join(DOCS, 'scan.pdf'), OCTETS);
+    await writeFile(join(SHARED, 'scan.pdf'), 'le travail d’un autre');
+
+    const out = await deplacer({ source: 'docs/scan.pdf', destination: 'shared/' }, ctx(jobId));
+
+    await refusNomPris(out, 'moved', join(SHARED, 'scan.pdf'));
+    expect(await readFile(join(SHARED, 'scan.pdf'), 'utf8')).toBe('le travail d’un autre');
+    expect(await readFile(join(DOCS, 'scan.pdf'))).toEqual(OCTETS);
+    const demandes = await db
+      .select()
+      .from(approvalRequests)
+      .where(eq(approvalRequests.jobId, jobId));
+    expect(demandes).toEqual([]);
+  });
+
+  it('entre deux volumes (EXDEV), un nom pris est refusé, sans temporaire laissé', async () => {
+    await writeFile(join(DOCS, 'scan.pdf'), OCTETS);
+    await writeFile(join(ARCHIVE, 'scan.pdf'), 'v1');
+    panne.link = [{ from: await realpath(join(DOCS, 'scan.pdf')), code: 'EXDEV' }];
+
+    const out = await deplacer({ source: 'docs/scan.pdf', destination: 'archive/' });
+
+    expect(panne.levees).toEqual(['EXDEV']);
+    await refusNomPris(out, 'moved', join(ARCHIVE, 'scan.pdf'));
+    expect(await readFile(join(ARCHIVE, 'scan.pdf'), 'utf8')).toBe('v1');
+    expect(await readFile(join(DOCS, 'scan.pdf'))).toEqual(OCTETS);
+    await seulement(ARCHIVE, ['scan.pdf']);
+  });
+
+  it('un lien physique de la source déjà à destination est un nom pris : les deux noms restent', async () => {
+    // Même fichier, deux entrées : ce n'est pas la source elle-même (un
+    // renommage de casse), et la retirer ne « déplacerait » rien.
+    await writeFile(join(DOCS, 'scan.pdf'), OCTETS);
+    await link(join(DOCS, 'scan.pdf'), join(ARCHIVE, 'scan.pdf'));
+
+    const out = await deplacer({ source: 'docs/scan.pdf', destination: 'archive/' });
+
+    await refusNomPris(out, 'moved', join(ARCHIVE, 'scan.pdf'));
+    expect(await readFile(join(DOCS, 'scan.pdf'))).toEqual(OCTETS);
+    expect(await readFile(join(ARCHIVE, 'scan.pdf'))).toEqual(OCTETS);
+  });
+});
+
+describe('file_move — un volume sans liens physiques (FAT32, exFAT) ne remplace rien non plus (#933) @cap:travailler-sur-des-fichiers/moteur', () => {
+  // `link` lève EPERM pour TOUT lien : le nom se réserve par une création
+  // exclusive, et le fichier complet est renommé sur la réservation.
+  beforeEach(() => {
+    panne.link = [{ from: '*', code: 'EPERM' }];
+  });
+
+  it('un déplacement vers un nom libre : fait, avec la date de la source, rien d’autre dans le dossier', async () => {
+    await writeFile(join(DOCS, 'scan.pdf'), OCTETS);
+    const date = new Date('2026-03-31T10:00:00Z');
+    await utimes(join(DOCS, 'scan.pdf'), date, date);
+
+    const out = await deplacer({ source: 'docs/scan.pdf', destination: 'archive/' });
+
+    expect(panne.levees).toEqual(['EPERM']);
+    expect(out.ok && out.operation).toBe('moved');
+    expect(await readFile(join(ARCHIVE, 'scan.pdf'))).toEqual(OCTETS);
+    expect((await stat(join(ARCHIVE, 'scan.pdf'))).mtime.toISOString()).toBe(date.toISOString());
+    expect(await existe(join(DOCS, 'scan.pdf'))).toBe(false);
+    await seulement(ARCHIVE, ['scan.pdf']);
+  });
+
+  it('une copie vers un nom libre : faite, la source reste, aucun temporaire', async () => {
+    await writeFile(join(DOCS, 'scan.pdf'), OCTETS);
+    const out = await deplacer({ source: 'docs/scan.pdf', destination: 'archive/', copy: true });
+    expect(out.ok && out.operation).toBe('copied');
+    expect(await readFile(join(ARCHIVE, 'scan.pdf'))).toEqual(OCTETS);
+    expect(await readFile(join(DOCS, 'scan.pdf'))).toEqual(OCTETS);
+    await seulement(ARCHIVE, ['scan.pdf']);
+  });
+
+  it('un déplacement et une copie vers un nom pris : refusés, ni réservation ni temporaire laissés', async () => {
+    await writeFile(join(DOCS, 'scan.pdf'), OCTETS);
+    await writeFile(join(ARCHIVE, 'scan.pdf'), 'v1');
+    for (const copy of [false, true]) {
+      const out = await deplacer({ source: 'docs/scan.pdf', destination: 'archive/', copy });
+      await refusNomPris(out, copy ? 'copied' : 'moved', join(ARCHIVE, 'scan.pdf'));
+    }
+    expect(await readFile(join(ARCHIVE, 'scan.pdf'), 'utf8')).toBe('v1');
+    expect(await readFile(join(DOCS, 'scan.pdf'))).toEqual(OCTETS);
+    await seulement(ARCHIVE, ['scan.pdf']);
+  });
+
+  it('deux déplacements en même temps vers le même nom : un seul réussit, aucun document perdu', async () => {
+    await course(false);
+  });
+
+  it('un fichier qui arrive au nom à l’instant de la réservation n’est pas écrasé', async () => {
+    await writeFile(join(DOCS, 'scan.pdf'), OCTETS);
+    const cible = join(await realpath(ARCHIVE), 'scan.pdf');
+    panne.arrive = { path: cible, content: 'arrivé entre-temps' };
+
+    const out = await deplacer({ source: 'docs/scan.pdf', destination: 'archive/' });
+
+    expect(panne.levees).toEqual(['EPERM', 'arrivée']);
+    await refusNomPris(out, 'moved', cible);
+    expect(await readFile(cible, 'utf8')).toBe('arrivé entre-temps');
+    expect(await readFile(join(DOCS, 'scan.pdf'))).toEqual(OCTETS);
+  });
+
+  it('entre deux volumes ET sans liens : un nom pris est refusé, sans temporaire laissé', async () => {
+    await writeFile(join(DOCS, 'scan.pdf'), OCTETS);
+    await writeFile(join(ARCHIVE, 'scan.pdf'), 'v1');
+    panne.link = [
+      { from: await realpath(join(DOCS, 'scan.pdf')), code: 'EXDEV' },
+      { from: '*', code: 'EPERM' },
+    ];
+
+    const out = await deplacer({ source: 'docs/scan.pdf', destination: 'archive/' });
+
+    expect(panne.levees).toEqual(['EXDEV', 'EPERM']);
+    await refusNomPris(out, 'moved', join(ARCHIVE, 'scan.pdf'));
+    expect(await readFile(join(DOCS, 'scan.pdf'))).toEqual(OCTETS);
+    await seulement(ARCHIVE, ['scan.pdf']);
+  });
+});
+
+describe('file_move — un renommage qui ne change que la casse (#933) @cap:travailler-sur-des-fichiers/moteur', () => {
+  // Sur un volume insensible à la casse (Windows, macOS), `Scan.pdf` EST
+  // `scan.pdf` : ce n'est pas un nom pris. Sur un volume sensible à la casse
+  // (Linux), c'est un autre nom, libre. Les deux finissent avec le seul
+  // `Scan.pdf`, ce que le test vérifie partout ; la CI Windows le prouve sur
+  // le cas qui compte.
+  it('scan.pdf -> Scan.pdf : renommé, le contenu intact, un seul fichier', async () => {
+    await writeFile(join(DOCS, 'scan.pdf'), OCTETS);
+
+    const out = await deplacer({ source: 'docs/scan.pdf', destination: 'docs/Scan.pdf' });
+
+    expect(out.ok && out.operation).toBe('moved');
+    await seulement(DOCS, ['Scan.pdf']);
+    expect(await readFile(join(DOCS, 'Scan.pdf'))).toEqual(OCTETS);
+  });
+
+  it('une copie sur soi-même en changeant la casse ne fait rien là où la casse ne compte pas', async () => {
+    await writeFile(join(DOCS, 'scan.pdf'), OCTETS);
+    const insensible = await existe(join(DOCS, 'SCAN.PDF'));
+
+    const out = await deplacer({
+      source: 'docs/scan.pdf',
+      destination: 'docs/Scan.pdf',
+      copy: true,
+    });
+
+    if (insensible) {
+      expect(out).toEqual({
+        ok: false,
+        reason: 'Source and destination are the same file: "docs/scan.pdf". Nothing to do.',
+      });
+      await seulement(DOCS, ['scan.pdf']);
+    } else {
+      expect(out.ok && out.operation).toBe('copied');
+      await seulement(DOCS, ['Scan.pdf', 'scan.pdf']);
+    }
+    expect(await readFile(join(DOCS, 'scan.pdf'))).toEqual(OCTETS);
   });
 });

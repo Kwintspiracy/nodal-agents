@@ -234,6 +234,11 @@ describe('file-filing skill', () => {
     expect(c, 'one question').toMatch(/one question, never several/);
     expect(c, 'dated name').toContain('YYYY-MM-DD Subject.ext');
     expect(c, 'never replace').toContain('" (2)", " (3)"');
+    // #933 : c'est l'outil qui refuse un nom pris ; le skill ne dit plus qu'un
+    // déplacement écrase, et interdit d'en forcer un.
+    expect(c, 'the tool refuses a taken name').toContain('`file_move` refuses a taken name');
+    expect(c, 'never force a replace').toContain('never pass `replace: true`');
+    expect(c, 'no longer says a move overwrites').not.toMatch(/overwrites it/);
     expect(c, 'move not copy').toMatch(/Move, never copy/);
     expect(c, 'never delete').toMatch(/Never delete/);
     expect(c, 'report').toMatch(/each file you left in place with the reason/);

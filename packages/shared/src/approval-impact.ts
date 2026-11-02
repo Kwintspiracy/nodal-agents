@@ -158,12 +158,20 @@ export function computeApprovalImpactLine(
       // Gaté par la même porte que file_write, sur chaque fichier que l'appel
       // détruit (#879) : la destination qu'une copie remplace ; la destination
       // ou la source qu'un déplacement remplace ou retire. Le geste se dit
-      // d'abord, ce qu'il détruit ensuite.
-      return input['copy'] === true
-        ? `Copies "${str(input['source'])}" to "${str(input['destination'])}", overwriting ` +
-            'the existing file there in the shared workspace.'
-        : `Moves "${str(input['source'])}" to "${str(input['destination'])}", replacing or ` +
-            'removing a file in the shared workspace that this run did not write.';
+      // d'abord, ce qu'il détruit ensuite. Sans `replace: true`, l'outil ne
+      // remplace jamais la destination (#933) : un déplacement n'est alors
+      // gaté que pour la source qu'il retire, et la carte ne dit que cela.
+      if (input['copy'] === true) {
+        return (
+          `Copies "${str(input['source'])}" to "${str(input['destination'])}", overwriting ` +
+          'the existing file there in the shared workspace.'
+        );
+      }
+      return input['replace'] === true
+        ? `Moves "${str(input['source'])}" to "${str(input['destination'])}", replacing or ` +
+            'removing a file in the shared workspace that this run did not write.'
+        : `Moves "${str(input['source'])}" to "${str(input['destination'])}", removing from ` +
+            'the shared workspace a file that this run did not write.';
     case 'run_command': {
       const cmd = input['command'];
       return typeof cmd === 'string' && cmd.trim().length > 0
