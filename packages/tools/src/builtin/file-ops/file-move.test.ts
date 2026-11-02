@@ -48,7 +48,18 @@ const panne = vi.hoisted(() => ({
    * fichier renommé sur le nom, comme le fait un `replace: true`) : le retour
    * en arrière qui suit doit le laisser.
    */
-  ecraseAvantRetour: null as { path: string; content: string } | null,
+  ecraseAvantRetour: null as { path: string; content: string | null } | null,
+  /**
+   * Ce que fait `unlink(unlinkOf)` : lever EBUSY (un fichier tenu ouvert), ou
+   * ENOENT après l'avoir retiré lui-même (un autre programme a supprimé la
+   * source pendant l'appel).
+   */
+  unlinkCode: 'EBUSY' as 'EBUSY' | 'ENOENT',
+  /** Après un `unlink(unlinkOf)` raté, le premier `lstat` de ce chemin lève EIO. */
+  lstatEchoueApres: null as string | null,
+  lstatEchoue: null as string | null,
+  /** Après la copie de ce chemin (`copyFile`), un programme ajoute ces octets à sa fin. */
+  ajouteApresCopie: null as { path: string; text: string } | null,
   /**
    * `rename(…, path)` lève `code` les `fois` premières fois : un autre
    * programme tient la cible ouverte un instant (sous Windows, elle ne se
@@ -82,8 +93,22 @@ vi.mock('node:fs/promises', async (importOriginal) => {
   return {
     ...actual,
     stat: async (...args: Parameters<typeof actual.stat>) => sansNumero(await actual.stat(...args)),
-    lstat: async (...args: Parameters<typeof actual.lstat>) =>
-      sansNumero(await actual.lstat(...args)),
+    lstat: async (...args: Parameters<typeof actual.lstat>) => {
+      if (meme(args[0], panne.lstatEchoue)) {
+        panne.lstatEchoue = null;
+        return leve('EIO');
+      }
+      return sansNumero(await actual.lstat(...args));
+    },
+    copyFile: async (...args: Parameters<typeof actual.copyFile>) => {
+      await actual.copyFile(...args);
+      const a = panne.ajouteApresCopie;
+      if (a !== null && meme(args[0], a.path)) {
+        panne.ajouteApresCopie = null;
+        panne.levees.push('ajouté');
+        await actual.appendFile(a.path, a.text);
+      }
+    },
     rename: async (from: string, to: string) => {
       await arrive(to, 'rename');
       if (meme(from, panne.renameFrom)) return leve(panne.renameCode);
@@ -113,12 +138,20 @@ vi.mock('node:fs/promises', async (importOriginal) => {
       const e = panne.ecraseAvantRetour;
       if (e !== null) {
         panne.ecraseAvantRetour = null;
-        panne.levees.push('écrasé');
-        const autre = `${e.path}.autre-programme`;
-        await actual.writeFile(autre, e.content);
-        await actual.rename(autre, e.path);
+        if (e.content === null) {
+          panne.levees.push('retiré');
+          await actual.unlink(e.path);
+        } else {
+          panne.levees.push('écrasé');
+          const autre = `${e.path}.autre-programme`;
+          await actual.writeFile(autre, e.content);
+          await actual.rename(autre, e.path);
+        }
       }
-      return leve('EBUSY');
+      panne.lstatEchoue = panne.lstatEchoueApres;
+      panne.lstatEchoueApres = null;
+      if (panne.unlinkCode === 'ENOENT') await actual.unlink(path);
+      return leve(panne.unlinkCode);
     },
   };
 });
@@ -185,6 +218,10 @@ afterEach(async () => {
   panne.inoNul = false;
   panne.marqueEchoue = false;
   panne.ecraseAvantRetour = null;
+  panne.unlinkCode = 'EBUSY';
+  panne.lstatEchoueApres = null;
+  panne.lstatEchoue = null;
+  panne.ajouteApresCopie = null;
   panne.renameVers = null;
   panne.levees = [];
   await rm(racine, { recursive: true, force: true }).catch(() => undefined);
@@ -1188,7 +1225,7 @@ describe('file_move — un retour en arrière laisse un fichier écrit par-dessu
         reason:
           'Nothing was moved: the original "docs/scan.pdf" could not be removed (EBUSY: EBUSY: ' +
           `simulated), and "${cible}" now holds a different file, written there by another ` +
-          'program during this call. The original is untouched at "docs/scan.pdf": keep it.',
+          'program during this call. The original is still at "docs/scan.pdf": keep it.',
       });
       expect(await readFile(cible, 'utf8')).toBe('écrit par un autre programme');
       expect(await readFile(join(DOCS, 'scan.pdf'))).toEqual(OCTETS);
@@ -1226,4 +1263,162 @@ describe('file_move — un déplacement inachevé dit ce qui est sur le disque (
       expect(await readFile(join(DOCS, 'scan.pdf'))).toEqual(OCTETS);
     });
   }
+});
+
+describe('file_move — un déplacement inachevé se dit d’après le disque, vu une fois (revue A de #938, passe 4) @cap:travailler-sur-des-fichiers/moteur', () => {
+  // Deux faits, vus une fois à la fin, sur tous les chemins (replace:true
+  // compris) : la source est-elle là, et la destination porte-t-elle ce que
+  // l'appel y a posé (l'empreinte prise en le posant), autre chose, ou rien.
+  const AJOUT = ' -- ajouté pendant la copie';
+
+  async function preparer(opts: { exdev: boolean; replace?: boolean }): Promise<{
+    src: string;
+    cible: string;
+  }> {
+    await writeFile(join(DOCS, 'scan.pdf'), OCTETS);
+    const src = await realpath(join(DOCS, 'scan.pdf'));
+    const cible = join(await realpath(ARCHIVE), 'scan.pdf');
+    if (opts.exdev) {
+      if (opts.replace === true) panne.renameFrom = src;
+      else panne.link = [{ from: src, code: 'EXDEV' }];
+    }
+    panne.unlinkOf = src;
+    return { src, cible };
+  }
+
+  const deplace = (replace = false): Promise<FileMoveOutput> =>
+    deplacer({ source: 'docs/scan.pdf', destination: 'archive/', replace });
+
+  it('replace:true entre deux volumes, la copie écrasée par un autre programme : rien n’a bougé, garder la source', async () => {
+    const { cible } = await preparer({ exdev: true, replace: true });
+    panne.ecraseAvantRetour = { path: cible, content: 'écrit par un autre programme' };
+
+    const out = await deplace(true);
+
+    expect(out).toEqual({
+      ok: false,
+      reason:
+        'Nothing was moved: the original "docs/scan.pdf" could not be removed (EBUSY: EBUSY: ' +
+        `simulated), and "${cible}" now holds a different file, written there by another ` +
+        'program during this call. The original is still at "docs/scan.pdf": keep it.',
+    });
+    expect(await readFile(cible, 'utf8')).toBe('écrit par un autre programme');
+    expect(await readFile(join(DOCS, 'scan.pdf'))).toEqual(OCTETS);
+  });
+
+  for (const cas of [
+    { nom: 'replace:true entre deux volumes', exdev: true, replace: true },
+    { nom: 'entre deux volumes', exdev: true, replace: false },
+    { nom: 'sur le même volume', exdev: false, replace: false },
+  ]) {
+    it(`${cas.nom}, la source supprimée par un autre programme : le fichier n’est plus qu’à destination`, async () => {
+      const { cible } = await preparer(cas);
+      panne.unlinkCode = 'ENOENT';
+
+      const out = await deplace(cas.replace);
+
+      expect(out).toEqual({
+        ok: false,
+        reason:
+          `"docs/scan.pdf" was placed at "${cible}", and the original is no longer at ` +
+          `"docs/scan.pdf" (ENOENT: ENOENT: simulated). The file is now only at "${cible}".`,
+      });
+      expect(await readFile(cible)).toEqual(OCTETS);
+      expect(await existe(join(DOCS, 'scan.pdf'))).toBe(false);
+    });
+  }
+
+  it('entre deux volumes, la source complétée pendant la copie : la copie de l’appel est reconnue, et retirée', async () => {
+    // La destination porte la copie que l'appel a faite, pas les octets
+    // ACTUELS de la source : c'est bien la sienne, et le retour en arrière la
+    // retire. La source, complétée, reste : rien n'a bougé.
+    const { src, cible } = await preparer({ exdev: true });
+    panne.ajouteApresCopie = { path: src, text: AJOUT };
+
+    const out = await deplace();
+
+    expect(panne.levees).toEqual(['EXDEV', 'ajouté', 'EBUSY']);
+    expect(out).toEqual({
+      ok: false,
+      reason:
+        'Could not move "docs/scan.pdf" to "archive/" (EBUSY: EBUSY: simulated). The file may be ' +
+        'open in another program, still being written, or read-only. Call again once it is ' +
+        'complete and closed.',
+    });
+    expect(await existe(cible)).toBe(false);
+    expect(await readFile(join(DOCS, 'scan.pdf'))).toEqual(
+      Buffer.concat([OCTETS, Buffer.from(AJOUT)]),
+    );
+  });
+
+  it('la source supprimée ET la destination écrasée : dit fort que l’original est perdu de vue', async () => {
+    const { cible } = await preparer({ exdev: true });
+    panne.unlinkCode = 'ENOENT';
+    panne.ecraseAvantRetour = { path: cible, content: 'écrit par un autre programme' };
+
+    const out = await deplace();
+
+    expect(out).toEqual({
+      ok: false,
+      reason:
+        'The original "docs/scan.pdf" is gone (ENOENT: ENOENT: simulated), and ' +
+        `"${cible}" does not hold it: it now holds a different file, written there by another ` +
+        'program. This call can no longer tell where the file is: tell the person before ' +
+        'doing anything else.',
+    });
+    expect(await readFile(cible, 'utf8')).toBe('écrit par un autre programme');
+    expect(await existe(join(DOCS, 'scan.pdf'))).toBe(false);
+  });
+
+  it('la source supprimée ET la destination retirée : rien nulle part, et c’est dit', async () => {
+    const { cible } = await preparer({ exdev: false });
+    panne.unlinkCode = 'ENOENT';
+    panne.ecraseAvantRetour = { path: cible, content: null };
+
+    const out = await deplace();
+
+    expect(out).toEqual({
+      ok: false,
+      reason:
+        'The original "docs/scan.pdf" is gone (ENOENT: ENOENT: simulated), and ' +
+        `"${cible}" does not hold it: nothing is there. This call can no longer tell where the ` +
+        'file is: tell the person before doing anything else.',
+    });
+    await seulement(ARCHIVE, []);
+    expect(await existe(join(DOCS, 'scan.pdf'))).toBe(false);
+  });
+
+  it('la source là, la destination retirée par un autre programme : rien n’a bougé, garder la source', async () => {
+    const { cible } = await preparer({ exdev: true });
+    panne.ecraseAvantRetour = { path: cible, content: null };
+
+    const out = await deplace();
+
+    expect(out).toEqual({
+      ok: false,
+      reason:
+        'Nothing was moved: the original "docs/scan.pdf" could not be removed (EBUSY: EBUSY: ' +
+        `simulated), and nothing is at "${cible}" any more: another program removed what this ` +
+        'call had placed there. The original is still at "docs/scan.pdf": keep it.',
+    });
+    await seulement(ARCHIVE, []);
+    expect(await readFile(join(DOCS, 'scan.pdf'))).toEqual(OCTETS);
+  });
+
+  it('une lecture qui échoue en regardant le disque est dite comme telle, et rien n’est retiré', async () => {
+    const { cible } = await preparer({ exdev: true });
+    panne.lstatEchoueApres = cible;
+
+    const out = await deplace();
+
+    expect(out).toEqual({
+      ok: false,
+      reason:
+        'The original "docs/scan.pdf" could not be removed (EBUSY: EBUSY: simulated), and ' +
+        `checking what is on disk afterwards failed: reading "${cible}" gave EIO: EIO: ` +
+        `simulated. Look at "docs/scan.pdf" and "${cible}" before doing anything else.`,
+    });
+    expect(await readFile(cible)).toEqual(OCTETS);
+    expect(await readFile(join(DOCS, 'scan.pdf'))).toEqual(OCTETS);
+  });
 });

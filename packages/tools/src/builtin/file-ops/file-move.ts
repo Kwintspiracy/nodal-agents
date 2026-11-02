@@ -52,7 +52,7 @@
 // La destination ne montre donc jamais un fichier à moitié écrit, et un appel
 // qui échoue laisse la source en place (`claimName`, `removeSource`).
 
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import {
   copyFile,
   link,
@@ -259,15 +259,20 @@ function systemFailure(err: unknown, verb: 'move' | 'copy', input: FileMoveInput
  * Une copie COMPLÈTE de `source` dans un fichier temporaire caché du dossier de
  * destination, avec la date de modification de la source : `copyFile` la garde
  * sous Windows, pas partout, et le geste doit être le même sur les trois
- * systèmes. Rend le chemin du temporaire ; le retire si la copie échoue.
+ * systèmes. Rend le chemin du temporaire et l'EMPREINTE de ses octets — ceux
+ * que l'appel pose, lus dans son propre fichier, jamais dans la source qui a
+ * pu changer depuis (revue A de #938, passe 4) ; le retire si la copie échoue.
  */
-async function copyToTemp(source: string, destination: string): Promise<string> {
+async function copyToTemp(
+  source: string,
+  destination: string,
+): Promise<{ tmp: string; digest: string }> {
   const tmp = `${dirname(destination)}/.${basename(destination)}.${randomBytes(6).toString('hex')}.tmp`;
   try {
     await copyFile(source, tmp);
     const st = await stat(source);
     await utimes(tmp, st.atime, st.mtime);
-    return tmp;
+    return { tmp, digest: await digestOf(tmp) };
   } catch (err) {
     await unlink(tmp).catch(() => undefined);
     throw err;
@@ -277,18 +282,20 @@ async function copyToTemp(source: string, destination: string): Promise<string> 
 /**
  * `replace: true` — pose `source` à `destination` par une copie : un fichier
  * temporaire du dossier de destination, renommé par-dessus la cible. Une copie
- * interrompue ne laisse jamais une destination à moitié écrite.
+ * interrompue ne laisse jamais une destination à moitié écrite. Rend
+ * l'empreinte de ce qui a été posé.
  */
 async function copyIntoPlace(
   ctx: ToolContext,
   source: string,
   destination: string,
   destroyed: readonly string[],
-): Promise<void> {
-  const tmp = await copyToTemp(source, destination);
+): Promise<string> {
+  const { tmp, digest } = await copyToTemp(source, destination);
   try {
     await assertStillOurs(ctx, destroyed);
     await rename(tmp, destination);
+    return digest;
   } catch (err) {
     await unlink(tmp).catch(() => undefined);
     throw err;
@@ -333,10 +340,12 @@ function sameFile(a: BigIntStats, b: BigIntStats): boolean {
  *   - une réservation porte une marque unique, écrite par l'appel : elle est
  *     retirée si elle ne porte que cette marque (ou un début de celle-ci, si
  *     l'écriture a été interrompue) ;
- *   - un fichier posé (un lien ou une copie de la source) est retiré s'il
- *     porte exactement les octets de la source, qui RESTE : rien ne peut s'y
- *     perdre. Un fichier aux octets différents, celui d'un programme qui a
- *     écrasé la destination exprès entre-temps, reste où il est.
+ *   - un fichier posé (un lien ou une copie de la source) se reconnaît à
+ *     l'EMPREINTE de ses octets, prise par l'appel au moment où il l'a posé
+ *     (`Placed`) — jamais aux octets ACTUELS de la source, qui a pu changer ou
+ *     disparaître entre-temps (revue A de #938, passe 4). Un fichier aux
+ *     octets différents, celui d'un programme qui a écrasé la destination
+ *     exprès entre-temps, reste où il est.
  */
 const RESERVATION_MARK = 'nodal file_move: this name is reserved, the file arrives now ';
 
@@ -400,33 +409,29 @@ async function renameOntoReservation(from: string, destination: string, mark: Bu
   }
 }
 
-/** Les octets des deux fichiers sont-ils les mêmes ? Lus par morceaux : un fichier peut être gros. */
-async function sameBytes(a: string, b: string): Promise<boolean> {
-  const [sa, sb] = await Promise.all([lstat(a).catch(() => null), lstat(b).catch(() => null)]);
-  if (sa === null || sb === null || !sa.isFile() || !sb.isFile() || sa.size !== sb.size) {
-    return false;
-  }
-  const [ha, hb] = await Promise.all([open(a, 'r'), open(b, 'r')]);
+/** L'empreinte (SHA-256) des octets d'un fichier, lus par morceaux : un fichier peut être gros. */
+async function digestOf(path: string): Promise<string> {
+  const handle = await open(path, 'r');
   try {
-    const [ba, bb] = [Buffer.alloc(1 << 20), Buffer.alloc(1 << 20)];
+    const hash = createHash('sha256');
+    const chunk = Buffer.alloc(1 << 20);
     for (;;) {
-      const [ra, rb] = await Promise.all([
-        ha.read(ba, 0, ba.length, null),
-        hb.read(bb, 0, bb.length, null),
-      ]);
-      if (ra.bytesRead !== rb.bytesRead) return false;
-      if (ra.bytesRead === 0) return true;
-      if (!ba.subarray(0, ra.bytesRead).equals(bb.subarray(0, rb.bytesRead))) return false;
+      const { bytesRead } = await handle.read(chunk, 0, chunk.length, null);
+      if (bytesRead === 0) return hash.digest('hex');
+      hash.update(chunk.subarray(0, bytesRead));
     }
   } finally {
-    await Promise.all([ha.close(), hb.close()]);
+    await handle.close();
   }
 }
 
-/** Retire `path` s'il porte exactement les octets de `original`, qui reste. */
-async function removeCopyOf(path: string, original: string): Promise<Removal> {
+/** Ce que l'appel a posé à destination : l'empreinte de ses octets, ou pourquoi elle n'a pas pu être prise. */
+type Placed = { digest: string } | { error: unknown };
+
+/** Retire `path` s'il porte toujours ce que l'appel y a posé (son empreinte). */
+async function removeIfPlaced(path: string, digest: string): Promise<Removal> {
   if ((await lstat(path).catch(() => null)) === null) return 'removed';
-  return (await sameBytes(path, original).catch(() => false)) ? unlinkOurs(path) : 'not_ours';
+  return (await digestOf(path).catch(() => null)) === digest ? unlinkOurs(path) : 'not_ours';
 }
 
 /**
@@ -490,18 +495,19 @@ async function claimName(from: string, destination: string): Promise<'linked' | 
  * Pose une copie complète de `source` au nom `destination`, sans jamais
  * remplacer : la copie se fait dans un temporaire du dossier de destination,
  * que `claimName` pose. Aucun temporaire ne reste, que l'appel réussisse ou
- * non.
+ * non. Rend l'empreinte de ce qui a été posé.
  */
-async function placeCopy(source: string, destination: string): Promise<void> {
-  const tmp = await copyToTemp(source, destination);
+async function placeCopy(source: string, destination: string): Promise<string> {
+  const { tmp, digest } = await copyToTemp(source, destination);
   try {
     if ((await claimName(tmp, destination)) === 'linked') {
       try {
         await unlink(tmp);
       } catch (err) {
-        throw withLeftover(err, destination, await removeCopyOf(destination, source));
+        throw withLeftover(err, destination, await removeIfPlaced(destination, digest));
       }
     }
+    return digest;
   } catch (err) {
     await unlink(tmp).catch(() => undefined);
     throw err;
@@ -511,44 +517,87 @@ async function placeCopy(source: string, destination: string): Promise<void> {
 /**
  * Un déplacement sans remplacement : le fichier est posé à destination
  * (`claimName` sur le même volume, `placeCopy` entre deux volumes), PUIS la
- * source est retirée. Quand elle ne peut pas l'être (un fichier encore ouvert
- * ailleurs), ce que l'appel a posé est retiré à son tour (`removeCopyOf`), et
- * l'erreur remonte : un déplacement qui échoue laisse les choses comme avant.
- * Quand ce retour en arrière n'a pas eu lieu, rend ce qui est VRAIMENT sur le
- * disque (revue A de #938, passe 3) : le fichier posé est toujours à
- * destination, ou la destination porte maintenant le fichier d'un autre
- * programme. La seule vérité de l'agent est la phrase qu'il lit : s'il croyait
- * la source copiée alors qu'elle ne l'est pas, la nettoyer détruirait les
- * derniers octets.
+ * source est retirée. Quand elle ne peut pas l'être, le disque est regardé une
+ * fois (`observePartialMove`). Le retour en arrière n'a lieu que si la source
+ * est toujours là ET que la destination porte ce que l'appel y a posé :
+ * l'erreur remonte alors, et rien n'a bougé. Sinon, rend ce qui a été vu, que
+ * `partialMove` dit tel quel.
  */
 async function moveWithoutReplacing(
   source: string,
   destination: string,
-): Promise<Unfinished | undefined> {
+): Promise<{ unlinkErr: unknown; seen: Seen } | undefined> {
+  let placed: Placed;
   try {
     if ((await claimName(source, destination)) === 'renamed') return undefined;
+    // Un lien : l'empreinte de ce que l'appel vient de poser, prise avant toute
+    // autre chose, pour le reconnaître si la suite échoue.
+    placed = await digestOf(destination).then(
+      (digest): Placed => ({ digest }),
+      (error: unknown): Placed => ({ error }),
+    );
   } catch (err) {
     // Deux volumes (un autre disque, un partage monté) : un lien n'y traverse
     // pas, le fichier y arrive par une copie.
     if (errnoOf(err) !== 'EXDEV') throw err;
-    await placeCopy(source, destination);
+    placed = { digest: await placeCopy(source, destination) };
   }
   try {
     await unlink(source);
     return undefined;
   } catch (err) {
-    const removal = await removeCopyOf(destination, source);
-    if (removal === 'removed') throw err;
-    return { unlinkErr: err, atDestination: removal === 'not_ours' ? 'someone_else' : 'ours' };
+    const seen = await observePartialMove(source, destination, placed);
+    if (
+      'sourceThere' in seen &&
+      seen.sourceThere &&
+      seen.atDestination === 'ours' &&
+      (await unlinkOurs(destination)) === 'removed'
+    ) {
+      throw err;
+    }
+    return { unlinkErr: err, seen };
   }
 }
 
 /**
- * Un déplacement dont la source ne s'est pas retirée, et dont le retour en
- * arrière n'a pas eu lieu : ce qui occupe la destination — le fichier que
- * l'appel y a posé, ou celui qu'un autre programme y a écrit entre-temps.
+ * Ce qu'un déplacement inachevé laisse sur le disque, vu UNE fois, sur tous
+ * les chemins (`replace: true` compris) : la source est-elle encore là, et
+ * qu'y a-t-il à destination — ce que l'appel y a posé (son empreinte), autre
+ * chose, ou rien. Une lecture qui échoue est rapportée comme telle, jamais
+ * prise pour l'un de ces cas.
  */
-type Unfinished = { unlinkErr: unknown; atDestination: 'ours' | 'someone_else' };
+type Seen =
+  | { readError: { path: string; error: unknown } }
+  | { sourceThere: boolean; atDestination: 'ours' | 'foreign' | 'absent' };
+
+async function observePartialMove(
+  source: string,
+  destination: string,
+  placed: Placed,
+): Promise<Seen> {
+  const there = async (path: string): Promise<boolean> =>
+    lstat(path).then(
+      () => true,
+      (error: unknown) => {
+        if (errnoOf(error) === 'ENOENT') return false;
+        throw error;
+      },
+    );
+  let sourceThere: boolean;
+  try {
+    sourceThere = await there(source);
+  } catch (error) {
+    return { readError: { path: source, error } };
+  }
+  try {
+    if (!(await there(destination))) return { sourceThere, atDestination: 'absent' };
+    if ('error' in placed) return { readError: { path: destination, error: placed.error } };
+    const ours = (await digestOf(destination)) === placed.digest;
+    return { sourceThere, atDestination: ours ? 'ours' : 'foreign' };
+  } catch (error) {
+    return { readError: { path: destination, error } };
+  }
+}
 
 /**
  * Le nom est pris : l'appel échoue, et dit quel fichier est là, pour que
@@ -590,33 +639,59 @@ function removalError(err: unknown): string {
 
 /**
  * Ce qu'un déplacement inachevé laisse sur le disque, dit tel quel (invariant
- * #4) — par une copie entre deux volumes comme par un lien sur le même : le
- * fichier est arrivé à destination, la source n'a pas pu être retirée, il est
- * donc aux deux endroits. Ou la destination porte le fichier d'un autre
- * programme : rien n'a été déplacé, et l'original, intact à la source, est le
- * seul exemplaire à garder.
+ * #4), à partir de ce qui a été VU (`observePartialMove`) et de rien d'autre :
+ * la seule vérité de l'agent est cette phrase, et s'il croyait la source
+ * copiée alors qu'elle ne l'est pas, la nettoyer détruirait les derniers
+ * octets.
  */
-function unfinishedMove(
+function partialMove(
   input: FileMoveInput,
   destination: string,
-  left: Unfinished,
+  unlinkErr: unknown,
+  seen: Seen,
 ): FileMoveOutput {
-  if (left.atDestination === 'someone_else') {
-    return {
-      ok: false,
-      reason:
-        `Nothing was moved: the original "${input.source}" could not be removed ` +
-        `(${removalError(left.unlinkErr)}), and "${destination}" now holds a different file, ` +
-        'written there by another program during this call. The original is untouched at ' +
-        `"${input.source}": keep it.`,
-    };
+  const a = input.source;
+  const why = removalError(unlinkErr);
+  const fail = (reason: string): FileMoveOutput => ({ ok: false, reason });
+  if ('readError' in seen) {
+    return fail(
+      `The original "${a}" could not be removed (${why}), and checking what is on disk ` +
+        `afterwards failed: reading "${seen.readError.path}" gave ` +
+        `${removalError(seen.readError.error)}. Look at "${a}" and "${destination}" before ` +
+        'doing anything else.',
+    );
   }
-  return {
-    ok: false,
-    reason:
-      `"${input.source}" was placed at "${destination}", but the original could not be ` +
-      `removed (${removalError(left.unlinkErr)}). The file is at both places now.`,
-  };
+  if (seen.sourceThere) {
+    if (seen.atDestination === 'ours') {
+      return fail(
+        `"${a}" was placed at "${destination}", but the original could not be removed ` +
+          `(${why}). The file is at both places now.`,
+      );
+    }
+    return fail(
+      `Nothing was moved: the original "${a}" could not be removed (${why}), and ` +
+        (seen.atDestination === 'foreign'
+          ? `"${destination}" now holds a different file, written there by another program ` +
+            'during this call.'
+          : `nothing is at "${destination}" any more: another program removed what this call ` +
+            'had placed there.') +
+        ` The original is still at "${a}": keep it.`,
+    );
+  }
+  if (seen.atDestination === 'ours') {
+    return fail(
+      `"${a}" was placed at "${destination}", and the original is no longer at "${a}" ` +
+        `(${why}). The file is now only at "${destination}".`,
+    );
+  }
+  return fail(
+    `The original "${a}" is gone (${why}), and "${destination}" does not hold it: ` +
+      (seen.atDestination === 'foreign'
+        ? 'it now holds a different file, written there by another program.'
+        : 'nothing is there.') +
+      ' This call can no longer tell where the file is: tell the person before doing ' +
+      'anything else.',
+  );
 }
 
 /**
@@ -679,7 +754,7 @@ async function withoutReplacing(
       return { ok: true, operation: 'copied', source, destination, bytes };
     }
     const left = await moveWithoutReplacing(source, destination);
-    if (left !== undefined) return unfinishedMove(input, destination, left);
+    if (left !== undefined) return partialMove(input, destination, left.unlinkErr, left.seen);
   } catch (err) {
     if (errnoOf(err) !== 'EEXIST') throw err;
     const there = await lstat(destination, { bigint: true }).catch(() => null);
@@ -821,16 +896,16 @@ export const fileMoveTool: ToolDefinition<typeof FileMoveInputSchema, FileMoveOu
         // traverse pas. Le déplacement se fait alors en deux temps, copie puis
         // suppression.
         if (errnoOf(err) !== 'EXDEV') throw err;
-        await copyIntoPlace(ctx, source, destination, destroyed);
+        const digest = await copyIntoPlace(ctx, source, destination, destroyed);
         try {
           await unlink(source);
           // Copié PUIS supprimé : le déplacement est fait (#916).
           ctx.confirmMove?.(source, destination);
         } catch (unlinkErr) {
-          // La copie a eu lieu, la suppression non : les DEUX fichiers
-          // existent, et l'agent doit le savoir, jamais croire à un
-          // déplacement fait (invariant #4).
-          return unfinishedMove(input, destination, { unlinkErr, atDestination: 'ours' });
+          // La copie a eu lieu, la suppression non : ce qui est sur le disque
+          // se regarde, et se dit tel quel (invariant #4), comme sans replace.
+          const seen = await observePartialMove(source, destination, { digest });
+          return partialMove(input, destination, unlinkErr, seen);
         }
       }
       return { ok: true, operation: 'moved', source, destination, bytes };
