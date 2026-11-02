@@ -128,7 +128,12 @@ describe('explainApproval — built-in tools keep their deterministic impact', (
   it('file_move : une écriture ciblée sur la destination, là où le fichier arrive (#879) @cap:travailler-sur-des-fichiers/ecran', () => {
     const x = explainApproval({
       toolName: 'file_move',
-      toolInput: { source: 'docs/scan.pdf', destination: 'shared/scan.pdf', copy: true },
+      toolInput: {
+        source: 'docs/scan.pdf',
+        destination: 'shared/scan.pdf',
+        copy: true,
+        replace: true,
+      },
     });
     expect(x.provenance.kind).toBe('builtin');
     expect(x.effect).toBe('write');

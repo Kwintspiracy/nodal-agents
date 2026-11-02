@@ -32,7 +32,14 @@ const panne = vi.hoisted(() => ({
    * le visent) : la fenêtre qu'une vérification suivie d'un renommage laisse
    * ouverte, rendue déterministe. Une seule fois.
    */
-  arrive: null as { path: string; content: string } | null,
+  arrive: null as { path: string; content: string; op?: 'rename' } | null,
+  /**
+   * `stat` et `lstat` rendent un numéro de fichier nul, comme un partage réseau
+   * sans index de fichier (revue A de #938).
+   */
+  inoNul: false,
+  /** L'écriture de la marque dans une réservation (`FileHandle.writeFile`) lève EIO. */
+  marqueEchoue: false,
   /** Les pannes réellement levées : un faux qui ne se déclenche pas ne prouve rien. */
   levees: [] as string[],
 }));
@@ -46,18 +53,25 @@ vi.mock('node:fs/promises', async (importOriginal) => {
     panne.levees.push(code);
     throw Object.assign(new Error(`${code}: simulated`), { code });
   };
-  const arrive = async (to: unknown): Promise<void> => {
+  const arrive = async (to: unknown, op?: 'rename'): Promise<void> => {
     const a = panne.arrive;
-    if (a === null || !meme(to, a.path)) return;
+    if (a === null || !meme(to, a.path) || (a.op !== undefined && a.op !== op)) return;
     panne.arrive = null;
     panne.levees.push('arrivée');
     await actual.writeFile(a.path, a.content);
   };
+  const sansNumero = <T extends { ino: number | bigint } | undefined>(st: T): T => {
+    if (panne.inoNul && st !== undefined) st.ino = typeof st.ino === 'bigint' ? BigInt(0) : 0;
+    return st;
+  };
   return {
     ...actual,
+    stat: async (...args: Parameters<typeof actual.stat>) => sansNumero(await actual.stat(...args)),
+    lstat: async (...args: Parameters<typeof actual.lstat>) =>
+      sansNumero(await actual.lstat(...args)),
     rename: async (from: string, to: string) => {
+      await arrive(to, 'rename');
       if (meme(from, panne.renameFrom)) return leve(panne.renameCode);
-      await arrive(to);
       return actual.rename(from, to);
     },
     link: async (from: string, to: string) => {
@@ -67,8 +81,11 @@ vi.mock('node:fs/promises', async (importOriginal) => {
       return actual.link(from, to);
     },
     open: async (path: string, flags?: string, mode?: number) => {
-      if (flags === 'wx') await arrive(path);
-      return actual.open(path, flags, mode);
+      if (flags !== 'wx') return actual.open(path, flags, mode);
+      await arrive(path);
+      const handle = await actual.open(path, flags, mode);
+      if (panne.marqueEchoue) handle.writeFile = async () => leve('EIO');
+      return handle;
     },
     unlink: async (path: string) =>
       meme(path, panne.unlinkOf) ? leve('EBUSY') : actual.unlink(path),
@@ -97,7 +114,7 @@ import { cheminConstate } from '../../verification/record-constat';
 import { executeTool } from '../../execute';
 import { presentToolResult } from '../../cards';
 import { SHARED_WORKSPACE_LABEL } from './workspace';
-import { fileMoveTool, type FileMoveOutput } from './file-move';
+import { fileMoveTool, RESERVATION_BYTES, type FileMoveOutput } from './file-move';
 import { fileWriteTool } from './file-write';
 import type { ExecuteOptions, ToolContext } from '../../types';
 
@@ -133,6 +150,8 @@ afterEach(async () => {
   panne.link = [];
   panne.unlinkOf = null;
   panne.arrive = null;
+  panne.inoNul = false;
+  panne.marqueEchoue = false;
   panne.levees = [];
   await rm(racine, { recursive: true, force: true }).catch(() => undefined);
 });
@@ -742,14 +761,17 @@ async function course(copy: boolean, reservation = false): Promise<void> {
   const perdant = gagnantA ? outB : outA;
   if (reservation) {
     // Sans liens physiques, le perdant peut trouver le nom pendant le seul
-    // renommage du gagnant, encore RÉSERVÉ par un fichier vide : son refus
-    // nomme alors ce fichier vide, ce qui était vrai à l'instant de l'appel.
+    // renommage du gagnant, encore RÉSERVÉ (la seule marque de la
+    // réservation) : son refus nomme alors cette réservation, ce qui était
+    // vrai à l'instant de l'appel.
     // Le nom, lui, était pris dans les deux cas.
     const reel = join(await realpath(SHARED), '2026-03-31 Document.pdf');
     if (perdant.ok) throw new Error('les deux appels ont réussi');
     expect(perdant.reason).toContain('file_move never replaces an existing file');
     expect(perdant.existing?.path).toBe(reel);
-    expect([0, (gagnantA ? DOC_A : DOC_B).length]).toContain(perdant.existing?.bytes);
+    expect([RESERVATION_BYTES, (gagnantA ? DOC_A : DOC_B).length]).toContain(
+      perdant.existing?.bytes,
+    );
   } else {
     await refusNomPris(perdant, copy ? 'copied' : 'moved', cible);
   }
@@ -976,4 +998,89 @@ describe('file_move — un renommage qui ne change que la casse (#933) @cap:trav
     }
     expect(await readFile(join(DOCS, 'scan.pdf'))).toEqual(OCTETS);
   });
+});
+
+describe('file_move — un retour en arrière reconnaît ce qu’il a posé sans numéro de fichier (revue A de #938) @cap:travailler-sur-des-fichiers/moteur', () => {
+  // Un partage réseau sans index de fichier rend un numéro nul : ce que l'appel
+  // a posé doit se reconnaître quand même, et se retirer quand l'appel échoue.
+  beforeEach(() => {
+    panne.inoNul = true;
+  });
+
+  const ouvert =
+    'Could not move "docs/scan.pdf" to "archive/" (EBUSY: EBUSY: simulated). The file may be ' +
+    'open in another program, still being written, or read-only. Call again once it is ' +
+    'complete and closed.';
+
+  it('sans liens physiques, un renommage raté retire la réservation : l’appel suivant passe', async () => {
+    await writeFile(join(DOCS, 'scan.pdf'), OCTETS);
+    panne.link = [{ from: '*', code: 'EPERM' }];
+    panne.renameFrom = await realpath(join(DOCS, 'scan.pdf'));
+    panne.renameCode = 'EBUSY';
+
+    const rate = await deplacer({ source: 'docs/scan.pdf', destination: 'archive/' });
+
+    expect(panne.levees).toEqual(['EPERM', 'EBUSY']);
+    expect(rate).toEqual({ ok: false, reason: ouvert });
+    await seulement(ARCHIVE, []);
+    expect(await readFile(join(DOCS, 'scan.pdf'))).toEqual(OCTETS);
+
+    // Le fichier fermé, l'agent rappelle : rien de l'outil ne lui barre le nom.
+    panne.renameFrom = null;
+    const reprise = await deplacer({ source: 'docs/scan.pdf', destination: 'archive/' });
+    expect(reprise.ok && reprise.operation).toBe('moved');
+    expect(await readFile(join(ARCHIVE, 'scan.pdf'))).toEqual(OCTETS);
+    await seulement(ARCHIVE, ['scan.pdf']);
+  });
+
+  it('une marque de réservation qui ne s’écrit pas : la réservation est retirée, et l’erreur dite', async () => {
+    await writeFile(join(DOCS, 'scan.pdf'), OCTETS);
+    panne.link = [{ from: '*', code: 'EPERM' }];
+    panne.marqueEchoue = true;
+
+    const out = await deplacer({ source: 'docs/scan.pdf', destination: 'archive/' });
+
+    expect(panne.levees).toEqual(['EPERM', 'EIO']);
+    expect(out).toEqual({
+      ok: false,
+      reason: 'Could not move "docs/scan.pdf" to "archive/" (EIO: EIO: simulated).',
+    });
+    await seulement(ARCHIVE, []);
+    expect(await readFile(join(DOCS, 'scan.pdf'))).toEqual(OCTETS);
+  });
+
+  it('une réservation écrasée exprès entre-temps n’est pas retirée : ce fichier n’est pas celui de l’appel', async () => {
+    await writeFile(join(DOCS, 'scan.pdf'), OCTETS);
+    const cible = join(await realpath(ARCHIVE), 'scan.pdf');
+    panne.link = [{ from: '*', code: 'EPERM' }];
+    panne.renameFrom = await realpath(join(DOCS, 'scan.pdf'));
+    panne.renameCode = 'EBUSY';
+    panne.arrive = { path: cible, content: 'écrit exprès par-dessus', op: 'rename' };
+
+    const out = await deplacer({ source: 'docs/scan.pdf', destination: 'archive/' });
+
+    expect(panne.levees).toEqual(['EPERM', 'arrivée', 'EBUSY']);
+    expect(out).toEqual({ ok: false, reason: ouvert });
+    expect(await readFile(cible, 'utf8')).toBe('écrit exprès par-dessus');
+    expect(await readFile(join(DOCS, 'scan.pdf'))).toEqual(OCTETS);
+  });
+
+  for (const cas of [
+    { nom: 'sur le même volume (un lien)', exdev: false, levees: ['EBUSY'] },
+    { nom: 'entre deux volumes (une copie)', exdev: true, levees: ['EXDEV', 'EBUSY'] },
+  ]) {
+    it(`une source qui ne se retire pas ${cas.nom} : ce qui a été posé est retiré`, async () => {
+      await writeFile(join(DOCS, 'scan.pdf'), OCTETS);
+      const src = await realpath(join(DOCS, 'scan.pdf'));
+      panne.link = cas.exdev ? [{ from: src, code: 'EXDEV' }] : [];
+      panne.unlinkOf = src;
+
+      const out = await deplacer({ source: 'docs/scan.pdf', destination: 'archive/' });
+
+      expect(panne.levees).toEqual(cas.levees);
+      expect(out).toEqual({ ok: false, reason: ouvert });
+      await seulement(ARCHIVE, []);
+      expect(await readFile(join(DOCS, 'scan.pdf'))).toEqual(OCTETS);
+    });
+  }
 });

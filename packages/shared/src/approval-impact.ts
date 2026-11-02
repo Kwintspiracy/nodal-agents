@@ -160,12 +160,15 @@ export function computeApprovalImpactLine(
       // ou la source qu'un déplacement remplace ou retire. Le geste se dit
       // d'abord, ce qu'il détruit ensuite. Sans `replace: true`, l'outil ne
       // remplace jamais la destination (#933) : un déplacement n'est alors
-      // gaté que pour la source qu'il retire, et la carte ne dit que cela.
+      // gaté que pour la source qu'il retire, et la carte ne dit que cela ;
+      // une copie ne détruit rien, et la carte le dit (une règle de
+      // l'utilisateur peut la soumettre à approbation quand même).
       if (input['copy'] === true) {
-        return (
-          `Copies "${str(input['source'])}" to "${str(input['destination'])}", overwriting ` +
-          'the existing file there in the shared workspace.'
-        );
+        return input['replace'] === true
+          ? `Copies "${str(input['source'])}" to "${str(input['destination'])}", overwriting ` +
+              'the existing file there in the shared workspace.'
+          : `Copies "${str(input['source'])}" to "${str(input['destination'])}". An existing ` +
+              'file there is never replaced: the copy is refused instead.';
       }
       return input['replace'] === true
         ? `Moves "${str(input['source'])}" to "${str(input['destination'])}", replacing or ` +

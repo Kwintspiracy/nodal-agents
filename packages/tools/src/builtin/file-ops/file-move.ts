@@ -53,7 +53,18 @@
 // qui échoue laisse la source en place (`claimName`, `removeSource`).
 
 import { randomBytes } from 'node:crypto';
-import { copyFile, link, lstat, mkdir, open, rename, stat, unlink, utimes } from 'node:fs/promises';
+import {
+  copyFile,
+  link,
+  lstat,
+  mkdir,
+  open,
+  readFile,
+  rename,
+  stat,
+  unlink,
+  utimes,
+} from 'node:fs/promises';
 import type { BigIntStats } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { z } from 'zod';
@@ -303,22 +314,104 @@ const NO_HARD_LINK = new Set([
   'EINVAL',
 ]);
 
-/** Deux états du même fichier : même volume, même numéro (un numéro nul ne prouve rien). */
+/**
+ * Deux états du même fichier : même volume, même numéro. Un numéro nul ne
+ * prouve rien : certains partages réseau n'en donnent pas. Sert seulement à
+ * reconnaître un renommage de casse ; un retour en arrière ne s'y fie jamais.
+ */
 function sameFile(a: BigIntStats, b: BigIntStats): boolean {
   return a.ino !== BigInt(0) && a.dev === b.dev && a.ino === b.ino;
 }
 
 /**
- * Retire `path` s'il est TOUJOURS le fichier `id` : le retour en arrière d'un
- * appel ne retire que ce qu'il a posé. Rend `true` quand il n'y est plus.
+ * LE RETOUR EN ARRIÈRE NE SE FIE À AUCUN NUMÉRO DE FICHIER (revue A de #938).
+ * Un volume qui n'en donne pas (un partage réseau sans index de fichier,
+ * justement ceux pour qui la réservation existe) rendait méconnaissable ce que
+ * l'appel venait de poser : la réservation restait, et l'appel suivant se
+ * refusait devant les restes de l'outil lui-même. Ce que l'appel pose se
+ * reconnaît donc par son CONTENU :
+ *   - une réservation porte une marque unique, écrite par l'appel : elle est
+ *     retirée si elle ne porte que cette marque (ou un début de celle-ci, si
+ *     l'écriture a été interrompue) ;
+ *   - un fichier posé (un lien ou une copie de la source) est retiré s'il
+ *     porte exactement les octets de la source, qui RESTE : rien ne peut s'y
+ *     perdre. Un fichier aux octets différents, celui d'un programme qui a
+ *     écrasé la destination exprès entre-temps, reste où il est.
  */
-async function removeIfStill(path: string, id: BigIntStats): Promise<boolean> {
-  const now = await lstat(path, { bigint: true }).catch(() => null);
-  if (now === null) return true;
-  if (!sameFile(now, id)) return false;
+const RESERVATION_MARK = 'nodal file_move: this name is reserved, the file arrives now ';
+
+/** Une marque de réservation que nul autre appel ne peut écrire. */
+function reservationMark(): Buffer {
+  return Buffer.from(`${RESERVATION_MARK}${randomBytes(8).toString('hex')}\n`);
+}
+
+/** Taille en octets d'une réservation (sa marque) : ce qu'un autre appel peut voir, le temps d'un renommage. */
+export const RESERVATION_BYTES = reservationMark().length;
+
+/** Ce que peut rendre un retrait : fait, refusé (ce n'est pas ce que l'appel a posé), ou l'erreur du système. */
+type Removal = 'removed' | 'not_ours' | { error: unknown };
+
+async function unlinkOurs(path: string): Promise<Removal> {
   return unlink(path).then(
-    () => true,
-    () => false,
+    (): Removal => 'removed',
+    (error: unknown): Removal => (errnoOf(error) === 'ENOENT' ? 'removed' : { error }),
+  );
+}
+
+/** Retire la réservation `path` si elle ne porte que la marque `mark` (ou un début). */
+async function removeReservation(path: string, mark: Buffer): Promise<Removal> {
+  const st = await lstat(path).catch(() => null);
+  if (st === null) return 'removed';
+  if (!st.isFile() || st.size > mark.length) return 'not_ours';
+  const held = await readFile(path).catch(() => null);
+  if (held === null || !mark.subarray(0, held.length).equals(held)) return 'not_ours';
+  return unlinkOurs(path);
+}
+
+/** Les octets des deux fichiers sont-ils les mêmes ? Lus par morceaux : un fichier peut être gros. */
+async function sameBytes(a: string, b: string): Promise<boolean> {
+  const [sa, sb] = await Promise.all([lstat(a).catch(() => null), lstat(b).catch(() => null)]);
+  if (sa === null || sb === null || !sa.isFile() || !sb.isFile() || sa.size !== sb.size) {
+    return false;
+  }
+  const [ha, hb] = await Promise.all([open(a, 'r'), open(b, 'r')]);
+  try {
+    const [ba, bb] = [Buffer.alloc(1 << 20), Buffer.alloc(1 << 20)];
+    for (;;) {
+      const [ra, rb] = await Promise.all([
+        ha.read(ba, 0, ba.length, null),
+        hb.read(bb, 0, bb.length, null),
+      ]);
+      if (ra.bytesRead !== rb.bytesRead) return false;
+      if (ra.bytesRead === 0) return true;
+      if (!ba.subarray(0, ra.bytesRead).equals(bb.subarray(0, rb.bytesRead))) return false;
+    }
+  } finally {
+    await Promise.all([ha.close(), hb.close()]);
+  }
+}
+
+/** Retire `path` s'il porte exactement les octets de `original`, qui reste. */
+async function removeCopyOf(path: string, original: string): Promise<Removal> {
+  if ((await lstat(path).catch(() => null)) === null) return 'removed';
+  return (await sameBytes(path, original).catch(() => false)) ? unlinkOurs(path) : 'not_ours';
+}
+
+/**
+ * L'erreur d'un appel dont le retour en arrière n'a pas pu retirer ce qu'il
+ * avait posé : l'agent l'apprend, avec le chemin (invariant #4).
+ */
+function withLeftover(err: unknown, path: string, removal: Removal): unknown {
+  if (typeof removal === 'string') return err;
+  const left = removal.error;
+  return Object.assign(
+    new Error(
+      `${err instanceof Error ? err.message : String(err)}; and what this call had placed at ` +
+        `"${path}" could not be removed (${errnoOf(left) ?? 'error'}: ${
+          left instanceof Error ? left.message : String(left)
+        })`,
+    ),
+    { code: errnoOf(err) },
   );
 }
 
@@ -329,12 +422,15 @@ async function removeIfStill(path: string, id: BigIntStats): Promise<boolean> {
  * reste : l'appelant le retire) ; ou, sur un volume sans liens physiques, une
  * réservation exclusive du nom (O_EXCL, EEXIST aussi), sur laquelle le fichier
  * complet `from` est renommé. La destination ne montre jamais qu'une
- * réservation vide, le temps d'un renommage, ou le fichier entier. La seule
- * fenêtre de ce second geste : un programme qui ÉCRASE exprès la réservation
- * vide entre sa création et le renommage (un `replace: true`, un éditeur)
- * serait écrasé à son tour. Une création ordinaire, elle, trouve le nom pris.
+ * réservation (sa seule marque), le temps d'un renommage, ou le fichier entier.
+ * La seule fenêtre de ce second geste : un programme qui ÉCRASE exprès la
+ * réservation entre sa création et le renommage (un `replace: true`, un
+ * éditeur) serait écrasé à son tour. Une création ordinaire, elle, trouve le
+ * nom pris.
  *
- * Lève l'erreur du système (EEXIST, EXDEV…) sans rien laisser derrière.
+ * Lève l'erreur du système (EEXIST, EXDEV…). Une réservation que l'appel n'a
+ * pas pu remplir est retirée, par sa marque, quoi qu'ait échoué après sa
+ * création — l'écriture de la marque, la fermeture ou le renommage.
  */
 async function claimName(from: string, destination: string): Promise<'linked' | 'renamed'> {
   try {
@@ -343,41 +439,37 @@ async function claimName(from: string, destination: string): Promise<'linked' | 
   } catch (err) {
     if (!NO_HARD_LINK.has(errnoOf(err) ?? '')) throw err;
   }
+  const mark = reservationMark();
   const handle = await open(destination, 'wx');
-  let reservation: BigIntStats;
   try {
-    reservation = await handle.stat({ bigint: true });
-  } finally {
-    await handle.close();
-  }
-  try {
+    try {
+      await handle.writeFile(mark);
+    } finally {
+      await handle.close();
+    }
     await rename(from, destination);
     return 'renamed';
   } catch (err) {
-    await removeIfStill(destination, reservation);
-    throw err;
+    throw withLeftover(err, destination, await removeReservation(destination, mark));
   }
 }
 
 /**
  * Pose une copie complète de `source` au nom `destination`, sans jamais
  * remplacer : la copie se fait dans un temporaire du dossier de destination,
- * que `claimName` pose. Rend l'identité du fichier posé ; aucun temporaire ne
- * reste, que l'appel réussisse ou non.
+ * que `claimName` pose. Aucun temporaire ne reste, que l'appel réussisse ou
+ * non.
  */
-async function placeCopy(source: string, destination: string): Promise<BigIntStats> {
+async function placeCopy(source: string, destination: string): Promise<void> {
   const tmp = await copyToTemp(source, destination);
   try {
-    const placed = await stat(tmp, { bigint: true });
     if ((await claimName(tmp, destination)) === 'linked') {
       try {
         await unlink(tmp);
       } catch (err) {
-        await removeIfStill(destination, placed);
-        throw err;
+        throw withLeftover(err, destination, await removeCopyOf(destination, source));
       }
     }
-    return placed;
   } catch (err) {
     await unlink(tmp).catch(() => undefined);
     throw err;
@@ -388,28 +480,25 @@ async function placeCopy(source: string, destination: string): Promise<BigIntSta
  * Un déplacement sans remplacement : le fichier est posé à destination
  * (`claimName` sur le même volume, `placeCopy` entre deux volumes), PUIS la
  * source est retirée. Quand elle ne peut pas l'être (un fichier encore ouvert
- * ailleurs), ce que l'appel a posé est retiré à son tour, et l'erreur remonte :
- * un déplacement qui échoue laisse les choses comme avant. Rend l'erreur du
- * retrait quand même ce retour en arrière a échoué : les deux fichiers
- * existent alors, et l'agent doit le savoir.
+ * ailleurs), ce que l'appel a posé est retiré à son tour (`removeCopyOf`), et
+ * l'erreur remonte : un déplacement qui échoue laisse les choses comme avant.
+ * Rend l'erreur du retrait quand ce retour en arrière n'a pas eu lieu : les
+ * deux fichiers existent alors, et l'agent doit le savoir.
  */
 async function moveWithoutReplacing(source: string, destination: string): Promise<unknown> {
-  const sourceId = await stat(source, { bigint: true });
-  let placed: BigIntStats;
   try {
     if ((await claimName(source, destination)) === 'renamed') return undefined;
-    placed = sourceId;
   } catch (err) {
     // Deux volumes (un autre disque, un partage monté) : un lien n'y traverse
     // pas, le fichier y arrive par une copie.
     if (errnoOf(err) !== 'EXDEV') throw err;
-    placed = await placeCopy(source, destination);
+    await placeCopy(source, destination);
   }
   try {
     await unlink(source);
     return undefined;
   } catch (err) {
-    if (await removeIfStill(destination, placed)) throw err;
+    if ((await removeCopyOf(destination, source)) === 'removed') throw err;
     return err;
   }
 }
