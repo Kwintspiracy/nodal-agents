@@ -17,6 +17,7 @@ import { buildTestPdf } from '@nodal-agents/test-kit';
 import { systemSkills } from '@nodal-agents/catalog';
 import { executeTool } from '../../execute';
 import { ALWAYS_ON_TOOLS, ALWAYS_ON_TOOL_DOCS } from '../index';
+import { LOAD_TOOLS_NAME } from '../load-tools';
 import { CHAT_CONTEXT_READ_TOOLS, UNTRUSTED_TOOL_NAMES } from '@nodal-agents/shared';
 import type { ModelAttachmentInput } from '../../model-images';
 import type { ToolContext, ToolExecutionResult } from '../../types';
@@ -28,6 +29,8 @@ import {
   OVERVIEW_TEXT_CHARS,
   OVERVIEW_TREE_DEPTH,
   OVERVIEW_TREE_MAX_FOLDERS,
+  OVERVIEW_FOLDER_MAX_FILES,
+  OVERVIEW_TREE_MAX_FILES,
   type FileOverviewOutput,
 } from './file-overview';
 
@@ -65,6 +68,16 @@ beforeAll(async () => {
   // A tree 5 levels deep: a/b/c/d/e, with files that must never be listed.
   await mkdir(join(ws, 'deep', 'a', 'b', 'c', 'd', 'e'), { recursive: true });
   await writeFile(join(ws, 'deep', 'a', 'file.txt'), 'a file, not a folder');
+  // File names over the caps: 60 in one folder, then 10 folders of 50.
+  await mkdir(join(ws, 'names', 'big'), { recursive: true });
+  for (let k = 0; k < OVERVIEW_FOLDER_MAX_FILES + 10; k++) {
+    await writeFile(join(ws, 'names', 'big', `n${String(k).padStart(3, '0')}.txt`), '');
+  }
+  for (let d = 0; d < 10; d++) {
+    const dir = join(ws, 'names', `d${String(d).padStart(2, '0')}`);
+    await mkdir(dir);
+    for (let k = 0; k < 50; k++) await writeFile(join(dir, `m${k}.txt`), '');
+  }
   // A tree wider than the cap, one level.
   for (let k = 0; k < OVERVIEW_TREE_MAX_FOLDERS + 10; k++) {
     await mkdir(join(ws, 'wide', `f${String(k).padStart(3, '0')}`), { recursive: true });
@@ -235,27 +248,56 @@ describe('file_overview — files @cap:travailler-sur-des-fichiers/moteur', () =
 });
 
 describe('file_overview — folder trees @cap:travailler-sur-des-fichiers/moteur', () => {
-  it(`lists folders only, ${OVERVIEW_TREE_DEPTH} levels deep, and says what is deeper`, async () => {
+  it(`lists the root and its folders ${OVERVIEW_TREE_DEPTH} levels deep, each with its file names, and says what is deeper`, async () => {
     const { out } = await overview({ files: ['inbox/note.txt'], roots: ['deep'] });
     expect(out.roots).toEqual([
       {
         root: 'deep',
         ok: true,
-        folders: ['deep/a', 'deep/a/b', 'deep/a/b/c'],
-        note: `Cut: folders more than ${OVERVIEW_TREE_DEPTH} levels below it are not listed; file_list lists a folder.`,
+        folders: [
+          { path: 'deep', files: [] },
+          { path: 'deep/a', files: ['file.txt'] },
+          { path: 'deep/a/b', files: [] },
+          { path: 'deep/a/b/c', files: [] },
+        ],
+        note: `Cut: folders more than ${OVERVIEW_TREE_DEPTH} levels below it are not listed. file_list lists a folder.`,
       },
     ]);
   });
 
-  it(`stops at ${OVERVIEW_TREE_MAX_FOLDERS} folders per root, and says so`, async () => {
+  it(`stops at ${OVERVIEW_TREE_MAX_FOLDERS} folders below a root, and says so`, async () => {
     const { out } = await overview({ files: ['inbox/note.txt'], roots: ['wide', 'inbox/'] });
     const [wide, inbox] = out.roots;
     if (!wide?.ok) throw new Error('expected the wide tree');
-    expect(wide.folders).toHaveLength(OVERVIEW_TREE_MAX_FOLDERS);
-    expect(wide.folders[0]).toBe('wide/f000');
-    expect(wide.note).toContain(`only the first ${OVERVIEW_TREE_MAX_FOLDERS} folders are listed`);
-    // A root with no subfolder: an empty tree, nothing cut, nothing said.
-    expect(inbox).toEqual({ root: 'inbox/', ok: true, folders: [] });
+    expect(wide.folders).toHaveLength(OVERVIEW_TREE_MAX_FOLDERS + 1);
+    expect(wide.folders.map((f) => f.path).slice(0, 2)).toEqual(['wide', 'wide/f000']);
+    expect(wide.note).toContain(
+      `only the first ${OVERVIEW_TREE_MAX_FOLDERS} folders below it are listed`,
+    );
+    // A root with files and no subfolder: its own names, nothing cut, nothing said.
+    expect(inbox).toEqual({
+      root: 'inbox/',
+      ok: true,
+      folders: [
+        {
+          path: 'inbox',
+          files: ['long.pdf', 'long.txt', 'note.txt', 'short.pdf', 'shot.png'],
+        },
+      ],
+    });
+  });
+
+  it(`names ${OVERVIEW_FOLDER_MAX_FILES} files per folder and ${OVERVIEW_TREE_MAX_FILES} per tree at most, and counts the others`, async () => {
+    const { out } = await overview({ files: ['inbox/note.txt'], roots: ['names'] });
+    const [tree] = out.roots;
+    if (!tree?.ok) throw new Error('expected the names tree');
+    const big = tree.folders.find((f) => f.path === 'names/big');
+    expect(big?.files).toHaveLength(OVERVIEW_FOLDER_MAX_FILES);
+    expect(big?.files[0]).toBe('n000.txt');
+    expect(big?.files_not_listed).toBe(10);
+    expect(tree.folders.reduce((n, f) => n + f.files.length, 0)).toBe(OVERVIEW_TREE_MAX_FILES);
+    expect(tree.folders.at(-1)).toEqual({ path: 'names/d09', files: [], files_not_listed: 50 });
+    expect(tree.note).toContain('"files_not_listed" counts the others');
   });
 
   it('a missing root, a file given as root and a root outside the workspace are said in their entries', async () => {
@@ -291,7 +333,19 @@ describe('file_overview — offered like file_read @cap:travailler-sur-des-fichi
     const named = [...fileFilingSkill.content.matchAll(/`([a-z]+_[a-z_]+)`/g)].map((m) => m[1]);
     expect(named).toContain('file_overview');
     expect(named).toContain('file_move');
-    for (const tool of named) expect(ALWAYS_ON_TOOLS as readonly string[]).toContain(tool);
+    // Every tool it names is held by every agent: always on, or the loader.
+    for (const tool of named) {
+      expect([...ALWAYS_ON_TOOLS, LOAD_TOOLS_NAME] as string[]).toContain(tool);
+    }
+    // A deferred tool it names is loaded by the method itself, in the turn
+    // that looks, never in a turn of its own (live run of #932).
+    const deferred = ALWAYS_ON_TOOL_DOCS.filter(
+      (d) => named.includes(d.name) && d.loading === 'deferred',
+    ).map((d) => d.name);
+    expect(deferred).toContain('file_move');
+    for (const tool of deferred) {
+      expect(fileFilingSkill.content).toContain(`\`load_tools\` for \`${tool}\``);
+    }
     expect(fileFilingSkill.requiredBuiltins).toEqual([]);
   });
 });

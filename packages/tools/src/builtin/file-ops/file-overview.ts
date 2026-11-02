@@ -5,7 +5,8 @@
 // followed by a model turn, each turn re-reading the whole context. This tool
 // returns, in one result, what those calls would: each file read through the
 // SAME path as `file_read` (`readWorkspaceFile`), and each folder's tree,
-// folders only. It reads; it decides nothing and changes nothing.
+// each folder with the names of its files (what a move onto an existing name
+// needs to know). It reads; it decides nothing and changes nothing.
 
 import { readdir, stat } from 'node:fs/promises';
 import { basename, join } from 'node:path';
@@ -25,8 +26,12 @@ export const OVERVIEW_TEXT_CHARS = 4000;
 export const OVERVIEW_PDF_PAGES = 3;
 /** Levels of a folder tree listed below its root. */
 export const OVERVIEW_TREE_DEPTH = 3;
-/** Folders listed at most per root. */
+/** Folders listed at most per root, below it. */
 export const OVERVIEW_TREE_MAX_FOLDERS = 200;
+/** File names listed at most per folder of a tree. */
+export const OVERVIEW_FOLDER_MAX_FILES = 50;
+/** File names listed at most per tree (`file_list`'s own cap). */
+export const OVERVIEW_TREE_MAX_FILES = 500;
 
 /** Lines read for a text file before its characters are cut (`file_read`'s own maximum). */
 const TEXT_LINES = 2000;
@@ -47,7 +52,7 @@ export const FileOverviewInputSchema = z.object({
     .default([])
     .describe(
       `Folders whose tree to list, 0 to ${OVERVIEW_MAX_ROOTS}, as file_list takes them. ` +
-        `Folders only, ${OVERVIEW_TREE_DEPTH} levels deep, ${OVERVIEW_TREE_MAX_FOLDERS} per folder at most.`,
+        `Each folder with its file names, ${OVERVIEW_TREE_DEPTH} levels deep, ${OVERVIEW_TREE_MAX_FOLDERS} folders per root at most.`,
     ),
 });
 
@@ -73,8 +78,11 @@ export type FileOverviewFile =
     })
   | { path: string; ok: false; reason: string };
 
+/** A folder of a tree, and the names of the files it holds (`files_not_listed`: the others, counted). */
+export type FileOverviewFolder = { path: string; files: string[]; files_not_listed?: number };
+
 export type FileOverviewRoot =
-  | { root: string; ok: true; folders: string[]; note?: string }
+  | { root: string; ok: true; folders: FileOverviewFolder[]; note?: string }
   | { root: string; ok: false; reason: string };
 
 export type FileOverviewOutput = { ok: true; files: FileOverviewFile[]; roots: FileOverviewRoot[] };
@@ -133,10 +141,11 @@ async function overviewFile(path: string, ctx: ToolContext, attached: () => numb
 }
 
 /**
- * A folder's tree, folders only, breadth first so that a cut drops the deepest
- * and last ones. Each folder is named as the root was given, then its path
- * below it (`Documents/Taxes/2025`): the form `file_move` takes. A link is not
- * followed, like `file_list`.
+ * A folder's tree, breadth first so that a cut drops the deepest and last
+ * folders: the root itself, then each folder below it, each with the names of
+ * the files it holds. Each folder is named as the root was given, then its
+ * path below it (`Documents/Taxes/2025`): the form `file_move` takes. A link
+ * is not followed, like `file_list`.
  */
 async function overviewRoot(root: string, ctx: ToolContext): Promise<FileOverviewRoot> {
   try {
@@ -144,45 +153,66 @@ async function overviewRoot(root: string, ctx: ToolContext): Promise<FileOvervie
     if (!(await stat(abs)).isDirectory()) {
       return { root, ok: false, reason: `Not a directory: "${root}".` };
     }
-    const prefix = root.replace(/\\/g, '/').replace(/\/+$/, '');
-    const folders: string[] = [];
+    const folders: FileOverviewFolder[] = [];
+    const queue: Array<{ abs: string; rel: string; depth: number }> = [
+      { abs, rel: root.replace(/\\/g, '/').replace(/\/+$/, ''), depth: 0 },
+    ];
+    let below = 0;
+    let names = 0;
     let full = false;
     let deeper = false;
-    let level: Array<{ abs: string; rel: string }> = [{ abs, rel: prefix }];
-    for (let depth = 1; level.length > 0; depth++) {
-      const next: Array<{ abs: string; rel: string }> = [];
-      for (const dir of level) {
-        const subdirs = (await readdir(dir.abs, { withFileTypes: true }))
-          .filter((d) => d.isDirectory())
-          .map((d) => d.name)
-          .sort((a, b) => a.localeCompare(b));
-        if (depth > OVERVIEW_TREE_DEPTH) {
-          if (subdirs.length > 0) deeper = true;
-          continue;
-        }
-        for (const name of subdirs) {
-          if (folders.length >= OVERVIEW_TREE_MAX_FOLDERS) {
-            full = true;
-            break;
-          }
-          const rel = `${dir.rel}/${name}`;
-          folders.push(rel);
-          next.push({ abs: join(dir.abs, name), rel });
-        }
-        if (full) break;
+    let filesCut = false;
+    for (let i = 0; i < queue.length; i++) {
+      const dir = queue[i]!;
+      const entries = await readdir(dir.abs, { withFileTypes: true });
+      const byName = (a: string, b: string): number => a.localeCompare(b);
+      const subdirs = entries
+        .filter((d) => d.isDirectory())
+        .map((d) => d.name)
+        .sort(byName);
+      const files = entries
+        .filter((d) => !d.isDirectory())
+        .map((d) => d.name)
+        .sort(byName);
+      const shown = files.slice(
+        0,
+        Math.max(0, Math.min(OVERVIEW_FOLDER_MAX_FILES, OVERVIEW_TREE_MAX_FILES - names)),
+      );
+      names += shown.length;
+      if (shown.length < files.length) filesCut = true;
+      folders.push({
+        path: dir.rel,
+        files: shown,
+        ...(shown.length < files.length ? { files_not_listed: files.length - shown.length } : {}),
+      });
+      if (dir.depth === OVERVIEW_TREE_DEPTH) {
+        if (subdirs.length > 0) deeper = true;
+        continue;
       }
-      if (full || depth > OVERVIEW_TREE_DEPTH) break;
-      level = next;
+      for (const name of subdirs) {
+        if (below >= OVERVIEW_TREE_MAX_FOLDERS) {
+          full = true;
+          break;
+        }
+        below++;
+        queue.push({ abs: join(dir.abs, name), rel: `${dir.rel}/${name}`, depth: dir.depth + 1 });
+      }
     }
     const cuts = [
-      ...(full ? [`only the first ${OVERVIEW_TREE_MAX_FOLDERS} folders are listed`] : []),
+      ...(full ? [`only the first ${OVERVIEW_TREE_MAX_FOLDERS} folders below it are listed`] : []),
       ...(deeper
         ? [`folders more than ${OVERVIEW_TREE_DEPTH} levels below it are not listed`]
+        : []),
+      ...(filesCut
+        ? [
+            `a folder lists ${OVERVIEW_FOLDER_MAX_FILES} file names at most, and a tree ` +
+              `${OVERVIEW_TREE_MAX_FILES}; "files_not_listed" counts the others`,
+          ]
         : []),
     ];
     return cuts.length === 0
       ? { root, ok: true, folders }
-      : { root, ok: true, folders, note: `Cut: ${cuts.join(', and ')}; file_list lists a folder.` };
+      : { root, ok: true, folders, note: `Cut: ${cuts.join('; ')}. file_list lists a folder.` };
   } catch (err) {
     return { root, ok: false, reason: errorReason(err, root) };
   }
@@ -199,8 +229,9 @@ export const fileOverviewTool: ToolDefinition<typeof FileOverviewInputSchema, Fi
       'call, instead of one file_read or file_list per item. Each file comes with its name, size ' +
       `and modified date, and what file_read gives for it: its text (the first ${OVERVIEW_TEXT_CHARS} ` +
       `characters), or the image or PDF itself (its first ${OVERVIEW_PDF_PAGES} pages) when your ` +
-      'model takes it, attached in the order of `attachment`. Each root comes with its subfolders, ' +
-      `folders only, ${OVERVIEW_TREE_DEPTH} levels deep, ${OVERVIEW_TREE_MAX_FOLDERS} at most. A file ` +
+      'model takes it, attached in the order of `attachment`. Each root comes with itself and its ' +
+      `subfolders, ${OVERVIEW_TREE_DEPTH} levels deep, ${OVERVIEW_TREE_MAX_FOLDERS} at most, each with ` +
+      `the names of the files it holds (${OVERVIEW_FOLDER_MAX_FILES} per folder at most). A file ` +
       'or folder that cannot be read says why in its own entry; the others are still returned, and ' +
       'whatever was cut says so. Use file_read to read more of a file.',
     inputSchema: FileOverviewInputSchema,

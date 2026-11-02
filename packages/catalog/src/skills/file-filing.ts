@@ -44,19 +44,17 @@ export const fileFilingSkill: SystemSkill = {
   requiredBuiltins: [],
   content: `# File filing
 
-The folders are the owner's, written in "Your folders" at the end.
-
 ## Method
-1. **Look once.** Call \`file_overview\` ONCE, in the same turn as \`skill_view\` when you can: every file in \`files\`, and in \`roots\` the folders "Your folders" names (or the destination named). Trust the real tree it shows over the section. Never \`file_list\` or \`file_read\` file by file; \`file_read\` only reads more of a file the overview cut. A document fits a folder by what it IS (its content), not its name. When it cannot be read (an image without text, an unreadable file), its name and extension are no evidence: say so and ask where it goes, unless the person already named the destination.
-2. **Act in one turn.** In ONE turn: \`file_move\` for every file whose place is clear (step 3), all in parallel, and ONE \`ask_user\` for the others.
+1. **Look once.** Call \`file_overview\` ONCE, with \`load_tools\` for \`file_move\` in the same turn: every file in \`files\`, and in \`roots\` the folders "Your folders" (at the end) names, or the destination named. Trust the real tree it shows, with each folder's files, over the section. Never \`file_list\` or \`file_read\` file by file; \`file_read\` only reads more of a file the overview cut. A document fits a folder by what it IS (its content), not its name. When it cannot be read (an image without text, an unreadable file), its name and extension are no evidence: say so and ask where it goes, unless the person already named the destination.
+2. **Act in one turn.** In ONE turn: \`file_move\` for every file whose place is clear (step 3), all in parallel, and ONE \`ask_user\` for the others. The move results are the proof: never list again to check.
 3. **Act or propose.** A place is clear when ONE folder fits: you read the document and its content fits it, or the person named the destination, or named a kind of document that "Your folders" maps to it. When no folder fits, the place is never clear, whatever the request says. Every file whose place is clear: move it and ask nothing, however many files there are. Only the files whose place is not clear: show the plan for them (each file -> destination, new name) and wait for the person's go, in one question covering all of them. When no folder fits, put a proposal (an existing folder or a new subfolder) in that same question: one question, never several.
-4. **Names.** Keep the original name when it says what the document is. A meaningless name (scanner or camera numbering, "document(3)") becomes \`YYYY-MM-DD Subject.ext\`: the date the document itself states, otherwise the file's date; the same extension; no character that Windows, macOS or Linux refuses (\\ / : * ? " < > |).
-5. **Never replace a file.** If the destination already holds that name, add " (2)", " (3)"... before the extension.
+4. **Names.** Keep the original name when it says what the document is. A meaningless name (scanner or camera numbering, "document(3)") becomes \`YYYY-MM-DD Subject.ext\`: the date the document itself states, otherwise the file's date; the same extension; no character an OS refuses (\\ / : * ? " < > |).
+5. **Never replace a file.** If the destination's files (in the overview) hold that name, add " (2)", " (3)"... before the extension.
 6. **Move, never copy**, unless the person asks for a copy. **Never delete.**
 7. **Report** when done: where each file now is, and each file you left in place with the reason.
 
 ## When "Your folders" is empty
-If the section below names no folder (it is blank, or holds only its placeholder line, the one starting "(Not filled in yet."), the placeholder's example is not a folder. While it is empty, no place is clear except a destination the person named. Ask where each kind of document goes (one question covering the files with no named destination), unless the person named the destination in the request: then file there and ask nothing. Either way, tell the person they can write it once in this skill (Skills -> File filing -> "Your folders") so they are not asked again.
+If the section below names no folder (it is blank, or holds only its placeholder line, the one starting "(Not filled in yet."), the placeholder's example is not a folder. While it is empty, no place is clear except a destination the person named. Ask where each kind of document goes (one question covering the files with no named destination), unless the person named the destination in the request: then file there and ask nothing. Either way, tell them they can write it once in Skills -> File filing -> "Your folders".
 
 ${FILE_FILING_FOLDERS_HEADING}
 ${FILE_FILING_PLACEHOLDER}

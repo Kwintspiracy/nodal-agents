@@ -226,7 +226,7 @@ describe('file-filing skill', () => {
   it('states the rules the owner decided, one by one', () => {
     const c = fileFilingSkill.content;
     expect(c, 'the real tree, not only the section').toContain(
-      'Trust the real tree it shows over the section.',
+      "Trust the real tree it shows, with each folder's files, over the section.",
     );
     expect(c, 'content, not name').toMatch(/by what it IS/);
     expect(c, 'ask on unreadable').toMatch(
@@ -258,10 +258,10 @@ describe('file-filing skill', () => {
     it('step 1 calls file_overview ONCE, with every file and the roots of "Your folders"', () => {
       const s1 = step(1);
       expect(s1).toContain(
-        'Call `file_overview` ONCE, in the same turn as `skill_view` when you can',
+        'Call `file_overview` ONCE, with `load_tools` for `file_move` in the same turn',
       );
       expect(s1).toContain('every file in `files`');
-      expect(s1).toContain('in `roots` the folders "Your folders" names');
+      expect(s1).toContain('in `roots` the folders "Your folders" (at the end) names');
     });
 
     it('never gathers file by file, except to read more of a file the overview cut', () => {
@@ -270,6 +270,21 @@ describe('file-filing skill', () => {
       expect(c).toContain('`file_read` only reads more of a file the overview cut');
       expect(c, 'the old one-call-at-a-time steps are gone').not.toMatch(
         /List the destination folder before moving|Read before deciding/,
+      );
+    });
+
+    // Live run (#932): `file_move` is deferred, and loading it cost a turn of
+    // its own; then three `file_list` turns re-listed folders "to check".
+    it('loads file_move in the turn that looks, and takes the move results as the proof', () => {
+      expect(step(1)).toContain('with `load_tools` for `file_move` in the same turn');
+      expect(step(2)).toContain('The move results are the proof: never list again to check.');
+    });
+
+    // Rule 5 (never replace) read the destination by listing it; the overview
+    // carries each folder's file names, so the check is still made.
+    it('never replaces a file: the overview names the files each folder holds', () => {
+      expect(step(5)).toContain(
+        'If the destination\'s files (in the overview) hold that name, add " (2)", " (3)"... before the extension.',
       );
     });
 
