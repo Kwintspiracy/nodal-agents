@@ -760,18 +760,20 @@ async function course(copy: boolean, reservation = false): Promise<void> {
   expect(await readFile(cible)).toEqual(gagnantA ? DOC_A : DOC_B);
   const perdant = gagnantA ? outB : outA;
   if (reservation) {
-    // Sans liens physiques, le perdant peut trouver le nom pendant le seul
-    // renommage du gagnant, encore RÉSERVÉ (la seule marque de la
-    // réservation) : son refus nomme alors cette réservation, ce qui était
-    // vrai à l'instant de l'appel.
-    // Le nom, lui, était pris dans les deux cas.
+    // Sans liens physiques, le perdant peut trouver le nom pendant que le
+    // gagnant le tient encore RÉSERVÉ : vide juste après sa création, puis sa
+    // seule marque, le temps d'un renommage. Son refus nomme alors cette
+    // réservation, ce qui était vrai à l'instant de l'appel. Le nom, lui,
+    // était pris dans tous les cas.
     const reel = join(await realpath(SHARED), '2026-03-31 Document.pdf');
     if (perdant.ok) throw new Error('les deux appels ont réussi');
     expect(perdant.reason).toContain('file_move never replaces an existing file');
     expect(perdant.existing?.path).toBe(reel);
-    expect([RESERVATION_BYTES, (gagnantA ? DOC_A : DOC_B).length]).toContain(
-      perdant.existing?.bytes,
-    );
+    const vu = perdant.existing?.bytes ?? -1;
+    expect(
+      vu === (gagnantA ? DOC_A : DOC_B).length || (vu >= 0 && vu <= RESERVATION_BYTES),
+      `taille vue par le perdant : ${String(vu)}`,
+    ).toBe(true);
   } else {
     await refusNomPris(perdant, copy ? 'copied' : 'moved', cible);
   }
