@@ -718,7 +718,7 @@ async function seulement(dossier: string, noms: string[]): Promise<void> {
  * partagé : exactement un réussit, l'autre échoue en nommant le fichier là, et
  * les deux documents existent encore — l'un à destination, l'autre à sa source.
  */
-async function course(copy: boolean): Promise<void> {
+async function course(copy: boolean, reservation = false): Promise<void> {
   await writeFile(join(DOCS, 'a.pdf'), DOC_A);
   await writeFile(join(ARCHIVE, 'b.pdf'), DOC_B);
   const [jobA, jobB] = [await jobNeuf(), await jobNeuf()];
@@ -739,7 +739,20 @@ async function course(copy: boolean): Promise<void> {
   const gagnantA = outA.ok;
   const cible = join(SHARED, '2026-03-31 Document.pdf');
   expect(await readFile(cible)).toEqual(gagnantA ? DOC_A : DOC_B);
-  await refusNomPris(gagnantA ? outB : outA, copy ? 'copied' : 'moved', cible);
+  const perdant = gagnantA ? outB : outA;
+  if (reservation) {
+    // Sans liens physiques, le perdant peut trouver le nom pendant le seul
+    // renommage du gagnant, encore RÉSERVÉ par un fichier vide : son refus
+    // nomme alors ce fichier vide, ce qui était vrai à l'instant de l'appel.
+    // Le nom, lui, était pris dans les deux cas.
+    const reel = join(await realpath(SHARED), '2026-03-31 Document.pdf');
+    if (perdant.ok) throw new Error('les deux appels ont réussi');
+    expect(perdant.reason).toContain('file_move never replaces an existing file');
+    expect(perdant.existing?.path).toBe(reel);
+    expect([0, (gagnantA ? DOC_A : DOC_B).length]).toContain(perdant.existing?.bytes);
+  } else {
+    await refusNomPris(perdant, copy ? 'copied' : 'moved', cible);
+  }
   // Le perdant est intact, à sa source.
   if (gagnantA) expect(await readFile(join(ARCHIVE, 'b.pdf'))).toEqual(DOC_B);
   else expect(await readFile(join(DOCS, 'a.pdf'))).toEqual(DOC_A);
@@ -892,7 +905,7 @@ describe('file_move — un volume sans liens physiques (FAT32, exFAT) ne remplac
   });
 
   it('deux déplacements en même temps vers le même nom : un seul réussit, aucun document perdu', async () => {
-    await course(false);
+    await course(false, true);
   });
 
   it('un fichier qui arrive au nom à l’instant de la réservation n’est pas écrasé', async () => {
