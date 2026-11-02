@@ -25,6 +25,7 @@ import {
   fileOverviewTool,
   FileOverviewInputSchema,
   OVERVIEW_MAX_FILES,
+  OVERVIEW_MAX_ROOTS,
   OVERVIEW_PDF_PAGES,
   OVERVIEW_TEXT_CHARS,
   OVERVIEW_TREE_DEPTH,
@@ -272,7 +273,7 @@ describe('file_overview — folder trees @cap:travailler-sur-des-fichiers/moteur
     expect(wide.folders).toHaveLength(OVERVIEW_TREE_MAX_FOLDERS + 1);
     expect(wide.folders.map((f) => f.path).slice(0, 2)).toEqual(['wide', 'wide/f000']);
     expect(wide.note).toContain(
-      `only the first ${OVERVIEW_TREE_MAX_FOLDERS} folders below it are listed`,
+      `the result lists ${OVERVIEW_TREE_MAX_FOLDERS} folders below its roots at most, and some below this one are not listed`,
     );
     // A root with files and no subfolder: its own names, nothing cut, nothing said.
     expect(inbox).toEqual({
@@ -298,6 +299,60 @@ describe('file_overview — folder trees @cap:travailler-sur-des-fichiers/moteur
     expect(tree.folders.reduce((n, f) => n + f.files.length, 0)).toBe(OVERVIEW_TREE_MAX_FILES);
     expect(tree.folders.at(-1)).toEqual({ path: 'names/d09', files: [], files_not_listed: 50 });
     expect(tree.note).toContain('"files_not_listed" counts the others');
+  });
+
+  // Live run of #935: "Your folders" named six folders and a bound of five
+  // roots refused the call, a whole turn lost. The bounds are on what the
+  // result carries, across all roots, never on how many roots are named.
+  it(`accepts 6 and ${OVERVIEW_MAX_ROOTS} roots, refuses ${OVERVIEW_MAX_ROOTS + 1}`, async () => {
+    const roots = (n: number): string[] => Array.from({ length: n }, () => 'deep');
+    const parse = (n: number): boolean =>
+      FileOverviewInputSchema.safeParse({ files: ['inbox/note.txt'], roots: roots(n) }).success;
+    expect(parse(6)).toBe(true);
+    expect(parse(OVERVIEW_MAX_ROOTS)).toBe(true);
+    expect(parse(OVERVIEW_MAX_ROOTS + 1)).toBe(false);
+    const { out } = await overview({ files: ['inbox/note.txt'], roots: roots(6) });
+    expect(out.roots).toHaveLength(6);
+    expect(out.roots.every((r) => r.ok && r.folders.length === 4)).toBe(true);
+  });
+
+  it(`bounds folders to ${OVERVIEW_TREE_MAX_FOLDERS} across ALL roots, and each cut root says so`, async () => {
+    const { out } = await overview({ files: ['inbox/note.txt'], roots: ['deep', 'wide', 'inbox'] });
+    const [deep, wide, inbox] = out.roots;
+    if (!deep?.ok || !wide?.ok || !inbox?.ok) throw new Error('expected three trees');
+    const below = out.roots.reduce((n, r) => n + (r.ok ? r.folders.length - 1 : 0), 0);
+    expect(below).toBe(OVERVIEW_TREE_MAX_FOLDERS);
+    // Breadth first across the roots: deep/a (level 1) is in, deep/a/b is cut.
+    expect(deep.folders.map((f) => f.path)).toEqual(['deep', 'deep/a']);
+    expect(wide.folders).toHaveLength(OVERVIEW_TREE_MAX_FOLDERS);
+    const said = `the result lists ${OVERVIEW_TREE_MAX_FOLDERS} folders below its roots at most`;
+    expect(deep.note).toContain(said);
+    expect(wide.note).toContain(said);
+    expect(inbox).toEqual({
+      root: 'inbox',
+      ok: true,
+      folders: [
+        { path: 'inbox', files: ['long.pdf', 'long.txt', 'note.txt', 'short.pdf', 'shot.png'] },
+      ],
+    });
+  });
+
+  it(`bounds file names to ${OVERVIEW_TREE_MAX_FILES} across ALL roots, and the cut root says so`, async () => {
+    const { out } = await overview({ files: ['inbox/note.txt'], roots: ['names', 'inbox'] });
+    const [names, inbox] = out.roots;
+    if (!names?.ok || !inbox?.ok) throw new Error('expected two trees');
+    const listed = out.roots.reduce(
+      (n, r) => n + (r.ok ? r.folders.reduce((m, f) => m + f.files.length, 0) : 0),
+      0,
+    );
+    expect(listed).toBe(OVERVIEW_TREE_MAX_FILES);
+    // inbox's 5 names come in at level 0, so 5 fewer names fit under names/.
+    expect(inbox.folders[0]?.files).toHaveLength(5);
+    expect(inbox.note).toBeUndefined();
+    expect(names.folders.find((f) => f.path === 'names/d08')).toEqual(
+      expect.objectContaining({ files_not_listed: 5 }),
+    );
+    expect(names.note).toContain(`and the result ${OVERVIEW_TREE_MAX_FILES}`);
   });
 
   it('a missing root, a file given as root and a root outside the workspace are said in their entries', async () => {
