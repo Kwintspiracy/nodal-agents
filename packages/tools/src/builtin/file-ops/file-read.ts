@@ -143,6 +143,20 @@ function imageResult(
   return { ok: true, image: { media_type: mediaType, bytes: bytes.length } };
 }
 
+/**
+ * How many pages of a PDF one read attaches at most, and why not more (said in
+ * the result's note). `file_read` attaches what one request carries; a caller
+ * reading several files in one call (`file_overview`) attaches fewer of each.
+ */
+export type PdfWindow = { pages: number; why: string };
+
+const REQUEST_PDF_WINDOW: PdfWindow = {
+  pages: MODEL_REQUEST_MAX_IMAGES,
+  why:
+    `a request to a model carries ${MODEL_REQUEST_MAX_IMAGES} images at most, a PDF page ` +
+    'counting as one',
+};
+
 /** A page range as written ("3", "21-40"), 1-based. */
 function parsePages(spec: string): { first: number; last: number } {
   const [a, b] = spec.split('-').map((n) => Number(n.trim()));
@@ -168,6 +182,7 @@ async function pdfResult(
   absPath: string,
   bytes: Buffer,
   ctx: ToolContext,
+  pdfWindow: PdfWindow,
 ): Promise<FileReadOutput> {
   const counted = await countPdfPages(bytes);
   if ('error' in counted) {
@@ -188,12 +203,8 @@ async function pdfResult(
     };
   }
   const wanted = asked.last - asked.first + 1;
-  let count = Math.min(wanted, MODEL_REQUEST_MAX_IMAGES);
-  let why =
-    count < wanted
-      ? `a request to a model carries ${MODEL_REQUEST_MAX_IMAGES} images at most, a PDF page ` +
-        'counting as one'
-      : null;
+  let count = Math.min(wanted, pdfWindow.pages);
+  let why = count < wanted ? pdfWindow.why : null;
   let window: Uint8Array;
   let rendered = false;
   for (;;) {
@@ -267,6 +278,123 @@ async function pdfResult(
   };
 }
 
+/**
+ * What `file_read` hands the model for one file: its text by lines, or the
+ * image or PDF attached (`ctx.attachForModel`), or why it was not read. The
+ * one reading path, shared by every tool that reads a workspace file for the
+ * model (`file_overview` reads each of its files through it).
+ */
+export async function readWorkspaceFile(
+  input: FileReadInput,
+  ctx: ToolContext,
+  pdfWindow: PdfWindow = REQUEST_PDF_WINDOW,
+): Promise<FileReadOutput> {
+  try {
+    const path = await resolveAndCheckPath(ctx, input.path);
+    const info = await stat(path);
+    if (info.isDirectory()) {
+      return {
+        ok: false,
+        reason: `Path is a directory, not a file: "${input.path}". Use file_list.`,
+      };
+    }
+
+    // Absolute hard cap: refused no matter what, even with offset/limit —
+    // there is no safe way to serve any window without scanning the whole
+    // file once, and above this size that scan itself is the OOM risk.
+    if (info.size > MAX_READ_FILE_BYTES) {
+      return {
+        ok: false,
+        reason:
+          `File is ${info.size} bytes, exceeding the hard read cap of ${MAX_READ_FILE_BYTES} ` +
+          `bytes (50 MiB) — refusing to read it at all, even with offset/limit. Use ` +
+          `file_search to locate the content you need, or split the file into smaller pieces.`,
+      };
+    }
+
+    const offset = input.offset ?? 1;
+    const limit = input.limit ?? 500;
+    const startIdx = Math.max(0, offset - 1);
+
+    if (info.size > MAX_READ_BYTES) {
+      // An image or a PDF is never read by lines: no line window of it
+      // means anything. Above the whole-read cap an image is not passed; a
+      // PDF is read by windows of pages, whatever its size under the hard cap.
+      const large = sniffAttachmentMediaType(await readHead(path));
+      if (large === PDF_MEDIA_TYPE)
+        return await pdfResult(input, path, await readFile(path), ctx, pdfWindow);
+      if (large !== null) {
+        if (input.pages !== undefined) return pagesNotForThisFile(input, `an image (${large})`);
+        return {
+          ok: false,
+          reason:
+            `${describe(input.path, large, info.size)}, and it was not read: an image can be ` +
+            `passed at ${formatBytes(MAX_MODEL_IMAGE_BYTES)} at most; a smaller copy (scaled ` +
+            'down, or JPEG) can be.',
+        };
+      }
+      if (input.pages !== undefined) return pagesNotForThisFile(input, 'not a PDF');
+      if (input.offset === undefined && input.limit === undefined) {
+        return {
+          ok: false,
+          reason: `File is ${info.size} bytes (> ${MAX_READ_BYTES}). Call again with explicit offset and limit.`,
+        };
+      }
+      // Bounded-memory streaming read for files between MAX_READ_BYTES and
+      // MAX_READ_FILE_BYTES — never loads the whole file into a string.
+      // maxBytes is a TOCTOU defense: the file could grow past the stat()
+      // check above between here and stream completion (concurrent writer
+      // on a shared workspace) — readLinesWindowed aborts if that happens.
+      const { windowLines, totalLines, sha256 } = await readLinesWindowed(
+        path,
+        startIdx,
+        startIdx + limit,
+        undefined,
+        MAX_READ_FILE_BYTES,
+      );
+      // Les octets LUS (tout le flux), rapportés au seam (tool_call_reads).
+      ctx.reportReadContent?.(path, sha256);
+      const endIdx = Math.min(totalLines, startIdx + limit);
+      return {
+        ok: true,
+        content: windowLines.join('\n'),
+        total_lines: totalLines,
+        start_line: startIdx + 1,
+        end_line: endIdx,
+        truncated: endIdx < totalLines,
+      };
+    }
+
+    const bytes = await readFile(path);
+    const attachmentType = sniffAttachmentMediaType(bytes.subarray(0, SNIFF_BYTES));
+    if (attachmentType === PDF_MEDIA_TYPE)
+      return await pdfResult(input, path, bytes, ctx, pdfWindow);
+    if (attachmentType !== null) return imageResult(input, path, bytes, attachmentType, ctx);
+    if (input.pages !== undefined) return pagesNotForThisFile(input, 'not a PDF');
+    // Les octets LUS, rapportés au seam (tool_call_reads) ; puis décodés comme avant.
+    ctx.reportReadContent?.(path, createHash('sha256').update(bytes).digest('hex'));
+    const raw = bytes.toString('utf8');
+    const allLines = raw.split('\n');
+    const endIdx = Math.min(allLines.length, startIdx + limit);
+    const selectedContent = allLines.slice(startIdx, endIdx).join('\n');
+    return {
+      ok: true,
+      content: selectedContent,
+      total_lines: allLines.length,
+      start_line: startIdx + 1,
+      end_line: endIdx,
+      truncated: endIdx < allLines.length,
+    };
+  } catch (err) {
+    if (err instanceof WorkspaceError) return { ok: false, reason: err.message };
+    if (err instanceof ReadLinesCapExceededError) return { ok: false, reason: err.message };
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      return { ok: false, reason: `File not found: "${input.path}".` };
+    }
+    throw err;
+  }
+}
+
 export const fileReadTool: ToolDefinition<typeof FileReadInputSchema, FileReadOutput> = {
   name: 'file_read',
   label: 'Read a workspace file',
@@ -308,109 +436,5 @@ export const fileReadTool: ToolDefinition<typeof FileReadInputSchema, FileReadOu
               sections: output.total_lines,
             })
           : failureText(output.reason),
-  execute: async (input, ctx) => {
-    try {
-      const path = await resolveAndCheckPath(ctx, input.path);
-      const info = await stat(path);
-      if (info.isDirectory()) {
-        return {
-          ok: false,
-          reason: `Path is a directory, not a file: "${input.path}". Use file_list.`,
-        };
-      }
-
-      // Absolute hard cap: refused no matter what, even with offset/limit —
-      // there is no safe way to serve any window without scanning the whole
-      // file once, and above this size that scan itself is the OOM risk.
-      if (info.size > MAX_READ_FILE_BYTES) {
-        return {
-          ok: false,
-          reason:
-            `File is ${info.size} bytes, exceeding the hard read cap of ${MAX_READ_FILE_BYTES} ` +
-            `bytes (50 MiB) — refusing to read it at all, even with offset/limit. Use ` +
-            `file_search to locate the content you need, or split the file into smaller pieces.`,
-        };
-      }
-
-      const offset = input.offset ?? 1;
-      const limit = input.limit ?? 500;
-      const startIdx = Math.max(0, offset - 1);
-
-      if (info.size > MAX_READ_BYTES) {
-        // An image or a PDF is never read by lines: no line window of it
-        // means anything. Above the whole-read cap an image is not passed; a
-        // PDF is read by windows of pages, whatever its size under the hard cap.
-        const large = sniffAttachmentMediaType(await readHead(path));
-        if (large === PDF_MEDIA_TYPE)
-          return await pdfResult(input, path, await readFile(path), ctx);
-        if (large !== null) {
-          if (input.pages !== undefined) return pagesNotForThisFile(input, `an image (${large})`);
-          return {
-            ok: false,
-            reason:
-              `${describe(input.path, large, info.size)}, and it was not read: an image can be ` +
-              `passed at ${formatBytes(MAX_MODEL_IMAGE_BYTES)} at most; a smaller copy (scaled ` +
-              'down, or JPEG) can be.',
-          };
-        }
-        if (input.pages !== undefined) return pagesNotForThisFile(input, 'not a PDF');
-        if (input.offset === undefined && input.limit === undefined) {
-          return {
-            ok: false,
-            reason: `File is ${info.size} bytes (> ${MAX_READ_BYTES}). Call again with explicit offset and limit.`,
-          };
-        }
-        // Bounded-memory streaming read for files between MAX_READ_BYTES and
-        // MAX_READ_FILE_BYTES — never loads the whole file into a string.
-        // maxBytes is a TOCTOU defense: the file could grow past the stat()
-        // check above between here and stream completion (concurrent writer
-        // on a shared workspace) — readLinesWindowed aborts if that happens.
-        const { windowLines, totalLines, sha256 } = await readLinesWindowed(
-          path,
-          startIdx,
-          startIdx + limit,
-          undefined,
-          MAX_READ_FILE_BYTES,
-        );
-        // Les octets LUS (tout le flux), rapportés au seam (tool_call_reads).
-        ctx.reportReadContent?.(path, sha256);
-        const endIdx = Math.min(totalLines, startIdx + limit);
-        return {
-          ok: true,
-          content: windowLines.join('\n'),
-          total_lines: totalLines,
-          start_line: startIdx + 1,
-          end_line: endIdx,
-          truncated: endIdx < totalLines,
-        };
-      }
-
-      const bytes = await readFile(path);
-      const attachmentType = sniffAttachmentMediaType(bytes.subarray(0, SNIFF_BYTES));
-      if (attachmentType === PDF_MEDIA_TYPE) return await pdfResult(input, path, bytes, ctx);
-      if (attachmentType !== null) return imageResult(input, path, bytes, attachmentType, ctx);
-      if (input.pages !== undefined) return pagesNotForThisFile(input, 'not a PDF');
-      // Les octets LUS, rapportés au seam (tool_call_reads) ; puis décodés comme avant.
-      ctx.reportReadContent?.(path, createHash('sha256').update(bytes).digest('hex'));
-      const raw = bytes.toString('utf8');
-      const allLines = raw.split('\n');
-      const endIdx = Math.min(allLines.length, startIdx + limit);
-      const selectedContent = allLines.slice(startIdx, endIdx).join('\n');
-      return {
-        ok: true,
-        content: selectedContent,
-        total_lines: allLines.length,
-        start_line: startIdx + 1,
-        end_line: endIdx,
-        truncated: endIdx < allLines.length,
-      };
-    } catch (err) {
-      if (err instanceof WorkspaceError) return { ok: false, reason: err.message };
-      if (err instanceof ReadLinesCapExceededError) return { ok: false, reason: err.message };
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-        return { ok: false, reason: `File not found: "${input.path}".` };
-      }
-      throw err;
-    }
-  },
+  execute: (input, ctx) => readWorkspaceFile(input, ctx),
 };

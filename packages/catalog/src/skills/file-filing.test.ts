@@ -225,11 +225,13 @@ describe('file-filing skill', () => {
 
   it('states the rules the owner decided, one by one', () => {
     const c = fileFilingSkill.content;
-    expect(c, 'list the destination before moving').toMatch(
-      /List the destination folder before moving/,
+    expect(c, 'the real tree, not only the section').toContain(
+      'Trust the real tree it shows over the section.',
     );
     expect(c, 'content, not name').toMatch(/by what it IS/);
-    expect(c, 'ask on unreadable').toMatch(/cannot \(an image without text, an unreadable file\)/);
+    expect(c, 'ask on unreadable').toMatch(
+      /cannot be read \(an image without text, an unreadable file\)/,
+    );
     expect(c, 'plan for several files').toMatch(/show the plan[\s\S]*wait for the person's go/);
     expect(c, 'one question').toMatch(/one question, never several/);
     expect(c, 'dated name').toContain('YYYY-MM-DD Subject.ext');
@@ -237,6 +239,46 @@ describe('file-filing skill', () => {
     expect(c, 'move not copy').toMatch(/Move, never copy/);
     expect(c, 'never delete').toMatch(/Never delete/);
     expect(c, 'report').toMatch(/each file you left in place with the reason/);
+  });
+
+  // #932: the method gathered what a decision needs one call at a time
+  // (file_list x2 to 6, file_read, then file_list again), each call a model
+  // turn re-reading the whole context: about 8 turns, 30 s, per request. The
+  // method now looks ONCE and acts in ONE turn.
+  describe('gathers in one call and acts in one turn (#932)', () => {
+    const step = (n: number): string => {
+      const c = fileFilingSkill.content;
+      const at = c.indexOf(`\n${n}. **`);
+      expect(at, `step ${n} is gone`).toBeGreaterThan(-1);
+      const rest = c.slice(at + 1);
+      const next = rest.search(/\n\d\. \*\*/);
+      return next < 0 ? rest : rest.slice(0, next);
+    };
+
+    it('step 1 calls file_overview ONCE, with every file and the roots of "Your folders"', () => {
+      const s1 = step(1);
+      expect(s1).toContain(
+        'Call `file_overview` ONCE, in the same turn as `skill_view` when you can',
+      );
+      expect(s1).toContain('every file in `files`');
+      expect(s1).toContain('in `roots` the folders "Your folders" names');
+    });
+
+    it('never gathers file by file, except to read more of a file the overview cut', () => {
+      const c = fileFilingSkill.content;
+      expect(c).toContain('Never `file_list` or `file_read` file by file');
+      expect(c).toContain('`file_read` only reads more of a file the overview cut');
+      expect(c, 'the old one-call-at-a-time steps are gone').not.toMatch(
+        /List the destination folder before moving|Read before deciding/,
+      );
+    });
+
+    it('step 2 moves every clear file in ONE turn, in parallel, with ONE ask_user for the rest', () => {
+      const s2 = step(2);
+      expect(s2).toContain(
+        'In ONE turn: `file_move` for every file whose place is clear (step 3), all in parallel, and ONE `ask_user` for the others.',
+      );
+    });
   });
 
   it('stays well under the print skill, the upper bound for a catalog skill', () => {

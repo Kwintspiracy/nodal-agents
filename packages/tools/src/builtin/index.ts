@@ -16,6 +16,7 @@ import { generateSpeechTool } from './generate-speech';
 import { dashboardPublishTool } from './dashboard-publish';
 import {
   fileReadTool,
+  fileOverviewTool,
   fileWriteTool,
   fileEditTool,
   fileMoveTool,
@@ -73,6 +74,7 @@ export { dashboardPublishTool, DashboardPublishInputSchema } from './dashboard-p
 export type { DashboardPublishInput } from './dashboard-publish';
 export {
   fileReadTool,
+  fileOverviewTool,
   fileWriteTool,
   fileEditTool,
   fileMoveTool,
@@ -195,6 +197,7 @@ export function registerBuiltins(registry: ToolRegistry): void {
   registry.register(webSearchTool);
   registry.register(dashboardPublishTool);
   registry.register(fileReadTool);
+  registry.register(fileOverviewTool);
   registry.register(fileWriteTool);
   registry.register(fileEditTool);
   registry.register(fileMoveTool);
@@ -302,6 +305,7 @@ export const ALWAYS_ON_TOOLS = [
   'web_search',
   'dashboard_publish',
   'file_read',
+  'file_overview',
   'file_write',
   'file_edit',
   'file_move',
@@ -397,6 +401,7 @@ export const ALWAYS_ON_TOOL_DOCS: ReadonlyArray<AlwaysOnToolDoc> = (
     webSearchTool,
     dashboardPublishTool,
     fileReadTool,
+    fileOverviewTool,
     fileWriteTool,
     fileEditTool,
     fileMoveTool,

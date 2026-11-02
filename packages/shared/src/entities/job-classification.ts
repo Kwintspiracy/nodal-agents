@@ -39,6 +39,7 @@ export const CHAT_CONTEXT_READ_TOOLS = [
   'list_models',
   'list_schedules',
   'file_read',
+  'file_overview',
   'file_list',
   'file_search',
 ] as const;

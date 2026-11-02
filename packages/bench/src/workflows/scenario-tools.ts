@@ -49,7 +49,8 @@ import { BENCH_PRINTER_SLUG, BENCH_PRINTER_TOOLS } from '../printer/identity';
  * Nodal, et la mémoire, que chaque job de Nodal consulte (la bloquer mesurerait
  * un Nodal amputé). Les autres outils toujours donnés sont bloqués là où aucun
  * scénario n'en a besoin : `list_models`, `list_schedules`, `file_move` (aucun
- * scénario ne range un fichier, #879), `dashboard_publish`
+ * scénario ne range un fichier, #879), `file_overview` (aucun ne lit d'un
+ * coup plusieurs fichiers à ranger, #932), `dashboard_publish`
  * (une page publiée hors du dossier de travail), `web_search` (sauf `WEB`) et
  * `declare_verification` (un outil `process`, sauf `COMMANDS`).
  */

@@ -210,6 +210,8 @@ export function computeApprovalImpactLine(
       return `Reads the file "${str(input['path'])}" — read-only, changes nothing.`;
     case 'file_list':
       return `Lists workspace files — read-only, changes nothing.`;
+    case 'file_overview':
+      return `Reads workspace files and lists their folders — read-only, changes nothing.`;
     case 'code_task': {
       // Risque fonction de l'IMPACT réel (lot approbations, décision Quentin
       // 24/08) : un code_task tombait dans le default « irreversible or

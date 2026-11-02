@@ -304,6 +304,10 @@ export function explainApproval(opts: ExplainOptions): ApprovalExplanation {
       effect = 'read';
       target = typeof input['path'] === 'string' ? input['path'] : null;
       break;
+    case 'file_overview':
+      effect = 'read';
+      target = null;
+      break;
     default:
       effect = 'write';
   }

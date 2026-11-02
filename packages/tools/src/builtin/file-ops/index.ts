@@ -1,6 +1,7 @@
 // file-ops/index.ts — barrel for the 6 workspace-scoped filesystem tools
 
 export { fileReadTool } from './file-read';
+export { fileOverviewTool } from './file-overview';
 export { fileWriteTool } from './file-write';
 export { fileEditTool } from './file-edit';
 export { fileMoveTool } from './file-move';

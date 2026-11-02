@@ -58,6 +58,7 @@ export const UNTRUSTED_WRAP_MIN_CHARS = 32;
 export const UNTRUSTED_TOOL_NAMES: ReadonlySet<string> = new Set([
   'web_search',
   'file_read',
+  'file_overview',
   'file_search',
   'skill_file_read',
   'docx_read',
