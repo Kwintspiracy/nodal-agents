@@ -305,7 +305,7 @@ const NO_HARD_LINK = new Set([
 
 /** Deux états du même fichier : même volume, même numéro (un numéro nul ne prouve rien). */
 function sameFile(a: BigIntStats, b: BigIntStats): boolean {
-  return a.ino !== 0n && a.dev === b.dev && a.ino === b.ino;
+  return a.ino !== BigInt(0) && a.dev === b.dev && a.ino === b.ino;
 }
 
 /**
@@ -524,7 +524,7 @@ async function withoutReplacing(
     if (errnoOf(err) !== 'EEXIST') throw err;
     const there = await lstat(destination, { bigint: true }).catch(() => null);
     const self = await stat(source, { bigint: true }).catch(() => null);
-    if (there === null || self === null || !sameFile(there, self) || there.nlink !== 1n) {
+    if (there === null || self === null || !sameFile(there, self) || there.nlink !== BigInt(1)) {
       return destinationTaken(verb, destination);
     }
     if (input.copy) {
