@@ -40,6 +40,19 @@ const panne = vi.hoisted(() => ({
   inoNul: false,
   /** L'écriture de la marque dans une réservation (`FileHandle.writeFile`) lève EIO. */
   marqueEchoue: false,
+  /**
+   * Quand `unlink(unlinkOf)` lève EBUSY, un programme pose d'abord un AUTRE
+   * fichier à ce chemin, par-dessus ce que l'appel avait posé (un nouveau
+   * fichier renommé sur le nom, comme le fait un `replace: true`) : le retour
+   * en arrière qui suit doit le laisser.
+   */
+  ecraseAvantRetour: null as { path: string; content: string } | null,
+  /**
+   * `rename(…, path)` lève `code` les `fois` premières fois : un autre
+   * programme tient la cible ouverte un instant (sous Windows, elle ne se
+   * remplace pas pendant ce temps).
+   */
+  renameVers: null as { path: string; code: string; fois: number } | null,
   /** Les pannes réellement levées : un faux qui ne se déclenche pas ne prouve rien. */
   levees: [] as string[],
 }));
@@ -72,6 +85,11 @@ vi.mock('node:fs/promises', async (importOriginal) => {
     rename: async (from: string, to: string) => {
       await arrive(to, 'rename');
       if (meme(from, panne.renameFrom)) return leve(panne.renameCode);
+      const vers = panne.renameVers;
+      if (vers !== null && vers.fois > 0 && meme(to, vers.path)) {
+        vers.fois -= 1;
+        return leve(vers.code);
+      }
       return actual.rename(from, to);
     },
     link: async (from: string, to: string) => {
@@ -87,8 +105,18 @@ vi.mock('node:fs/promises', async (importOriginal) => {
       if (panne.marqueEchoue) handle.writeFile = async () => leve('EIO');
       return handle;
     },
-    unlink: async (path: string) =>
-      meme(path, panne.unlinkOf) ? leve('EBUSY') : actual.unlink(path),
+    unlink: async (path: string) => {
+      if (!meme(path, panne.unlinkOf)) return actual.unlink(path);
+      const e = panne.ecraseAvantRetour;
+      if (e !== null) {
+        panne.ecraseAvantRetour = null;
+        panne.levees.push('écrasé');
+        const autre = `${e.path}.autre-programme`;
+        await actual.writeFile(autre, e.content);
+        await actual.rename(autre, e.path);
+      }
+      return leve('EBUSY');
+    },
   };
 });
 
@@ -152,6 +180,8 @@ afterEach(async () => {
   panne.arrive = null;
   panne.inoNul = false;
   panne.marqueEchoue = false;
+  panne.ecraseAvantRetour = null;
+  panne.renameVers = null;
   panne.levees = [];
   await rm(racine, { recursive: true, force: true }).catch(() => undefined);
 });
@@ -892,6 +922,45 @@ describe('file_move — un volume sans liens physiques (FAT32, exFAT) ne remplac
     panne.link = [{ from: '*', code: 'EPERM' }];
   });
 
+  // Sous Windows, un fichier tenu ouvert un instant (un autre appel qui lit
+  // ses attributs, un indexeur, un antivirus) ne se remplace pas : la
+  // réservation est à l'appel, qui réessaie brièvement au lieu d'échouer.
+  for (const code of ['EPERM', 'EACCES', 'EBUSY']) {
+    it(`une réservation tenue ouverte un instant (${code}) : le renommage réessaie, et le déplacement se fait`, async () => {
+      await writeFile(join(DOCS, 'scan.pdf'), OCTETS);
+      const cible = join(await realpath(ARCHIVE), 'scan.pdf');
+      panne.renameVers = { path: cible, code, fois: 2 };
+
+      const out = await deplacer({ source: 'docs/scan.pdf', destination: 'archive/' });
+
+      expect(panne.levees).toEqual(['EPERM', code, code]);
+      expect(out.ok && out.operation).toBe('moved');
+      expect(await readFile(cible)).toEqual(OCTETS);
+      expect(await existe(join(DOCS, 'scan.pdf'))).toBe(false);
+      await seulement(ARCHIVE, ['scan.pdf']);
+    });
+  }
+
+  it('une réservation écrasée exprès entre deux essais n’est jamais remplacée par l’essai suivant', async () => {
+    await writeFile(join(DOCS, 'scan.pdf'), OCTETS);
+    const cible = join(await realpath(ARCHIVE), 'scan.pdf');
+    panne.arrive = { path: cible, content: 'écrit exprès par-dessus', op: 'rename' };
+    panne.renameVers = { path: cible, code: 'EPERM', fois: 1 };
+
+    const out = await deplacer({ source: 'docs/scan.pdf', destination: 'archive/' });
+
+    expect(panne.levees).toEqual(['EPERM', 'arrivée', 'EPERM']);
+    expect(out).toEqual({
+      ok: false,
+      reason:
+        'Could not move "docs/scan.pdf" to "archive/" (EPERM: EPERM: simulated). The file may be ' +
+        'open in another program, still being written, or read-only. Call again once it is ' +
+        'complete and closed.',
+    });
+    expect(await readFile(cible, 'utf8')).toBe('écrit exprès par-dessus');
+    expect(await readFile(join(DOCS, 'scan.pdf'))).toEqual(OCTETS);
+  });
+
   it('un déplacement vers un nom libre : fait, avec la date de la source, rien d’autre dans le dossier', async () => {
     await writeFile(join(DOCS, 'scan.pdf'), OCTETS);
     const date = new Date('2026-03-31T10:00:00Z');
@@ -1022,7 +1091,8 @@ describe('file_move — un retour en arrière reconnaît ce qu’il a posé sans
 
     const rate = await deplacer({ source: 'docs/scan.pdf', destination: 'archive/' });
 
-    expect(panne.levees).toEqual(['EPERM', 'EBUSY']);
+    // Huit essais, la réservation portant toujours sa marque, puis l'erreur.
+    expect(panne.levees).toEqual(['EPERM', ...Array<string>(8).fill('EBUSY')]);
     expect(rate).toEqual({ ok: false, reason: ouvert });
     await seulement(ARCHIVE, []);
     expect(await readFile(join(DOCS, 'scan.pdf'))).toEqual(OCTETS);
@@ -1083,6 +1153,39 @@ describe('file_move — un retour en arrière reconnaît ce qu’il a posé sans
       expect(out).toEqual({ ok: false, reason: ouvert });
       await seulement(ARCHIVE, []);
       expect(await readFile(join(DOCS, 'scan.pdf'))).toEqual(OCTETS);
+    });
+  }
+});
+
+describe('file_move — un retour en arrière laisse un fichier écrit par-dessus entre-temps (revue A de #938, passe 2) @cap:travailler-sur-des-fichiers/moteur', () => {
+  // La source ne se retire pas (EBUSY) ; avant le retour en arrière, un
+  // programme a posé un autre fichier, aux octets différents, sur le nom que
+  // l'appel venait de poser. Ce fichier n'est pas celui de l'appel : il reste,
+  // la source aussi, et l'agent apprend que les deux existent.
+  for (const cas of [
+    { nom: 'entre deux volumes (une copie)', exdev: true, levees: ['EXDEV', 'écrasé', 'EBUSY'] },
+    { nom: 'sur le même volume (un lien)', exdev: false, levees: ['écrasé', 'EBUSY'] },
+  ]) {
+    it(`${cas.nom} : le fichier écrit par-dessus garde ses octets, la source reste`, async () => {
+      await writeFile(join(DOCS, 'scan.pdf'), OCTETS);
+      const src = await realpath(join(DOCS, 'scan.pdf'));
+      const cible = join(await realpath(ARCHIVE), 'scan.pdf');
+      panne.link = cas.exdev ? [{ from: src, code: 'EXDEV' }] : [];
+      panne.unlinkOf = src;
+      panne.ecraseAvantRetour = { path: cible, content: 'écrit par un autre programme' };
+
+      const out = await deplacer({ source: 'docs/scan.pdf', destination: 'archive/' });
+
+      expect(panne.levees).toEqual(cas.levees);
+      expect(out).toEqual({
+        ok: false,
+        reason:
+          `"docs/scan.pdf" was copied to "${cible}", but the original could not be removed ` +
+          '(EBUSY: EBUSY: simulated). Both files exist now.',
+      });
+      expect(await readFile(cible, 'utf8')).toBe('écrit par un autre programme');
+      expect(await readFile(join(DOCS, 'scan.pdf'))).toEqual(OCTETS);
+      await seulement(ARCHIVE, ['scan.pdf']);
     });
   }
 });

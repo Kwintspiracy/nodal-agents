@@ -360,12 +360,44 @@ async function unlinkOurs(path: string): Promise<Removal> {
 
 /** Retire la réservation `path` si elle ne porte que la marque `mark` (ou un début). */
 async function removeReservation(path: string, mark: Buffer): Promise<Removal> {
+  if ((await lstat(path).catch(() => null)) === null) return 'removed';
+  return (await holdsMark(path, mark)) ? unlinkOurs(path) : 'not_ours';
+}
+
+/** `path` ne porte-t-il que la marque `mark` (ou un début) ? */
+async function holdsMark(path: string, mark: Buffer): Promise<boolean> {
   const st = await lstat(path).catch(() => null);
-  if (st === null) return 'removed';
-  if (!st.isFile() || st.size > mark.length) return 'not_ours';
+  if (st === null || !st.isFile() || st.size > mark.length) return false;
   const held = await readFile(path).catch(() => null);
-  if (held === null || !mark.subarray(0, held.length).equals(held)) return 'not_ours';
-  return unlinkOurs(path);
+  return held !== null && mark.subarray(0, held.length).equals(held);
+}
+
+/**
+ * Ce que Windows répond, le temps qu'un autre programme tient ouvert le
+ * fichier qu'on remplace — même un instant, pour en lire les attributs : un
+ * autre appel qui regarde le nom, un indexeur, un antivirus.
+ */
+const HELD_OPEN = new Set(['EPERM', 'EACCES', 'EBUSY']);
+
+/**
+ * Le renommage du fichier complet sur la réservation. Sous Windows, un fichier
+ * tenu ouvert ne se remplace pas : le renommage échoue en EPERM, EACCES ou
+ * EBUSY le temps de cette lecture, alors que la réservation est à l'appel. Il
+ * réessaie donc, brièvement (8 essais, 0,7 s en tout), tant que la réservation
+ * porte toujours sa marque — un fichier écrit par-dessus entre deux essais
+ * n'est jamais remplacé — puis rend l'erreur.
+ */
+async function renameOntoReservation(from: string, destination: string, mark: Buffer) {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      await rename(from, destination);
+      return;
+    } catch (err) {
+      if (!HELD_OPEN.has(errnoOf(err) ?? '') || attempt >= 8) throw err;
+      await new Promise((done) => setTimeout(done, 25 * attempt));
+      if (!(await holdsMark(destination, mark))) throw err;
+    }
+  }
 }
 
 /** Les octets des deux fichiers sont-ils les mêmes ? Lus par morceaux : un fichier peut être gros. */
@@ -447,7 +479,7 @@ async function claimName(from: string, destination: string): Promise<'linked' | 
     } finally {
       await handle.close();
     }
-    await rename(from, destination);
+    await renameOntoReservation(from, destination, mark);
     return 'renamed';
   } catch (err) {
     throw withLeftover(err, destination, await removeReservation(destination, mark));
