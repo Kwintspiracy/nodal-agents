@@ -26,6 +26,8 @@ const panne = vi.hoisted(() => ({
   link: [] as { from: string; code: string }[],
   /** `unlink(chemin)` lève EBUSY quand `chemin` est celui-ci. */
   unlinkOf: null as string | null,
+  /** Un second chemin dont `unlink` lève EBUSY (le retour en arrière ne peut pas le retirer). */
+  unlinkAussi: null as string | null,
   /**
    * Un AUTRE fichier qui arrive à ce chemin à l'instant exact où l'outil y pose
    * le sien (juste avant le `link`, le `rename` ou la création exclusive qui
@@ -106,6 +108,7 @@ vi.mock('node:fs/promises', async (importOriginal) => {
       return handle;
     },
     unlink: async (path: string) => {
+      if (meme(path, panne.unlinkAussi)) return leve('EBUSY');
       if (!meme(path, panne.unlinkOf)) return actual.unlink(path);
       const e = panne.ecraseAvantRetour;
       if (e !== null) {
@@ -177,6 +180,7 @@ afterEach(async () => {
   panne.renameCode = 'EXDEV';
   panne.link = [];
   panne.unlinkOf = null;
+  panne.unlinkAussi = null;
   panne.arrive = null;
   panne.inoNul = false;
   panne.marqueEchoue = false;
@@ -631,7 +635,7 @@ describe('file_move — entre deux volumes, et un fichier tenu par un autre prog
     expect(panne.levees).toEqual(['EXDEV', 'EBUSY']);
     expect(out.ok).toBe(false);
     expect(!out.ok && out.reason).toMatch(
-      /^"docs\/scan\.pdf" was copied to ".*scan\.pdf", but the original could not be removed \(EBUSY: EBUSY: simulated\)\. Both files exist now\.$/,
+      /^"docs\/scan\.pdf" was placed at ".*scan\.pdf", but the original could not be removed \(EBUSY: EBUSY: simulated\)\. The file is at both places now\.$/,
     );
     expect(await readFile(join(ARCHIVE, 'scan.pdf'))).toEqual(OCTETS);
     expect(await readFile(join(DOCS, 'scan.pdf'))).toEqual(OCTETS);
@@ -1177,15 +1181,49 @@ describe('file_move — un retour en arrière laisse un fichier écrit par-dessu
       const out = await deplacer({ source: 'docs/scan.pdf', destination: 'archive/' });
 
       expect(panne.levees).toEqual(cas.levees);
+      // Rien n'a été déplacé : la destination porte le fichier d'un autre, et
+      // l'original, à la source, est le seul exemplaire (revue A, passe 3).
       expect(out).toEqual({
         ok: false,
         reason:
-          `"docs/scan.pdf" was copied to "${cible}", but the original could not be removed ` +
-          '(EBUSY: EBUSY: simulated). Both files exist now.',
+          'Nothing was moved: the original "docs/scan.pdf" could not be removed (EBUSY: EBUSY: ' +
+          `simulated), and "${cible}" now holds a different file, written there by another ` +
+          'program during this call. The original is untouched at "docs/scan.pdf": keep it.',
       });
       expect(await readFile(cible, 'utf8')).toBe('écrit par un autre programme');
       expect(await readFile(join(DOCS, 'scan.pdf'))).toEqual(OCTETS);
       await seulement(ARCHIVE, ['scan.pdf']);
+    });
+  }
+});
+
+describe('file_move — un déplacement inachevé dit ce qui est sur le disque (revue A de #938, passe 3) @cap:travailler-sur-des-fichiers/moteur', () => {
+  // La source ne se retire pas, et ce que l'appel a posé ne se retire pas non
+  // plus : le fichier est aux deux endroits, par un lien sur le même volume
+  // comme par une copie entre deux. Le texte ne dit jamais « copié » d'un lien.
+  for (const cas of [
+    { nom: 'sur le même volume (un lien)', exdev: false, levees: ['EBUSY', 'EBUSY'] },
+    { nom: 'entre deux volumes (une copie)', exdev: true, levees: ['EXDEV', 'EBUSY', 'EBUSY'] },
+  ]) {
+    it(`${cas.nom} : « placé », et le fichier aux deux endroits`, async () => {
+      await writeFile(join(DOCS, 'scan.pdf'), OCTETS);
+      const src = await realpath(join(DOCS, 'scan.pdf'));
+      const cible = join(await realpath(ARCHIVE), 'scan.pdf');
+      panne.link = cas.exdev ? [{ from: src, code: 'EXDEV' }] : [];
+      panne.unlinkOf = src;
+      panne.unlinkAussi = cible;
+
+      const out = await deplacer({ source: 'docs/scan.pdf', destination: 'archive/' });
+
+      expect(panne.levees).toEqual(cas.levees);
+      expect(out).toEqual({
+        ok: false,
+        reason:
+          `"docs/scan.pdf" was placed at "${cible}", but the original could not be removed ` +
+          '(EBUSY: EBUSY: simulated). The file is at both places now.',
+      });
+      expect(await readFile(cible)).toEqual(OCTETS);
+      expect(await readFile(join(DOCS, 'scan.pdf'))).toEqual(OCTETS);
     });
   }
 });

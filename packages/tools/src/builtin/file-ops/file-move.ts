@@ -514,10 +514,17 @@ async function placeCopy(source: string, destination: string): Promise<void> {
  * source est retirée. Quand elle ne peut pas l'être (un fichier encore ouvert
  * ailleurs), ce que l'appel a posé est retiré à son tour (`removeCopyOf`), et
  * l'erreur remonte : un déplacement qui échoue laisse les choses comme avant.
- * Rend l'erreur du retrait quand ce retour en arrière n'a pas eu lieu : les
- * deux fichiers existent alors, et l'agent doit le savoir.
+ * Quand ce retour en arrière n'a pas eu lieu, rend ce qui est VRAIMENT sur le
+ * disque (revue A de #938, passe 3) : le fichier posé est toujours à
+ * destination, ou la destination porte maintenant le fichier d'un autre
+ * programme. La seule vérité de l'agent est la phrase qu'il lit : s'il croyait
+ * la source copiée alors qu'elle ne l'est pas, la nettoyer détruirait les
+ * derniers octets.
  */
-async function moveWithoutReplacing(source: string, destination: string): Promise<unknown> {
+async function moveWithoutReplacing(
+  source: string,
+  destination: string,
+): Promise<Unfinished | undefined> {
   try {
     if ((await claimName(source, destination)) === 'renamed') return undefined;
   } catch (err) {
@@ -530,10 +537,18 @@ async function moveWithoutReplacing(source: string, destination: string): Promis
     await unlink(source);
     return undefined;
   } catch (err) {
-    if ((await removeCopyOf(destination, source)) === 'removed') throw err;
-    return err;
+    const removal = await removeCopyOf(destination, source);
+    if (removal === 'removed') throw err;
+    return { unlinkErr: err, atDestination: removal === 'not_ours' ? 'someone_else' : 'ours' };
   }
 }
+
+/**
+ * Un déplacement dont la source ne s'est pas retirée, et dont le retour en
+ * arrière n'a pas eu lieu : ce qui occupe la destination — le fichier que
+ * l'appel y a posé, ou celui qu'un autre programme y a écrit entre-temps.
+ */
+type Unfinished = { unlinkErr: unknown; atDestination: 'ours' | 'someone_else' };
 
 /**
  * Le nom est pris : l'appel échoue, et dit quel fichier est là, pour que
@@ -568,15 +583,39 @@ async function destinationTaken(
   };
 }
 
-/** La copie a eu lieu, le retrait de la source non : les DEUX fichiers existent (invariant #4). */
-function bothExist(input: FileMoveInput, destination: string, unlinkErr: unknown): FileMoveOutput {
+/** La raison système d'un retrait raté, telle que l'agent la lit. */
+function removalError(err: unknown): string {
+  return `${errnoOf(err) ?? 'error'}: ${err instanceof Error ? err.message : String(err)}`;
+}
+
+/**
+ * Ce qu'un déplacement inachevé laisse sur le disque, dit tel quel (invariant
+ * #4) — par une copie entre deux volumes comme par un lien sur le même : le
+ * fichier est arrivé à destination, la source n'a pas pu être retirée, il est
+ * donc aux deux endroits. Ou la destination porte le fichier d'un autre
+ * programme : rien n'a été déplacé, et l'original, intact à la source, est le
+ * seul exemplaire à garder.
+ */
+function unfinishedMove(
+  input: FileMoveInput,
+  destination: string,
+  left: Unfinished,
+): FileMoveOutput {
+  if (left.atDestination === 'someone_else') {
+    return {
+      ok: false,
+      reason:
+        `Nothing was moved: the original "${input.source}" could not be removed ` +
+        `(${removalError(left.unlinkErr)}), and "${destination}" now holds a different file, ` +
+        'written there by another program during this call. The original is untouched at ' +
+        `"${input.source}": keep it.`,
+    };
+  }
   return {
     ok: false,
     reason:
-      `"${input.source}" was copied to "${destination}", but the original could not be ` +
-      `removed (${errnoOf(unlinkErr) ?? 'error'}: ${
-        unlinkErr instanceof Error ? unlinkErr.message : String(unlinkErr)
-      }). Both files exist now.`,
+      `"${input.source}" was placed at "${destination}", but the original could not be ` +
+      `removed (${removalError(left.unlinkErr)}). The file is at both places now.`,
   };
 }
 
@@ -640,7 +679,7 @@ async function withoutReplacing(
       return { ok: true, operation: 'copied', source, destination, bytes };
     }
     const left = await moveWithoutReplacing(source, destination);
-    if (left !== undefined) return bothExist(input, destination, left);
+    if (left !== undefined) return unfinishedMove(input, destination, left);
   } catch (err) {
     if (errnoOf(err) !== 'EEXIST') throw err;
     const there = await lstat(destination, { bigint: true }).catch(() => null);
@@ -791,7 +830,7 @@ export const fileMoveTool: ToolDefinition<typeof FileMoveInputSchema, FileMoveOu
           // La copie a eu lieu, la suppression non : les DEUX fichiers
           // existent, et l'agent doit le savoir, jamais croire à un
           // déplacement fait (invariant #4).
-          return bothExist(input, destination, unlinkErr);
+          return unfinishedMove(input, destination, { unlinkErr, atDestination: 'ours' });
         }
       }
       return { ok: true, operation: 'moved', source, destination, bytes };
