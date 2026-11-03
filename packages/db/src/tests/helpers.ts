@@ -88,7 +88,8 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       sandbox_enabled boolean NOT NULL DEFAULT true,
       sandbox_folders jsonb NOT NULL DEFAULT '{"added":[],"removed":[]}',
       -- mirrors migration 0156
-      autonomy_rows_written_at timestamptz DEFAULT now()
+      autonomy_rows_written_at timestamptz DEFAULT now(),
+      spoken_reasoning_written_at timestamptz DEFAULT now()
     );
 
     CREATE TABLE IF NOT EXISTS entity_members (
@@ -122,6 +123,7 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       personality text NOT NULL,
       model text DEFAULT 'claude-sonnet-4-6-20260217',
       reasoning_effort text,
+      spoken_reasoning_effort text,
       llm_key_id uuid REFERENCES entity_llm_keys(id) ON DELETE SET NULL,
       fallback_chain jsonb DEFAULT '[]'::jsonb,
       active boolean DEFAULT true,

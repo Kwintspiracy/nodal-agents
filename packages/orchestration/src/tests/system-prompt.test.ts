@@ -2008,6 +2008,44 @@ ${sentence}`).length > 0,
     expect(typed).not.toContain('Open with one short sentence');
   });
 
+  // #977 — with reasoning off, Alfred's reply opened with "This is a general
+  // knowledge question, so I can answer it directly": the reply-or-escalate
+  // split of the chat surface line, said aloud. The line states the choice as
+  // silent, for every chat turn, typed or spoken, worker or orchestrator. A job
+  // has no such split (it holds its tools), so its prompt does not carry it.
+  // Mutation verified: the sentence removed from the surface line → red.
+  it('the reply-or-run_task choice is stated as silent on every chat turn, typed and spoken (#977)', async () => {
+    const SILENT =
+      'The choice between the two is silent: your reply never says which path you took or why.';
+    const { entityId, root, worker } = await seedTeam();
+    const agentsUnderTest = [
+      makeAgent(root.id, entityId, root.personality, 'orchestrator'),
+      makeAgent(worker.id, entityId, worker.personality),
+    ];
+    for (const agent of agentsUnderTest) {
+      for (const replyRendering of ['text', 'spoken'] as const) {
+        const chat = await buildSystemPrompt(agent, db, {
+          origin: 'dashboard',
+          surface: 'chat',
+          replyRendering,
+        });
+        const surfaceLine = chat.split('\n').find((l) => l.startsWith('- surface: in-app'));
+        expect({ role: agent.role, replyRendering, said: surfaceLine?.includes(SILENT) }).toEqual({
+          role: agent.role,
+          replyRendering,
+          said: true,
+        });
+        expect(chat.split(SILENT)).toHaveLength(2);
+      }
+      const job = await buildSystemPrompt(agent, db, {
+        origin: 'dashboard',
+        replyRendering: 'spoken',
+        availableToolNames: [...ALWAYS_ON_TOOLS],
+      });
+      expect(job).not.toContain(SILENT);
+    }
+  });
+
   it('a delegate answers its parent: a spoken root does not make it write for the voice (#941)', async () => {
     const { entityId, worker } = await seedTeam();
     const workerAgent = makeAgent(worker.id, entityId, worker.personality);
