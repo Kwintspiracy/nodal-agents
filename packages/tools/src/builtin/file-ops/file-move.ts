@@ -30,10 +30,43 @@
 // produit ces octets, il les a déplacés. Le fichier arrivé dans `shared` n'est
 // donc pas « du contenu que ce run a écrit », et la porte d'écrasement le
 // protège comme le travail d'un autre — le choix prudent.
+//
+// JAMAIS DE REMPLACEMENT SANS `replace: true` (issue #933). Deux jobs de
+// rangement lancés en même temps ont posé deux documents sous le même nom, à
+// 0,18 s d'écart : les deux appels ont rendu `ok: true`, et l'un des documents
+// a disparu. Une règle de compétence (« ajoute (2) ») ne protège pas un
+// déplacement, puisqu'elle repose sur une liste du dossier faite AVANT : un
+// autre job, un client de synchronisation ou le propriétaire peut créer le nom
+// entre les deux. C'est donc l'outil qui garantit, pour tout agent et tout
+// appelant, et en un seul geste du système, sans fenêtre entre « le nom est
+// libre » et « le fichier est là » :
+//   - même volume : un lien physique (`link`), qui échoue en EEXIST quand le
+//     nom est pris, puis le retrait de la source ;
+//   - deux volumes (EXDEV) : une copie complète dans un fichier temporaire du
+//     dossier de destination, posée par le même lien, puis le retrait de la
+//     source ;
+//   - un volume sans liens physiques (FAT32, exFAT, certains partages) : le
+//     nom se RÉSERVE par une création exclusive (O_EXCL), et le fichier
+//     complet (la source, ou la copie temporaire) est renommé sur cette
+//     réservation vide.
+// La destination ne montre donc jamais un fichier à moitié écrit, et un appel
+// qui échoue laisse la source en place (`claimName`, `removeSource`).
 
 import { randomBytes } from 'node:crypto';
-import { copyFile, mkdir, rename, stat, unlink } from 'node:fs/promises';
-import { basename, dirname } from 'node:path';
+import {
+  copyFile,
+  link,
+  lstat,
+  mkdir,
+  open,
+  readFile,
+  rename,
+  stat,
+  unlink,
+  utimes,
+} from 'node:fs/promises';
+import type { BigIntStats } from 'node:fs';
+import { basename, dirname, join } from 'node:path';
 import { z } from 'zod';
 import type { ToolContext, ToolDefinition } from '../../types';
 import { failureText, filesCard } from '../../presenters';
@@ -60,13 +93,22 @@ export const FileMoveInputSchema = z.object({
     .describe(
       'Where the file goes: a file path, or an existing folder (the file keeps its name ' +
         'there). End it with "/" to name a folder. An existing file at the destination is ' +
-        'replaced.',
+        'never replaced unless `replace` is true.',
     ),
   copy: z
     .boolean()
     .optional()
     .default(false)
     .describe('If true, copy the file and leave the source in place. Default false: move it.'),
+  replace: z
+    .boolean()
+    .optional()
+    .default(false)
+    .describe(
+      'If true, an existing file at the destination is replaced. Default false: when the ' +
+        'destination name is taken, nothing moves and the result names the file that is ' +
+        'there, so another name can be chosen.',
+    ),
   create_dirs: z
     .boolean()
     .optional()
@@ -94,7 +136,12 @@ export type FileMoveOutput =
       destination: string;
       bytes: number;
     }
-  | { ok: false; reason: string };
+  | {
+      ok: false;
+      reason: string;
+      /** Le fichier qui occupe déjà la destination, quand c'est la raison du refus (#933). */
+      existing?: { path: string; bytes: number; modified: string };
+    };
 
 /** Les deux chemins RÉSOLUS d'un appel, ou la raison pour laquelle il ne peut pas avoir lieu. */
 type MovePaths =
@@ -133,7 +180,23 @@ async function resolveDestination(
       reason: `Destination "${requested}" ends with "/" but is a file, not a folder.`,
     };
   }
-  return { ok: true, destination: resolved };
+  return { ok: true, destination: withSpelledName(resolved, requested) };
+}
+
+/**
+ * Le nom final tel que l'appel l'écrit. `realpath` rend le nom d'un fichier
+ * EXISTANT avec la casse du disque : sur un volume insensible à la casse
+ * (Windows, macOS), `scan.pdf` -> `Scan.pdf` résolvait vers `scan.pdf`, la
+ * source elle-même, et le renommage était refusé comme « le même fichier ».
+ * Seule la casse est reprise de la demande : un nom qui diffère autrement (un
+ * lien suivi, un nom court 8.3 développé) est celui que la résolution a trouvé.
+ */
+function withSpelledName(resolved: string, requested: string): string {
+  const spelled = basename(requested);
+  const onDisk = basename(resolved);
+  return spelled !== onDisk && spelled.toLowerCase() === onDisk.toLowerCase()
+    ? join(dirname(resolved), spelled)
+    : resolved;
 }
 
 /**
@@ -193,21 +256,22 @@ function systemFailure(err: unknown, verb: 'move' | 'copy', input: FileMoveInput
 }
 
 /**
- * Pose `source` à `destination` par une copie : un fichier temporaire du
- * dossier de destination, renommé par-dessus la cible. Une copie interrompue
- * ne laisse jamais une destination à moitié écrite.
+ * Une copie COMPLÈTE de `source` dans un fichier temporaire caché du dossier de
+ * destination, avec la date de modification de la source : `copyFile` la garde
+ * sous Windows, pas partout, et le geste doit être le même sur les trois
+ * systèmes. Rend le chemin du temporaire et son IDENTITÉ (`placedId`), relevée
+ * avant de le poser ; le retire si la copie échoue.
  */
-async function copyIntoPlace(
-  ctx: ToolContext,
+async function copyToTemp(
   source: string,
   destination: string,
-  destroyed: readonly string[],
-): Promise<void> {
+): Promise<{ tmp: string; id: BigIntStats }> {
   const tmp = `${dirname(destination)}/.${basename(destination)}.${randomBytes(6).toString('hex')}.tmp`;
   try {
     await copyFile(source, tmp);
-    await assertStillOurs(ctx, destroyed);
-    await rename(tmp, destination);
+    const st = await stat(source);
+    await utimes(tmp, st.atime, st.mtime);
+    return { tmp, id: await placedId(tmp) };
   } catch (err) {
     await unlink(tmp).catch(() => undefined);
     throw err;
@@ -215,14 +279,576 @@ async function copyIntoPlace(
 }
 
 /**
- * Les fichiers existants que l'appel DÉTRUIT : la destination, qu'il remplace
- * quand elle existe, et, pour un déplacement, la source, qu'il retire. Retirer
- * du dossier partagé le fichier d'un autre détruit son travail autant que
- * l'écraser : la porte d'écrasement pose donc la même question aux deux. Une
- * copie laisse la source intacte.
+ * `replace: true` — pose `source` à `destination` par une copie : un fichier
+ * temporaire du dossier de destination, renommé par-dessus la cible. Une copie
+ * interrompue ne laisse jamais une destination à moitié écrite. Rend
+ * l'identité de ce qui a été posé.
  */
-function destroyedBy(copy: boolean, paths: { source: string; destination: string }): string[] {
-  return copy ? [paths.destination] : [paths.destination, paths.source];
+async function copyIntoPlace(
+  ctx: ToolContext,
+  source: string,
+  destination: string,
+  destroyed: readonly string[],
+): Promise<BigIntStats> {
+  const { tmp, id } = await copyToTemp(source, destination);
+  try {
+    await assertStillOurs(ctx, destroyed);
+    await rename(tmp, destination);
+    return id;
+  } catch (err) {
+    await unlink(tmp).catch(() => undefined);
+    throw err;
+  }
+}
+
+/**
+ * Ce que `link` répond sur un volume qui n'a pas de liens physiques (FAT32,
+ * exFAT, certains partages réseau), ou plus de place pour un lien de plus
+ * (EMLINK). Sous Windows, ERROR_INVALID_FUNCTION arrive en EISDIR et
+ * ERROR_INVALID_PARAMETER en EINVAL. Un code de cette liste qui voulait dire
+ * autre chose (un fichier tenu ailleurs, en EPERM) ne coûte qu'un essai : la
+ * réservation exclusive ne remplace rien, et le renommage qui suit échoue sur
+ * la même cause.
+ */
+const NO_HARD_LINK = new Set([
+  'EPERM',
+  'ENOTSUP',
+  'EOPNOTSUPP',
+  'ENOSYS',
+  'EMLINK',
+  'EISDIR',
+  'EINVAL',
+]);
+
+/**
+ * Deux états du même fichier : même volume, même numéro. Un numéro nul ne
+ * prouve rien : certains partages réseau n'en donnent pas. Sert seulement à
+ * reconnaître un renommage de casse ; un retour en arrière ne s'y fie jamais.
+ */
+function sameFile(a: BigIntStats, b: BigIntStats): boolean {
+  return a.ino !== BigInt(0) && a.dev === b.dev && a.ino === b.ino;
+}
+
+/**
+ * LE RETOUR EN ARRIÈRE NE SE FIE À AUCUN NUMÉRO DE FICHIER (revue A de #938).
+ * Un volume qui n'en donne pas (un partage réseau sans index de fichier,
+ * justement ceux pour qui la réservation existe) rendait méconnaissable ce que
+ * l'appel venait de poser : la réservation restait, et l'appel suivant se
+ * refusait devant les restes de l'outil lui-même. Ce que l'appel pose se
+ * reconnaît donc par son CONTENU :
+ *   - une réservation porte une marque unique, écrite par l'appel : elle est
+ *     retirée si elle ne porte que cette marque (ou un début de celle-ci, si
+ *     l'écriture a été interrompue) ;
+ *   - un fichier posé (un lien ou une copie de la source) se reconnaît à son
+ *     IDENTITÉ, relevée en O(1) au moment de la pose (`Placed`, `sameIdentity`)
+ *     — jamais aux octets ACTUELS de la source, qui a pu changer ou disparaître
+ *     entre-temps (revue A de #938, passe 4). Le chemin qui réussit ne lit
+ *     AUCUN octet de plus (arbitrage du 03/11) : un déplacement sur un même
+ *     volume reste O(1), même pour une vidéo de plusieurs Go. Seul un
+ *     déplacement déjà inachevé peut lire des octets, et seulement pour un lien
+ *     sur un volume sans numéros de fichier. Un fichier écrit par-dessus
+ *     exprès entre-temps reste où il est.
+ */
+const RESERVATION_MARK = 'nodal file_move: this name is reserved, the file arrives now ';
+
+/** Une marque de réservation que nul autre appel ne peut écrire. */
+function reservationMark(): Buffer {
+  return Buffer.from(`${RESERVATION_MARK}${randomBytes(8).toString('hex')}\n`);
+}
+
+/** Taille en octets d'une réservation (sa marque) : ce qu'un autre appel peut voir, le temps d'un renommage. */
+export const RESERVATION_BYTES = reservationMark().length;
+
+/** Ce que peut rendre un retrait : fait, refusé (ce n'est pas ce que l'appel a posé), ou l'erreur du système. */
+type Removal = 'removed' | 'not_ours' | 'kept' | { error: unknown };
+
+async function unlinkOurs(path: string): Promise<Removal> {
+  return unlink(path).then(
+    (): Removal => 'removed',
+    (error: unknown): Removal => (errnoOf(error) === 'ENOENT' ? 'removed' : { error }),
+  );
+}
+
+/** Retire la réservation `path` si elle ne porte que la marque `mark` (ou un début). */
+async function removeReservation(path: string, mark: Buffer): Promise<Removal> {
+  if ((await lstat(path).catch(() => null)) === null) return 'removed';
+  return (await holdsMark(path, mark)) ? unlinkOurs(path) : 'not_ours';
+}
+
+/** `path` ne porte-t-il que la marque `mark` (ou un début) ? */
+async function holdsMark(path: string, mark: Buffer): Promise<boolean> {
+  const st = await lstat(path).catch(() => null);
+  if (st === null || !st.isFile() || st.size > mark.length) return false;
+  const held = await readFile(path).catch(() => null);
+  return held !== null && mark.subarray(0, held.length).equals(held);
+}
+
+/**
+ * Ce que Windows répond, le temps qu'un autre programme tient ouvert le
+ * fichier qu'on remplace — même un instant, pour en lire les attributs : un
+ * autre appel qui regarde le nom, un indexeur, un antivirus.
+ */
+const HELD_OPEN = new Set(['EPERM', 'EACCES', 'EBUSY']);
+
+/**
+ * Le renommage du fichier complet sur la réservation. Sous Windows, un fichier
+ * tenu ouvert ne se remplace pas : le renommage échoue en EPERM, EACCES ou
+ * EBUSY le temps de cette lecture, alors que la réservation est à l'appel. Il
+ * réessaie donc, brièvement (8 essais, 0,7 s en tout), tant que la réservation
+ * porte toujours sa marque — un fichier écrit par-dessus entre deux essais
+ * n'est jamais remplacé — puis rend l'erreur.
+ */
+async function renameOntoReservation(from: string, destination: string, mark: Buffer) {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      await rename(from, destination);
+      return;
+    } catch (err) {
+      if (!HELD_OPEN.has(errnoOf(err) ?? '') || attempt >= 8) throw err;
+      await new Promise((done) => setTimeout(done, 25 * attempt));
+      if (!(await holdsMark(destination, mark))) throw err;
+    }
+  }
+}
+
+/** L'identité d'un fichier, relevée en O(1) (`lstat`) : rien n'en est lu. */
+async function placedId(path: string): Promise<BigIntStats> {
+  return lstat(path, { bigint: true });
+}
+
+/**
+ * Ce que l'appel a posé à destination : l'identité relevée au moment de la
+ * pose, et, pour un lien de la source sur le même volume, le chemin de cette
+ * source — tant que le lien tient, la source et la destination SONT le même
+ * fichier.
+ */
+type Placed = { id: BigIntStats; linkOf?: string };
+
+/** Le volume donne-t-il de vrais numéros de fichier, des deux côtés ? */
+function hasIds(a: BigIntStats, b: BigIntStats): boolean {
+  return a.ino !== BigInt(0) && b.ino !== BigInt(0);
+}
+
+/**
+ * `now` est-il le fichier relevé dans `ref` ? Par le volume et le numéro de
+ * fichier quand le volume en donne ; sinon par la taille, la date de
+ * modification et la date de création, à la nanoseconde.
+ *
+ * Sans numéros de fichier, cette réponse peut être TROMPÉE : un outil qui
+ * garde les dates (rsync -t, robocopy /COPY:T, une restauration) pose un
+ * fichier de même taille et de même date ; un volume qui ne donne pas la date
+ * de création, ou la date à 2 s de FAT, complète la ressemblance (revue A de
+ * #938, passe 5). Elle ne sert donc qu'à CHOISIR le texte dit à l'agent ;
+ * elle n'autorise jamais seule un retrait (`bytesRemainAt`).
+ */
+function sameIdentity(now: BigIntStats, ref: BigIntStats): boolean {
+  if (hasIds(now, ref)) return now.dev === ref.dev && now.ino === ref.ino;
+  return (
+    now.size === ref.size && now.mtimeNs === ref.mtimeNs && now.birthtimeNs === ref.birthtimeNs
+  );
+}
+
+/** Les octets des deux fichiers sont-ils les mêmes ? Lus par morceaux, et seulement sur un chemin d'échec. */
+async function sameBytes(a: string, b: string): Promise<boolean> {
+  const [sa, sb] = await Promise.all([lstat(a), lstat(b)]);
+  if (!sa.isFile() || !sb.isFile() || sa.size !== sb.size) return false;
+  const [ha, hb] = await Promise.all([open(a, 'r'), open(b, 'r')]);
+  try {
+    const [ba, bb] = [Buffer.alloc(1 << 20), Buffer.alloc(1 << 20)];
+    for (;;) {
+      const [ra, rb] = await Promise.all([
+        ha.read(ba, 0, ba.length, null),
+        hb.read(bb, 0, bb.length, null),
+      ]);
+      if (ra.bytesRead !== rb.bytesRead) return false;
+      if (ra.bytesRead === 0) return true;
+      if (!ba.subarray(0, ra.bytesRead).equals(bb.subarray(0, rb.bytesRead))) return false;
+    }
+  } finally {
+    await Promise.all([ha.close(), hb.close()]);
+  }
+}
+
+/**
+ * Un retrait ne détruit rien seulement si les octets de `path` restent
+ * ailleurs : `path` et `other` sont le même fichier par un VRAI numéro de
+ * fichier, ou portent les mêmes octets — comparés à eux-mêmes, sur un chemin
+ * d'échec seulement. La ressemblance de taille et de dates ne suffit jamais.
+ */
+async function bytesRemainAt(path: string, other: string): Promise<boolean> {
+  const [a, b] = await Promise.all([
+    lstat(path, { bigint: true }).catch(() => null),
+    lstat(other, { bigint: true }).catch(() => null),
+  ]);
+  if (a === null || b === null) return false;
+  if (hasIds(a, b) && a.dev === b.dev && a.ino === b.ino) return true;
+  return sameBytes(path, other);
+}
+
+/**
+ * Retire `path`, ce que l'appel y a posé, s'il est prouvé être le sien par un
+ * VRAI numéro de fichier (`id`), ou que ses octets restent à `original`.
+ * Sinon il reste, et le dit (`kept`).
+ */
+async function removeIfPlaced(path: string, id: BigIntStats, original: string): Promise<Removal> {
+  const now = await lstat(path, { bigint: true }).catch(() => null);
+  if (now === null) return 'removed';
+  const own = hasIds(now, id) && now.dev === id.dev && now.ino === id.ino;
+  if (own || (await bytesRemainAt(path, original).catch(() => false))) return unlinkOurs(path);
+  return 'kept';
+}
+
+/**
+ * L'erreur d'un appel dont le retour en arrière n'a pas pu retirer ce qu'il
+ * avait posé : l'agent l'apprend, avec le chemin (invariant #4).
+ */
+function withLeftover(err: unknown, path: string, removal: Removal): unknown {
+  if (removal === 'kept') {
+    return Object.assign(
+      new Error(
+        `${err instanceof Error ? err.message : String(err)}; nothing was removed from ` +
+          `"${path}": what is there could not be proven to be this call's copy`,
+      ),
+      { code: errnoOf(err) },
+    );
+  }
+  if (typeof removal === 'string') return err;
+  const left = removal.error;
+  return Object.assign(
+    new Error(
+      `${err instanceof Error ? err.message : String(err)}; and what this call had placed at ` +
+        `"${path}" could not be removed (${errnoOf(left) ?? 'error'}: ${
+          left instanceof Error ? left.message : String(left)
+        })`,
+    ),
+    { code: errnoOf(err) },
+  );
+}
+
+/**
+ * Pose le fichier `from` (sur le volume de la destination) au nom
+ * `destination` SANS JAMAIS REMPLACER ce qui s'y trouve, en un seul geste du
+ * système : un lien physique, qui échoue en EEXIST quand le nom est pris (`from`
+ * reste : l'appelant le retire) ; ou, sur un volume sans liens physiques, une
+ * réservation exclusive du nom (O_EXCL, EEXIST aussi), sur laquelle le fichier
+ * complet `from` est renommé. La destination ne montre jamais qu'une
+ * réservation (sa seule marque), le temps d'un renommage, ou le fichier entier.
+ * La seule fenêtre de ce second geste : un programme qui ÉCRASE exprès la
+ * réservation entre sa création et le renommage (un `replace: true`, un
+ * éditeur) serait écrasé à son tour. Une création ordinaire, elle, trouve le
+ * nom pris.
+ *
+ * Lève l'erreur du système (EEXIST, EXDEV…). Une réservation que l'appel n'a
+ * pas pu remplir est retirée, par sa marque, quoi qu'ait échoué après sa
+ * création — l'écriture de la marque, la fermeture ou le renommage.
+ */
+async function claimName(from: string, destination: string): Promise<'linked' | 'renamed'> {
+  try {
+    await link(from, destination);
+    return 'linked';
+  } catch (err) {
+    if (!NO_HARD_LINK.has(errnoOf(err) ?? '')) throw err;
+  }
+  const mark = reservationMark();
+  const handle = await open(destination, 'wx');
+  try {
+    try {
+      await handle.writeFile(mark);
+    } finally {
+      await handle.close();
+    }
+    await renameOntoReservation(from, destination, mark);
+    return 'renamed';
+  } catch (err) {
+    throw withLeftover(err, destination, await removeReservation(destination, mark));
+  }
+}
+
+/**
+ * Pose une copie complète de `source` au nom `destination`, sans jamais
+ * remplacer : la copie se fait dans un temporaire du dossier de destination,
+ * que `claimName` pose. Aucun temporaire ne reste, que l'appel réussisse ou
+ * non. Rend l'identité de ce qui a été posé : celle du temporaire, relevée
+ * avant la pose — un lien ou un renommage garde le même fichier.
+ */
+async function placeCopy(source: string, destination: string): Promise<BigIntStats> {
+  const { tmp, id } = await copyToTemp(source, destination);
+  try {
+    if ((await claimName(tmp, destination)) === 'linked') {
+      try {
+        await unlink(tmp);
+      } catch (err) {
+        throw withLeftover(err, destination, await removeIfPlaced(destination, id, source));
+      }
+    }
+    return id;
+  } catch (err) {
+    await unlink(tmp).catch(() => undefined);
+    throw err;
+  }
+}
+
+/**
+ * Un déplacement sans remplacement : le fichier est posé à destination
+ * (`claimName` sur le même volume, `placeCopy` entre deux volumes), PUIS la
+ * source est retirée. Quand elle ne peut pas l'être, le disque est regardé une
+ * fois (`observePartialMove`). Le retour en arrière n'a lieu que si la source
+ * est toujours là ET que la destination porte ce que l'appel y a posé :
+ * l'erreur remonte alors, et rien n'a bougé. Sinon, rend ce qui a été vu, que
+ * `partialMove` dit tel quel.
+ */
+async function moveWithoutReplacing(
+  source: string,
+  destination: string,
+): Promise<{ unlinkErr: unknown; seen: Seen } | undefined> {
+  // L'identité de la source, relevée en O(1) AVANT que le déplacement ne
+  // commence : c'est aussi celle de ce que l'appel pose par un lien, qui est le
+  // même fichier.
+  const sourceId = await placedId(source);
+  let placed: Placed = { id: sourceId, linkOf: source };
+  try {
+    if ((await claimName(source, destination)) === 'renamed') return undefined;
+  } catch (err) {
+    // Deux volumes (un autre disque, un partage monté) : un lien n'y traverse
+    // pas, le fichier y arrive par une copie.
+    if (errnoOf(err) !== 'EXDEV') throw err;
+    placed = { id: await placeCopy(source, destination) };
+  }
+  try {
+    await unlink(source);
+    return undefined;
+  } catch (err) {
+    const seen = await observePartialMove(source, destination, sourceId, placed);
+    // Le retour en arrière retire la destination : seulement quand la source
+    // est TOUJOURS le fichier de départ. Si un autre fichier l'a remplacée, la
+    // destination porte le seul exemplaire de l'original (arbitrage du 03/11).
+    // … et seulement quand les octets de la destination restent à la source
+    // (`bytesRemain`) : la seule identité, sans numéros de fichier, peut être
+    // trompée (revue A, passe 5).
+    if (
+      'source' in seen &&
+      seen.source === 'original' &&
+      seen.atDestination === 'ours' &&
+      seen.bytesRemain === true &&
+      (await unlinkOurs(destination)) === 'removed'
+    ) {
+      throw err;
+    }
+    return { unlinkErr: err, seen };
+  }
+}
+
+/**
+ * Ce qu'un déplacement inachevé laisse sur le disque, vu UNE fois, sur tous
+ * les chemins (`replace: true` compris) : la source est-elle toujours le
+ * fichier dont l'appel est parti (son identité, relevée avant le
+ * déplacement), un autre fichier, ou rien ; et qu'y a-t-il à destination —
+ * ce que l'appel y a posé (son identité), autre chose, ou rien. Une lecture qui échoue est rapportée comme telle, jamais
+ * prise pour l'un de ces cas.
+ *
+ * Un lien de la source, sur un volume sans numéros de fichier, se reconnaît
+ * aussi à ses octets : tant que le lien tient, la source et la destination
+ * sont le même fichier, et un programme qui écrit dans la source écrit aussi
+ * dans la destination (sa date change, ses octets restent ceux de la source).
+ * C'est le seul cas qui lit des octets, et seulement ici, sur un déplacement
+ * déjà inachevé.
+ */
+type Seen =
+  | { readError: { path: string; error: unknown } }
+  | {
+      source: 'original' | 'replaced' | 'absent';
+      atDestination: 'ours' | 'foreign' | 'absent';
+      /**
+       * Source d'origine ET destination de l'appel : les octets de la
+       * destination restent-ils à la source (`bytesRemainAt`) ? Seule cette
+       * preuve autorise le retour en arrière.
+       */
+      bytesRemain?: boolean;
+    };
+
+async function observePartialMove(
+  source: string,
+  destination: string,
+  sourceId: BigIntStats,
+  placed: Placed,
+): Promise<Seen> {
+  const look = async (path: string): Promise<BigIntStats | null> =>
+    lstat(path, { bigint: true }).catch((error: unknown) => {
+      if (errnoOf(error) === 'ENOENT') return null;
+      throw error;
+    });
+  let srcNow: BigIntStats | null;
+  try {
+    srcNow = await look(source);
+  } catch (error) {
+    return { readError: { path: source, error } };
+  }
+  try {
+    const dstNow = await look(destination);
+    let sourceIs: 'original' | 'replaced' | 'absent' =
+      srcNow === null ? 'absent' : sameIdentity(srcNow, sourceId) ? 'original' : 'replaced';
+    let atDestination: 'ours' | 'foreign' | 'absent' =
+      dstNow === null ? 'absent' : sameIdentity(dstNow, placed.id) ? 'ours' : 'foreign';
+    // Un lien, sur un volume sans numéros de fichier, dont la date a changé :
+    // tant que le lien tient, la source et la destination sont le même fichier,
+    // et portent les mêmes octets. Il est alors intact des deux côtés.
+    if (
+      placed.linkOf !== undefined &&
+      srcNow !== null &&
+      dstNow !== null &&
+      !hasIds(dstNow, placed.id) &&
+      (sourceIs !== 'original' || atDestination !== 'ours') &&
+      (await sameBytes(destination, placed.linkOf))
+    ) {
+      sourceIs = 'original';
+      atDestination = 'ours';
+    }
+    if (sourceIs === 'original' && atDestination === 'ours') {
+      return {
+        source: sourceIs,
+        atDestination,
+        bytesRemain: await bytesRemainAt(destination, source),
+      };
+    }
+    return { source: sourceIs, atDestination };
+  } catch (error) {
+    return { readError: { path: destination, error } };
+  }
+}
+
+/**
+ * Le nom est pris : l'appel échoue, et dit quel fichier est là, pour que
+ * l'agent choisisse un autre nom (#933).
+ */
+async function destinationTaken(
+  verb: 'move' | 'copy',
+  destination: string,
+): Promise<FileMoveOutput> {
+  const nothing = verb === 'move' ? 'Nothing was moved' : 'Nothing was copied';
+  const rule =
+    'file_move never replaces an existing file unless replace:true is passed. Choose ' +
+    'another name, or pass replace:true if replacing this file is intended.';
+  const there = await lstat(destination).catch(() => null);
+  if (there === null) {
+    return {
+      ok: false,
+      reason: `${nothing}: "${destination}" was taken when the call ran. ${rule}`,
+    };
+  }
+  const existing = {
+    path: destination,
+    bytes: there.size,
+    modified: there.mtime.toISOString(),
+  };
+  return {
+    ok: false,
+    reason:
+      `${nothing}: "${destination}" already exists (${String(existing.bytes)} bytes, ` +
+      `modified ${existing.modified}). ${rule}`,
+    existing,
+  };
+}
+
+/** La raison système d'un retrait raté, telle que l'agent la lit. */
+function removalError(err: unknown): string {
+  return `${errnoOf(err) ?? 'error'}: ${err instanceof Error ? err.message : String(err)}`;
+}
+
+/**
+ * Ce qu'un déplacement inachevé laisse sur le disque, dit tel quel (invariant
+ * #4), à partir de ce qui a été VU (`observePartialMove`) et de rien d'autre :
+ * la seule vérité de l'agent est cette phrase, et s'il croyait la source
+ * copiée alors qu'elle ne l'est pas, la nettoyer détruirait les derniers
+ * octets.
+ */
+function partialMove(
+  input: FileMoveInput,
+  destination: string,
+  unlinkErr: unknown,
+  seen: Seen,
+): FileMoveOutput {
+  const a = input.source;
+  const why = removalError(unlinkErr);
+  const fail = (reason: string): FileMoveOutput => ({ ok: false, reason });
+  if ('readError' in seen) {
+    return fail(
+      `The original "${a}" could not be removed (${why}), and checking what is on disk ` +
+        `afterwards failed: reading "${seen.readError.path}" gave ` +
+        `${removalError(seen.readError.error)}. Look at "${a}" and "${destination}" before ` +
+        'doing anything else.',
+    );
+  }
+  if (seen.source === 'original') {
+    if (seen.atDestination === 'ours' && seen.bytesRemain === false) {
+      return fail(
+        `"${a}" was placed at "${destination}", but the original could not be removed ` +
+          `(${why}), and "${a}" no longer holds the same bytes as "${destination}": both are ` +
+          'kept. Look at both before doing anything else, and tell the person.',
+      );
+    }
+    if (seen.atDestination === 'ours') {
+      return fail(
+        `"${a}" was placed at "${destination}", but the original could not be removed ` +
+          `(${why}). The file is at both places now.`,
+      );
+    }
+    return fail(
+      `Nothing was moved: the original "${a}" could not be removed (${why}), and ` +
+        (seen.atDestination === 'foreign'
+          ? `"${destination}" now holds a different file, written there by another program ` +
+            'during this call.'
+          : `nothing is at "${destination}" any more: another program removed what this call ` +
+            'had placed there.') +
+        ` The original is still at "${a}": keep it.`,
+    );
+  }
+  if (seen.source === 'replaced') {
+    if (seen.atDestination === 'ours') {
+      return fail(
+        `The original "${a}" was replaced by another file during this call (removing it ` +
+          `failed: ${why}). "${destination}" holds the original: keep it, and tell the person.`,
+      );
+    }
+    return fail(
+      `The original "${a}" was replaced by another file during this call (removing it ` +
+        `failed: ${why}), and "${destination}" does not hold the original either: ` +
+        (seen.atDestination === 'foreign'
+          ? 'it now holds a different file, written there by another program.'
+          : 'nothing is there.') +
+        ' This call can no longer tell where the original is: tell the person before doing ' +
+        'anything else.',
+    );
+  }
+  if (seen.atDestination === 'ours') {
+    return fail(
+      `"${a}" was placed at "${destination}", and the original is no longer at "${a}" ` +
+        `(${why}). The file is now only at "${destination}".`,
+    );
+  }
+  return fail(
+    `The original "${a}" is gone (${why}), and "${destination}" does not hold it: ` +
+      (seen.atDestination === 'foreign'
+        ? 'it now holds a different file, written there by another program.'
+        : 'nothing is there.') +
+      ' This call can no longer tell where the file is: tell the person before doing ' +
+      'anything else.',
+  );
+}
+
+/**
+ * Les fichiers existants que l'appel DÉTRUIT : la destination, qu'il remplace
+ * quand elle existe — seulement avec `replace: true`, sans quoi il ne la
+ * remplace jamais (#933) —, et, pour un déplacement, la source, qu'il retire.
+ * Retirer du dossier partagé le fichier d'un autre détruit son travail autant
+ * que l'écraser : la porte d'écrasement pose donc la même question aux deux.
+ * Une copie laisse la source intacte.
+ */
+function destroyedBy(
+  input: Pick<FileMoveInput, 'copy' | 'replace'>,
+  paths: { source: string; destination: string },
+): string[] {
+  const replaced = input.replace === true ? [paths.destination] : [];
+  return input.copy ? replaced : [...replaced, paths.source];
 }
 
 /**
@@ -245,6 +871,51 @@ async function assertStillOurs(ctx: ToolContext, destroyed: readonly string[]): 
   }
 }
 
+/**
+ * Le geste par défaut (#933) : copier ou déplacer SANS JAMAIS REMPLACER. Un nom
+ * pris fait échouer l'appel en nommant le fichier qui est là, sauf quand ce
+ * fichier EST la source (même volume, même numéro, une seule entrée) : un
+ * renommage qui ne change que la casse, sur un volume insensible à la casse
+ * (`scan.pdf` -> `Scan.pdf`). Le renommage renomme alors l'entrée elle-même ;
+ * une copie sur soi-même ne fait rien.
+ */
+async function withoutReplacing(
+  ctx: ToolContext,
+  input: FileMoveInput,
+  source: string,
+  destination: string,
+  bytes: number,
+  destroyed: readonly string[],
+): Promise<FileMoveOutput> {
+  const verb = input.copy ? 'copy' : 'move';
+  await assertStillOurs(ctx, destroyed);
+  try {
+    if (input.copy) {
+      await placeCopy(source, destination);
+      return { ok: true, operation: 'copied', source, destination, bytes };
+    }
+    const left = await moveWithoutReplacing(source, destination);
+    if (left !== undefined) return partialMove(input, destination, left.unlinkErr, left.seen);
+  } catch (err) {
+    if (errnoOf(err) !== 'EEXIST') throw err;
+    const there = await lstat(destination, { bigint: true }).catch(() => null);
+    const self = await stat(source, { bigint: true }).catch(() => null);
+    if (there === null || self === null || !sameFile(there, self) || there.nlink !== BigInt(1)) {
+      return destinationTaken(verb, destination);
+    }
+    if (input.copy) {
+      return {
+        ok: false,
+        reason: `Source and destination are the same file: "${input.source}". Nothing to do.`,
+      };
+    }
+    await rename(source, destination);
+  }
+  // Le déplacement est FAIT : il se confirme maintenant, jamais avant (#916).
+  ctx.confirmMove?.(source, destination);
+  return { ok: true, operation: 'moved', source, destination, bytes };
+}
+
 export const fileMoveTool: ToolDefinition<typeof FileMoveInputSchema, FileMoveOutput> = {
   name: 'file_move',
   label: 'Move or copy a workspace file',
@@ -255,8 +926,10 @@ export const fileMoveTool: ToolDefinition<typeof FileMoveInputSchema, FileMoveOu
     'into another folder, or carry it from one workspace to another. Works on any file type ' +
     '(images, PDFs, archives): the content is never read nor returned. `destination` is a ' +
     'file path, or a folder (existing, or ending with "/") where the file keeps its name. An ' +
-    'existing file at the destination is replaced. A folder as `source` is refused. Use this ' +
-    'instead of a shell command to file away a document.',
+    'existing file is NEVER replaced: when the destination name is taken, nothing moves and ' +
+    'the result names the file that is there (path, size, date), so you can choose another ' +
+    'name. Pass replace:true only to replace that file on purpose. A folder as `source` is ' +
+    'refused. Use this instead of a shell command to file away a document.',
   inputSchema: FileMoveInputSchema,
   riskLevel: 'write',
   egress: 'none',
@@ -316,7 +989,7 @@ export const fileMoveTool: ToolDefinition<typeof FileMoveInputSchema, FileMoveOu
     if (!paths.ok) return undefined;
     if (await isProtectedWorkflowTemplate(ctx, paths.destination)) return undefined;
     if (!input.copy && (await isProtectedWorkflowTemplate(ctx, paths.source))) return undefined;
-    for (const path of destroyedBy(input.copy, paths)) {
+    for (const path of destroyedBy(input, paths)) {
       if ((await computeSharedOverwriteApproval(ctx, path)) === 'require_approval') {
         return 'require_approval';
       }
@@ -343,9 +1016,13 @@ export const fileMoveTool: ToolDefinition<typeof FileMoveInputSchema, FileMoveOu
       return { ok: false, reason: WORKFLOW_TEMPLATE_PROTECTED_MESSAGE };
     }
     const verb = input.copy ? 'copy' : 'move';
-    const destroyed = destroyedBy(input.copy, paths);
+    const destroyed = destroyedBy(input, paths);
     try {
       if (input.create_dirs) await mkdir(dirname(destination), { recursive: true });
+      if (input.replace !== true) {
+        return await withoutReplacing(ctx, input, source, destination, bytes, destroyed);
+      }
+      // `replace: true` : le geste d'avant #933, à l'identique.
       if (input.copy) {
         await copyIntoPlace(ctx, source, destination, destroyed);
         return { ok: true, operation: 'copied', source, destination, bytes };
@@ -360,23 +1037,17 @@ export const fileMoveTool: ToolDefinition<typeof FileMoveInputSchema, FileMoveOu
         // traverse pas. Le déplacement se fait alors en deux temps, copie puis
         // suppression.
         if (errnoOf(err) !== 'EXDEV') throw err;
-        await copyIntoPlace(ctx, source, destination, destroyed);
+        const sourceId = await placedId(source);
+        const id = await copyIntoPlace(ctx, source, destination, destroyed);
         try {
           await unlink(source);
           // Copié PUIS supprimé : le déplacement est fait (#916).
           ctx.confirmMove?.(source, destination);
         } catch (unlinkErr) {
-          // La copie a eu lieu, la suppression non : les DEUX fichiers
-          // existent, et l'agent doit le savoir, jamais croire à un
-          // déplacement fait (invariant #4).
-          return {
-            ok: false,
-            reason:
-              `"${input.source}" was copied to "${destination}", but the original could not be ` +
-              `removed (${errnoOf(unlinkErr) ?? 'error'}: ${
-                unlinkErr instanceof Error ? unlinkErr.message : String(unlinkErr)
-              }). Both files exist now.`,
-          };
+          // La copie a eu lieu, la suppression non : ce qui est sur le disque
+          // se regarde, et se dit tel quel (invariant #4), comme sans replace.
+          const seen = await observePartialMove(source, destination, sourceId, { id });
+          return partialMove(input, destination, unlinkErr, seen);
         }
       }
       return { ok: true, operation: 'moved', source, destination, bytes };
