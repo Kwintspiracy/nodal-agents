@@ -6,6 +6,7 @@
 import { eq, and, or, ilike, inArray, isNull } from 'drizzle-orm';
 import {
   INITIAL_AUTO_ROOT_GRANTS,
+  effortKeptOnModel,
   findModelCatalogEntry,
   firstSpokenReasoningEffort,
 } from '@nodal-agents/shared';
@@ -389,7 +390,8 @@ export interface SetAgentModelInput {
   readonly reasoningEffort: (typeof agents.$inferSelect)['reasoningEffort'];
   /**
    * The effort of a chat turn whose reply is heard (#977), on the same model's
-   * scale; null = Auto. Undefined keeps the one the agent holds.
+   * scale; null = Auto. Undefined keeps the one the agent holds, unless the
+   * model or key changes to one that does not offer it (`effortKeptOnModel`).
    */
   readonly spokenReasoningEffort?: (typeof agents.$inferSelect)['spokenReasoningEffort'];
   /** The primary key to set; undefined keeps the one the agent holds. */
@@ -408,7 +410,13 @@ export async function setAgentModelRepo(
   input: SetAgentModelInput,
 ): Promise<{ ok: true } | { error: 'agent_not_found' }> {
   const [agent] = await db
-    .select({ id: agents.id, fallbackChain: agents.fallbackChain })
+    .select({
+      id: agents.id,
+      fallbackChain: agents.fallbackChain,
+      model: agents.model,
+      llmKeyId: agents.llmKeyId,
+      spokenReasoningEffort: agents.spokenReasoningEffort,
+    })
     .from(agents)
     .where(and(eq(agents.id, input.agentId), eq(agents.entityId, entityId)));
   if (!agent) return { error: 'agent_not_found' };
@@ -420,6 +428,23 @@ export async function setAgentModelRepo(
   };
   if (input.spokenReasoningEffort !== undefined) {
     patch.spokenReasoningEffort = input.spokenReasoningEffort;
+  } else {
+    // Not given: the stored value follows the rule of every model change
+    // (`effortKeptOnModel`, #977): kept, unless the new model does not offer it.
+    const keyId = input.llmKeyId !== undefined ? input.llmKeyId : agent.llmKeyId;
+    if (input.model !== agent.model || keyId !== agent.llmKeyId) {
+      const [key] = keyId
+        ? await db
+            .select({ provider: entityLlmKeys.provider })
+            .from(entityLlmKeys)
+            .where(and(eq(entityLlmKeys.id, keyId), eq(entityLlmKeys.entityId, entityId)))
+        : [];
+      patch.spokenReasoningEffort = effortKeptOnModel(
+        key?.provider ?? '',
+        input.model,
+        agent.spokenReasoningEffort,
+      );
+    }
   }
   if (input.llmKeyId !== undefined) {
     patch.llmKeyId = input.llmKeyId;

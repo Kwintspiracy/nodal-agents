@@ -307,7 +307,7 @@ import {
 } from '@nodal-agents/shared';
 import { toElicitationView, type ElicitationView } from './elicitation-view.ts';
 import { readAttachmentViews } from './elicitation-attachments.ts';
-import { isRefusedEffort } from './model-choices.ts';
+import { effortKeptOnModel, isRefusedEffort } from './model-choices.ts';
 import type { ConversationFeed, Step } from './conversation-feed.ts';
 import {
   parsePresented,
@@ -1233,7 +1233,13 @@ export async function updateAgentAction(raw: unknown): Promise<ActionResult<void
 
     // Verify agent exists and belongs to this entity
     const [existing] = await db
-      .select({ id: agents.id, llmKeyId: agents.llmKeyId })
+      .select({
+        id: agents.id,
+        llmKeyId: agents.llmKeyId,
+        model: agents.model,
+        reasoningEffort: agents.reasoningEffort,
+        spokenReasoningEffort: agents.spokenReasoningEffort,
+      })
       .from(agents)
       .where(and(eq(agents.id, id), eq(agents.entityId, session.entityId)));
     if (!existing) return fail('not_found', 'Agent not found');
@@ -1296,6 +1302,37 @@ export async function updateAgentAction(raw: unknown): Promise<ActionResult<void
     }
     if (spokenReasoningEffort !== undefined) {
       patch['spokenReasoningEffort'] = spokenReasoningEffort;
+    }
+    // Un changement de modèle (ou de clé) ramène à Auto chaque effort que le
+    // nouveau modèle n'offre pas, par LA règle de tout changement de modèle
+    // (`effortKeptOnModel`, #977). Le formulaire le fait déjà ; une requête
+    // qui ne passe pas par lui, ou qui ne touche pas aux efforts, aussi.
+    const effectiveKeyId = llmKeyId !== undefined ? llmKeyId : existing.llmKeyId;
+    if (model !== existing.model || effectiveKeyId !== existing.llmKeyId) {
+      const [key] = effectiveKeyId
+        ? await db
+            .select({ provider: entityLlmKeys.provider })
+            .from(entityLlmKeys)
+            .where(
+              and(
+                eq(entityLlmKeys.id, effectiveKeyId),
+                eq(entityLlmKeys.entityId, session.entityId),
+              ),
+            )
+        : [];
+      const provider = key?.provider ?? '';
+      patch['reasoningEffort'] = effortKeptOnModel(
+        provider,
+        model,
+        reasoningEffort !== undefined ? reasoningEffort : existing.reasoningEffort,
+      );
+      patch['spokenReasoningEffort'] = effortKeptOnModel(
+        provider,
+        model,
+        spokenReasoningEffort !== undefined
+          ? spokenReasoningEffort
+          : existing.spokenReasoningEffort,
+      );
     }
 
     // Whole mutation is one transaction (F-19, audit #2 + R4 follow-up): the
@@ -7970,7 +8007,6 @@ export async function setAgentModelAndEffortAction(raw: unknown): Promise<Action
         role: agents.role,
         llmKeyId: agents.llmKeyId,
         fallbackChain: agents.fallbackChain,
-        spokenReasoningEffort: agents.spokenReasoningEffort,
       })
       .from(agents)
       .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
@@ -8017,20 +8053,14 @@ export async function setAgentModelAndEffortAction(raw: unknown): Promise<Action
     // L'écriture, et le retrait de la clé primaire de la chaîne de repli (même
     // nettoyage que `updateAgentAction`, sinon l'agent se relancerait sur
     // lui-même) : setAgentModelRepo (@nodal-agents/db), le chemin du banc aussi.
-    // « Reasoning when spoken to » (#977) est sur l'échelle du même modèle :
-    // un palier que le nouveau modèle n'offre pas repasse à Auto, comme
-    // l'écran d'édition le fait quand on y change de modèle. Sinon l'écran
-    // afficherait Auto pendant que le moteur enverrait l'ancien palier.
-    const keptSpokenEffort =
-      agent.spokenReasoningEffort !== null &&
-      isRefusedEffort(provider, model, agent.spokenReasoningEffort)
-        ? null
-        : agent.spokenReasoningEffort;
+    // « Reasoning when spoken to » (#977) n'est pas passé : setAgentModelRepo
+    // le garde, sauf si le nouveau modèle ne l'offre pas (`effortKeptOnModel`,
+    // la règle de tout changement de modèle). Reasoning arrive avec la
+    // requête, et un palier non offert y est refusé plus haut.
     const written = await setAgentModelRepo(db, session.entityId, {
       agentId,
       model,
       reasoningEffort,
-      spokenReasoningEffort: keptSpokenEffort,
       ...(llmKeyId !== undefined ? { llmKeyId } : {}),
     });
     if ('error' in written) return fail('not_found', 'Agent not found');

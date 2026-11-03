@@ -1954,6 +1954,42 @@ export function reasoningOptionValues(provider: string, modelId: string): string
 }
 
 /**
+ * L'effort demandé est-il refusable ? Vrai SEULEMENT quand le modèle est
+ * catalogué et que son contrôle ne l'offre pas.
+ *
+ * Un modèle hors catalogue (un identifiant libre, un modèle vu en direct) ne
+ * dit rien de ses paliers : le refuser interdirait un réglage que l'écran
+ * d'édition accepte, et inventer un verdict à partir d'une absence serait un
+ * faux « non ». On ne refuse donc que ce qu'on SAIT faux.
+ *
+ * Vivait dans `apps/web/src/lib/model-choices.ts` (#977, comme
+ * `reasoningOptionValues`).
+ */
+export function isRefusedEffort(provider: string, modelId: string, effort: string): boolean {
+  if (findModelCatalogEntry(provider, modelId) === undefined) return false;
+  return !reasoningOptionValues(provider, modelId).includes(effort);
+}
+
+/**
+ * Ce qu'un effort RANGÉ devient quand l'agent change de modèle (ou de clé) :
+ * gardé s'il est offert par le nouveau modèle, ou si ce modèle est hors
+ * catalogue (`isRefusedEffort`) ; sinon NULL, Auto.
+ *
+ * LA règle de tout changement de modèle, pour Reasoning comme pour « Reasoning
+ * when spoken to » (#977, revue A passe 1) : l'écran d'édition, la pastille du
+ * composeur, `updateAgentAction`, l'outil `update_agent` de l'agent racine, le
+ * modèle du banc. Sans elle, un palier que le modèle n'offre pas restait rangé
+ * derrière un écran qui affichait Auto, et le moteur l'envoyait.
+ */
+export function effortKeptOnModel(
+  provider: string,
+  modelId: string,
+  effort: string | null,
+): string | null {
+  return effort !== null && isRefusedEffort(provider, modelId, effort) ? null : effort;
+}
+
+/**
  * La PREMIÈRE valeur de « Reasoning when spoken to » (#977) pour un agent sur
  * ce modèle : `off` quand le modèle l'offre, sinon NULL (Auto). Mesurée par
  * l'orchestrateur le 03/11/2026 (l'agent racine, haiku 5.5, 108 tours) : Off décide

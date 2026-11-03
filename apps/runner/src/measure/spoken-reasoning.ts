@@ -221,6 +221,11 @@ export async function playMeasuredTurn(
       // Une base qui n'a pas encore la migration 0159 (la stack qui tourne,
       // avant le merge) : la colonne n'existe que sur la copie, en dernière
       // position, où le `SELECT *` ci-dessous la laisse à NULL. Déjà là : rien.
+      // Ce n'est PAS une erreur de nombre de colonnes : un INSERT sans liste de
+      // colonnes vise « les N premières colonnes, si la requête n'en fournit
+      // que N » (documentation PostgreSQL, INSERT) ; la dernière prend son
+      // défaut. Vérifié sur la base du propriétaire, qui n'a pas 0159 : 108
+      // tours, 0 erreur (revue A, passe 1).
       await tx.execute(
         sql`ALTER TABLE pg_temp.agents ADD COLUMN IF NOT EXISTS spoken_reasoning_effort text`,
       );

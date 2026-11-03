@@ -450,3 +450,86 @@ describe('setAgentModelAndEffortAction, Reasoning when spoken to (#977) @cap:cho
     expect(await efforts(id)).toEqual({ reasoning: null, spoken: 'off' });
   });
 });
+
+// #977, revue A passe 1 : `updateAgentAction` est un autre chemin qui change le
+// modèle (une requête qui ne passe pas par le formulaire, ou qui n'envoie pas
+// les efforts). Il passe par la même règle : un palier rangé que le nouveau
+// modèle n'offre pas repasse à Auto, les deux efforts ; sans changement de
+// modèle, rien n'est touché, même un palier que le modèle n'offre pas.
+// Mutation vérifiée : la remise à Auto retirée de updateAgentAction → le
+// premier cas rougit.
+describe('updateAgentAction, un changement de modèle (#977) @cap:choisir-modele/moteur', () => {
+  async function agentSur(model: string, efforts: { reasoning: string; spoken: string }) {
+    const [row] = await testDb
+      .insert(agents)
+      .values({
+        entityId: seed.entityId,
+        name: 'Edited Agent',
+        slug: `edited-agent-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        personality: 'Test.',
+        llmKeyId: anthropicKeyId,
+        model,
+        reasoningEffort: efforts.reasoning,
+        spokenReasoningEffort: efforts.spoken,
+      })
+      .returning();
+    return row!.id;
+  }
+  async function efforts(id: string) {
+    const [row] = await testDb
+      .select({
+        model: agents.model,
+        reasoning: agents.reasoningEffort,
+        spoken: agents.spokenReasoningEffort,
+      })
+      .from(agents)
+      .where(eq(agents.id, id));
+    return row!;
+  }
+  const payload = (id: string, model: string, extra: Record<string, unknown> = {}) => ({
+    id,
+    name: 'Edited Agent',
+    personality: 'Test.',
+    model,
+    role: 'worker',
+    subAgentIds: [],
+    subAgentInstructions: {},
+    fallbackChain: [],
+    ...extra,
+  });
+
+  it('un nouveau modèle ramène à Auto les paliers qu’il n’offre pas, même non envoyés', async () => {
+    const { updateAgentAction } = await import('../actions.ts');
+    const id = await agentSur('claude-opus-5', { reasoning: 'off', spoken: 'off' });
+    // Sur la clé OpenAI : gpt-5, raisonnement obligatoire, pas de Off.
+    const r = await updateAgentAction(payload(id, 'gpt-5', { llmKeyId: openaiKeyId }));
+    expect(r.ok).toBe(true);
+    expect(await efforts(id)).toEqual({ model: 'gpt-5', reasoning: null, spoken: null });
+  });
+
+  it('un palier envoyé que le nouveau modèle offre est gardé', async () => {
+    const { updateAgentAction } = await import('../actions.ts');
+    const id = await agentSur('claude-opus-5', { reasoning: 'off', spoken: 'off' });
+    const r = await updateAgentAction(
+      payload(id, 'gpt-5', {
+        llmKeyId: openaiKeyId,
+        reasoningEffort: 'high',
+        spokenReasoningEffort: 'low',
+      }),
+    );
+    expect(r.ok).toBe(true);
+    expect(await efforts(id)).toEqual({ model: 'gpt-5', reasoning: 'high', spoken: 'low' });
+  });
+
+  it('sans changement de modèle, un palier rangé non offert reste tel quel (Save d’un formulaire intact)', async () => {
+    const { updateAgentAction } = await import('../actions.ts');
+    // Dérive du catalogue : gpt-5 n'offre pas Off, et pourtant il est rangé.
+    const id = await agentSur('gpt-5', { reasoning: 'off', spoken: 'off' });
+    await testDb.update(agents).set({ llmKeyId: openaiKeyId }).where(eq(agents.id, id));
+    const r = await updateAgentAction(
+      payload(id, 'gpt-5', { reasoningEffort: 'off', spokenReasoningEffort: 'off' }),
+    );
+    expect(r.ok).toBe(true);
+    expect(await efforts(id)).toEqual({ model: 'gpt-5', reasoning: 'off', spoken: 'off' });
+  });
+});

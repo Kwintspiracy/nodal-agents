@@ -275,4 +275,36 @@ describe('Agent settings, Reasoning when spoken to (#977) @cap:configurer-agent/
     expect(fieldLabels()).not.toContain('Reasoning');
     expect(spokenSelect()).toBeNull();
   });
+
+  // #977, review A pass 1: a stored level the model does not offer (catalogue
+  // drift, a model set by another path) is what the engine sends. Both fields
+  // show it as itself, with the note, never as Auto; an untouched form saves
+  // it as it is. Mutation verified: EffortField back to showing '' for an
+  // unoffered value → red.
+  it('a stored level the model does not offer is shown as itself, with a note, in both fields', async () => {
+    await render({ model: MANDATORY, reasoningEffort: 'off', spokenReasoningEffort: 'off' });
+    for (const select of [selectUnder('Reasoning'), spokenSelect()]) {
+      expect(select?.value).toBe('off');
+      expect(select?.selectedOptions[0]?.textContent).toBe('Off');
+    }
+    expect(
+      container.textContent?.split('This model does not offer Off. Pick another level.'),
+    ).toHaveLength(3);
+  });
+
+  it('an untouched effort is saved as stored, even when the model does not offer it', async () => {
+    await render({ model: MANDATORY, reasoningEffort: 'off', spokenReasoningEffort: 'off' });
+    const nameInput = [...document.querySelectorAll('input')].find((i) => i.value === 'Alfred');
+    if (!nameInput) throw new Error('name input not rendered');
+    act(() => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      setter?.call(nameInput, 'Alfred II');
+      nameInput.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    const payload = await save();
+    expect({
+      reasoningEffort: payload.reasoningEffort,
+      spokenReasoningEffort: payload.spokenReasoningEffort,
+    }).toEqual({ reasoningEffort: 'off', spokenReasoningEffort: 'off' });
+  });
 });

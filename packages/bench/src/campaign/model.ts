@@ -63,6 +63,7 @@ export function campaignModelApplier(
           model: d.agents.model,
           llmKeyId: d.agents.llmKeyId,
           reasoningEffort: d.agents.reasoningEffort,
+          spokenReasoningEffort: d.agents.spokenReasoningEffort,
         })
         .from(d.agents)
         .where(d.eq(d.agents.entityId, entityId));
@@ -87,6 +88,8 @@ export function campaignModelApplier(
               agentId: b.id,
               model: b.model,
               reasoningEffort: b.reasoningEffort,
+              // The campaign's model may have reset it (#977): given back as it was.
+              spokenReasoningEffort: b.spokenReasoningEffort,
               llmKeyId: b.llmKeyId,
             });
           }
