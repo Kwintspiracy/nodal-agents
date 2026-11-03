@@ -31,6 +31,7 @@ import { asc, conversations, eq, llmCalls, sql, type AnyDrizzleDb } from '@nodal
 import { REASONING_EFFORT_LEVELS, type ReasoningEffort } from '@nodal-agents/shared';
 import type { RunnerDeps } from '../deps.ts';
 import { runChatTurn } from '../chat/run-chat-turn.ts';
+import { runInLane } from '../chat/turn-lane.ts';
 
 /** Un effort mesuré : un palier de l'échelle, ou `auto` (NULL rangé). */
 export type MeasuredEffort = ReasoningEffort | 'auto';
@@ -242,19 +243,24 @@ export async function playMeasuredTurn(
 
       const started = performance.now();
       let firstDeltaMs: number | null = null;
-      const result = await runChatTurn({
-        deps: { db: tx } as unknown as RunnerDeps,
-        entityId: opts.entityId,
-        agentId: opts.agentId,
-        conversationId: conv.id,
-        message: opts.request.text,
-        spoken: { durationMs: opts.spokenMs ?? 2_500 },
-        onTextDelta: () => {
-          firstDeltaMs ??= Math.round(performance.now() - started);
-        },
-      });
+      // Comme toute entrée du chat : le tour passe par la file de sa
+      // conversation (turn-lane.ts, #453). Le fil est neuf, la file vide.
+      const conversationId = conv.id;
+      const result = await runInLane(conversationId, () =>
+        runChatTurn({
+          deps: { db: tx } as unknown as RunnerDeps,
+          entityId: opts.entityId,
+          agentId: opts.agentId,
+          conversationId,
+          message: opts.request.text,
+          spoken: { durationMs: opts.spokenMs ?? 2_500 },
+          onTextDelta: () => {
+            firstDeltaMs ??= Math.round(performance.now() - started);
+          },
+        }),
+      );
       const totalMs = Math.round(performance.now() - started);
-      const calls = await callsOf(tx, conv.id);
+      const calls = await callsOf(tx, conversationId);
 
       // Le relevé ne vaut que si le tour a demandé l'effort mesuré.
       const asked = calls[0]?.reasoningEffort ?? null;
