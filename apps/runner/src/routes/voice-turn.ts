@@ -33,6 +33,7 @@ import { and, conversations, eq } from '@nodal-agents/db';
 import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
 import { resolveTranscription } from '../job/resolve-speech.ts';
+import { readBoundedBody } from '../lib/read-bounded-body.ts';
 import { runVoiceTurn } from '../chat/run-voice-turn.ts';
 import {
   VOICE_FORMATS,
@@ -116,14 +117,16 @@ export async function voiceTurnChunkRoute(c: Context): Promise<Response> {
   const u = ownTurn(c, turnId);
   if (!u) return c.json({ error: 'turn_not_found' }, 404);
 
-  // Refusé sur l'en-tête quand il le dit, avant de lire le corps.
-  const declared = Number(c.req.header('content-length') ?? NaN);
-  if (Number.isFinite(declared) && u.bytes + declared > VOICE_LIMITS.maxBytes) {
+  // La LECTURE elle-même est bornée à ce que le tour peut encore recevoir
+  // (revue de #958, passe 1) : un corps en `Transfer-Encoding: chunked` n'a
+  // pas de Content-Length, et `arrayBuffer()` l'aurait alloué en entier avant
+  // tout refus. Le tour entier part, comme dans `appendChunk`.
+  const read = await readBoundedBody(c.req.raw, VOICE_LIMITS.maxBytes - u.bytes);
+  if (!read.ok) {
     cancelUtterance(turnId);
     return c.json({ error: 'audio_too_long' }, 413);
   }
-  const bytes = new Uint8Array(await c.req.arrayBuffer());
-  const appended = appendChunk(turnId, seq, bytes);
+  const appended = appendChunk(turnId, seq, read.bytes);
   if (!appended.ok) {
     const status =
       appended.error === 'turn_not_found' ? 404 : appended.error === 'audio_too_long' ? 413 : 409;

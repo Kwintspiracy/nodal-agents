@@ -21,6 +21,7 @@ import type { ChannelKind } from '@nodal-agents/delivery';
 import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
 import { isValidWorkerSecret } from '../lib/worker-secret.ts';
+import { readBoundedBody } from '../lib/read-bounded-body.ts';
 import { triggerWorker } from './agent.ts';
 
 // ─── Body cap (1 MB) ────────────────────────────────────────────────────────
@@ -32,49 +33,16 @@ type BodyReadResult =
   | { ok: false; reason: 'too_large' | 'invalid_json' };
 
 /**
- * Read the request body up to MAX_BODY_BYTES, streamed so the cap is enforced
- * as bytes arrive (a wrong/absent Content-Length header can't be used to smuggle
- * an oversized body past a header-only check) — same approach as
- * packages/tools/src/communication/delivery-guard.ts's readBoundedBody, adapted
- * for an incoming Request instead of an outgoing fetch Response.
+ * Read the request body up to MAX_BODY_BYTES, the cap enforced as bytes
+ * arrive (a wrong/absent Content-Length header can't be used to smuggle an
+ * oversized body past a header-only check): `readBoundedBody`, shared with the
+ * voice turn's audio chunks.
  */
 async function readBoundedJsonBody(req: Request): Promise<BodyReadResult> {
-  const declaredLength = req.headers.get('content-length');
-  if (declaredLength !== null) {
-    const declared = Number(declaredLength);
-    if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) {
-      return { ok: false, reason: 'too_large' };
-    }
-  }
-
-  const reader = req.body?.getReader();
-  if (!reader) {
-    return { ok: false, reason: 'invalid_json' };
-  }
-
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    total += value.byteLength;
-    if (total > MAX_BODY_BYTES) {
-      await reader.cancel().catch(() => {});
-      return { ok: false, reason: 'too_large' };
-    }
-    chunks.push(value);
-  }
-
-  const buf = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    buf.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-
+  const read = await readBoundedBody(req, MAX_BODY_BYTES);
+  if (!read.ok) return { ok: false, reason: 'too_large' };
   try {
-    const text = new TextDecoder().decode(buf);
-    return { ok: true, value: JSON.parse(text) };
+    return { ok: true, value: JSON.parse(new TextDecoder().decode(read.bytes)) };
   } catch {
     return { ok: false, reason: 'invalid_json' };
   }

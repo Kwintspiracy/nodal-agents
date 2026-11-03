@@ -21,7 +21,10 @@
 //   - un second outil offert au tour vocal à côté de `run_task` → « question » ;
 //   - la garde « rien entendu » retirée (durée 0 ou transcription vide) : un
 //     message vide est rangé → les deux cas « nothing heard » rougissent ;
-//   - `spokenMs` non rangé sur le message de la personne → « question ».
+//   - `spokenMs` non rangé sur le message de la personne → « question » ;
+//   - la lecture d'un morceau rendue à `c.req.arrayBuffer()` (le corps entier
+//     alloué avant le refus) → « a chunked body larger than the turn may
+//     still accept » (revue de #958, passe 1).
 
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest';
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -49,7 +52,7 @@ import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';
 import { TITLE_SYSTEM_PROMPT } from '../../chat/conversation-title.ts';
 import { ACTION_RECHECK } from '../../llm/action-recheck.ts';
-import { openUtterances } from '../../chat/voice-utterances.ts';
+import { openUtterances, VOICE_LIMITS } from '../../chat/voice-utterances.ts';
 
 // Provider calls leave through packages/llm's own transport (#608): routed back
 // to the global fetch, so the stub below is the network boundary — for the
@@ -685,5 +688,94 @@ describe('the voice turn route — the runner gate @cap:se-connecter/moteur', ()
 
     await call(app, 'DELETE', `/api/voice/turns/${turnId}`);
     expect(await rows(conv)).toEqual([]);
+  });
+});
+
+describe('the voice turn route — the audio read is capped (review of #958, pass 1) @cap:parler-a-un-agent/moteur', () => {
+  /**
+   * A body with no Content-Length, as `Transfer-Encoding: chunked` sends it,
+   * that yields `chunk` bytes per read and only when asked (highWaterMark 0):
+   * `pulled` is then exactly what the route read off the network.
+   */
+  function chunkedBody(total: number, chunk = 64 * 1024) {
+    const counter = { pulled: 0, cancelled: false };
+    const stream = new ReadableStream<Uint8Array>(
+      {
+        pull(controller) {
+          if (counter.pulled >= total) {
+            controller.close();
+            return;
+          }
+          const n = Math.min(chunk, total - counter.pulled);
+          counter.pulled += n;
+          controller.enqueue(new Uint8Array(n));
+        },
+        cancel() {
+          counter.cancelled = true;
+        },
+      },
+      { highWaterMark: 0 },
+    );
+    return { stream, counter, chunk };
+  }
+
+  function sendStream(
+    app: ReturnType<typeof createApp>,
+    path: string,
+    stream: ReadableStream<Uint8Array>,
+  ): Promise<Response> {
+    const init = {
+      method: 'POST',
+      headers: { ...AUTH, 'Content-Type': 'application/octet-stream' },
+      body: stream,
+      duplex: 'half',
+    } as RequestInit & { duplex: 'half' };
+    const req = new Request(`http://localhost${path}`, init);
+    expect(req.headers.get('content-length')).toBeNull();
+    return Promise.resolve(app.fetch(req));
+  }
+
+  async function openTurn(app: ReturnType<typeof createApp>): Promise<string> {
+    const conv = await conversation();
+    network({});
+    const start = await call(app, 'POST', '/api/voice/turns', {
+      entityId: seed.entityId,
+      conversationId: conv,
+      format: 'audio/pcm',
+      sampleRate: 16_000,
+    });
+    return ((await start.json()) as { turnId: string }).turnId;
+  }
+
+  it('a chunked body larger than the turn may still accept is refused with 413, after reading no more than the limit plus one network chunk', async () => {
+    const app = createApp(makeDeps(), testEnv);
+    const turnId = await openTurn(app);
+    const body = chunkedBody(2 * VOICE_LIMITS.maxBytes);
+
+    const res = await sendStream(app, `/api/voice/turns/${turnId}/chunks/0`, body.stream);
+
+    expect(res.status).toBe(413);
+    expect(await res.json()).toEqual({ error: 'audio_too_long' });
+    expect(body.counter.pulled).toBeLessThanOrEqual(VOICE_LIMITS.maxBytes + body.chunk);
+    expect(body.counter.cancelled).toBe(true);
+    // The whole turn is dropped: half a sentence never becomes a message.
+    const end = await call(app, 'POST', `/api/voice/turns/${turnId}/end`);
+    expect(end.status).toBe(404);
+  });
+
+  it('a body exactly at the limit passes; one byte more on the next chunk is refused', async () => {
+    const app = createApp(makeDeps(), testEnv);
+    const turnId = await openTurn(app);
+
+    const full = chunkedBody(VOICE_LIMITS.maxBytes);
+    const res = await sendStream(app, `/api/voice/turns/${turnId}/chunks/0`, full.stream);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ received: VOICE_LIMITS.maxBytes });
+
+    // The cap is what the TURN may still accept, not a per-chunk size.
+    const extra = chunkedBody(1);
+    const over = await sendStream(app, `/api/voice/turns/${turnId}/chunks/1`, extra.stream);
+    expect(over.status).toBe(413);
+    expect(await call(app, 'DELETE', `/api/voice/turns/${turnId}`).then((r) => r.status)).toBe(404);
   });
 });
