@@ -7,10 +7,13 @@
 // fichiers audio à partir de texte". Not a talking agent: a file, like any
 // other the agent writes.
 //
-// The audio comes from `ctx.speech`: the OpenRouter SpeechAdapter of
-// packages/speech, the one speech path of the platform (#940), which the
-// runner binds to the workspace's OpenRouter key (packages/tools never sees a
-// key, same rule as web_search's premium backend). The file is written like `file_write` writes:
+// The audio comes from `ctx.speech`: the workspace's voice (#969), its source's
+// SpeechAdapter of packages/speech, the one speech path of the platform
+// (#940), which the runner binds to the workspace's key for that source
+// (packages/tools never sees a key, same rule as web_search's premium
+// backend). `model` and `voice` left out are the workspace's voice setting
+// (Settings, Voice); given, they win, on the setting's source. Neither has a
+// default written here any more. The file is written like `file_write` writes:
 // the same folder resolution (never outside the agent's folders), the same
 // atomic tempfile-then-rename, the same gate before overwriting a file in the
 // shared workspace.
@@ -22,12 +25,7 @@ import { mkdir } from 'node:fs/promises';
 import { dirname, extname } from 'node:path';
 import { writeFileAtomically } from './file-ops/atomic-write';
 import { z } from 'zod';
-import {
-  DEFAULT_GEMINI_VOICE,
-  OPENROUTER_SPEECH_MODELS,
-  type OpenRouterSpeechModelId,
-} from '@nodal-agents/speech';
-import type { ToolDefinition } from '../types';
+import type { ToolDefinition, ToolSpeech } from '../types';
 import { failureText, writtenFile } from '../presenters';
 import { deliverableTypeForWrittenFile } from '../verification/written-file-type';
 import {
@@ -46,11 +44,6 @@ export const MAX_SPEECH_CHARS = 5_000;
 /** An audio file can be larger than a text file; still bounded. */
 export const MAX_SPEECH_BYTES = 20 * MAX_WRITE_BYTES;
 
-const SPEECH_MODEL_IDS = OPENROUTER_SPEECH_MODELS.map((m) => m.id) as [
-  OpenRouterSpeechModelId,
-  ...OpenRouterSpeechModelId[],
-];
-
 export const GenerateSpeechInputSchema = z.object({
   text: z
     .string()
@@ -68,17 +61,20 @@ export const GenerateSpeechInputSchema = z.object({
         '(e.g. "audio/intro.wav"). Missing folders are created.',
     ),
   model: z
-    .enum(SPEECH_MODEL_IDS)
+    .string()
+    .min(1)
     .optional()
-    .default(SPEECH_MODEL_IDS[0])
-    .describe(OPENROUTER_SPEECH_MODELS.map((m) => `${m.id}: ${m.note}`).join(' ')),
+    .describe(
+      "OPTIONAL. The speech model, as the workspace's voice source names it. Leave it out to " +
+        "speak with the workspace's voice (the one set in Settings, Voice).",
+    ),
   voice: z
     .string()
     .min(1)
     .optional()
-    .default(DEFAULT_GEMINI_VOICE)
     .describe(
-      `The voice name, as the model's provider names it (default "${DEFAULT_GEMINI_VOICE}").`,
+      'OPTIONAL. The voice name, as the model names it. Leave it out to speak with the ' +
+        "workspace's voice.",
     ),
   style: z
     .string()
@@ -166,27 +162,38 @@ export const generateSpeechTool: ToolDefinition<
     if (!ctx.speech) {
       return {
         ok: false,
-        reason:
-          'No active OpenRouter key in this workspace: speech is generated through OpenRouter. ' +
-          'Tell the owner to add one in Settings, LLM keys.',
+        reason: 'Speech is not available in this run: no voice was given to it.',
       };
     }
+    if (!ctx.speech.ok) return { ok: false, reason: unavailableReason(ctx.speech) };
+    const workspace = ctx.speech.voice;
+    // Explicit parameters win; left out, the workspace's voice setting speaks.
+    const model = input.model ?? workspace.model;
+    const voice = input.voice ?? workspace.voice;
     try {
       const path = await resolveAndCheckPath(ctx, target);
-      const spoken = await ctx.speech.synthesize({
-        model: input.model,
+      const spoken = await workspace.speech.synthesize({
+        model,
         text: input.text,
-        voiceId: input.voice,
+        voiceId: voice,
         ...(input.style !== undefined ? { style: input.style } : {}),
       });
       const audio = spoken.audio;
       if (audio.byteLength === 0) {
-        return { ok: false, reason: `${input.model} returned no audio for this text.` };
+        return { ok: false, reason: `${model} returned no audio for this text.` };
+      }
+      // A model that answers another container (MiniMax: mp3, #969) is said as
+      // such: its bytes are audio, just not the WAV this tool writes.
+      if (spoken.mimeType !== 'audio/wav') {
+        return {
+          ok: false,
+          reason: `${model} answered ${spoken.mimeType}, and this tool writes WAV files. Nothing was written.`,
+        };
       }
       if (!looksLikeWav(audio)) {
         return {
           ok: false,
-          reason: `${input.model} answered, but not with audio. Nothing was written.`,
+          reason: `${model} answered, but not with audio. Nothing was written.`,
         };
       }
       if (audio.byteLength > MAX_SPEECH_BYTES) {
@@ -204,8 +211,8 @@ export const generateSpeechTool: ToolDefinition<
         written: true,
         path,
         bytes: audio.byteLength,
-        model: input.model,
-        voice: input.voice,
+        model,
+        voice,
       };
     } catch (err) {
       if (err instanceof WorkspaceError) return { ok: false, reason: err.message };
@@ -214,3 +221,25 @@ export const generateSpeechTool: ToolDefinition<
     }
   },
 };
+
+const SOURCE_NAMES: Record<string, string> = { openrouter: 'OpenRouter', google: 'Google' };
+
+/** Why the workspace cannot speak, for the agent to tell the owner. */
+function unavailableReason(failure: Extract<ToolSpeech, { ok: false }>): string {
+  const source = failure.source ? (SOURCE_NAMES[failure.source] ?? failure.source) : 'its source';
+  switch (failure.code) {
+    case 'voice_key_missing':
+      return (
+        `No active ${source} key in this workspace, and its voice (Settings, Voice) speaks ` +
+        `through ${source}. Tell the owner to add one in Settings, LLM keys, or to choose ` +
+        'another voice.'
+      );
+    case 'voice_key_undecryptable':
+      return `The workspace ${source} key could not be decrypted${failure.detail ? ` (${failure.detail})` : ''}. Tell the owner to enter it again in Settings, LLM keys.`;
+    default:
+      return (
+        `The workspace's voice cannot be used (${failure.code}` +
+        `${failure.detail ? `: ${failure.detail}` : ''}). Tell the owner to check Settings, Voice.`
+      );
+  }
+}

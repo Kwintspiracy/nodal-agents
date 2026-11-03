@@ -5,6 +5,7 @@ export type {
   ToolDefinition,
   ConnectorToolDefinition,
   ToolContext,
+  ToolSpeech,
   ToolProvisioning,
   ProvisionMcpConnect,
   ProvisionedMcpTool,

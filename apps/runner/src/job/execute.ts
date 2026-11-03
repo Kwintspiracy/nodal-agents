@@ -94,7 +94,7 @@ import {
 import type { NodalLlmClient } from '@nodal-agents/llm';
 import { liveCallProgress, watchCallProgress } from './call-progress.ts';
 import { resolveAgentLlmClient } from './resolve-llm.ts';
-import { resolveSpeech } from './resolve-speech.ts';
+import { resolveVoice } from './resolve-voice.ts';
 import { makeLlmCallSink } from '../llm/call-sink.ts';
 import { runCliRuntimeJob } from '../cli-runtime/run-job.ts';
 import { deferredToolNames, toolsLoadedByCalls, toolsSentThisTurn } from './tool-loading.ts';
@@ -2785,11 +2785,12 @@ async function runJobTracked(
     return { status: 'failed', error: errorCode };
   }
 
-  // generate_speech (#487): built on the workspace OpenRouter key, like
-  // searchBackend, and only for a job whose agent has the tool: no key read or
-  // decrypted for the others (review of PR #488).
+  // generate_speech (#487): the workspace voice setting and its source key
+  // (#969), like searchBackend, and only for a job whose agent has the tool: no
+  // key read or decrypted for the others (review of PR #488). Read when the job
+  // starts: a voice changed in Settings speaks from the next job on.
   const speech = toolDefs.some((t) => t.name === 'generate_speech')
-    ? await resolveSpeech(db, job.entityId ?? null)
+    ? await resolveVoice(db, job.entityId ?? null)
     : undefined;
 
   // La personnalité contredit-elle la liste ? (issue #62) Dev C disait « via

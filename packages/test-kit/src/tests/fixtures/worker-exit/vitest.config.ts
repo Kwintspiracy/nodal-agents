@@ -8,9 +8,7 @@ export default mergeConfig(
   baseConfig,
   defineConfig({
     test: {
-      include: [
-        process.env['WORKER_EXIT_FIXTURE'] === 'dies' ? 'dies.fixture.ts' : 'lives.fixture.ts',
-      ],
+      include: [`${process.env['WORKER_EXIT_FIXTURE'] ?? 'lives'}.fixture.ts`],
     },
   }),
 );

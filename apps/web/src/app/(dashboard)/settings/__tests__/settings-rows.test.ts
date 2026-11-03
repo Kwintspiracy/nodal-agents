@@ -355,6 +355,7 @@ describe('buildSettingRows — les lignes lisent la base @cap:installer-et-demar
       'root-agent',
       'mcp-server',
       'timezone',
+      'voice',
       'autostart',
       'install-notes',
       'workspaces',
@@ -377,6 +378,7 @@ describe('buildSettingRows — les lignes lisent la base @cap:installer-et-demar
       'workspace',
       'workspace',
       'workspace',
+      'workspace',
       'advanced',
       'advanced',
     ]);
@@ -386,7 +388,7 @@ describe('buildSettingRows — les lignes lisent la base @cap:installer-et-demar
     for (const mode of ['local-trust', 'bearer-token'] as const) {
       const rows = await rowsFromDb({ authMode: mode });
       expect(rows.map((r) => r.id)).not.toContain('password');
-      expect(rows).toHaveLength(16);
+      expect(rows).toHaveLength(17);
     }
   });
 });

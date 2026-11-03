@@ -1,0 +1,171 @@
+/**
+ * settings-voice.spec.ts — choisir la voix avec laquelle Nodal parle (#969), au navigateur.
+ *
+ * Le propriétaire veut passer d'une voix à l'autre quand il veut, pour les
+ * comparer sur de vrais tours. Ce parcours prouve, sur un vrai Chromium :
+ *   — Réglages → Workspace montre la section Voice, avec la voix ENREGISTRÉE
+ *     (source, modèle, voix) et les choix que la source a listés ;
+ *   — passer à Google vide le modèle et la voix (rien n'est choisi à la place
+ *     de la personne), puis « Play a sample » fait entendre la voix À L'ÉCRAN,
+ *     avant de l'enregistrer : la requête porte cette voix, et l'audio rendu
+ *     est joué ;
+ *   — Save envoie ce réglage et seulement lui ;
+ *   — une source sans clé le dit, avec ce qu'il faut faire.
+ *
+ * Aucun runner ni fournisseur : les routes de la voix sont interceptées À LA
+ * PORTE WEB (`/api/voice/setting`, `/api/voice/sample`), qui les relaie au
+ * runner (règle du #948). Ce que le runner fait du réglage est prouvé côté
+ * moteur (apps/runner/src/tests/routes/voice-turn.test.ts, describe #969).
+ *
+ * Conventions : requireLiveStack() en beforeAll, storageState via la config.
+ */
+
+import { test, expect, type Page, type Route } from '@playwright/test';
+import { requireLiveStack } from './helpers.ts';
+
+test.beforeAll(async () => {
+  await requireLiveStack();
+});
+
+const OPENROUTER = {
+  source: 'openrouter',
+  state: 'available',
+  models: [
+    {
+      id: 'google/gemini-3.8-flash-tts',
+      label: 'Google: Gemini 3.8 Flash TTS',
+      voices: [
+        { id: 'Kore', label: 'Kore' },
+        { id: 'Puck', label: 'Puck' },
+      ],
+    },
+    {
+      id: 'x-ai/grok-voice-tts-1.0',
+      label: 'SpaceXAI: Grok Voice TTS 1.0',
+      voices: [
+        { id: 'eve', label: 'eve' },
+        { id: 'leo', label: 'leo' },
+      ],
+    },
+  ],
+  listedAt: '2026-11-03T10:00:00.000Z',
+  cacheSeconds: 3600,
+};
+const GOOGLE = {
+  source: 'google',
+  state: 'available',
+  models: [
+    {
+      id: 'gemini-3.8-flash-tts',
+      label: 'Gemini 3.8 Flash TTS',
+      voices: [
+        { id: 'Kore', label: 'Kore', description: 'Firm' },
+        { id: 'Puck', label: 'Puck', description: 'Upbeat' },
+      ],
+    },
+  ],
+  listedAt: '2026-11-03T10:00:00.000Z',
+  cacheSeconds: 3600,
+};
+const FIRST = { source: 'openrouter', model: 'google/gemini-3.8-flash-tts', voice: 'Kore' };
+
+/** Une seconde de silence en PCM 16 bits mono à 24 kHz : ce que la route rend, en base64. */
+const SILENT_PCM = Buffer.alloc(24_000 * 2).toString('base64');
+
+type Seen = { method: string; path: string; body: unknown };
+
+async function stubVoice(page: Page, sources: unknown[]): Promise<Seen[]> {
+  const seen: Seen[] = [];
+  const note = (route: Route) => {
+    const req = route.request();
+    seen.push({
+      method: req.method(),
+      path: new URL(req.url()).pathname,
+      body: req.postData() ? (JSON.parse(req.postData()!) as unknown) : null,
+    });
+  };
+  await page.route('**/api/voice/setting', async (route) => {
+    note(route);
+    if (route.request().method() === 'PUT') {
+      await route.fulfill({ json: route.request().postDataJSON() as { setting: unknown } });
+      return;
+    }
+    await route.fulfill({ json: { setting: FIRST, sources } });
+  });
+  await page.route('**/api/voice/sample', async (route) => {
+    note(route);
+    const body = [
+      `event: audio\ndata: ${JSON.stringify({ seq: 0, sentence: 0, mimeType: 'audio/pcm', sampleRate: 24_000, base64: SILENT_PCM })}\n\n`,
+      `event: audio_end\ndata: ${JSON.stringify({ sentence: 0, complete: true })}\n\n`,
+      `event: done\ndata: ${JSON.stringify({ speechError: null, source: 'google', model: 'gemini-3.8-flash-tts', voice: 'Puck' })}\n\n`,
+    ].join('');
+    await route.fulfill({ status: 200, headers: { 'content-type': 'text/event-stream' }, body });
+  });
+  return seen;
+}
+
+test.describe('the Voice setting @cap:parler-a-un-agent/ecran', () => {
+  test('shows the stored voice, tries another before saving it, and saves exactly that one', async ({
+    page,
+  }) => {
+    const seen = await stubVoice(page, [OPENROUTER, GOOGLE]);
+    await page.goto('/settings?page=workspace');
+
+    const section = page.getByTestId('setting-section-voice');
+    await expect(section.getByRole('heading', { name: 'Voice', level: 2 })).toBeVisible({
+      timeout: 30_000,
+    });
+    await expect(section.getByTestId('voice-model')).toHaveValue('google/gemini-3.8-flash-tts', {
+      timeout: 15_000,
+    });
+    await expect(section.getByTestId('voice-voice')).toHaveValue('Kore');
+    await expect(
+      section.getByText('Models and voices listed by OpenRouter, kept for an hour.'),
+    ).toBeVisible();
+    await expect(section.getByRole('button', { name: 'Save' })).toHaveCount(0);
+
+    // Google: nothing is chosen for the person.
+    await section.getByTestId('voice-source-google').click();
+    await expect(section.getByTestId('voice-model')).toHaveValue('');
+    await expect(section.getByTestId('voice-sample')).toBeDisabled();
+    await section.getByTestId('voice-model').selectOption('gemini-3.8-flash-tts');
+    await section.getByTestId('voice-voice').selectOption('Puck');
+
+    // The sample speaks the voice on screen, before it is saved.
+    await section.getByTestId('voice-sample').click();
+    await expect(section.getByTestId('voice-sample-stop')).toBeVisible();
+    await expect
+      .poll(() => seen.filter((s) => s.path === '/api/voice/sample').map((s) => s.body))
+      .toEqual([
+        {
+          text: 'Hello, this is how I sound when I answer you.',
+          setting: { source: 'google', model: 'gemini-3.8-flash-tts', voice: 'Puck' },
+        },
+      ]);
+    await section.getByTestId('voice-sample-stop').click();
+    await expect(section.getByTestId('voice-sample')).toBeVisible();
+    // Trying never saves.
+    expect(seen.filter((s) => s.method === 'PUT')).toEqual([]);
+
+    await section.getByRole('button', { name: 'Save' }).click();
+    await expect
+      .poll(() => seen.filter((s) => s.method === 'PUT').map((s) => s.body))
+      .toEqual([{ setting: { source: 'google', model: 'gemini-3.8-flash-tts', voice: 'Puck' } }]);
+    await expect(section.getByRole('button', { name: 'Save' })).toHaveCount(0);
+  });
+
+  test('a source without a key says so, and what to do', async ({ page }) => {
+    await stubVoice(page, [
+      OPENROUTER,
+      { source: 'google', state: 'unavailable', code: 'voice_key_missing' },
+    ]);
+    await page.goto('/settings?page=workspace');
+    const section = page.getByTestId('setting-section-voice');
+    await expect(section.getByTestId('voice-model')).toBeVisible({ timeout: 30_000 });
+    await section.getByTestId('voice-source-google').click();
+    await expect(section.getByTestId('voice-source-unavailable')).toHaveText(
+      'No Google key in this workspace. Add one in LLM Providers to speak through Google.',
+    );
+    await expect(section.getByTestId('voice-model')).toHaveCount(0);
+  });
+});

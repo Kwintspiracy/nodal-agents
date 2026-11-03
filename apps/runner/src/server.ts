@@ -26,6 +26,11 @@ import {
   voiceTurnEndRoute,
   voiceTurnStartRoute,
 } from './routes/voice-turn.ts';
+import {
+  voiceSampleRoute,
+  voiceSettingReadRoute,
+  voiceSettingWriteRoute,
+} from './routes/voice-setting.ts';
 import { eventsRoute } from './routes/events.ts';
 import { transitionListener } from './events/publish.ts';
 import { listenToTransitions, writeFirstSpokenReasoningAtBoot } from '@nodal-agents/db';
@@ -249,6 +254,10 @@ export function createApp(
   // jamais une session du tableau de bord.
   app.use('/api/voice/turns', requireRunnerAuth);
   app.use('/api/voice/turns/*', requireRunnerAuth);
+  // La voix de l'espace et son essai (#969) : la même garde, pour la même
+  // raison — un module les appelle comme le tableau de bord.
+  app.use('/api/voice/setting', requireRunnerAuth);
+  app.use('/api/voice/sample', requireRunnerAuth);
   // #944 — le flux poussé des événements de job. Même garde que /api/chat* :
   // c'est par elle, et par elle seule, que le jeton d'appareil de #946 entrera.
   app.use('/api/events', requireRunnerAuth);
@@ -281,6 +290,9 @@ export function createApp(
   app.post('/api/voice/turns/:turnId/chunks/:seq', (c) => voiceTurnChunkRoute(c));
   app.post('/api/voice/turns/:turnId/end', (c) => voiceTurnEndRoute(c, deps, runnerEnv));
   app.delete('/api/voice/turns/:turnId', (c) => voiceTurnCancelRoute(c));
+  app.get('/api/voice/setting', (c) => voiceSettingReadRoute(c, deps));
+  app.put('/api/voice/setting', (c) => voiceSettingWriteRoute(c, deps));
+  app.post('/api/voice/sample', (c) => voiceSampleRoute(c, deps));
 
   app.post('/api/approve', (c) => approveRoute(c, deps, runnerEnv));
 

@@ -16,7 +16,7 @@ import {
   type SynthesizeRequest,
 } from '@nodal-agents/speech';
 import { generateSpeechTool, GenerateSpeechInputSchema } from '../builtin/generate-speech';
-import type { ToolContext } from '../types';
+import type { ToolContext, ToolSpeech } from '../types';
 
 let WORKSPACE: string;
 let OUTSIDE: string;
@@ -66,7 +66,9 @@ const WAV = new Uint8Array([
 ]);
 
 /** A bound speech that answers `audio` (or throws `error`) for every request. */
-function fakeSpeech(answer: { audio?: Uint8Array; error?: Error } = {}): {
+function fakeSpeech(
+  answer: { audio?: Uint8Array; error?: Error; mimeType?: 'audio/wav' | 'audio/mpeg' } = {},
+): {
   calls: SynthesizeRequest[];
   speech: BoundSpeech;
 } {
@@ -79,7 +81,7 @@ function fakeSpeech(answer: { audio?: Uint8Array; error?: Error } = {}): {
     synthesize: async (request) => {
       calls.push(request);
       if (answer.error) throw answer.error;
-      return { audio: answer.audio ?? WAV, mimeType: 'audio/wav', latencyMs: 0 };
+      return { audio: answer.audio ?? WAV, mimeType: answer.mimeType ?? 'audio/wav', latencyMs: 0 };
     },
   };
   return { calls, speech };
@@ -87,6 +89,21 @@ function fakeSpeech(answer: { audio?: Uint8Array; error?: Error } = {}): {
 
 function recorder() {
   return fakeSpeech();
+}
+
+/** The voice of before #969: what every workspace holds until someone chooses. */
+const FIRST = {
+  source: 'openrouter',
+  model: 'google/gemini-3.8-flash-tts',
+  voice: 'Kore',
+} as const;
+
+/** What the runner hands the tool: the workspace's voice setting, and its bound adapter. */
+function voiced(
+  speech: BoundSpeech,
+  setting: { source: 'openrouter' | 'google'; model: string; voice: string } = FIRST,
+): ToolSpeech {
+  return { ok: true, voice: { ...setting, speech } };
 }
 
 const input = (fields: Record<string, unknown>) => GenerateSpeechInputSchema.parse(fields);
@@ -102,7 +119,7 @@ describe('generate_speech @cap:travailler-sur-des-fichiers/moteur', () => {
         voice: 'Puck',
         style: 'warm and friendly',
       }),
-      ctx({ speech }),
+      ctx({ speech: voiced(speech) }),
     );
 
     expect(res.ok).toBe(true);
@@ -120,16 +137,42 @@ describe('generate_speech @cap:travailler-sur-des-fichiers/moteur', () => {
     ]);
   });
 
-  it('defaults to Gemini 3.8 Flash TTS and the voice Kore, and adds .wav to a bare name', async () => {
+  // #969. Mutation verified: `input.model ?? workspace.model` replaced by
+  // the old written default (the first Gemini model, Kore) → red.
+  it("with no model nor voice, speaks with the workspace's voice setting, and adds .wav to a bare name", async () => {
+    for (const setting of [
+      { source: 'openrouter', model: 'x-ai/grok-voice-tts-1.0', voice: 'leo' },
+      FIRST,
+    ] as const) {
+      const { calls, speech } = recorder();
+      const res = await generateSpeechTool.execute(
+        input({ text: 'x', path: 'note' }),
+        ctx({ speech: voiced(speech, setting) }),
+      );
+      expect(res).toMatchObject({
+        ok: true,
+        path: join(WORKSPACE, 'note.wav'),
+        model: setting.model,
+        voice: setting.voice,
+      });
+      expect(calls).toEqual([{ model: setting.model, text: 'x', voiceId: setting.voice }]);
+    }
+  });
+
+  it('explicit model and voice win over the setting', async () => {
     const { calls, speech } = recorder();
-
     const res = await generateSpeechTool.execute(
-      input({ text: 'x', path: 'note' }),
-      ctx({ speech }),
+      input({ text: 'x', path: 'a.wav', model: 'deepgram/aura-2', voice: 'aura-2-thalia-en' }),
+      ctx({
+        speech: voiced(speech, {
+          source: 'openrouter',
+          model: 'x-ai/grok-voice-tts-1.0',
+          voice: 'leo',
+        }),
+      }),
     );
-
-    expect(res.ok && res.path).toBe(join(WORKSPACE, 'note.wav'));
-    expect(calls[0]).toEqual({ model: 'google/gemini-3.8-flash-tts', text: 'x', voiceId: 'Kore' });
+    expect(res).toMatchObject({ ok: true, model: 'deepgram/aura-2', voice: 'aura-2-thalia-en' });
+    expect(calls).toEqual([{ model: 'deepgram/aura-2', text: 'x', voiceId: 'aura-2-thalia-en' }]);
   });
 
   it('never writes outside the agent folders', async () => {
@@ -137,7 +180,7 @@ describe('generate_speech @cap:travailler-sur-des-fichiers/moteur', () => {
 
     const res = await generateSpeechTool.execute(
       input({ text: 'x', path: join(OUTSIDE, 'escape.wav') }),
-      ctx({ speech }),
+      ctx({ speech: voiced(speech) }),
     );
 
     expect(res.ok).toBe(false);
@@ -149,7 +192,7 @@ describe('generate_speech @cap:travailler-sur-des-fichiers/moteur', () => {
 
     const res = await generateSpeechTool.execute(
       input({ text: 'x', path: 'audio/intro.mp3' }),
-      ctx({ speech }),
+      ctx({ speech: voiced(speech) }),
     );
 
     expect(res).toEqual({
@@ -159,18 +202,32 @@ describe('generate_speech @cap:travailler-sur-des-fichiers/moteur', () => {
     expect(calls).toEqual([]);
   });
 
-  it('says there is no OpenRouter key when the runner provided no generator', async () => {
-    const res = await generateSpeechTool.execute(input({ text: 'x', path: 'a.wav' }), ctx());
+  it("says which key is missing for the workspace's voice, and writes nothing", async () => {
+    const res = await generateSpeechTool.execute(
+      input({ text: 'x', path: 'a.wav' }),
+      ctx({ speech: { ok: false, code: 'voice_key_missing', source: 'google' } }),
+    );
+    expect(res).toEqual({
+      ok: false,
+      reason:
+        'No active Google key in this workspace, and its voice (Settings, Voice) speaks through ' +
+        'Google. Tell the owner to add one in Settings, LLM keys, or to choose another voice.',
+    });
+    await expect(readFile(join(WORKSPACE, 'a.wav'))).rejects.toThrow();
 
-    expect(res.ok).toBe(false);
-    if (res.ok) throw new Error('unreachable');
-    expect(res.reason).toContain('No active OpenRouter key in this workspace');
+    const none = await generateSpeechTool.execute(input({ text: 'x', path: 'a.wav' }), ctx());
+    expect(none).toEqual({
+      ok: false,
+      reason: 'Speech is not available in this run: no voice was given to it.',
+    });
   });
 
   it('reports the provider error and writes nothing', async () => {
     const res = await generateSpeechTool.execute(
       input({ text: 'x', path: 'a.wav' }),
-      ctx({ speech: fakeSpeech({ error: new Error('400: unknown voice "Nobody"') }).speech }),
+      ctx({
+        speech: voiced(fakeSpeech({ error: new Error('400: unknown voice "Nobody"') }).speech),
+      }),
     );
 
     expect(res).toEqual({
@@ -181,9 +238,11 @@ describe('generate_speech @cap:travailler-sur-des-fichiers/moteur', () => {
     await expect(readFile(join(WORKSPACE, 'a.wav'))).rejects.toThrow();
   });
 
-  it('refuses text longer than the model takes, and an unknown model, at the schema', () => {
+  // #969: the model is no longer one of a list written in the code; an unknown
+  // one is the vendor's to refuse, and its words reach the agent (below).
+  it('refuses text longer than the model takes, and an empty model, at the schema', () => {
     expect(() => input({ text: 'x'.repeat(5_001), path: 'a.wav' })).toThrow();
-    expect(() => input({ text: 'x', path: 'a.wav', model: 'openai/gpt-5' })).toThrow();
+    expect(() => input({ text: 'x', path: 'a.wav', model: '' })).toThrow();
   });
 
   // Review of PR #488 (Reviewer C, minor findings).
@@ -191,9 +250,11 @@ describe('generate_speech @cap:travailler-sur-des-fichiers/moteur', () => {
     const res = await generateSpeechTool.execute(
       input({ text: 'x', path: 'a.wav' }),
       ctx({
-        speech: fakeSpeech({
-          audio: new TextEncoder().encode('{"error":{"message":"upstream"}}'),
-        }).speech,
+        speech: voiced(
+          fakeSpeech({
+            audio: new TextEncoder().encode('{"error":{"message":"upstream"}}'),
+          }).speech,
+        ),
       }),
     );
 
@@ -204,10 +265,31 @@ describe('generate_speech @cap:travailler-sur-des-fichiers/moteur', () => {
     await expect(readFile(join(WORKSPACE, 'a.wav'))).rejects.toThrow();
   });
 
+  // #969. Mutation verified: the container check removed → red (the reason says
+  // the model did not answer with audio, which is false).
+  it('a model that answers mp3 is said as such, and nothing is written', async () => {
+    const res = await generateSpeechTool.execute(
+      input({ text: 'x', path: 'a.wav' }),
+      ctx({
+        speech: voiced(
+          fakeSpeech({ audio: Uint8Array.from([0xff, 0xfb, 0x90, 0x64]), mimeType: 'audio/mpeg' })
+            .speech,
+          { source: 'openrouter', model: 'minimax/speech-2.8-turbo', voice: 'English_CalmWoman' },
+        ),
+      }),
+    );
+    expect(res).toEqual({
+      ok: false,
+      reason:
+        'minimax/speech-2.8-turbo answered audio/mpeg, and this tool writes WAV files. Nothing was written.',
+    });
+    await expect(readFile(join(WORKSPACE, 'a.wav'))).rejects.toThrow();
+  });
+
   it('writes .WAV as .wav', async () => {
     const res = await generateSpeechTool.execute(
       input({ text: 'x', path: 'audio/INTRO.WAV' }),
-      ctx({ speech: fakeSpeech().speech }),
+      ctx({ speech: voiced(fakeSpeech().speech) }),
     );
 
     expect(res.ok && res.path).toBe(join(WORKSPACE, 'audio', 'INTRO.wav'));
@@ -231,7 +313,7 @@ describe('generate_speech @cap:travailler-sur-des-fichiers/moteur', () => {
 
     const res = await generateSpeechTool.execute(
       input({ text: 'Bonjour.', path: 'audio/hello.wav', style: 'calm' }),
-      ctx({ speech }),
+      ctx({ speech: voiced(speech) }),
     );
 
     expect(res.ok).toBe(true);
@@ -271,7 +353,7 @@ describe('generate_speech @cap:travailler-sur-des-fichiers/moteur', () => {
 
     const res = await generateSpeechTool.execute(
       input({ text: 'x', path: 'a.wav', voice: 'Nobody' }),
-      ctx({ speech }),
+      ctx({ speech: voiced(speech) }),
     );
 
     expect(res).toEqual({

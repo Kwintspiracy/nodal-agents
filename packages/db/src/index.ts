@@ -124,6 +124,8 @@ export {
   setInstallNotes,
   INSTALL_NOTES_KEY,
 } from './repos/app-settings.ts';
+export { readVoiceSetting, writeVoiceSetting } from './repos/voice-setting.ts';
+export type { VoiceSettingRead } from './repos/voice-setting.ts';
 export { getVerificationSurfaces } from './repos/verification-surfaces.ts';
 export {
   readWorkspaceSandbox,

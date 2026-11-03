@@ -50,6 +50,47 @@ export type SpokenChunk = {
   bytes: Uint8Array;
 };
 
+/**
+ * Un événement de voix d'un flux du runner (`audio`, `audio_end`), lu UNE fois
+ * pour toute porte qui fait entendre une voix : la fin d'un tour dit et l'essai
+ * des réglages (#969). `invalid` : l'événement n'a pas la forme du protocole.
+ * `null` : ce n'est pas un événement de voix.
+ */
+export type SpokenEvent =
+  | { kind: 'audio'; chunk: SpokenChunk }
+  | { kind: 'audio_end'; sentence: number; complete: boolean }
+  | { kind: 'invalid' }
+  | null;
+
+export function readSpokenEvent(event: string, data: Record<string, unknown>): SpokenEvent {
+  if (event === 'audio') {
+    const { base64, mimeType, seq, sentence, sampleRate } = data;
+    if (
+      typeof base64 !== 'string' ||
+      typeof mimeType !== 'string' ||
+      typeof seq !== 'number' ||
+      typeof sentence !== 'number'
+    ) {
+      return { kind: 'invalid' };
+    }
+    return {
+      kind: 'audio',
+      chunk: {
+        seq,
+        sentence,
+        mimeType,
+        ...(typeof sampleRate === 'number' ? { sampleRate } : {}),
+        bytes: Uint8Array.from(atob(base64), (c) => c.charCodeAt(0)),
+      },
+    };
+  }
+  if (event === 'audio_end') {
+    if (typeof data['sentence'] !== 'number') return { kind: 'invalid' };
+    return { kind: 'audio_end', sentence: data['sentence'], complete: data['complete'] === true };
+  }
+  return null;
+}
+
 export interface SpokenStream {
   /** Le morceau suivant, dans l'ordre de `seq`. */
   push(chunk: SpokenChunk): void;

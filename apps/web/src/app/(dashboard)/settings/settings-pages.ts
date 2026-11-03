@@ -48,7 +48,7 @@ export const SETTINGS_PAGES: readonly SettingsPage[] = [
     key: 'workspace',
     label: 'Workspace',
     lede: 'Where your agents work, and the facts of this installation.',
-    ids: ['timezone', 'workspaces', 'urls', 'session'],
+    ids: ['timezone', 'voice', 'workspaces', 'urls', 'session'],
   },
   {
     key: 'install',
