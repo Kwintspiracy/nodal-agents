@@ -20,6 +20,7 @@ import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { executeTool } from '../execute';
 import type { ToolContext, ToolDefinition, ApprovalGateRequest, ExecuteOptions } from '../types';
+import { autonomousRows, rowsAsWritten } from './autonomy-rows-fixture';
 
 let db: TestDb;
 let seed: { userId: string; entityId: string; agentId: string; jobId: string };
@@ -75,7 +76,15 @@ describe('preflight runs before the approval gate', () => {
     // was handed a card for a call that could never run.
     const asked: ApprovalGateRequest[] = [];
     const optsWithSpy: ExecuteOptions = {
-      approvalRules: [],
+      get approvalRules() {
+        return rowsAsWritten(seed, [
+          {
+            name: 'gated_tool',
+            riskLevel: 'destructive' as const,
+            defaultApproval: 'require_approval' as const,
+          },
+        ]);
+      },
       onApprovalRequired: async (req) => {
         asked.push(req);
       },
@@ -110,6 +119,7 @@ describe('preflight runs before the approval gate', () => {
             agentId: seed.agentId,
             entityId: seed.entityId,
           } as never,
+          ...autonomousRows(seed),
         ],
         onApprovalRequired: async () => {},
       },
@@ -127,10 +137,22 @@ describe('preflight runs before the approval gate', () => {
       { value: 'x' },
       makeCtx(),
       {
-        approvalRules: [],
-        autonomy: 'fully_autonomous',
+        // The row a gated tool gets on arrival under full autonomy (#917).
+        get approvalRules() {
+          return rowsAsWritten(
+            seed,
+            [
+              {
+                name: 'gated_tool',
+                riskLevel: 'destructive' as const,
+                defaultApproval: 'require_approval' as const,
+              },
+            ],
+            'fully_autonomous',
+          );
+        },
         onApprovalRequired: async () => {},
-      } as ExecuteOptions,
+      },
     );
 
     expect(result.outcome).toBe('error');
@@ -148,7 +170,15 @@ describe('preflight runs before the approval gate', () => {
       { value: 'x', purpose: 'Vérifier que la porte fonctionne encore.' },
       makeCtx(),
       {
-        approvalRules: [],
+        get approvalRules() {
+          return rowsAsWritten(seed, [
+            {
+              name: 'gated_tool',
+              riskLevel: 'destructive' as const,
+              defaultApproval: 'require_approval' as const,
+            },
+          ]);
+        },
         onApprovalRequired: async (req) => {
           asked.push(req);
         },
@@ -170,7 +200,12 @@ describe('preflight runs before the approval gate', () => {
       } as ToolDefinition<z.ZodObject<{ value: z.ZodString }>, string>,
       { value: 'x' },
       makeCtx(),
-      { approvalRules: [], onApprovalRequired: async () => {} },
+      {
+        get approvalRules() {
+          return autonomousRows(seed, ['plain_tool']);
+        },
+        onApprovalRequired: async () => {},
+      },
     );
 
     expect(result.outcome).toBe('success');

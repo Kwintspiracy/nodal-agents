@@ -270,13 +270,11 @@ approval covers that one call. To stop confirming every time, you allow the
 only inside one of its folders. The card's **Approve for this project** writes
 that same rule for the folder the run is in. A rule never reads what the command
 says, so it cannot allow one command line and keep asking about another; set
-without a folder, it covers every command that agent runs. A second way does not
-come from that tab at all: with the workspace's
-[autonomy level](/docs/guides/root-agent) set to **Autonomous, gate
-destructive** and no rule on the tool, an ordinary command runs unasked, while a
-destructive or heavy one (deleting files, installing a package, killing a
-process, a disk operation) stays gated. See
-[Shell commands](/docs/guides/shell-commands).
+without a folder, it covers every command that agent runs. Every tool an agent
+has carries such a setting, always: it starts with the value of the workspace
+[autonomy level](/docs/guides/root-agent), and the agent's shell checklist then
+decides, kind by kind, which commands still ask (deleting files, installing a
+package, killing a process). See [Shell commands](/docs/guides/shell-commands).
 
 `?show=<id>` opens one request on its own, whatever its decision — it is what the
 sidebar's **Recents** rows link to. The list narrows to that card and the page

@@ -79,6 +79,38 @@ import { resolveBuiltinToolNames } from '../builtin-tool-names';
 import type { AgentId } from '../types';
 
 /**
+ * What a reader of the agent's tools needs from each: the name, and what the
+ * autonomy rows are written from (#917) — the tool's own posture, its reach,
+ * whether it can replace a shared file, and the text the owner reads.
+ * Structural: every ToolDefinition satisfies it.
+ */
+export interface ResolvedAgentTool extends LoadableTool {
+  riskLevel: 'read' | 'write' | 'destructive';
+  defaultApproval?: 'require_approval';
+  label?: string;
+  summary?: string;
+  replacesSharedFile?: unknown;
+}
+
+/** Where a tool of the agent comes from: what grants it, hence where it is shown. */
+export type AgentToolSource = 'builtin' | 'delivery' | 'connector' | 'mcp' | 'delegation';
+
+export type SourcedAgentTool = ResolvedAgentTool & { source: AgentToolSource };
+
+/**
+ * The placement whose tool list is the WIDEST: a top-level job, run by a
+ * routine, in a conversation. A routine adds `save_routine_state`, a
+ * conversation its run tools; a delegated job only removes. The autonomy rows
+ * are written for this list, so a tool the agent holds in SOME job always has
+ * its row (#917).
+ */
+export const WIDEST_PLACEMENT: JobPlacement = {
+  ...TOP_LEVEL_JOB,
+  routine: true,
+  inConversation: true,
+};
+
+/**
  * Resolve the set of tool NAMES an agent can actually call — a read-only
  * reconstruction of the whitelist executeJob would build for a job placed as
  * `job` says (a fresh top-level job by default; the routine lint passes a
@@ -92,6 +124,18 @@ export async function resolveAgentToolNames(
   agentId: string,
   job: JobPlacement = TOP_LEVEL_JOB,
 ): Promise<Set<string>> {
+  return new Set((await resolveAgentTools(db, agentId, job)).map((t) => t.name));
+}
+
+/**
+ * The tools themselves, for the same list as `resolveAgentToolNames` — what
+ * the autonomy rows are written from (#917, `autonomy-rows.ts`).
+ */
+export async function resolveAgentTools(
+  db: AnyDrizzleDb,
+  agentId: string,
+  job: JobPlacement = TOP_LEVEL_JOB,
+): Promise<SourcedAgentTool[]> {
   const [agentRow] = await db.select().from(agents).where(eq(agents.id, agentId)).limit(1);
   if (!agentRow) throw new Error(`resolveAgentToolNames: agent ${agentId} not found`);
 
@@ -106,7 +150,7 @@ export async function resolveAgentToolNames(
   // deferred, hence whether the job gets `load_tools` (see the end).
   const registry = createToolRegistry();
   registerBuiltins(registry);
-  const builtinTools: LoadableTool[] = builtins.names.map((name) => {
+  const builtinTools: ResolvedAgentTool[] = builtins.names.map((name) => {
     const def = registry.get(name);
     if (!def) throw new Error(`resolveAgentToolNames: builtin ${name} is not registered`);
     return def;
@@ -118,7 +162,7 @@ export async function resolveAgentToolNames(
   const hasDiscordBinding = discordBinding?.enabled === true;
   const slackBinding = await getChannelBinding(db, agentRow.id, 'slack');
   const hasSlackBinding = slackBinding?.enabled === true;
-  const deliveryTools: LoadableTool[] = [];
+  const deliveryTools: ResolvedAgentTool[] = [];
   if (deliveryBotToken || hasDiscordBinding || hasSlackBinding) {
     deliveryTools.push(
       createTelegramSendMessageTool(),
@@ -143,7 +187,7 @@ export async function resolveAgentToolNames(
     .innerJoin(connectorsTable, eq(connectorsTable.id, agentConnectorAssignments.connectorId))
     .where(eq(agentConnectorAssignments.agentId, agentRow.id));
 
-  const connectorTools: LoadableTool[] = [];
+  const connectorTools: ResolvedAgentTool[] = [];
   for (const ca of connectorAssignments) {
     const entry = ADAPTER_REGISTRY[ca.slug];
     if (!entry) continue; // no adapter for this catalog slug — skip silently (matches execute.ts)
@@ -164,7 +208,7 @@ export async function resolveAgentToolNames(
     .innerJoin(mcpServersTable, eq(mcpServersTable.id, agentMcpServersTable.mcpServerId))
     .where(eq(agentMcpServersTable.agentId, agentRow.id));
 
-  const mcpTools: LoadableTool[] = [];
+  const mcpTools: ResolvedAgentTool[] = [];
   for (const ms of mcpAssignments) {
     const availableTools = ms.availableTools as McpToolDescriptor[] | null;
     if (!isUsableMcpToolCache(availableTools)) continue; // no live connect — see module doc
@@ -184,7 +228,7 @@ export async function resolveAgentToolNames(
   // ── Delegation: what the orchestrator role ADDS (the function execute.ts §6
   // calls, at the depth of a top-level job) ─ The rest of the list is the same
   // for every role (#636).
-  const delegationTools: LoadableTool[] = await generateDelegationTools(
+  const delegationTools: ResolvedAgentTool[] = await generateDelegationTools(
     agentRow.id as AgentId,
     db,
     { isOrchestrator: builtins.isOrchestrator, delegationDepth: 0 },
@@ -193,12 +237,15 @@ export async function resolveAgentToolNames(
   // `load_tools` exactly when the job gets it: the runner's own
   // `withToolLoader`, over the same list — a routine naming load_tools is not
   // flagged as naming a missing tool.
+  const from = (list: ResolvedAgentTool[], source: AgentToolSource): SourcedAgentTool[] =>
+    list.map((t) => ({ ...t, source }));
   const tools = withToolLoader([
-    ...delegationTools,
-    ...builtinTools,
-    ...connectorTools,
-    ...mcpTools,
-    ...deliveryTools,
+    ...from(delegationTools, 'delegation'),
+    ...from(builtinTools, 'builtin'),
+    ...from(connectorTools, 'connector'),
+    ...from(mcpTools, 'mcp'),
+    ...from(deliveryTools, 'delivery'),
   ]);
-  return new Set(tools.map((t) => t.name));
+  // `load_tools` is a built-in the loader adds.
+  return tools.map((t) => ('source' in t ? t : { ...t, source: 'builtin' as const }));
 }

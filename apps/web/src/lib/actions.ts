@@ -153,7 +153,6 @@ import {
   setRunBudgetRepo,
   setMcpServerEnabledRepo,
   createLlmKeyRepo,
-  refuseGlobalGrantOverFolderRule,
   setRunCommandRuleRepo,
   setApprovalRuleRepo,
   createStdioMcpServerRepo,
@@ -237,6 +236,12 @@ import {
   DEFAULT_LIMITS,
   UNBLOCKABLE_TOOLS,
   INTERNAL_TOOL_DESCRIPTORS,
+  applyAutonomyLevelToAll,
+  resolveAgentTools,
+  sharedFileToolNames,
+  syncAgentAutonomyRows,
+  templateValuesFor,
+  WIDEST_PLACEMENT,
 } from '@nodal-agents/orchestration';
 import type { Agent } from '@nodal-agents/orchestration';
 import { getLanAddresses } from './network.ts';
@@ -249,8 +254,6 @@ import type {
 } from '@nodal-agents/shared';
 import {
   type RootGrants,
-  META_TOOL_NAMES,
-  metaToolsForAgent,
   parseRootGrants,
   resolveShellPolicy,
   StoredShellPolicySchema,
@@ -262,7 +265,8 @@ import {
   redactSecretsForAudit,
   explainApproval,
   explainApprovalRules,
-  resolveToolDefaultApproval,
+  REPLACE_SHARED_FILE_SETTING,
+  READONLY_PRESET_TOOLS,
   type ApprovalExplanation,
   type ExplainedApprovalRule,
   type ApprovalRuleCondition,
@@ -1097,6 +1101,8 @@ export async function createAgentAction(
       return created;
     });
 
+    // One autonomy row per tool the new agent holds (#917).
+    await writeAutonomyRowsAfter(result.id, 'createAgentAction');
     revalidatePath('/agents');
     if (applied) revalidatePath('/skills');
     return ok(applied ? { id: result.id, recipe: applied } : { id: result.id });
@@ -5686,6 +5692,8 @@ export async function setAgentMcpServerAssignmentAction(
       }
     }
 
+    // The rows of the server's tools this agent now holds (#917).
+    await writeAutonomyRowsAfter(agentId, 'setAgentMcpServerAssignmentAction');
     revalidatePath('/agents');
     return ok(undefined);
   } catch (err) {
@@ -6047,17 +6055,13 @@ export type ApprovalRow = {
    * button: one decision instead of one per tool.
    */
   /**
-   * Les regles d'approbation qui ont JOUE pour cet appel, de la plus precise a
-   * la moins precise, la premiere marquee `wins` (#346). La carte les montre,
-   * et permet de les changer sur place : avant, elle promettait « ca tournera
-   * sans demander » pendant qu'une regle plus precise continuait de demander.
+   * Les lignes d'autonomie qui ont JOUE pour cet appel (#346, #917) : celle de
+   * l'outil pour cet agent (et sa ligne de dossier quand elle s'applique),
+   * puis, pour un outil qui peut remplacer un fichier partagé, le réglage
+   * « Replace or remove a shared file » de l'agent. La gagnante est marquée
+   * `wins`. Vide : l'agent n'a pas de ligne, et la porte a refusé l'appel.
    */
   ruleChain: ExplainedApprovalRule[];
-  /**
-   * La posture de l'outil quand AUCUNE regle ne le nomme. Seule chose que la
-   * carte affiche quand `ruleChain` est vide, sous le nom « Tool default ».
-   */
-  toolDefault: 'auto_approve' | 'require_approval' | 'block';
   /**
    * Les dossiers de l'agent (`agent_workspaces`), pour « Approve for this
    * project » : aucun dossier, pas de bouton ; un seul, pas de question ;
@@ -6087,6 +6091,41 @@ export type ApprovalRow = {
  * ne peut pas en porter un tout a zero.
  */
 const NO_AGENT = '00000000-0000-0000-0000-000000000000';
+
+/**
+ * What decided one call, as the gate reads it (#917): the agent's row for the
+ * tool (its folder row first), then, for a tool that can replace a shared
+ * file, the agent's shared-file setting.
+ *
+ * Which of the two held a request is not a guess. Those tools reach no other
+ * floor (no shell, no stdio, no question), so a request held while the tool's
+ * row is Autonomous was held by the setting: it is the one marked `wins`.
+ */
+function approvalChainFor(
+  rules: Parameters<typeof explainApprovalRules>[0],
+  toolName: string,
+  agentId: string,
+  entityId: string,
+  workspaces: Parameters<typeof explainApprovalRules>[4],
+): ExplainedApprovalRule[] {
+  const own = explainApprovalRules(rules, toolName, agentId, entityId, workspaces);
+  if (!sharedFileToolNames().has(toolName)) return own;
+  const setting = explainApprovalRules(
+    rules,
+    REPLACE_SHARED_FILE_SETTING,
+    agentId,
+    entityId,
+    workspaces,
+  );
+  const settingDecided =
+    own[0]?.action === 'auto_approve' &&
+    setting[0] !== undefined &&
+    setting[0].action !== 'auto_approve';
+  return [
+    ...own.map((r) => ({ ...r, wins: r.wins && !settingDecided })),
+    ...setting.map((r) => ({ ...r, wins: r.wins && settingDecided })),
+  ];
+}
 
 /**
  * `approval_requests.gate_reasons` for the card (#464), masked like every other
@@ -6370,20 +6409,13 @@ export async function listApprovalsAction(
           // LA MEME fonction que la porte (`matchApprovalRule` en derive) :
           // ce que la carte montre est ce que le moteur a obei, pas une
           // seconde lecture de la precedence libre de deriver (#346).
-          // Une demande SANS agent (agent supprime, job systeme) reste
-          // gouvernee par les regles Everyone. Rendre une chaine vide faisait
-          // dire « Tool default » a la carte alors qu'une regle d'entite
-          // decidait - le mensonge meme que #346 ferme (revue Reviewer C,
-          // passe 1). `NO_AGENT` ne peut egaler aucun `agent_id` : seuls les
-          // tiers Everyone peuvent matcher.
-          ruleChain: explainApprovalRules(
+          ruleChain: approvalChainFor(
             chainRules,
             r.toolName,
             r.agentId ?? NO_AGENT,
             session.entityId,
             r.agentId === null ? [] : (workspacesByAgent.get(r.agentId) ?? []),
           ),
-          toolDefault: resolveToolDefaultApproval(r.toolName),
           agentWorkspaces: r.agentId === null ? [] : (workspacesByAgent.get(r.agentId) ?? []),
           gateReasons,
         };
@@ -6562,9 +6594,10 @@ export async function resolveApprovalAction(raw: unknown): Promise<
 
 // ─── Agent Approval Rule Actions ─────────────────────────────────────────────
 //
-// approval_rules is the runtime gate used by executeTool (_matchApprovalRule).
+// approval_rules is the runtime gate used by executeTool (matchApprovalRule).
 // Each row: (entityId, agentId, toolName, action ∈ 'auto_approve'|'require_approval'|'block').
-// No rule → default is auto_approve (execute without gating).
+// Since #917 an agent holds one row per tool it has, always: no row means the
+// gate REFUSES the tool, there is no default.
 // (The legacy agents.requires_approval and agent_skill_assignments.
 // approval_overrides columns were never read by this gate — dropped in
 // migration 0070.)
@@ -6595,6 +6628,11 @@ export type ApprovalRuleUiRow = {
 /**
  * List all approval_rules rows scoped to this agent (entity-owned check).
  * Returns only agent-scoped rows (agentId = agentId), not entity-wide wildcards.
+ *
+ * The rows the agent is missing are WRITTEN first (#917,
+ * `syncAgentAutonomyRows`): the screen shows a row for every tool the agent
+ * holds, the same row the gate applies, and never a value computed for a tool
+ * that has none.
  */
 export async function listAgentApprovalRulesAction(
   agentId: string,
@@ -6612,6 +6650,8 @@ export async function listAgentApprovalRulesAction(
       .from(agents)
       .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
     if (!agent) return fail('not_found', 'Agent not found');
+
+    await syncAgentAutonomyRows(db, agentId);
 
     const rows = await db
       .select({
@@ -6678,10 +6718,74 @@ export async function listAgentApprovalRulesAction(
   }
 }
 
+export type AutonomyToolUiRow = {
+  name: string;
+  label: string;
+  summary: string;
+  risk: 'read' | 'write' | 'destructive';
+  source: 'builtin' | 'delivery' | 'connector' | 'mcp' | 'delegation';
+};
+
+/**
+ * Every tool this agent holds, with the text the owner reads (#917): the
+ * Autonomy tab shows one row per tool, and the tools no other section names
+ * are listed under "Other tools". The SAME list the rows are written from
+ * (`resolveAgentTools`, the whitelist's code), so a tool on screen is a tool
+ * the gate knows, and the reverse.
+ */
+export async function listAgentAutonomyToolsAction(
+  agentId: string,
+): Promise<ActionResult<{ tools: AutonomyToolUiRow[]; sharedFileSetting: boolean }>> {
+  try {
+    const session = await getSession();
+    if (!z.string().guid().safeParse(agentId).success) {
+      return fail('validation_failed', 'Invalid agent id');
+    }
+    const db = getDb();
+    const [agent] = await db
+      .select({ id: agents.id })
+      .from(agents)
+      .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
+    if (!agent) return fail('not_found', 'Agent not found');
+    const tools = await resolveAgentTools(db, agentId, WIDEST_PLACEMENT);
+    return ok({
+      tools: tools.map((t) => ({
+        name: t.name,
+        // `label` and `summary`, never `description`: the text written for the
+        // model stays with the model (issue #382).
+        label: t.label ?? t.name,
+        summary: t.summary ?? '',
+        risk: t.riskLevel,
+        source: t.source,
+      })),
+      sharedFileSetting: tools.some((t) => t.replacesSharedFile !== undefined),
+    });
+  } catch (err) {
+    console.error('[listAgentAutonomyToolsAction]', err);
+    return fail('db_error', 'Failed to load the agent tools');
+  }
+}
+
+/**
+ * The autonomy rows of the tools a gesture just made available (#917): an
+ * agent created, a skill, connector or MCP server attached. Written by the one
+ * writer, from the template. A failure is logged loud and does not undo the
+ * gesture: the next job of the agent, and the Autonomy tab, write them again
+ * before anything reads them.
+ */
+async function writeAutonomyRowsAfter(agentId: string, where: string): Promise<void> {
+  try {
+    await syncAgentAutonomyRows(getDb(), agentId);
+  } catch (err) {
+    console.error(`[${where}] AUTONOMY_ROWS_FAILED agent=${agentId}`, err);
+  }
+}
+
 const SetApprovalRuleSchema = z.object({
   agentId: z.string().guid(),
   toolName: z.string().min(1).max(200),
-  // null = delete the rule (revert to each tool's own default)
+  // null = delete a folder row or a template row (a server's setting). A
+  // tool's own row is never deleted (#917): the repo refuses it.
   action: z.enum(['auto_approve', 'require_approval', 'block']).nullable(),
   /**
    * 'agent'  → the rule binds this agent only (agent_id = <agentId>).
@@ -6697,33 +6801,21 @@ const SetApprovalRuleSchema = z.object({
    * l'agent travaille dans ce dossier. Le chemin doit etre l'un des
    * `agent_workspaces` de l'agent, verifie ici et pas seulement a l'ecran.
    *
-   * Absent = regle sans condition. Et l'upsert REECRIT `condition_json` dans
-   * les deux cas : changer une regle depuis l'ecran d'autonomie ou depuis la
-   * ligne « Change » la rend inconditionnelle, plutot que de lui laisser en
-   * silence une condition que personne ne voit la (invariant #4).
+   * Absent = la ligne de l'outil, valable partout. Depuis #917 les deux
+   * coexistent : écrire l'une ne touche jamais l'autre.
    */
   workspacePath: z.string().min(1).max(1000).optional(),
-  /**
-   * « Oui, retire la limite de dossier » (issue #401).
-   *
-   * Sans ce drapeau, `refuseGlobalGrantOverFolderRule` REFUSE de remplacer une
-   * regle confinee a un dossier par une permission valable partout : c'est le
-   * garde de #360, et il reste le defaut pour tout appelant qui ne dit rien.
-   * Avec, l'appelant affirme avoir montre au proprietaire ce qu'il perd, en
-   * nommant le dossier, et avoir recu son accord : l'elargissement n'est plus
-   * silencieux, et le silence est la SEULE chose que le garde protegeait.
-   *
-   * Nomme ainsi, et non `force` : un drapeau qui dit « passe outre » finit pose
-   * partout « pour que ca marche ».
-   */
-  confirmWidening: z.boolean().optional(),
 });
 
 /**
- * Upsert or delete one approval_rules row for (entity, agent-or-null, toolName).
+ * Upsert or delete one approval_rules row for (entity, agent-or-null, toolName,
+ * folder).
  *
- * action=null → DELETE the row (reverts to the tool's own default).
- * action='auto_approve'|'require_approval'|'block' → upsert.
+ * action=null → DELETE a folder row or a template row; a tool's own row is
+ * never deleted (#917).
+ * action='auto_approve'|'require_approval'|'block' → upsert. A template row
+ * (a server's `<prefix>__*`, a rule for every agent) also rewrites the rows it
+ * covers (`setApprovalRuleRepo`).
  *
  * `auto_approve` USED TO DELETE, on the reasoning that "no rule" already meant
  * auto-approve. MCP-001 made that false: every tool from a third-party MCP
@@ -6777,9 +6869,6 @@ export async function listInternalToolsAction(): Promise<
   }
 }
 
-// The folder guard (`refuseGlobalGrantOverFolderRule`) lives in @nodal-agents/db
-// (repos/approval-rules.ts), with the run_command rule that also calls it.
-
 export async function setAgentApprovalRuleAction(raw: unknown): Promise<ActionResult<void>> {
   try {
     const session = await getSession();
@@ -6787,7 +6876,7 @@ export async function setAgentApprovalRuleAction(raw: unknown): Promise<ActionRe
     if (!parsed.success) {
       return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
     }
-    const { agentId, toolName, action, scope, workspacePath, confirmWidening } = parsed.data;
+    const { agentId, toolName, action, scope, workspacePath } = parsed.data;
 
     // Une regle conditionnee ne vaut que pour CET agent : « Everyone dans le
     // dossier de cet agent-la » ne veut rien dire.
@@ -6829,16 +6918,15 @@ export async function setAgentApprovalRuleAction(raw: unknown): Promise<ActionRe
       conditionJson = { workspacePath };
     }
 
-    // Le garde de dossier, la suppression ou l'upsert, dans UNE transaction :
-    // `setApprovalRuleRepo` (@nodal-agents/db), le chemin que le banc prend
-    // aussi pour poser la même règle (#794).
+    // La suppression ou l'upsert, et les lignes qu'une ligne modèle couvre,
+    // dans UNE transaction : `setApprovalRuleRepo` (@nodal-agents/db), le
+    // chemin que le banc prend aussi pour poser la même ligne (#794).
     const written = await setApprovalRuleRepo(db, session.entityId, {
       agentId,
       toolName,
       action,
       scope,
       conditionJson,
-      ...(confirmWidening === undefined ? {} : { confirmWidening }),
     });
     const refus = 'refused' in written ? written.refused : null;
     if (refus) return fail('validation_failed', refus);
@@ -6855,10 +6943,8 @@ export async function setAgentApprovalRuleAction(raw: unknown): Promise<ActionRe
 // ─── Command execution (run_command) rule ────────────────────────────────────
 //
 // The "Run commands" row of the Autonomy tab (#468): the same three choices as
-// every other tool, plus "no rule", which leaves the workspace autonomy to
-// decide. Before #468 it was a Yolo switch (on = auto_approve, off = no rule):
-// Block could not be set from any screen, and Off read as "always asks" where
-// under destructive_gate an ordinary command still runs.
+// every other tool. Since #917 it always has one: the "no rule, the workspace
+// autonomy decides" state is gone, as it is for every tool.
 //
 // Gate (non-local-trust only): only the workspace owner may change it, in
 // EVERY direction. Making it stricter is the safe direction, but a non-owner
@@ -6870,8 +6956,7 @@ const RUN_COMMAND_ACTIONS = ['auto_approve', 'require_approval', 'block'] as con
 
 const SetRunCommandRuleSchema = z.object({
   agentId: z.string().guid(),
-  /** `null` removes the rule: the workspace autonomy decides. */
-  action: z.enum(RUN_COMMAND_ACTIONS).nullable(),
+  action: z.enum(RUN_COMMAND_ACTIONS),
 });
 
 export async function setRunCommandRuleAction(raw: unknown): Promise<ActionResult<void>> {
@@ -6907,10 +6992,8 @@ export async function setRunCommandRuleAction(raw: unknown): Promise<ActionResul
       .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
     if (!agent) return fail('not_found', 'Agent not found');
 
-    // The transactional delete-then-insert and its folder guard (a grant
-    // everywhere never silently widens a rule confined to a folder) live in
-    // setRunCommandRuleRepo (@nodal-agents/db), the bench's applier writes
-    // the same rule through it.
+    // The row's upsert lives in setRunCommandRuleRepo (@nodal-agents/db); the
+    // bench's applier writes the same row through it.
     const written = await setRunCommandRuleRepo(db, session.entityId, agentId, action);
     const refus = 'refused' in written ? written.refused : null;
     if (refus) return fail('validation_failed', refus);
@@ -6974,52 +7057,17 @@ export async function setCodeTaskYoloAction(raw: unknown): Promise<ActionResult<
       .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
     if (!agent) return fail('not_found', 'Agent not found');
 
-    // Delete-then-insert wrapped in a transaction (R2, as in
-    // setRunCommandRuleAction) — approval_rules carries a
-    // UNIQUE(entity_id, agent_id, tool_name) constraint, so two overlapping
-    // calls could otherwise race on the insert.
-    // Une bascule Yolo accorde l'outil PARTOUT. Si une regle le confine deja a
-    // un dossier, l'ecraser elargirait la permission en silence (revue
-    // Reviewer C, passe 1) : on refuse, en nommant le dossier. Le garde vit
-    // DANS la transaction et verrouille la ligne, sans quoi un geste concurrent
-    // passerait entre la lecture et l'ecriture (passe 2).
-    const refus = await db.transaction(async (tx) => {
-      if (enabled) {
-        const message = await refuseGlobalGrantOverFolderRule(
-          tx,
-          session.entityId,
-          agentId,
-          'code_task',
-        );
-        if (message) return message;
-      }
-
-      await tx
-        .delete(approvalRules)
-        .where(
-          and(
-            eq(approvalRules.entityId, session.entityId),
-            eq(approvalRules.agentId, agentId),
-            eq(approvalRules.toolName, 'code_task'),
-          ),
-        );
-
-      if (enabled) {
-        await tx
-          .insert(approvalRules)
-          .values({
-            entityId: session.entityId,
-            agentId,
-            toolName: 'code_task',
-            action: 'auto_approve',
-          })
-          .onConflictDoUpdate({
-            target: [approvalRules.entityId, approvalRules.agentId, approvalRules.toolName],
-            set: { action: 'auto_approve', updatedAt: new Date() },
-          });
-      }
-      return null;
+    // On = Autonomous, off = Ask first (#917): the row always exists. Off
+    // used to DELETE the row, leaving the tool to its default; a tool without
+    // a row is now refused.
+    const written = await setApprovalRuleRepo(db, session.entityId, {
+      agentId,
+      toolName: 'code_task',
+      action: enabled ? 'auto_approve' : 'require_approval',
+      scope: 'agent',
+      conditionJson: {},
     });
+    const refus = 'refused' in written ? written.refused : null;
     if (refus) return fail('validation_failed', refus);
 
     revalidatePath(`/agents/${agentId}/edit`);
@@ -7419,7 +7467,15 @@ export async function setReviewerReadOnlyPresetAction(raw: unknown): Promise<Act
       .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
     if (!agent) return fail('not_found', 'Agent not found');
 
-    await setReadOnlyPresetRepo(db, session.entityId, agentId, enabled);
+    // Off puts each blocked row back to the value the workspace level gives it
+    // (#917): deleting it, as before, would make the gate refuse the tool.
+    await setReadOnlyPresetRepo(
+      db,
+      session.entityId,
+      agentId,
+      enabled,
+      enabled ? {} : await templateValuesFor(db, agentId, READONLY_PRESET_TOOLS),
+    );
 
     revalidatePath(`/agents/${agentId}/edit`);
     return ok(undefined);
@@ -8161,12 +8217,6 @@ export async function setCliRuntimeShellAction(raw: unknown): Promise<ActionResu
 export type AutoRunPauseView = {
   autoRunPaused: boolean;
   isOwner: boolean;
-  /**
-   * The workspace autonomy (`entities.root_grants.autonomy`). The agent's
-   * Autonomy tab needs it to say what REALLY happens to a command (#464):
-   * under `destructive_gate` an ordinary command runs without a rule.
-   */
-  workspaceAutonomy: RootGrants['autonomy'];
 };
 
 export async function getAutoRunPauseAction(): Promise<ActionResult<AutoRunPauseView>> {
@@ -8177,7 +8227,6 @@ export async function getAutoRunPauseAction(): Promise<ActionResult<AutoRunPause
       .select({
         userId: entities.userId,
         autoRunPaused: entities.autoRunPaused,
-        rootGrants: entities.rootGrants,
       })
       .from(entities)
       .where(eq(entities.id, session.entityId));
@@ -8185,7 +8234,6 @@ export async function getAutoRunPauseAction(): Promise<ActionResult<AutoRunPause
     return ok({
       autoRunPaused: entityRow.autoRunPaused,
       isOwner: entityRow.userId === session.userId,
-      workspaceAutonomy: parseRootGrants(entityRow.rootGrants).autonomy,
     });
   } catch (err) {
     console.error('[getAutoRunPauseAction]', err);
@@ -9424,6 +9472,8 @@ export async function assignSkillAction(raw: unknown): Promise<ActionResult<void
       revalidatePath('/skills');
       return ok(undefined);
     }
+    // The rows of the built-ins this skill unlocks (#917).
+    await writeAutonomyRowsAfter(parsed.data.agentId, 'assignSkillAction');
     revalidatePath('/skills');
     return ok(undefined);
   } catch (err) {
@@ -9777,6 +9827,8 @@ export async function setSkillScriptsAuthorizedAction(raw: unknown): Promise<Act
     if ('error' in result) {
       return fail('not_assigned', 'This skill is not assigned to the agent.');
     }
+    // run_skill_script's row, when this authorization hands it over (#917).
+    await writeAutonomyRowsAfter(agentId, 'setSkillScriptsAuthorizedAction');
 
     revalidatePath(`/agents/${agentId}/edit`);
     return ok(undefined);
@@ -9832,6 +9884,8 @@ export async function setSkillFilesWritableAction(raw: unknown): Promise<ActionR
     if ('error' in result) {
       return fail('not_assigned', 'This skill is not assigned to the agent.');
     }
+    // skill_file_write's row, when this authorization hands it over (#917).
+    await writeAutonomyRowsAfter(agentId, 'setSkillFilesWritableAction');
 
     revalidatePath(`/agents/${agentId}/edit`);
     return ok(undefined);
@@ -13123,6 +13177,8 @@ export async function setAgentConnectorAssignmentAction(
       );
     }
 
+    // The rows of the connector operations this agent now holds (#917).
+    await writeAutonomyRowsAfter(agentId, 'setAgentConnectorAssignmentAction');
     revalidatePath('/agents');
     return ok(undefined);
   } catch (err) {
@@ -13176,6 +13232,36 @@ const SetRootGrantsSchema = z.object({
 });
 
 /**
+ * "Apply to all agents" (#917): the workspace autonomy level written to every
+ * agent's rows, tools and the shared-file setting. The server settings and the
+ * rules for every agent are removed; the rows limited to one folder are kept.
+ * The screen asks first (`<ConfirmDialog />`).
+ */
+export async function applyAutonomyLevelToAllAction(): Promise<ActionResult<{ changed: number }>> {
+  try {
+    const session = await getSession();
+    if (env.AUTH_MODE !== 'local-trust') {
+      const db = getDb();
+      const [entityRow] = await db
+        .select({ userId: entities.userId })
+        .from(entities)
+        .where(eq(entities.id, session.entityId));
+      if (!entityRow) return fail('not_found', 'Workspace not found');
+      if (entityRow.userId !== session.userId) {
+        return fail('forbidden', 'Only the workspace owner can apply the autonomy level to all.');
+      }
+    }
+    const result = await applyAutonomyLevelToAll(getDb(), session.entityId);
+    revalidatePath('/settings');
+    revalidatePath('/agents');
+    return ok(result);
+  } catch (err) {
+    console.error('[applyAutonomyLevelToAllAction]', err);
+    return fail('db_error', 'Failed to apply the autonomy level');
+  }
+}
+
+/**
  * Configure the powers (grants + autonomy) of the active workspace's ROOT agent.
  *
  * The ROOT itself is NOT chosen here — it is the entity's "origin orchestrator"
@@ -13184,12 +13270,9 @@ const SetRootGrantsSchema = z.object({
  *
  * Side effects:
  *   1. Updates entities.rootGrants (rootAgentId is left as-is — structural).
- *   2. Clears all existing meta-tool approval_rules for this entity.
- *   3. If autonomy is 'propose_confirm': inserts require_approval rules for each
- *      enabled meta-tool.
- *      - 'destructive_gate' inserts require_approval only for destructive
- *        meta-tools; none exist in the MVT toolset yet.
- *      - 'fully_autonomous' inserts nothing — meta-tools execute freely.
+ *   2. Writes the autonomy rows of the meta-tools the grants now hand the ROOT
+ *      (#917), from the level. The level changes no existing row: "Apply to
+ *      all agents" does.
  *
  * Fails with 'not_found' when no ROOT exists yet (no orchestrator created).
  */
@@ -13223,21 +13306,6 @@ export async function setRootAgentAction(raw: unknown): Promise<ActionResult<voi
       return fail('not_found', 'No ROOT agent yet — create an orchestrator first');
     }
 
-    // The ROOT's own "May change its own team" (issue #137). The rules synced
-    // below must describe the tools the runner will ACTUALLY hand this agent:
-    // a `require_approval` row for a tool that never reaches its list is an
-    // approval nobody will ever be asked for, and a line on the Autonomy tab
-    // for a power the agent does not have.
-    //
-    // Nothing is lost by leaving the row out: the three tools ship
-    // `defaultApproval: 'require_approval'`, so an agent whose owner turns the
-    // setting on later still gets asked, rule or no rule.
-    const [rootAgentRow] = await db
-      .select({ mayChangeTeam: agents.mayChangeTeam })
-      .from(agents)
-      .where(eq(agents.id, rootAgentId));
-    const rootMayChangeTeam = rootAgentRow?.mayChangeTeam ?? false;
-
     // Persist rootGrants on the entity (rootAgentId is structural — left as-is).
     // Cast grants to unknown so Drizzle accepts it as JSONB without type friction.
     await db
@@ -13248,53 +13316,12 @@ export async function setRootAgentAction(raw: unknown): Promise<ActionResult<voi
       })
       .where(eq(entities.id, session.entityId));
 
-    // ── Sync approval_rules for meta-tools ────────────────────────────────────
-    // Delete-then-insert wrapped in a transaction (R2, audit #2 follow-up):
-    // approval_rules now carries a UNIQUE(entity_id, agent_id, tool_name)
-    // constraint (DB-1) — an overlapping call could pass the delete and then
-    // hit that constraint on insert. db.transaction plus onConflictDoUpdate
-    // (per-row, since this is a batch insert) makes the whole sync atomic.
-    await db.transaction(async (tx) => {
-      // Step 1: clear any existing meta-tool rules for this entity (covers both
-      // the previous ROOT agent's rules and the current one).
-      await tx
-        .delete(approvalRules)
-        .where(
-          and(
-            eq(approvalRules.entityId, session.entityId),
-            inArray(approvalRules.toolName, META_TOOL_NAMES as unknown as string[]),
-          ),
-        );
-
-      // Step 2: insert new rules according to autonomy level.
-      if (grants.autonomy === 'propose_confirm') {
-        // Each enabled meta-tool requires explicit user approval before
-        // execution — the same list the runner builds, team tools included
-        // only when this agent may change its team.
-        const tools = metaToolsForAgent(grants as RootGrants, {
-          mayChangeTeam: rootMayChangeTeam,
-        });
-        if (tools.length > 0) {
-          await tx
-            .insert(approvalRules)
-            .values(
-              tools.map((toolName) => ({
-                entityId: session.entityId,
-                agentId: rootAgentId,
-                toolName,
-                action: 'require_approval' as const,
-              })),
-            )
-            .onConflictDoUpdate({
-              target: [approvalRules.entityId, approvalRules.agentId, approvalRules.toolName],
-              set: { action: 'require_approval', updatedAt: new Date() },
-            });
-        }
-      }
-      // destructive_gate inserts require_approval only for destructive meta-tools;
-      // none exist in the MVT toolset yet.
-      // fully_autonomous: no approval rules — all meta-tools execute without gating.
-    });
+    // The level decides nothing at run time any more (#917): it gives the
+    // value of a row when that row is written. A grant turned on here hands
+    // the ROOT new meta-tools, whose rows are written now; an existing row is
+    // the owner's and is left as it is. "Apply to all agents" is the gesture
+    // that rewrites them (applyAutonomyLevelToAllAction).
+    await writeAutonomyRowsAfter(rootAgentId, 'setRootAgentAction');
 
     revalidatePath('/settings');
     return ok(undefined);

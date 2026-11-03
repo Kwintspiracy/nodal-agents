@@ -28,6 +28,7 @@ import { executeTool } from '../execute';
 import { cheminConstate } from '../verification/record-constat';
 import type { z } from 'zod';
 import type { ApprovalRule, ExecuteOptions, ToolContext, ToolDefinition } from '../types';
+import { autonomousRows } from './autonomy-rows-fixture';
 
 const registry = createToolRegistry();
 registerBuiltins(registry);
@@ -93,7 +94,7 @@ function autoApprove(): ExecuteOptions {
       agentId: seed.agentId,
       entityId: seed.entityId,
     })) as ApprovalRule[];
-  return { approvalRules: rules, onApprovalRequired: async () => {} };
+  return { approvalRules: [...rules, ...autonomousRows(seed)], onApprovalRequired: async () => {} };
 }
 
 const sha = (s: string | Buffer): string => createHash('sha256').update(s).digest('hex');

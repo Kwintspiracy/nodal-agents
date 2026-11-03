@@ -60,10 +60,12 @@ as every other tool, in every auth mode:
 - **Ask for approval**: every command waits for you.
 - **Block**: the agent cannot run commands.
 
-With no choice set, none is lit and the workspace autonomy decides; the sentence
-above the row says what that means for this agent. **Let the workspace autonomy
-decide** removes a choice. Before 0.9.3 this row was a "Yolo" switch, whose Off
-position could not block and did not always mean "asks".
+The row always holds one of the three: when the tool arrives, it starts with the
+value of the workspace [autonomy level](/docs/guides/root-agent), and from then
+on what you set is what applies. A command that can wipe the machine (formatting
+a disk, a fork bomb) always asks, whatever the row says, and the row says so.
+Before 0.9.3 this row was a "Yolo" switch, whose Off position could not block and
+did not always mean "asks".
 
 **Only the workspace owner can change it**, both in the dashboard and on the
 approval card. That was already true on both sides, which is why the separate

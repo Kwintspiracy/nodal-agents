@@ -24,11 +24,18 @@ import {
   aToolRule,
   TEST_AGENT_ID,
   type ExecuteToolFn,
+  type TemplateFn,
 } from '@nodal-agents/test-kit';
 import { executeTool } from '../execute';
+import { templateAutonomy } from '../autonomy-template';
 
-// Branché sur le gate de production. Si `executeTool` change, ces tests bougent.
-const { expectGate } = createGateHarness(executeTool as unknown as ExecuteToolFn);
+// Branché sur le gate de production ET sur le modèle de production (#917) :
+// « sous un niveau » veut dire « avec la ligne que ce niveau écrit pour l'outil
+// à son arrivée ». Si l'un ou l'autre change, ces tests bougent.
+const { expectGate } = createGateHarness(
+  executeTool as unknown as ExecuteToolFn,
+  templateAutonomy as unknown as TemplateFn,
+);
 
 describe('MCP-001 — un outil MCP tiers est gaté sans règle', () => {
   it('suspend dans la posture livrée et en propose_confirm', async () => {

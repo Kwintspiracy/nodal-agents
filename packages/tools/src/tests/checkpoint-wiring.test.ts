@@ -81,6 +81,7 @@ import { fileWriteTool } from '../builtin/file-ops/file-write';
 import { fileReadTool } from '../builtin/file-ops/file-read';
 import { fileMoveTool } from '../builtin/file-ops/file-move';
 import type { ApprovalRule, ExecuteOptions, ToolContext } from '../types';
+import { autonomousRows } from './autonomy-rows-fixture';
 
 let db: TestDb;
 let seed: { userId: string; entityId: string; agentId: string; jobId: string };
@@ -165,7 +166,12 @@ function ctx(over: Partial<ToolContext> = {}): ToolContext {
   } as unknown as ToolContext;
 }
 
-const opts = { approvalRules: [], onApprovalRequired: async () => {} } as never;
+const opts = {
+  get approvalRules() {
+    return autonomousRows(seed);
+  },
+  onApprovalRequired: async () => {},
+} as never;
 
 describe('quels outils sont marqués', () => {
   it('la liste des outils marqués vient du REGISTRE, jamais d’une liste à la main', () => {
@@ -221,7 +227,10 @@ describe('quels outils sont marqués', () => {
       agentId: seed.agentId,
       entityId: seed.entityId,
     })) as ApprovalRule[];
-    const approved: ExecuteOptions = { approvalRules: rules, onApprovalRequired: async () => {} };
+    const approved: ExecuteOptions = {
+      approvalRules: [...rules, ...autonomousRows(seed)],
+      onApprovalRequired: async () => {},
+    };
 
     for (const [i, tool] of covered.entries()) {
       const input = MINIMAL_INPUT[tool.name];
@@ -359,6 +368,7 @@ describe('le refus NOMME sa cause @cap:executer-une-commande/moteur', () => {
           agentId: seed.agentId,
           entityId: seed.entityId,
         },
+        ...autonomousRows(seed),
       ] as ApprovalRule[],
       onApprovalRequired: async () => {},
     }) as ExecuteOptions;

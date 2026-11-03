@@ -63,7 +63,6 @@ const approval = (id: string, kind: 'approval' | 'question') => ({
     impact: null,
   },
   ruleChain: [],
-  toolDefault: 'require_approval',
   agentWorkspaces: [],
   gateReasons: [{ category: 'delete_files', state: 'ask', details: ['rm -rf out'] }],
 });

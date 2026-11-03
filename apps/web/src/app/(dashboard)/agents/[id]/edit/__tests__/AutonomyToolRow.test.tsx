@@ -104,19 +104,41 @@ describe("une ligne d'outil parle au propriétaire @cap:regler-autonomie/ecran",
     expect(onChange.mock.calls.at(-1)?.[0]).toBe('block');
   });
 
-  it('nomme le dossier auquel la règle est confinée, à côté du curseur', async () => {
-    // Issue #361 : sans cette ligne, « Run without asking » se lisait comme
-    // « partout » alors que la règle ne vaut que dans un dossier.
-    await render({ folder: 'Dev' });
-    expect(container.querySelector('[data-testid="autonomy-folder-file_write"]')?.textContent).toBe(
-      'in Dev',
-    );
+  it('says a row confined to a folder under the tool, with its value, and its Remove', async () => {
+    // Issue #361, then #917: the folder row lives BESIDE the tool row. The
+    // control shows the tool row; the folder row is said under it.
+    const onRemove = vi.fn();
+    await render({
+      folderRows: [{ label: 'Dev', action: 'auto_approve', workspacePath: 'D:/Dev' }],
+      onRemoveFolder: onRemove,
+    });
+    expect(
+      container.querySelector('[data-testid="autonomy-folder-file_write"]')?.textContent,
+    ).toContain('In Dev: Run without asking');
+    await act(async () => {
+      container
+        .querySelector<HTMLButtonElement>('[data-testid="autonomy-folder-remove-file_write"]')!
+        .click();
+    });
+    expect(onRemove.mock.calls).toEqual([['D:/Dev']]);
   });
 
-  it("ne dit aucun dossier quand la règle n'en porte pas", async () => {
+  it("ne dit aucun dossier quand l'agent n'en a pas", async () => {
     await render();
     expect(container.querySelector('[data-testid="autonomy-folder-file_write"]')).toBeNull();
-    expect(container.textContent).not.toContain('in Dev');
+    expect(container.textContent).not.toContain('In Dev');
+  });
+
+  it('a row without a value is said as refused, with no choice painted', async () => {
+    await render({ value: null });
+    expect(container.querySelector('[data-testid="autonomy-unset-file_write"]')?.textContent).toBe(
+      'Not set: this tool is refused until you choose.',
+    );
+    expect(
+      container
+        .querySelector('[data-testid="autonomy-btn-file_write-auto_approve"]')
+        ?.getAttribute('aria-pressed'),
+    ).toBe('false');
   });
 
   it("remplace le curseur par la raison quand l'outil ne peut pas être bloqué", async () => {

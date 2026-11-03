@@ -172,9 +172,9 @@ export function computeApprovalImpactLine(
       }
       return input['replace'] === true
         ? `Moves "${str(input['source'])}" to "${str(input['destination'])}", replacing or ` +
-            'removing a file in the shared workspace that this run did not write.'
+            'removing a file in the shared workspace that this agent did not create.'
         : `Moves "${str(input['source'])}" to "${str(input['destination'])}", removing from ` +
-            'the shared workspace a file that this run did not write.';
+            'the shared workspace a file that this agent did not create.';
     case 'run_command': {
       const cmd = input['command'];
       return typeof cmd === 'string' && cmd.trim().length > 0

@@ -172,40 +172,38 @@ describe('setAgentModelRepo @cap:choisir-modele/moteur', () => {
 });
 
 describe('the approval rules @cap:regler-autonomie/moteur', () => {
-  it('run_command: written, replaced, removed; a grant everywhere never widens a rule confined to a folder', async () => {
+  it('run_command: its row is written and replaced, never removed; a folder row lives beside it (#917)', async () => {
     const where = and(
       eq(schema.approvalRules.agentId, seed.agentId),
       eq(schema.approvalRules.toolName, 'run_command'),
     );
+    const held = async () =>
+      (await db.select().from(schema.approvalRules).where(where))
+        .map((r) => `${r.action}@${r.conditionFolder}`)
+        .sort();
     expect(await setRunCommandRuleRepo(db, seed.entityId, seed.agentId, 'auto_approve')).toEqual({
       ok: true,
     });
-    expect(
-      (await db.select().from(schema.approvalRules).where(where)).map((r) => r.action),
-    ).toEqual(['auto_approve']);
-    await setRunCommandRuleRepo(db, seed.entityId, seed.agentId, null);
-    expect(await db.select().from(schema.approvalRules).where(where)).toEqual([]);
+    expect(await held()).toEqual(['auto_approve@']);
 
     await db.insert(schema.approvalRules).values({
       entityId: seed.entityId,
       agentId: seed.agentId,
       toolName: 'run_command',
-      action: 'auto_approve',
+      action: 'block',
       conditionJson: { workspacePath: 'D:/work/project' },
     });
-    const refused = await setRunCommandRuleRepo(db, seed.entityId, seed.agentId, 'auto_approve');
-    expect(refused).toEqual({
-      refused:
-        'run_command is already approved for this agent only inside D:/work/project. Change that rule on the approval card before allowing it everywhere.',
-    });
-    const [kept] = await db.select().from(schema.approvalRules).where(where);
-    expect(kept!.conditionJson).toEqual({ workspacePath: 'D:/work/project' });
-    await setRunCommandRuleRepo(db, seed.entityId, seed.agentId, null);
+    // The tool row changes; the folder row is another row, untouched.
+    expect(
+      await setRunCommandRuleRepo(db, seed.entityId, seed.agentId, 'require_approval'),
+    ).toEqual({ ok: true });
+    expect(await held()).toEqual(['block@D:/work/project', 'require_approval@']);
+    await db.delete(schema.approvalRules).where(where);
   });
 
   // setApprovalRuleRepo : le chemin de `setAgentApprovalRuleAction` (l'écran)
   // et de l'applicateur du banc (#794), sur n'importe quel outil.
-  it('a tool rule: for one agent or the whole workspace, replaced, removed, its condition rewritten', async () => {
+  it('a tool row: replaced in place, never removed; a folder row is removed alone', async () => {
     const tool = 'bench_printer__request_print';
     const rows = () =>
       db
@@ -237,63 +235,123 @@ describe('the approval rules @cap:regler-autonomie/moteur', () => {
     // Replaced in place: one row, never two.
     expect(await rule({ action: 'block' })).toEqual({ ok: true });
     expect(await rows()).toEqual([{ agentId: seed.agentId, action: 'block', conditionJson: {} }]);
-    // The workspace scope is its own row (agent_id NULL), beside the agent's.
-    expect(await rule({ scope: 'entity', action: 'require_approval' })).toEqual({ ok: true });
-    expect((await rows()).map((r) => [r.agentId, r.action]).sort()).toEqual(
-      [
-        [seed.agentId, 'block'],
-        [null, 'require_approval'],
-      ].sort(),
-    );
-    // Removing one scope leaves the other.
-    expect(await rule({ action: null })).toEqual({ ok: true });
-    expect(await rows()).toEqual([
-      { agentId: null, action: 'require_approval', conditionJson: {} },
-    ]);
-    expect(await rule({ scope: 'entity', action: null })).toEqual({ ok: true });
-    expect(await rows()).toEqual([]);
-  });
-
-  it('a tool rule never widens a rule confined to a folder in silence; the widening shown and accepted passes', async () => {
-    const tool = 'bench_printer__get_print_request';
-    const where = and(
-      eq(schema.approvalRules.agentId, seed.agentId),
-      eq(schema.approvalRules.toolName, tool),
-    );
-    const base = {
-      agentId: seed.agentId,
-      toolName: tool,
-      action: 'auto_approve' as const,
-      scope: 'agent' as const,
-    };
-    expect(
-      await setApprovalRuleRepo(db, seed.entityId, {
-        ...base,
-        conditionJson: { workspacePath: 'D:/work/project' },
-      }),
-    ).toEqual({ ok: true });
-    expect(await setApprovalRuleRepo(db, seed.entityId, { ...base, conditionJson: {} })).toEqual({
-      refused: `${tool} is already approved for this agent only inside D:/work/project. Change that rule on the approval card before allowing it everywhere.`,
+    // A tool row is never removed: without it the gate refuses the tool.
+    expect(await rule({ action: null })).toEqual({
+      refused: `${tool} always has a setting for this agent: choose Autonomous, Ask first or Block.`,
     });
-    const [kept] = await db.select().from(schema.approvalRules).where(where);
-    expect(kept!.conditionJson).toEqual({ workspacePath: 'D:/work/project' });
-    expect(
-      await setApprovalRuleRepo(db, seed.entityId, {
-        ...base,
-        conditionJson: {},
-        confirmWidening: true,
-      }),
-    ).toEqual({ ok: true });
-    const [widened] = await db.select().from(schema.approvalRules).where(where);
-    expect(widened!.conditionJson).toEqual({});
-    await db.delete(schema.approvalRules).where(where);
+    expect(await rows()).toHaveLength(1);
+    // A folder row: written beside the tool row, removed alone.
+    expect(await rule({ conditionJson: { workspacePath: 'D:/w' } })).toEqual({ ok: true });
+    expect(await rows()).toHaveLength(2);
+    expect(await rule({ action: null, conditionJson: { workspacePath: 'D:/w' } })).toEqual({
+      ok: true,
+    });
+    expect(await rows()).toEqual([{ agentId: seed.agentId, action: 'block', conditionJson: {} }]);
+    await db
+      .delete(schema.approvalRules)
+      .where(
+        and(
+          eq(schema.approvalRules.entityId, seed.entityId),
+          eq(schema.approvalRules.toolName, tool),
+        ),
+      );
   });
 
-  it('the read-only preset blocks its tools, and removing it keeps a rule set by hand', async () => {
+  it('a template row rewrites the rows it covers: a server for its tools, Everyone for every agent', async () => {
+    const [other] = await db
+      .insert(schema.agents)
+      .values({
+        entityId: seed.entityId,
+        slug: `autre-${Date.now()}`,
+        name: 'Autre',
+        personality: 'p',
+      })
+      .returning();
+    if (!other) throw new Error('agent not created');
+    const put = (
+      agentId: string,
+      toolName: string,
+      action: 'auto_approve' | 'require_approval' | 'block',
+    ) =>
+      db
+        .insert(schema.approvalRules)
+        .values({ entityId: seed.entityId, agentId, toolName, action });
+    await put(seed.agentId, 'tpl__read', 'require_approval');
+    await put(seed.agentId, 'tpl__write', 'block');
+    await put(other.id, 'tpl__read', 'require_approval');
     await db.insert(schema.approvalRules).values({
       entityId: seed.entityId,
       agentId: seed.agentId,
-      toolName: 'file_read',
+      toolName: 'tpl__read',
+      action: 'block',
+      conditionJson: { workspacePath: 'D:/keep' },
+    });
+    const of = async (agentId: string) =>
+      (
+        await db
+          .select()
+          .from(schema.approvalRules)
+          .where(
+            and(
+              eq(schema.approvalRules.entityId, seed.entityId),
+              eq(schema.approvalRules.agentId, agentId),
+            ),
+          )
+      )
+        .filter((r) => r.toolName.startsWith('tpl'))
+        .map((r) => `${r.toolName}=${r.action}${r.conditionFolder ? `@${r.conditionFolder}` : ''}`)
+        .sort();
+
+    // The agent's server row: its own tools of that server, nobody else's,
+    // and never a folder row.
+    expect(
+      await setApprovalRuleRepo(db, seed.entityId, {
+        agentId: seed.agentId,
+        toolName: 'tpl__*',
+        action: 'auto_approve',
+        scope: 'agent',
+        conditionJson: {},
+      }),
+    ).toEqual({ ok: true });
+    expect(await of(seed.agentId)).toEqual([
+      'tpl__*=auto_approve',
+      'tpl__read=auto_approve',
+      'tpl__read=block@D:/keep',
+      'tpl__write=auto_approve',
+    ]);
+    expect(await of(other.id)).toEqual(['tpl__read=require_approval']);
+
+    // Everyone + one tool: that tool's row, for every agent of the workspace.
+    expect(
+      await setApprovalRuleRepo(db, seed.entityId, {
+        agentId: seed.agentId,
+        toolName: 'tpl__read',
+        action: 'block',
+        scope: 'entity',
+        conditionJson: {},
+      }),
+    ).toEqual({ ok: true });
+    expect(await of(seed.agentId)).toContain('tpl__read=block');
+    expect(await of(other.id)).toEqual(['tpl__read=block']);
+
+    // A rule for every tool is the level's job, refused here.
+    expect(
+      await setApprovalRuleRepo(db, seed.entityId, {
+        agentId: seed.agentId,
+        toolName: '*',
+        action: 'auto_approve',
+        scope: 'agent',
+        conditionJson: {},
+      }),
+    ).toHaveProperty('refused');
+    await db.delete(schema.approvalRules).where(eq(schema.approvalRules.entityId, seed.entityId));
+  });
+
+  it('the read-only preset blocks its tools; removing it gives each back the value handed in, and keeps a row set by hand', async () => {
+    await db.insert(schema.approvalRules).values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      toolName: 'run_command',
       action: 'require_approval',
     });
     await setReadOnlyPresetRepo(db, seed.entityId, seed.agentId, true);
@@ -306,11 +364,22 @@ describe('the approval rules @cap:regler-autonomie/moteur', () => {
       )
         .map((r) => `${r.toolName}=${r.action}`)
         .sort();
-    expect(await rows()).toEqual(
-      [...READONLY_PRESET_TOOLS.map((t) => `${t}=block`), 'file_read=require_approval'].sort(),
+    expect(await rows()).toEqual(READONLY_PRESET_TOOLS.map((t) => `${t}=block`).sort());
+    // Back to the level's values: the rows stay, they are not deleted (#917).
+    const restore = Object.fromEntries(
+      READONLY_PRESET_TOOLS.map((t) => [
+        t,
+        t === 'run_command' ? 'require_approval' : 'auto_approve',
+      ]),
+    ) as Record<string, 'auto_approve' | 'require_approval'>;
+    await setReadOnlyPresetRepo(db, seed.entityId, seed.agentId, false, restore);
+    expect(await rows()).toEqual(READONLY_PRESET_TOOLS.map((t) => `${t}=${restore[t]}`).sort());
+    // A missing value is a caller's fault, said loud.
+    await setReadOnlyPresetRepo(db, seed.entityId, seed.agentId, true);
+    await expect(setReadOnlyPresetRepo(db, seed.entityId, seed.agentId, false, {})).rejects.toThrow(
+      /no value to restore/,
     );
-    await setReadOnlyPresetRepo(db, seed.entityId, seed.agentId, false);
-    expect(await rows()).toEqual(['file_read=require_approval']);
+    await db.delete(schema.approvalRules).where(eq(schema.approvalRules.agentId, seed.agentId));
   });
 });
 

@@ -22,6 +22,7 @@ import { registerBuiltins } from '../../builtin';
 import { executeTool } from '../../execute';
 import { MAX_WRITE_BYTES } from '../../builtin/file-ops/workspace';
 import type { ExecuteOptions, ToolContext } from '../../types';
+import { autonomousRows } from '../autonomy-rows-fixture';
 
 let db: TestDb;
 let seed: Awaited<ReturnType<typeof seedMinimal>>;
@@ -99,6 +100,7 @@ function options(): ExecuteOptions {
         agentId: seed.agentId,
         entityId: seed.entityId,
       },
+      ...autonomousRows(seed),
     ] as ExecuteOptions['approvalRules'],
     onApprovalRequired: async () => {},
   };
@@ -312,7 +314,6 @@ describe('le registre au seam d’exécution — register_project puis file_writ
     return {
       ...base,
       approvalRules: [
-        ...(base.approvalRules ?? []),
         {
           id: 'rule-register-project',
           toolName: 'register_project',
@@ -320,6 +321,7 @@ describe('le registre au seam d’exécution — register_project puis file_writ
           agentId: seed.agentId,
           entityId: seed.entityId,
         },
+        ...(base.approvalRules ?? []),
       ] as ExecuteOptions['approvalRules'],
     };
   }

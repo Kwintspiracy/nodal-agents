@@ -68,7 +68,8 @@ export type { CreateWorkspaceInput } from './repos/workspaces.ts';
 export { createLlmKeyRepo } from './repos/llm-keys.ts';
 export type { CreateLlmKeyInput } from './repos/llm-keys.ts';
 export {
-  refuseGlobalGrantOverFolderRule,
+  APPROVAL_ROW_KEY,
+  removeAgentToolRowRepo,
   setRunCommandRuleRepo,
   setApprovalRuleRepo,
   setReadOnlyPresetRepo,

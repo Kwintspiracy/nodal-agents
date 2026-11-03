@@ -41,6 +41,7 @@ import { executeTool } from '../execute';
 import { fileWriteTool } from '../builtin/file-ops/file-write';
 import { constatedGitWrites, snapshotGitAvant } from '../verification/git-constat';
 import type { ToolContext } from '../types';
+import { autonomousRows } from './autonomy-rows-fixture';
 
 const fwd = (p: string): string => p.split('\\').join('/');
 
@@ -180,7 +181,12 @@ describe.runIf(available)(
         turn,
       } as unknown as ToolContext;
     }
-    const opts = { approvalRules: [], onApprovalRequired: async () => {} } as never;
+    const opts = {
+      get approvalRules() {
+        return autonomousRows(seed);
+      },
+      onApprovalRequired: async () => {},
+    } as never;
 
     /** Un sous-dépôt dans le workspace ; la commande confinée y plante le piège. */
     async function plantedSubRepo(): Promise<string> {

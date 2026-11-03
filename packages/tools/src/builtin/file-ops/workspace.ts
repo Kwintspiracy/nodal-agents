@@ -20,7 +20,7 @@ import {
   dirname,
 } from 'node:path';
 import type { ToolContext } from '../../types';
-import { cheminConstate, currentContentWrittenByJob } from '../../verification/record-constat';
+import { cheminConstate, currentContentWrittenByAgentOf } from '../../verification/record-constat';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -721,7 +721,7 @@ export const WORKFLOW_TEMPLATE_PROTECTED_MESSAGE =
  * D1 gate: file_write/file_edit only need a human in the loop when the call
  * would OVERWRITE an EXISTING file inside the shared workspace — never for a
  * brand-new file, and never for an attached or private workspace. Wired as
- * each tool's `computeApproval` hook (see ToolDefinition) so the decision is
+ * each tool's `replacesSharedFile` hook (see ToolDefinition) so the decision is
  * made PER CALL instead of a blanket `defaultApproval` that would gate every
  * write regardless of target.
  *
@@ -729,11 +729,12 @@ export const WORKFLOW_TEMPLATE_PROTECTED_MESSAGE =
  * return undefined — the call is about to fail loud in execute() anyway;
  * there is nothing destructive to gate.
  *
- * A file whose CURRENT content is the one THIS run wrote is not another
- * run's work (#505): re-writing it overwrites nothing anyone else made, so it
- * is not gated. Content, not record order, decides (see
- * `currentContentWrittenByJob`): an edit made outside Nodal, or a later write
- * by another run, puts the gate back. Every caller (file_write, file_edit, generate_speech) gets the same
+ * A file whose CURRENT content is the one THIS AGENT wrote, in this run or
+ * an earlier one, is not another's work (#505, agent scope since #917):
+ * re-writing it overwrites nothing anyone else made, so it is not gated.
+ * Content, not record order, decides (see `currentContentWrittenByAgentOf`):
+ * an edit made outside Nodal, or a later write by another agent, puts the
+ * gate back. Every caller (file_write, file_edit, generate_speech) gets the same
  * answer from the same record, `constated_writes`.
  */
 export async function computeSharedOverwriteApproval(
@@ -752,7 +753,7 @@ export async function computeSharedOverwriteApproval(
     () => false,
   );
   if (!exists) return undefined;
-  return (await currentContentWrittenByJob(ctx.db, ctx.jobId, resolved))
+  return (await currentContentWrittenByAgentOf(ctx.db, ctx.jobId, resolved))
     ? undefined
     : 'require_approval';
 }

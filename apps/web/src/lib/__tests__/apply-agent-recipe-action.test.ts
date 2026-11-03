@@ -150,7 +150,14 @@ describe('the profile is applied through createAgentAction', () => {
       .select({ toolName: approvalRules.toolName, action: approvalRules.action })
       .from(approvalRules)
       .where(eq(approvalRules.agentId, res.data.id));
-    expect(rules.map((r) => r.toolName).sort()).toEqual([
+    // The agent holds a row for every tool (#917); the preset's are Block, and
+    // the rows written after it did not undo them.
+    expect(
+      rules
+        .filter((r) => r.action === 'block')
+        .map((r) => r.toolName)
+        .sort(),
+    ).toEqual([
       'file_edit',
       'file_move',
       'file_write',
@@ -158,7 +165,7 @@ describe('the profile is applied through createAgentAction', () => {
       'run_skill_script',
       'skill_file_write',
     ]);
-    expect(rules.every((r) => r.action === 'block')).toBe(true);
+    expect(rules.find((r) => r.toolName === 'file_read')?.action).toBe('auto_approve');
   });
 
   it('lets a non-owner create from a profile with NO preset — skills are not owner-gated', async () => {
@@ -310,12 +317,17 @@ describe('createAgentAction with a profile — one gesture, nothing half-done', 
     expect(res.data.recipe?.readOnlyApplied).toBe(true);
     expect(res.data.recipe?.skillsAttached).toEqual(['code-review']);
     const rules = await testDb
-      .select({ toolName: approvalRules.toolName })
+      .select({ toolName: approvalRules.toolName, action: approvalRules.action })
       .from(approvalRules)
       .where(eq(approvalRules.agentId, res.data.id));
     // Les outils bloqués eux-mêmes, pas leur nombre : un compte resterait vert
     // si un outil d'écriture en remplaçait un autre.
-    expect(rules.map((r) => r.toolName).sort()).toEqual([
+    expect(
+      rules
+        .filter((r) => r.action === 'block')
+        .map((r) => r.toolName)
+        .sort(),
+    ).toEqual([
       'file_edit',
       'file_move',
       'file_write',

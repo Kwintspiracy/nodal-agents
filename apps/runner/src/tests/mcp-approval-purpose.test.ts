@@ -13,7 +13,7 @@ import { and, eq, approvalRequests } from '@nodal-agents/db';
 import { spinUpTestDb, seedMinimal, type TestDb } from '@nodal-agents/db/test-utils';
 import { mcpToolToToolDefinition } from '@nodal-agents/adapter-mcp';
 import type { McpToolDescriptor } from '@nodal-agents/adapter-mcp';
-import { executeTool } from '@nodal-agents/tools';
+import { executeTool, templateAutonomy } from '@nodal-agents/tools';
 import type { ToolContext } from '@nodal-agents/tools';
 
 let db: TestDb;
@@ -50,8 +50,22 @@ describe('un outil MCP gaté garde la raison de l’agent @cap:approuver-une-act
     const def = mcpToolToToolDefinition({ callTool } as unknown as McpClient, descriptor, 'cogni');
     const phrase = 'Relire la page d’accueil avant de proposer un changement.';
 
+    // The row a newly attached MCP tool gets under the shipped level (#917).
     const result = await executeTool(def, { detail: true, purpose: phrase }, ctx(), {
-      approvalRules: [],
+      approvalRules: [
+        {
+          id: 'row',
+          toolName: def.name,
+          action: templateAutonomy(def, {
+            level: 'propose_confirm',
+            rules: [],
+            agentId: seed.agentId,
+            entityId: seed.entityId,
+          }),
+          agentId: seed.agentId,
+          entityId: seed.entityId,
+        },
+      ],
       onApprovalRequired: async () => {},
     });
 
