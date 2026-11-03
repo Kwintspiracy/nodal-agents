@@ -6,8 +6,8 @@
 // @nodal-agents/test-kit, no local copy to drift.
 
 import { describe, it, expect } from 'vitest';
-import { readdirSync, readFileSync } from 'node:fs';
-import { join, relative, sep } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   scanForAgentSlugs,
@@ -15,6 +15,7 @@ import {
   scanForDbDriverImports,
   scanForUserFacingStrings,
   assertNoViolations,
+  sourceFilesUnder,
 } from '@nodal-agents/test-kit';
 
 const srcDir = join(fileURLToPath(import.meta.url), '..', '..');
@@ -42,31 +43,17 @@ describe('architecture invariants', () => {
 // Until #940, `generate_speech` produced its audio through packages/llm (the AI
 // SDK's speech model pointed at OpenRouter), and this package held a second
 // set of vendors. One path remains: the adapters of this package. This scan
-// reads every product source file of the monorepo, tests excluded, and fails
+// reads every product source file of the monorepo (git's view of what is
+// source, from test-kit's `sourceFilesUnder`), tests excluded, and fails
 // on a second text-to-speech call site: the AI SDK's speech entry point, an
 // SDK speech model, or a request to a speech endpoint outside this package's
 // providers.
 
 const repoRoot = join(srcDir, '..', '..', '..');
-const SKIP = new Set(['node_modules', 'dist', '.next', '.turbo', 'tests', '__tests__', 'out']);
 
-function sourceFiles(dir: string, out: string[] = []): string[] {
-  let entries;
-  try {
-    entries = readdirSync(dir, { withFileTypes: true });
-  } catch {
-    return out;
-  }
-  for (const e of entries) {
-    if (SKIP.has(e.name)) continue;
-    const full = join(dir, e.name);
-    if (e.isDirectory()) sourceFiles(full, out);
-    else if (/\.(ts|tsx|mts|js|mjs)$/.test(e.name) && !/\.test\.[tj]sx?$/.test(e.name)) {
-      out.push(full);
-    }
-  }
-  return out;
-}
+/** A test reads or fakes these calls on purpose; product code may not. */
+const isTest = (rel: string): boolean =>
+  /(^|\/)(tests|__tests__)\//.test(rel) || /\.(test|spec)\.[cm]?[tj]sx?$/.test(rel);
 
 const SECOND_PATH = [
   {
@@ -82,19 +69,18 @@ const SECOND_PATH = [
 
 describe('one speech path @cap:travailler-sur-des-fichiers/moteur', () => {
   it('no product source outside packages/speech/src/providers calls a text-to-speech API', () => {
-    const roots = ['packages', 'apps'].map((r) => join(repoRoot, r));
-    const files = roots.flatMap((r) => sourceFiles(r));
+    const files = ['packages', 'apps']
+      .flatMap((r) => sourceFilesUnder(join(repoRoot, r)))
+      .map((file) => ({ file, rel: relative(repoRoot, file).replaceAll('\\', '/') }))
+      .filter(({ rel }) => /\.[cm]?[tj]sx?$/.test(rel) && !isTest(rel));
     // The scan must have read the monorepo, not an empty folder.
-    expect(
-      files.some((f) => f.endsWith(join('tools', 'src', 'builtin', 'generate-speech.ts'))),
-    ).toBe(true);
-    const providers = join(srcDir, 'providers') + sep;
+    expect(files.map((f) => f.rel)).toContain('packages/tools/src/builtin/generate-speech.ts');
     const found: string[] = [];
-    for (const file of files) {
-      if (file.startsWith(providers)) continue;
+    for (const { file, rel } of files) {
+      if (rel.startsWith('packages/speech/src/providers/')) continue;
       const text = readFileSync(file, 'utf8');
       for (const { what, re } of SECOND_PATH) {
-        if (re.test(text)) found.push(`${relative(repoRoot, file)}: ${what}`);
+        if (re.test(text)) found.push(`${rel}: ${what}`);
       }
     }
     expect(found).toEqual([]);
