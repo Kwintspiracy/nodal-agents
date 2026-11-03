@@ -299,6 +299,11 @@ export interface SetAgentModelInput {
   readonly model: string;
   /** null = Auto (the provider's default). */
   readonly reasoningEffort: (typeof agents.$inferSelect)['reasoningEffort'];
+  /**
+   * The effort of a chat turn whose reply is heard (#977), on the same model's
+   * scale; null = Auto. Undefined keeps the one the agent holds.
+   */
+  readonly spokenReasoningEffort?: (typeof agents.$inferSelect)['spokenReasoningEffort'];
   /** The primary key to set; undefined keeps the one the agent holds. */
   readonly llmKeyId?: string | null;
 }
@@ -325,6 +330,9 @@ export async function setAgentModelRepo(
     reasoningEffort: input.reasoningEffort,
     updatedAt: new Date(),
   };
+  if (input.spokenReasoningEffort !== undefined) {
+    patch.spokenReasoningEffort = input.spokenReasoningEffort;
+  }
   if (input.llmKeyId !== undefined) {
     patch.llmKeyId = input.llmKeyId;
     patch.fallbackChain = (agent.fallbackChain ?? []).filter(

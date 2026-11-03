@@ -343,6 +343,10 @@ export default function AgentComposer({
   const [model, setModel] = useState<string>(agent.model ?? '');
   // '' = Auto (provider default). Levels offered come from the catalog.
   const [reasoningEffort, setReasoningEffort] = useState<string>(agent.reasoningEffort ?? '');
+  // « Reasoning when spoken to » (#977) — '' = Auto, comme Reasoning.
+  const [spokenReasoningEffort, setSpokenReasoningEffort] = useState<string>(
+    agent.spokenReasoningEffort ?? '',
+  );
   const [avatarUrl, setAvatarUrl] = useState<string | null>(agent.avatarUrl ?? null);
   // Runtime (étape E): 'nodal' | 'claude-code'. Saved immediately via its own
   // action (setAgentRuntimeAction) — not part of the Save/Reset dirty flow.
@@ -430,6 +434,7 @@ export default function AgentComposer({
     JSON.stringify(fallbackChain) !== JSON.stringify(agent.fallbackChain ?? []) ||
     model !== (agent.model ?? '') ||
     reasoningEffort !== (agent.reasoningEffort ?? '') ||
+    spokenReasoningEffort !== (agent.spokenReasoningEffort ?? '') ||
     avatarUrl !== (agent.avatarUrl ?? null);
 
   // ── handlers ─────────────────────────────────────────────────────────────
@@ -442,11 +447,10 @@ export default function AgentComposer({
     const firstCurated = newKey ? (MODEL_CATALOG[newKey.provider]?.[0]?.modelId ?? '') : '';
     setModel(firstCurated);
     // An effort only makes sense if the new provider+model still offers it.
-    if (
-      reasoningEffort &&
-      !reasoningOptionValues(newKey?.provider ?? '', firstCurated).includes(reasoningEffort)
-    ) {
-      setReasoningEffort('');
+    const offered = reasoningOptionValues(newKey?.provider ?? '', firstCurated);
+    if (reasoningEffort && !offered.includes(reasoningEffort)) setReasoningEffort('');
+    if (spokenReasoningEffort && !offered.includes(spokenReasoningEffort)) {
+      setSpokenReasoningEffort('');
     }
     // Prefetch live models for this key if not yet cached.
     if (id && liveModelsCache[id] === undefined) {
@@ -462,8 +466,10 @@ export default function AgentComposer({
     setModel(next);
     // An effort the new model's control doesn't offer is dropped back to Auto.
     const provider = llmKeys.find((k) => k.id === llmKeyId)?.provider ?? '';
-    if (reasoningEffort && !reasoningOptionValues(provider, next).includes(reasoningEffort)) {
-      setReasoningEffort('');
+    const offered = reasoningOptionValues(provider, next);
+    if (reasoningEffort && !offered.includes(reasoningEffort)) setReasoningEffort('');
+    if (spokenReasoningEffort && !offered.includes(spokenReasoningEffort)) {
+      setSpokenReasoningEffort('');
     }
   }
 
@@ -533,6 +539,7 @@ export default function AgentComposer({
       subAgentInstructions,
       avatarUrl,
       reasoningEffort: reasoningEffort || null,
+      spokenReasoningEffort: spokenReasoningEffort || null,
     };
     startTransition(async () => {
       const result = await updateAgentAction(payload);
@@ -555,6 +562,7 @@ export default function AgentComposer({
     setFallbackChain(agent.fallbackChain ?? []);
     setModel(agent.model ?? '');
     setReasoningEffort(agent.reasoningEffort ?? '');
+    setSpokenReasoningEffort(agent.spokenReasoningEffort ?? '');
     setAvatarUrl(agent.avatarUrl ?? null);
   }
 
@@ -721,6 +729,7 @@ export default function AgentComposer({
             selectedKey={selectedKey}
             model={model}
             reasoningEffort={reasoningEffort}
+            spokenReasoningEffort={spokenReasoningEffort}
             noLlmKeys={noLlmKeys}
             workspaces={workspaces}
             workspacesLoaded={workspacesLoaded}
@@ -740,6 +749,7 @@ export default function AgentComposer({
             onChangeLlmKey={handleLlmKeyChange}
             onChangeModel={handleModelChange}
             onChangeReasoningEffort={setReasoningEffort}
+            onChangeSpokenReasoningEffort={setSpokenReasoningEffort}
             onSave={handleSave}
             onReset={handleReset}
             liveModelsCache={liveModelsCache}
@@ -3008,6 +3018,8 @@ function SettingsTab(props: {
   selectedKey: LlmKeyUiRow | null;
   model: string;
   reasoningEffort: string;
+  /** « Reasoning when spoken to » (#977) — '' = Auto. */
+  spokenReasoningEffort: string;
   noLlmKeys: boolean;
   workspaces: AgentWorkspaceRow[];
   workspacesLoaded: boolean;
@@ -3027,6 +3039,7 @@ function SettingsTab(props: {
   onChangeLlmKey: (id: string) => void;
   onChangeModel: (v: string) => void;
   onChangeReasoningEffort: (v: string) => void;
+  onChangeSpokenReasoningEffort: (v: string) => void;
   onSave: () => void;
   onReset: () => void;
   liveModelsCache: Record<string, string[]>;
@@ -3064,6 +3077,7 @@ function SettingsTab(props: {
     selectedKey,
     model,
     reasoningEffort,
+    spokenReasoningEffort,
     noLlmKeys,
     workspaces,
     workspacesLoaded,
@@ -3083,6 +3097,7 @@ function SettingsTab(props: {
     onChangeLlmKey,
     onChangeModel,
     onChangeReasoningEffort,
+    onChangeSpokenReasoningEffort,
     onSave,
     onReset,
     liveModelsCache,
@@ -3559,6 +3574,32 @@ function SettingsTab(props: {
                   </Select>
                   <p className="mt-1.5 text-body-13 text-ink-4">
                     How hard this model thinks before answering. Auto keeps the provider default.
+                  </p>
+                </Field>
+              )}
+              {/* #977 — l'effort d'un tour de chat dont la réponse est ENTENDUE
+                  (le tour vocal, quel que soit le client). Les mêmes paliers
+                  que Reasoning, rangés à part : le job que ce tour lance et
+                  les tours tapés gardent Reasoning. */}
+              {reasoningOptions.length > 0 && (
+                <Field label="Reasoning when spoken to">
+                  <Select
+                    aria-label="Reasoning when spoken to"
+                    value={
+                      reasoningOptions.includes(spokenReasoningEffort) ? spokenReasoningEffort : ''
+                    }
+                    onChange={(e) => onChangeSpokenReasoningEffort(e.target.value)}
+                    className="!rounded-lg !bg-canvas !px-3 !py-2 !text-body-14"
+                  >
+                    <option value="">Auto</option>
+                    {reasoningOptions.map((v) => (
+                      <option key={v} value={v}>
+                        {REASONING_LABELS[v] ?? v}
+                      </option>
+                    ))}
+                  </Select>
+                  <p className="mt-1.5 text-body-13 text-ink-4">
+                    For the reply you hear. Typed chat and the tasks it starts keep Reasoning.
                   </p>
                 </Field>
               )}

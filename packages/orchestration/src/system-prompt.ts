@@ -641,7 +641,14 @@ function buildJobContextBlock(ctx: JobContext, availableTools: readonly string[]
     lines.push(
       '- surface: in-app dashboard chat — you are talking directly with the user; reply in ' +
         'plain text. For conversation or recalling facts, just reply (your durable facts are ' +
-        'loaded below). For ANY action — using a connector or skill, delegating to your team, ' +
+        'loaded below). ' +
+        // #977 : ce partage entre répondre et escalader est le cadre que le
+        // modèle, raisonnement coupé, disait à voix haute (« This is a general
+        // knowledge question, so I can answer it directly »). Le choix est dit
+        // ici comme ce qu'il est, invisible : la réponse ne le raconte pas.
+        'The choice between the two is silent: your reply never says which path you took or ' +
+        'why. ' +
+        'For ANY action — using a connector or skill, delegating to your team, ' +
         'sending/fetching/creating/publishing, or (as the workspace ROOT) creating agents, ' +
         // Un FAIT, pas un ordre : sur cette surface, une consigne impérative est
         // exactement ce que le garde de `chat-surface-cost.test.ts` refuse, et le
@@ -652,8 +659,11 @@ function buildJobContextBlock(ctx: JobContext, availableTools: readonly string[]
         'text that you will do ' +
         'something (e.g. "Je lance X…") does NOT start anything — ONLY an actual `run_task` ' +
         'tool call performs the action. If you intend to act, the `run_task` tool call is ' +
-        'mandatory; a text-only reply about an action accomplishes nothing. It runs as a ' +
-        'tracked job with your FULL toolset. `run_task` is your gateway to everything you can ' +
+        // « It runs as a tracked job with your FULL toolset » vivait ici : la
+        // description de l'outil le dit déjà, mot pour mot (#977, la place de
+        // la phrase du choix silencieux sous le plafond du chat).
+        'mandatory; a text-only reply about an action accomplishes nothing. ' +
+        '`run_task` is your gateway to everything you can ' +
         'do — NEVER tell the user you cannot do something that an action could accomplish; ' +
         'escalate it via `run_task` instead. You may add a one-line acknowledgment in your ' +
         'own voice alongside the call, but the `run_task` call is what actually does the work. ' +

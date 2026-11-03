@@ -122,6 +122,7 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       personality text NOT NULL,
       model text DEFAULT 'claude-sonnet-4-6-20260217',
       reasoning_effort text,
+      spoken_reasoning_effort text,
       llm_key_id uuid REFERENCES entity_llm_keys(id) ON DELETE SET NULL,
       fallback_chain jsonb DEFAULT '[]'::jsonb,
       active boolean DEFAULT true,

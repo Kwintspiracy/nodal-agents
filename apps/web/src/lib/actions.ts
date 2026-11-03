@@ -694,6 +694,8 @@ export type AgentRow = {
   fallbackChain?: Array<{ keyId: string; model: string; reasoningEffort?: string }> | null;
   // Reasoning effort for the primary model — null/absent = Auto.
   reasoningEffort?: string | null;
+  // The same, for a chat turn whose reply is heard (#977) — null/absent = Auto.
+  spokenReasoningEffort?: string | null;
   active: boolean | null;
   isDefault: boolean | null;
   role: string | null;
@@ -1172,6 +1174,9 @@ const UpdateAgentSchema = z.object({
   // Level-vs-model coherence is enforced by the UI (options come from the
   // catalog's reasoningControl); the runtime drops an invalid value loudly.
   reasoningEffort: z.enum(['off', 'low', 'medium', 'high', 'max']).nullable().optional(),
+  // « Reasoning when spoken to » (#977) : l'effort d'un tour de chat dont la
+  // réponse est entendue, sur la même échelle. Mêmes règles que ci-dessus.
+  spokenReasoningEffort: z.enum(['off', 'low', 'medium', 'high', 'max']).nullable().optional(),
   role: z.enum(['worker', 'router', 'planner']),
   subAgentIds: z.array(z.string().guid()).default([]),
   // Per-sub-agent routing instructions (agent_assignments.instructions), keyed
@@ -1222,6 +1227,7 @@ export async function updateAgentAction(raw: unknown): Promise<ActionResult<void
       subAgentInstructions,
       avatarUrl,
       reasoningEffort,
+      spokenReasoningEffort,
     } = parsed.data;
     const db = getDb();
 
@@ -1287,6 +1293,9 @@ export async function updateAgentAction(raw: unknown): Promise<ActionResult<void
     // Reasoning effort: undefined = don't touch (legacy clients); null = Auto.
     if (reasoningEffort !== undefined) {
       patch['reasoningEffort'] = reasoningEffort;
+    }
+    if (spokenReasoningEffort !== undefined) {
+      patch['spokenReasoningEffort'] = spokenReasoningEffort;
     }
 
     // Whole mutation is one transaction (F-19, audit #2 + R4 follow-up): the
@@ -7961,6 +7970,7 @@ export async function setAgentModelAndEffortAction(raw: unknown): Promise<Action
         role: agents.role,
         llmKeyId: agents.llmKeyId,
         fallbackChain: agents.fallbackChain,
+        spokenReasoningEffort: agents.spokenReasoningEffort,
       })
       .from(agents)
       .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
@@ -8007,10 +8017,20 @@ export async function setAgentModelAndEffortAction(raw: unknown): Promise<Action
     // L'écriture, et le retrait de la clé primaire de la chaîne de repli (même
     // nettoyage que `updateAgentAction`, sinon l'agent se relancerait sur
     // lui-même) : setAgentModelRepo (@nodal-agents/db), le chemin du banc aussi.
+    // « Reasoning when spoken to » (#977) est sur l'échelle du même modèle :
+    // un palier que le nouveau modèle n'offre pas repasse à Auto, comme
+    // l'écran d'édition le fait quand on y change de modèle. Sinon l'écran
+    // afficherait Auto pendant que le moteur enverrait l'ancien palier.
+    const keptSpokenEffort =
+      agent.spokenReasoningEffort !== null &&
+      isRefusedEffort(provider, model, agent.spokenReasoningEffort)
+        ? null
+        : agent.spokenReasoningEffort;
     const written = await setAgentModelRepo(db, session.entityId, {
       agentId,
       model,
       reasoningEffort,
+      spokenReasoningEffort: keptSpokenEffort,
       ...(llmKeyId !== undefined ? { llmKeyId } : {}),
     });
     if ('error' in written) return fail('not_found', 'Agent not found');
