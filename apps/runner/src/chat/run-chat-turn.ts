@@ -555,6 +555,13 @@ export async function runChatTurn(opts: {
 
   // 2. Resolve the per-agent LLM client + failover chain (shared with executeJob
   //    via resolveAgentLlmClient so the chain logic can't drift — Guard 2).
+  //
+  //    L'effort de CE tour (#977) : un tour dont la réponse sera entendue prend
+  //    le réglage « Reasoning when spoken to » de l'agent, un tour tapé son
+  //    Reasoning. Les deux sont rangés, aucun ne se déduit de l'autre. Le
+  //    client sert tout le tour — réponse, relecture d'escalade, relance sans
+  //    outils, titre —, qui pense donc d'un seul effort ; le job que le tour
+  //    lance (`execute.ts`) résout le sien, avec le Reasoning de l'agent.
   const resolved = await resolveAgentLlmClient(
     db,
     {
@@ -562,7 +569,9 @@ export async function runChatTurn(opts: {
       llmKeyId: agentRow.llmKeyId,
       fallbackChain: agentRow.fallbackChain ?? null,
       model: agentRow.model ?? DEFAULT_MODEL,
-      reasoningEffort: agentRow.reasoningEffort ?? null,
+      reasoningEffort:
+        (replyRendering === 'spoken' ? agentRow.spokenReasoningEffort : agentRow.reasoningEffort) ??
+        null,
     },
     undefined,
     // étape D: a chat turn makes up to 3 LLM calls (main, escalation recheck,

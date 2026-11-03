@@ -31,6 +31,12 @@ export const agents = pgTable(
     // NULL = Auto (provider default — pre-feature behavior). Validated at the
     // app layer against the model's reasoningControl (model-catalog.ts).
     reasoningEffort: text('reasoning_effort'),
+    // Reasoning effort of a chat turn whose reply is HEARD (`reply_rendering`
+    // 'spoken', #958), on the primary model's scale — same values, same NULL =
+    // Auto. Only that turn: the job it launches through `run_task`, typed turns
+    // and reflection keep `reasoning_effort` (#977). Stored, never derived from
+    // `reasoning_effort`.
+    spokenReasoningEffort: text('spoken_reasoning_effort'),
     llmKeyId: uuid('llm_key_id').references(() => entityLlmKeys.id, { onDelete: 'set null' }),
     // Ordered LLM-key fallback chain (Guard 2). When the primary key
     // (llmKeyId) exhausts retries / times out / hits quota mid-job, the runner

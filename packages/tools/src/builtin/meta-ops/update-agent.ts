@@ -7,6 +7,7 @@
 
 import { z } from 'zod';
 import { eq, and, agents } from '@nodal-agents/db';
+import { effortKeptOnModel } from '@nodal-agents/shared';
 import type { ToolDefinition } from '../../types';
 import { resolveAgentProvider, validateModelForProvider } from './agent-model';
 
@@ -53,7 +54,13 @@ export const updateAgentTool: ToolDefinition<typeof UpdateAgentInput, UpdateAgen
     }
 
     const [agent] = await ctx.db
-      .select({ id: agents.id, llmKeyId: agents.llmKeyId })
+      .select({
+        id: agents.id,
+        llmKeyId: agents.llmKeyId,
+        model: agents.model,
+        reasoningEffort: agents.reasoningEffort,
+        spokenReasoningEffort: agents.spokenReasoningEffort,
+      })
       .from(agents)
       .where(and(eq(agents.entityId, ctx.entityId), eq(agents.slug, input.slug)));
 
@@ -64,6 +71,7 @@ export const updateAgentTool: ToolDefinition<typeof UpdateAgentInput, UpdateAgen
       };
     }
 
+    const patch: Record<string, unknown> = { updatedAt: new Date() };
     // Validate the new model against the agent's provider catalog.
     if (input.model) {
       const resolved = await resolveAgentProvider(ctx.db, ctx.entityId, agent.llmKeyId);
@@ -71,10 +79,19 @@ export const updateAgentTool: ToolDefinition<typeof UpdateAgentInput, UpdateAgen
         const check = validateModelForProvider(resolved.provider, input.model);
         if (!check.ok) return check;
       }
+      // A new model brings back to Auto each stored effort it does not offer:
+      // the rule of every model change (`effortKeptOnModel`, #977).
+      if (input.model !== agent.model) {
+        const provider = resolved?.provider ?? '';
+        patch['reasoningEffort'] = effortKeptOnModel(provider, input.model, agent.reasoningEffort);
+        patch['spokenReasoningEffort'] = effortKeptOnModel(
+          provider,
+          input.model,
+          agent.spokenReasoningEffort,
+        );
+      }
+      patch['model'] = input.model;
     }
-
-    const patch: Record<string, unknown> = { updatedAt: new Date() };
-    if (input.model) patch['model'] = input.model;
     if (input.personality) patch['personality'] = input.personality;
     if (input.name) patch['name'] = input.name;
 

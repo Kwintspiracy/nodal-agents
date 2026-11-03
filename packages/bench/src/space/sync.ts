@@ -93,6 +93,9 @@ export const ENTITY_POLICY = {
   // #917 : l'heure où les lignes d'autonomie d'avant ont été écrites. Une
   // copie reçoit les lignes de la source, déjà écrites : elle naît `now()`.
   autonomyRowsWrittenAt: 'own',
+  // #977 : la première écriture de l'effort d'un tour dit. La copie reçoit
+  // les agents de la source, valeur comprise : elle naît `now()`.
+  spokenReasoningWrittenAt: 'own',
 } as const satisfies Record<string, ColumnPolicy>;
 
 export const AGENT_POLICY = {
@@ -103,6 +106,8 @@ export const AGENT_POLICY = {
   personality: 'copy',
   model: 'copy',
   reasoningEffort: 'copy',
+  // #977 : l'effort d'un tour dit, un réglage de l'agent comme Reasoning.
+  spokenReasoningEffort: 'copy',
   llmKeyId: 'map',
   fallbackChain: 'map',
   active: 'copy',

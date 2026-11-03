@@ -55,6 +55,7 @@ export {
   attachAgentToOrchestrator,
   orchestratorModelToolsError,
   setAgentModelRepo,
+  writeFirstSpokenReasoningAtBoot,
 } from './repos/agents.ts';
 export type { SetAgentModelInput } from './repos/agents.ts';
 export {

@@ -13,7 +13,7 @@
 // sur le message de retour.
 
 import { describe, it, expect, beforeAll } from 'vitest';
-import { eq, and, agents, agentSchedules, entities, users } from '@nodal-agents/db';
+import { eq, and, agents, agentSchedules, entities, entityLlmKeys, users } from '@nodal-agents/db';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import type { ToolContext } from '../types';
@@ -219,5 +219,45 @@ describe('toggle_schedule', () => {
 
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.error).toMatch(/no schedule named/i);
+  });
+});
+
+// #977, review A pass 1: a model change by the root brings back to Auto each
+// stored effort the new model does not offer (`effortKeptOnModel`), Reasoning
+// and Reasoning when spoken to alike; an offered one is kept.
+// Mutation verified: the reset removed from update_agent → red (both stay).
+describe('update_agent — a model change keeps only the efforts the new model offers (#977) @cap:choisir-modele/moteur', () => {
+  it('resets an unoffered effort, keeps an offered one, and touches neither without a model change', async () => {
+    const [key] = await db
+      .insert(entityLlmKeys)
+      .values({ entityId: seed.entityId, provider: 'openrouter', apiKey: '', nickname: 'OR' })
+      .returning();
+    const slug = `efforts-${Date.now()}`;
+    await db.insert(agents).values({
+      entityId: seed.entityId,
+      name: 'Efforts',
+      slug,
+      personality: 'Test.',
+      llmKeyId: key!.id,
+      model: 'anthropic/claude-haiku-5.5',
+      reasoningEffort: 'off',
+      spokenReasoningEffort: 'low',
+    });
+
+    // Mandatory reasoning: Off is not offered, Low is.
+    const r = await updateAgentTool.execute({ slug, model: 'anthropic/claude-sonnet-5.5' }, ctx());
+    expect(r.ok).toBe(true);
+    let row = await agentParSlug(slug);
+    expect([row?.model, row?.reasoningEffort, row?.spokenReasoningEffort]).toEqual([
+      'anthropic/claude-sonnet-5.5',
+      null,
+      'low',
+    ]);
+
+    // No model change: a stored value is never touched.
+    await db.update(agents).set({ reasoningEffort: 'off' }).where(eq(agents.slug, slug));
+    await updateAgentTool.execute({ slug, personality: 'Changed.' }, ctx());
+    row = await agentParSlug(slug);
+    expect([row?.reasoningEffort, row?.spokenReasoningEffort]).toEqual(['off', 'low']);
   });
 });

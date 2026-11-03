@@ -678,6 +678,10 @@ describe('applySpaceModel — le modèle des copies pour une série, puis restau
           model: d.agents.model,
           llmKeyId: d.agents.llmKeyId,
           fallbackChain: d.agents.fallbackChain,
+          // #977 : le modèle de la série peut ramener les efforts à Auto ;
+          // `restore()` doit les rendre aussi.
+          reasoningEffort: d.agents.reasoningEffort,
+          spokenReasoningEffort: d.agents.spokenReasoningEffort,
         })
         .from(d.agents)
         .where(d.eq(d.agents.entityId, spaceId))
@@ -692,8 +696,22 @@ describe('applySpaceModel — le modèle des copies pour une série, puis restau
     const during = await snapCopies();
     const backupKey = copyIdFor(spaceId, 'entity_llm_keys', team.keyFallback.id);
     expect(during.filter((a) => a.slug !== 'coder')).toEqual([
-      { slug: 'alfred', model: 'claude-opus-5-5', llmKeyId: backupKey, fallbackChain: [] },
-      { slug: 'writer', model: 'claude-opus-5-5', llmKeyId: backupKey, fallbackChain: [] },
+      {
+        slug: 'alfred',
+        model: 'claude-opus-5-5',
+        llmKeyId: backupKey,
+        fallbackChain: [],
+        reasoningEffort: null,
+        spokenReasoningEffort: null,
+      },
+      {
+        slug: 'writer',
+        model: 'claude-opus-5-5',
+        llmKeyId: backupKey,
+        fallbackChain: [],
+        reasoningEffort: null,
+        spokenReasoningEffort: null,
+      },
     ]);
     expect(during.find((a) => a.slug === 'coder')).toEqual(
       original.find((a) => a.slug === 'coder'),

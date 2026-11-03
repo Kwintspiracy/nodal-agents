@@ -92,6 +92,18 @@ export const entities = pgTable(
       withTimezone: true,
     }).defaultNow(),
     /**
+     * L'heure de la PREMIÈRE écriture de « Reasoning when spoken to » (#977,
+     * migration 0159) sur les agents qui existaient avant : `off` là où le
+     * modèle l'offre, Auto ailleurs. NULL : pas encore fait, l'état de tout
+     * espace d'avant 0159 ; le runner le fait à son démarrage
+     * (`writeFirstSpokenReasoningAtBoot`, @nodal-agents/db). Un espace créé
+     * après naît avec `now()` : ses agents reçoivent cette valeur à leur
+     * création (`createAgentRepo`).
+     */
+    spokenReasoningWrittenAt: timestamp('spoken_reasoning_written_at', {
+      withTimezone: true,
+    }).defaultNow(),
+    /**
      * Interrupteur maitre du serveur MCP (PR C, decision Quentin 23/08).
      * Defaut FERME : un point d'entree externe qui cree des jobs doit etre
      * ouvert par un geste explicite, pas exister parce qu'un paquet est

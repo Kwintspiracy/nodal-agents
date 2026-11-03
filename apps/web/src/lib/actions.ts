@@ -307,7 +307,7 @@ import {
 } from '@nodal-agents/shared';
 import { toElicitationView, type ElicitationView } from './elicitation-view.ts';
 import { readAttachmentViews } from './elicitation-attachments.ts';
-import { isRefusedEffort } from './model-choices.ts';
+import { effortKeptOnModel, isRefusedEffort } from './model-choices.ts';
 import type { ConversationFeed, Step } from './conversation-feed.ts';
 import {
   parsePresented,
@@ -694,6 +694,8 @@ export type AgentRow = {
   fallbackChain?: Array<{ keyId: string; model: string; reasoningEffort?: string }> | null;
   // Reasoning effort for the primary model — null/absent = Auto.
   reasoningEffort?: string | null;
+  // The same, for a chat turn whose reply is heard (#977) — null/absent = Auto.
+  spokenReasoningEffort?: string | null;
   active: boolean | null;
   isDefault: boolean | null;
   role: string | null;
@@ -1172,6 +1174,9 @@ const UpdateAgentSchema = z.object({
   // Level-vs-model coherence is enforced by the UI (options come from the
   // catalog's reasoningControl); the runtime drops an invalid value loudly.
   reasoningEffort: z.enum(['off', 'low', 'medium', 'high', 'max']).nullable().optional(),
+  // « Reasoning when spoken to » (#977) : l'effort d'un tour de chat dont la
+  // réponse est entendue, sur la même échelle. Mêmes règles que ci-dessus.
+  spokenReasoningEffort: z.enum(['off', 'low', 'medium', 'high', 'max']).nullable().optional(),
   role: z.enum(['worker', 'router', 'planner']),
   subAgentIds: z.array(z.string().guid()).default([]),
   // Per-sub-agent routing instructions (agent_assignments.instructions), keyed
@@ -1222,12 +1227,19 @@ export async function updateAgentAction(raw: unknown): Promise<ActionResult<void
       subAgentInstructions,
       avatarUrl,
       reasoningEffort,
+      spokenReasoningEffort,
     } = parsed.data;
     const db = getDb();
 
     // Verify agent exists and belongs to this entity
     const [existing] = await db
-      .select({ id: agents.id, llmKeyId: agents.llmKeyId })
+      .select({
+        id: agents.id,
+        llmKeyId: agents.llmKeyId,
+        model: agents.model,
+        reasoningEffort: agents.reasoningEffort,
+        spokenReasoningEffort: agents.spokenReasoningEffort,
+      })
       .from(agents)
       .where(and(eq(agents.id, id), eq(agents.entityId, session.entityId)));
     if (!existing) return fail('not_found', 'Agent not found');
@@ -1287,6 +1299,40 @@ export async function updateAgentAction(raw: unknown): Promise<ActionResult<void
     // Reasoning effort: undefined = don't touch (legacy clients); null = Auto.
     if (reasoningEffort !== undefined) {
       patch['reasoningEffort'] = reasoningEffort;
+    }
+    if (spokenReasoningEffort !== undefined) {
+      patch['spokenReasoningEffort'] = spokenReasoningEffort;
+    }
+    // Un changement de modèle (ou de clé) ramène à Auto chaque effort que le
+    // nouveau modèle n'offre pas, par LA règle de tout changement de modèle
+    // (`effortKeptOnModel`, #977). Le formulaire le fait déjà ; une requête
+    // qui ne passe pas par lui, ou qui ne touche pas aux efforts, aussi.
+    const effectiveKeyId = llmKeyId !== undefined ? llmKeyId : existing.llmKeyId;
+    if (model !== existing.model || effectiveKeyId !== existing.llmKeyId) {
+      const [key] = effectiveKeyId
+        ? await db
+            .select({ provider: entityLlmKeys.provider })
+            .from(entityLlmKeys)
+            .where(
+              and(
+                eq(entityLlmKeys.id, effectiveKeyId),
+                eq(entityLlmKeys.entityId, session.entityId),
+              ),
+            )
+        : [];
+      const provider = key?.provider ?? '';
+      patch['reasoningEffort'] = effortKeptOnModel(
+        provider,
+        model,
+        reasoningEffort !== undefined ? reasoningEffort : existing.reasoningEffort,
+      );
+      patch['spokenReasoningEffort'] = effortKeptOnModel(
+        provider,
+        model,
+        spokenReasoningEffort !== undefined
+          ? spokenReasoningEffort
+          : existing.spokenReasoningEffort,
+      );
     }
 
     // Whole mutation is one transaction (F-19, audit #2 + R4 follow-up): the
@@ -8007,6 +8053,10 @@ export async function setAgentModelAndEffortAction(raw: unknown): Promise<Action
     // L'écriture, et le retrait de la clé primaire de la chaîne de repli (même
     // nettoyage que `updateAgentAction`, sinon l'agent se relancerait sur
     // lui-même) : setAgentModelRepo (@nodal-agents/db), le chemin du banc aussi.
+    // « Reasoning when spoken to » (#977) n'est pas passé : setAgentModelRepo
+    // le garde, sauf si le nouveau modèle ne l'offre pas (`effortKeptOnModel`,
+    // la règle de tout changement de modèle). Reasoning arrive avec la
+    // requête, et un palier non offert y est refusé plus haut.
     const written = await setAgentModelRepo(db, session.entityId, {
       agentId,
       model,

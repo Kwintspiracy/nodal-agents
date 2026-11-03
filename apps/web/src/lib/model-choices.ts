@@ -16,35 +16,21 @@
 
 import {
   MODEL_CATALOG,
-  findModelCatalogEntry,
   groupModelCatalog,
   modelOptionLabel,
+  REASONING_BUDGET_ORDER,
+  effortKeptOnModel,
+  isRefusedEffort,
+  reasoningOptionValues,
   type ModelCatalogEntry,
 } from '@nodal-agents/shared';
 import { prettyProviderName } from './provider-names.ts';
 
-/** L'ordre des paliers d'un contrôle `budget` — du plus petit au plus grand. */
-export const REASONING_BUDGET_ORDER = ['low', 'medium', 'high', 'max'] as const;
-
-/**
- * Les valeurs d'effort sélectionnables pour un couple fournisseur + modèle,
- * telles que le catalogue les déclare (`reasoningControl`) : les paliers du
- * modèle, plus `off` sauf quand le raisonnement est obligatoire.
- *
- * Tableau vide = rien à régler — le champ se cache plutôt que d'offrir un
- * choix sans effet (inv. #4 : pas de faux réglage).
- */
-export function reasoningOptionValues(provider: string, modelId: string): string[] {
-  const control = findModelCatalogEntry(provider, modelId)?.capabilities.reasoningControl;
-  if (!control) return [];
-  const levels =
-    control.kind === 'onoff'
-      ? []
-      : control.kind === 'budget'
-        ? REASONING_BUDGET_ORDER.filter((l) => control.budgets?.[l])
-        : (control.levels ?? []);
-  return control.mandatory ? [...levels] : [...levels, 'off'];
-}
+// `reasoningOptionValues` et `REASONING_BUDGET_ORDER` vivent dans
+// `@nodal-agents/shared` depuis #977 (la base écrit aussi la première valeur de
+// « Reasoning when spoken to », par la même règle) ; réexportés ici pour les
+// écrans qui les importaient d'ici.
+export { REASONING_BUDGET_ORDER, effortKeptOnModel, isRefusedEffort, reasoningOptionValues };
 
 /** Le nom lisible d'un effort. Une valeur inconnue se rend telle quelle. */
 export const REASONING_LABELS: Record<string, string> = {
@@ -173,18 +159,4 @@ export function disabledHintFor(choice: ModelChoice, requireTools: boolean): str
   if (!requireTools) return null;
   if (choice.entry === undefined || choice.entry.capabilities.tools) return null;
   return NO_TOOLS_HINT;
-}
-
-/**
- * L'effort demandé est-il refusable ? Vrai SEULEMENT quand le modèle est
- * catalogué et que son contrôle ne l'offre pas.
- *
- * Un modèle hors catalogue (un identifiant libre, un modèle vu en direct) ne
- * dit rien de ses paliers : le refuser interdirait un réglage que l'écran
- * d'édition accepte, et inventer un verdict à partir d'une absence serait un
- * faux « non ». On ne refuse donc que ce qu'on SAIT faux.
- */
-export function isRefusedEffort(provider: string, modelId: string, effort: string): boolean {
-  if (findModelCatalogEntry(provider, modelId) === undefined) return false;
-  return !reasoningOptionValues(provider, modelId).includes(effort);
 }

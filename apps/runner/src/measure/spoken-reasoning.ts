@@ -1,0 +1,414 @@
+// measure/spoken-reasoning.ts — la mesure qui choisit la valeur de départ de
+// « Reasoning when spoken to » (#977).
+//
+// Pour chaque effort demandé, elle joue des tours de chat DITS par le vrai
+// `runChatTurn`, avec le vrai prompt système d'un agent lu dans la base qu'on
+// lui donne, et relève pour chaque tour : la décision (`run_task` appelé ou
+// non, et si c'était le bon choix), le temps jusqu'au premier fragment de
+// texte, les jetons de sortie, et si la réponse s'ouvre en racontant son
+// aiguillage (« This is a general knowledge question, so… »).
+//
+// POURQUOI UN SCRIPT, ET PAS UNE SCÉNARIO DU BANC. `packages/bench` joue ses
+// essais contre une stack qui tourne, par MCP ; un paquet ne peut pas importer
+// le runner (dependency-cruiser, `packages-cant-import-apps`). La mesure, elle,
+// doit appeler `runChatTurn` en direct, sans stack : elle vit donc dans le
+// runner, à côté du code qu'elle mesure.
+//
+// CE QU'ELLE ÉCRIT : RIEN. Chaque tour se joue dans UNE transaction annulée à
+// la fin : la conversation, les messages, le job qu'un `run_task` crée (jamais
+// visible, donc jamais exécuté par un runner qui tourne sur la même base), les
+// lignes `llm_calls`. L'effort mesuré n'est pas écrit sur l'agent : la
+// transaction lit une COPIE temporaire des agents de l'espace
+// (`pg_temp.agents`, qui masque `public.agents` pour cette seule transaction),
+// où l'effort est posé. Aucune ligne de `public.agents` n'est verrouillée, et
+// rien ne reste après le ROLLBACK. Chaque tour vérifie que l'effort rangé dans
+// sa trace est bien celui qu'il mesure, sinon la mesure s'arrête (invariant #4).
+//
+// Ce que la base ne voit jamais, en revanche : les appels au modèle sont
+// réels, et facturés sur la clé de l'agent.
+
+import { asc, conversations, eq, llmCalls, sql, type AnyDrizzleDb } from '@nodal-agents/db';
+import { REASONING_EFFORT_LEVELS, type ReasoningEffort } from '@nodal-agents/shared';
+import type { RunnerDeps } from '../deps.ts';
+import { runChatTurn } from '../chat/run-chat-turn.ts';
+import { runInLane } from '../chat/turn-lane.ts';
+
+/** Un effort mesuré : un palier de l'échelle, ou `auto` (NULL rangé). */
+export type MeasuredEffort = ReasoningEffort | 'auto';
+
+export function parseMeasuredEffort(value: string): MeasuredEffort {
+  if (value === 'auto') return 'auto';
+  if ((REASONING_EFFORT_LEVELS as readonly string[]).includes(value)) {
+    return value as ReasoningEffort;
+  }
+  throw new Error(
+    `unknown effort "${value}" (expected auto or one of ${REASONING_EFFORT_LEVELS.join(', ')})`,
+  );
+}
+
+/** Une demande de la mesure, et la décision juste pour elle. */
+export interface MeasureRequest {
+  id: string;
+  text: string;
+  /** Vrai : la bonne réponse appelle `run_task`. Faux : elle répond, sans job. */
+  needsTask: boolean;
+}
+
+/**
+ * Les douze demandes par défaut : six qui demandent un travail (une
+ * recherche, un fichier, une impression, une délégation de code, une
+ * automatisation, une page à lire), six qui n'en demandent aucun (l'heure
+ * ailleurs, un fait, un bonjour, un avis, un calcul connu, une explication
+ * courte). En français, la langue du propriétaire ; `--requests` en donne
+ * d'autres. Aucune ne sort de la base : le job qu'un tour crée est annulé
+ * avec lui, jamais exécuté.
+ */
+export const SPOKEN_REASONING_REQUESTS: readonly MeasureRequest[] = [
+  {
+    id: 'research',
+    text: "Fais une recherche sur l'histoire du vélo électrique et fais-moi un résumé.",
+    needsTask: true,
+  },
+  {
+    id: 'file',
+    text: 'Écris un fichier liste-courses.txt avec du lait, des œufs et du pain.',
+    needsTask: true,
+  },
+  { id: 'print', text: 'Imprime-moi une page avec la recette des crêpes.', needsTask: true },
+  {
+    id: 'delegate-code',
+    text: 'Demande à ton équipe de coder un petit script qui renomme mes photos par date.',
+    needsTask: true,
+  },
+  {
+    id: 'automation',
+    text: "Crée-moi un rappel tous les jours à 8 heures pour boire de l'eau.",
+    needsTask: true,
+  },
+  {
+    id: 'fetch',
+    text: "Va voir sur le site du musée d'Orsay ses horaires d'ouverture de demain.",
+    needsTask: true,
+  },
+  { id: 'time', text: 'Quelle heure est-il à Tokyo en ce moment ?', needsTask: false },
+  { id: 'fact', text: "Quelle est la capitale de l'Australie ?", needsTask: false },
+  { id: 'greeting', text: 'Bonjour, comment ça va ?', needsTask: false },
+  { id: 'opinion', text: 'Tu préfères le thé ou le café ?', needsTask: false },
+  { id: 'leap-year', text: 'Combien de jours compte une année bissextile ?', needsTask: false },
+  {
+    id: 'explain',
+    text: 'Explique-moi en deux phrases la différence entre un virus et une bactérie.',
+    needsTask: false,
+  },
+];
+
+/**
+ * Les ouvertures qui racontent l'aiguillage au lieu de répondre : le défaut
+ * vu le 03/11 (« This is a general knowledge question, so I can answer it
+ * directly. »). Lues sur la PREMIÈRE phrase seulement, en anglais et en
+ * français. Un repérage, pas un juge : chaque ouverture est aussi rendue
+ * telle quelle dans le relevé, pour être relue.
+ */
+const ROUTING_NARRATION: readonly RegExp[] = [
+  /\b(general[- ]knowledge|simple|quick|factual|straightforward|conversational|casual)\s+(question|request|query)\b/i,
+  /\b(answer|reply|respond)\s+(to\s+)?(it|this|that)?\s*(directly|right away|myself|without)\b/i,
+  /\bno need (to|for)\b.*\b(task|job|tool|delegat\w*)\b/i,
+  /\b(doesn'?t|does not|won'?t|will not)\s+(need|require)\b.*\b(task|job|tool|delegat\w*)\b/i,
+  /\bquestion\s+(de culture g[ée]n[ée]rale|g[ée]n[ée]rale|simple|factuelle)\b/i,
+  /\bje (peux|vais) (y )?r[ée]pondre (directement|moi-m[êe]me|tout de suite|sans)\b/i,
+  /\br[ée]pondre directement\b/i,
+  /\bpas besoin de\b.*\b(t[âa]che|job|outil|d[ée]l[ée]gu\w*|lancer)\b/i,
+  /\b(ne (n[ée]cessite|demande|requiert) pas)\b.*\b(t[âa]che|job|outil)\b/i,
+];
+
+/** La première phrase d'une réponse, bornée. */
+export function openingOf(reply: string): string {
+  const text = reply.trim();
+  const end = text.search(/[.!?…](\s|$)/);
+  return (end === -1 ? text : text.slice(0, end + 1)).slice(0, 240);
+}
+
+/** La réponse s'ouvre-t-elle en racontant le choix entre répondre et escalader ? */
+export function opensWithRoutingNarration(reply: string): boolean {
+  const opening = openingOf(reply);
+  return ROUTING_NARRATION.some((re) => re.test(opening));
+}
+
+/** Un tour joué, tel que la mesure le relève. */
+export interface TurnRecord {
+  effort: MeasuredEffort;
+  run: number;
+  requestId: string;
+  needsTask: boolean;
+  /** Le tour a lancé un job (`run_task`, relecture d'escalade comprise). */
+  calledRunTask: boolean;
+  /** La décision était la bonne pour cette demande. */
+  rightDecision: boolean;
+  /** Du début du tour au premier fragment de texte ; null : aucun texte diffusé. */
+  firstDeltaMs: number | null;
+  /** Du début du tour à son retour. */
+  totalMs: number;
+  /** Jetons de sortie de l'appel principal (la réponse), tels que `llm_calls` les a rangés. */
+  replyOutputTokens: number | null;
+  /** Jetons de sortie de tous les appels du tour (réponse, relecture, titre). */
+  turnOutputTokens: number | null;
+  /** Les appels du tour, dans l'ordre, et l'effort que chacun a demandé. */
+  calls: Array<{ reasoningEffort: string | null; outputTokens: number | null; ms: number | null }>;
+  opening: string;
+  routingNarration: boolean;
+  /** Le tour a échoué : le code rendu par `runChatTurn`. */
+  error?: string;
+}
+
+/** Lève pour annuler la transaction du tour ; jamais une erreur de la mesure. */
+class RollbackTurn extends Error {}
+
+/** Les lignes `llm_calls` sont écrites sans être attendues (call-sink.ts) : on les attend ici. */
+async function callsOf(
+  tx: AnyDrizzleDb,
+  conversationId: string,
+): Promise<
+  Array<{ reasoningEffort: string | null; outputTokens: number | null; ms: number | null }>
+> {
+  let rows: Array<{
+    reasoningEffort: string | null;
+    outputTokens: number | null;
+    ms: number | null;
+  }> = [];
+  for (let i = 0; i < 20; i++) {
+    rows = await tx
+      .select({
+        reasoningEffort: llmCalls.reasoningEffort,
+        outputTokens: llmCalls.outputTokens,
+        ms: llmCalls.durationMs,
+      })
+      .from(llmCalls)
+      .where(eq(llmCalls.conversationId, conversationId))
+      .orderBy(asc(llmCalls.createdAt));
+    if (rows.length > 0) return rows;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  return rows;
+}
+
+/**
+ * Joue UN tour dit, dans une transaction annulée à la fin (voir l'en-tête).
+ * `db` est la base pointée ; rien n'y reste.
+ */
+export async function playMeasuredTurn(
+  db: AnyDrizzleDb,
+  opts: {
+    entityId: string;
+    agentId: string;
+    effort: MeasuredEffort;
+    request: MeasureRequest;
+    run: number;
+    /** La durée « dite » du message, rangée sur la ligne comme un vrai tour vocal. */
+    spokenMs?: number;
+  },
+): Promise<TurnRecord> {
+  const stored = opts.effort === 'auto' ? null : opts.effort;
+  let record: TurnRecord | null = null;
+  try {
+    await db.transaction(async (raw) => {
+      const tx = raw as unknown as AnyDrizzleDb;
+      // Un tour peut attendre son modèle plus que la minute que le pool
+      // accorde à une transaction inactive (client.ts) : celle-ci seulement.
+      await tx.execute(sql`SET LOCAL idle_in_transaction_session_timeout = '600s'`);
+      await tx.execute(
+        sql`CREATE TEMP TABLE agents (LIKE public.agents INCLUDING DEFAULTS) ON COMMIT DROP`,
+      );
+      // Une base qui n'a pas encore la migration 0159 (la stack qui tourne,
+      // avant le merge) : la colonne n'existe que sur la copie, en dernière
+      // position, où le `SELECT *` ci-dessous la laisse à NULL. Déjà là : rien.
+      // Ce n'est PAS une erreur de nombre de colonnes : un INSERT sans liste de
+      // colonnes vise « les N premières colonnes, si la requête n'en fournit
+      // que N » (documentation PostgreSQL, INSERT) ; la dernière prend son
+      // défaut. Vérifié sur la base du propriétaire, qui n'a pas 0159 : 108
+      // tours, 0 erreur (revue A, passe 1).
+      await tx.execute(
+        sql`ALTER TABLE pg_temp.agents ADD COLUMN IF NOT EXISTS spoken_reasoning_effort text`,
+      );
+      await tx.execute(
+        sql`INSERT INTO pg_temp.agents SELECT * FROM public.agents WHERE entity_id = ${opts.entityId}`,
+      );
+      await tx.execute(
+        sql`UPDATE pg_temp.agents SET spoken_reasoning_effort = ${stored} WHERE id = ${opts.agentId}`,
+      );
+      const [conv] = await tx
+        .insert(conversations)
+        // Un titre déjà donné : le tour ne paie pas l'appel qui nomme le fil.
+        .values({
+          entityId: opts.entityId,
+          agentId: opts.agentId,
+          title: 'Spoken reasoning measure',
+        })
+        .returning({ id: conversations.id });
+      if (!conv) throw new Error('measure: the conversation row was not returned');
+
+      const started = performance.now();
+      let firstDeltaMs: number | null = null;
+      // Comme toute entrée du chat : le tour passe par la file de sa
+      // conversation (turn-lane.ts, #453). Le fil est neuf, la file vide.
+      const conversationId = conv.id;
+      const result = await runInLane(conversationId, () =>
+        runChatTurn({
+          deps: { db: tx } as unknown as RunnerDeps,
+          entityId: opts.entityId,
+          agentId: opts.agentId,
+          conversationId,
+          message: opts.request.text,
+          spoken: { durationMs: opts.spokenMs ?? 2_500 },
+          onTextDelta: () => {
+            firstDeltaMs ??= Math.round(performance.now() - started);
+          },
+        }),
+      );
+      const totalMs = Math.round(performance.now() - started);
+      const calls = await callsOf(tx, conversationId);
+
+      // Le relevé ne vaut que si le tour a demandé l'effort mesuré.
+      const asked = calls[0]?.reasoningEffort ?? null;
+      if (calls.length > 0 && asked !== stored) {
+        throw new Error(
+          `measure: the turn asked for reasoning "${String(asked)}", not the measured "${String(stored)}"`,
+        );
+      }
+
+      const reply = result.ok ? result.reply : '';
+      const calledRunTask = result.ok && result.spawnedJobId !== undefined;
+      const sum = calls.reduce<number | null>(
+        (acc, c) => (c.outputTokens === null ? acc : (acc ?? 0) + c.outputTokens),
+        null,
+      );
+      record = {
+        effort: opts.effort,
+        run: opts.run,
+        requestId: opts.request.id,
+        needsTask: opts.request.needsTask,
+        calledRunTask,
+        rightDecision: result.ok && calledRunTask === opts.request.needsTask,
+        firstDeltaMs,
+        totalMs,
+        replyOutputTokens: calls[0]?.outputTokens ?? null,
+        turnOutputTokens: sum,
+        calls,
+        opening: openingOf(reply),
+        routingNarration: opensWithRoutingNarration(reply),
+        ...(result.ok ? {} : { error: result.error }),
+      };
+      throw new RollbackTurn();
+    });
+  } catch (err) {
+    if (!(err instanceof RollbackTurn)) throw err;
+  }
+  if (!record) throw new Error('measure: the turn left no record');
+  return record;
+}
+
+/**
+ * Toute la mesure : `runs` passes ; dans chaque passe, chaque demande, et pour
+ * chaque demande chaque effort à la suite — les efforts se croisent dans le
+ * temps, pour qu'une heure chargée chez le fournisseur ne pèse pas sur un seul.
+ */
+export async function measureSpokenReasoning(
+  db: AnyDrizzleDb,
+  opts: {
+    entityId: string;
+    agentId: string;
+    efforts: readonly MeasuredEffort[];
+    runs: number;
+    requests?: readonly MeasureRequest[];
+    onTurn?: (record: TurnRecord) => void;
+  },
+): Promise<TurnRecord[]> {
+  const requests = opts.requests ?? SPOKEN_REASONING_REQUESTS;
+  const records: TurnRecord[] = [];
+  for (let run = 1; run <= opts.runs; run++) {
+    for (const request of requests) {
+      for (const effort of opts.efforts) {
+        const record = await playMeasuredTurn(db, {
+          entityId: opts.entityId,
+          agentId: opts.agentId,
+          effort,
+          request,
+          run,
+        });
+        records.push(record);
+        opts.onTurn?.(record);
+      }
+    }
+  }
+  return records;
+}
+
+/** Une ligne du résumé : un effort. */
+export interface EffortSummary {
+  effort: MeasuredEffort;
+  turns: number;
+  errors: number;
+  rightDecisions: number;
+  /** Demandes qui voulaient un travail, et parmi elles celles qui l'ont lancé. */
+  taskTurns: number;
+  taskLaunched: number;
+  /** Demandes sans travail, et parmi elles celles qui n'en ont lancé aucun. */
+  noTaskTurns: number;
+  noTaskAnswered: number;
+  /** Tours qui ont diffusé du texte (ceux qui comptent pour le premier mot). */
+  withText: number;
+  firstDeltaMedianMs: number | null;
+  firstDeltaP90Ms: number | null;
+  replyOutputTokensMedian: number | null;
+  routingNarrations: number;
+}
+
+function percentile(values: readonly number[], p: number): number | null {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const rank = Math.ceil((p / 100) * sorted.length) - 1;
+  return sorted[Math.min(sorted.length - 1, Math.max(0, rank))] ?? null;
+}
+
+export function summarize(records: readonly TurnRecord[]): EffortSummary[] {
+  const efforts = [...new Set(records.map((r) => r.effort))];
+  return efforts.map((effort) => {
+    const rows = records.filter((r) => r.effort === effort);
+    const deltas = rows.flatMap((r) => (r.firstDeltaMs === null ? [] : [r.firstDeltaMs]));
+    const tokens = rows.flatMap((r) => (r.replyOutputTokens === null ? [] : [r.replyOutputTokens]));
+    const task = rows.filter((r) => r.needsTask);
+    const noTask = rows.filter((r) => !r.needsTask);
+    return {
+      effort,
+      turns: rows.length,
+      errors: rows.filter((r) => r.error !== undefined).length,
+      rightDecisions: rows.filter((r) => r.rightDecision).length,
+      taskTurns: task.length,
+      taskLaunched: task.filter((r) => r.calledRunTask).length,
+      noTaskTurns: noTask.length,
+      noTaskAnswered: noTask.filter((r) => r.error === undefined && !r.calledRunTask).length,
+      withText: deltas.length,
+      firstDeltaMedianMs: percentile(deltas, 50),
+      firstDeltaP90Ms: percentile(deltas, 90),
+      replyOutputTokensMedian: percentile(tokens, 50),
+      routingNarrations: rows.filter((r) => r.routingNarration).length,
+    };
+  });
+}
+
+/** Le résumé en tableau Markdown, prêt pour la PR. */
+export function summaryTable(rows: readonly EffortSummary[]): string {
+  const ms = (v: number | null): string => (v === null ? 'n/a' : `${(v / 1000).toFixed(2)} s`);
+  const lines = [
+    '| Effort | Right decisions | Task launched | No-task answered | First text (median / p90) | Reply output tokens (median) | Routing narrations | Errors |',
+    '|---|---|---|---|---|---|---|---|',
+  ];
+  for (const r of rows) {
+    lines.push(
+      `| ${r.effort} | ${r.rightDecisions}/${r.turns} | ${r.taskLaunched}/${r.taskTurns} | ` +
+        `${r.noTaskAnswered}/${r.noTaskTurns} | ${ms(r.firstDeltaMedianMs)} / ${ms(r.firstDeltaP90Ms)} ` +
+        `(${r.withText} turns with text) | ${r.replyOutputTokensMedian ?? 'n/a'} | ` +
+        `${r.routingNarrations} | ${r.errors} |`,
+    );
+  }
+  return lines.join('\n');
+}

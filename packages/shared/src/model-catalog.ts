@@ -1925,6 +1925,83 @@ export function findModelCatalogEntry(
   return same.length === 1 ? same[0] : undefined;
 }
 
+/** L'ordre des paliers d'un contrôle `budget` — du plus petit au plus grand. */
+export const REASONING_BUDGET_ORDER = ['low', 'medium', 'high', 'max'] as const;
+
+/**
+ * Les valeurs d'effort sélectionnables pour un couple fournisseur + modèle,
+ * telles que le catalogue les déclare (`reasoningControl`) : les paliers du
+ * modèle, plus `off` sauf quand le raisonnement est obligatoire.
+ *
+ * Tableau vide = rien à régler — le champ se cache plutôt que d'offrir un
+ * choix sans effet (inv. #4 : pas de faux réglage).
+ *
+ * Vivait dans `apps/web/src/lib/model-choices.ts` ; ici depuis #977, parce
+ * que la première valeur de « Reasoning when spoken to » s'écrit aussi côté
+ * base (création d'un agent, première écriture au démarrage) et doit obéir à
+ * la MÊME règle que l'écran qui l'affiche.
+ */
+export function reasoningOptionValues(provider: string, modelId: string): string[] {
+  const control = findModelCatalogEntry(provider, modelId)?.capabilities.reasoningControl;
+  if (!control) return [];
+  const levels =
+    control.kind === 'onoff'
+      ? []
+      : control.kind === 'budget'
+        ? REASONING_BUDGET_ORDER.filter((l) => control.budgets?.[l])
+        : (control.levels ?? []);
+  return control.mandatory ? [...levels] : [...levels, 'off'];
+}
+
+/**
+ * L'effort demandé est-il refusable ? Vrai SEULEMENT quand le modèle est
+ * catalogué et que son contrôle ne l'offre pas.
+ *
+ * Un modèle hors catalogue (un identifiant libre, un modèle vu en direct) ne
+ * dit rien de ses paliers : le refuser interdirait un réglage que l'écran
+ * d'édition accepte, et inventer un verdict à partir d'une absence serait un
+ * faux « non ». On ne refuse donc que ce qu'on SAIT faux.
+ *
+ * Vivait dans `apps/web/src/lib/model-choices.ts` (#977, comme
+ * `reasoningOptionValues`).
+ */
+export function isRefusedEffort(provider: string, modelId: string, effort: string): boolean {
+  if (findModelCatalogEntry(provider, modelId) === undefined) return false;
+  return !reasoningOptionValues(provider, modelId).includes(effort);
+}
+
+/**
+ * Ce qu'un effort RANGÉ devient quand l'agent change de modèle (ou de clé) :
+ * gardé s'il est offert par le nouveau modèle, ou si ce modèle est hors
+ * catalogue (`isRefusedEffort`) ; sinon NULL, Auto.
+ *
+ * LA règle de tout changement de modèle, pour Reasoning comme pour « Reasoning
+ * when spoken to » (#977, revue A passe 1) : l'écran d'édition, la pastille du
+ * composeur, `updateAgentAction`, l'outil `update_agent` de l'agent racine, le
+ * modèle du banc. Sans elle, un palier que le modèle n'offre pas restait rangé
+ * derrière un écran qui affichait Auto, et le moteur l'envoyait.
+ */
+export function effortKeptOnModel(
+  provider: string,
+  modelId: string,
+  effort: string | null,
+): string | null {
+  return effort !== null && isRefusedEffort(provider, modelId, effort) ? null : effort;
+}
+
+/**
+ * La PREMIÈRE valeur de « Reasoning when spoken to » (#977) pour un agent sur
+ * ce modèle : `off` quand le modèle l'offre, sinon NULL (Auto). Mesurée par
+ * l'orchestrateur le 03/11/2026 (l'agent racine, haiku 5.5, 108 tours) : Off décide
+ * aussi juste qu'Auto (36/36) et dit son premier mot en 0,94 s contre 1,46 s.
+ *
+ * Écrite UNE fois, à la création de l'agent ou par la première écriture au
+ * démarrage pour les agents d'avant, puis rangée : jamais recalculée.
+ */
+export function firstSpokenReasoningEffort(provider: string, modelId: string): 'off' | null {
+  return reasoningOptionValues(provider, modelId).includes('off') ? 'off' : null;
+}
+
 /**
  * Whether a model can call tools, as three distinct states — NOT a boolean,
  * because "not in the catalog" (a custom id, a local ollama/openai-compatible

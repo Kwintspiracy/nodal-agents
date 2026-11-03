@@ -17,6 +17,7 @@
 //     que la série dise qu'elle n'est pas pure au lieu de le taire.
 
 import type { AnyDrizzleDb } from '@nodal-agents/db';
+import { effortKeptOnModel } from '@nodal-agents/shared';
 import { assertSpaceIdle, requireBenchSpace } from './space';
 
 /** Même forme que `MatrixModel` du banc : `fournisseur` + `modèle`. */
@@ -30,7 +31,11 @@ export interface AppliedSpaceModel {
   readonly changed: string[];
   /** Les agents laissés tels quels, et pourquoi. */
   readonly untouched: Array<{ slug: string; reason: string }>;
-  /** Rend à chaque agent modifié son modèle, sa clé et sa chaîne de repli. */
+  /**
+   * Rend à chaque agent modifié son modèle, sa clé, sa chaîne de repli et ses
+   * deux efforts (le passage sur le modèle de la série ramène à Auto ceux
+   * qu'il n'offre pas, `effortKeptOnModel`, #977).
+   */
   restore(): Promise<void>;
 }
 
@@ -69,6 +74,8 @@ export async function applySpaceModel(
       model: agents.model,
       llmKeyId: agents.llmKeyId,
       fallbackChain: agents.fallbackChain,
+      reasoningEffort: agents.reasoningEffort,
+      spokenReasoningEffort: agents.spokenReasoningEffort,
     })
     .from(agents)
     .where(eq(agents.entityId, space.id));
@@ -87,7 +94,18 @@ export async function applySpaceModel(
     for (const r of touched) {
       await tx
         .update(agents)
-        .set({ model: target.model, llmKeyId: keyId, fallbackChain: [], updatedAt: new Date() })
+        .set({
+          model: target.model,
+          llmKeyId: keyId,
+          fallbackChain: [],
+          reasoningEffort: effortKeptOnModel(target.provider, target.model, r.reasoningEffort),
+          spokenReasoningEffort: effortKeptOnModel(
+            target.provider,
+            target.model,
+            r.spokenReasoningEffort,
+          ),
+          updatedAt: new Date(),
+        })
         .where(and(eq(agents.id, r.id), eq(agents.entityId, space.id)));
     }
   });
@@ -106,6 +124,8 @@ export async function applySpaceModel(
               model: r.model,
               llmKeyId: r.llmKeyId,
               fallbackChain: r.fallbackChain,
+              reasoningEffort: r.reasoningEffort,
+              spokenReasoningEffort: r.spokenReasoningEffort,
               updatedAt: new Date(),
             })
             .where(and(eq(agents.id, r.id), eq(agents.entityId, space.id)));
