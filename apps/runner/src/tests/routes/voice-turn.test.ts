@@ -214,7 +214,10 @@ function gate(): { wait: Promise<void>; open: () => void } {
  * quand le front a fini et quand la relecture a commencé.
  */
 function network(opts: {
-  transcription?: { status: number; body: unknown };
+  /** The transcription answer: one for every request, or one per request's audio (#976). */
+  transcription?:
+    | { status: number; body: unknown }
+    | ((audioBase64: string) => { status: number; body: unknown });
   front?: {
     text?: string;
     instruction?: string;
@@ -231,7 +234,7 @@ function network(opts: {
 }) {
   const workerCalls = [...(opts.worker ?? [])];
   const sent = {
-    transcription: [] as Array<{ model: string; messages: Sent }>,
+    transcription: [] as Array<{ url: string; body: Record<string, unknown> }>,
     front: [] as ChatBody[],
     worker: [] as ChatBody[],
     speech: [] as Array<Record<string, unknown>>,
@@ -265,6 +268,15 @@ function network(opts: {
           ],
         });
       }
+      if (url.includes('/models?output_modalities=transcription')) {
+        return Response.json({
+          data: [
+            { id: 'x-ai/grok-stt-1.0', name: 'SpaceXAI: Grok STT 1.0' },
+            { id: 'deepgram/nova-3', name: 'Deepgram: Nova-3' },
+            { id: 'openai/gpt-transcribe', name: 'OpenAI: GPT Transcribe' },
+          ],
+        });
+      }
       if (url.includes('generativelanguage.googleapis.com/v1beta/models?')) {
         return Response.json({
           models: [
@@ -294,22 +306,22 @@ function network(opts: {
           headers: { 'content-type': 'audio/pcm' },
         });
       }
-      if (!url.includes('/chat/completions')) throw new Error(`unexpected fetch ${url}`);
-      const body = JSON.parse(init?.body as string) as ChatBody & { model: string };
-      const first = body.messages[0]?.content;
-      const isAudio =
-        Array.isArray(first) && first.some((p) => (p as { type?: unknown }).type === 'input_audio');
-      if (isAudio) {
-        sent.transcription.push({ model: body.model, messages: body.messages });
-        const t = opts.transcription ?? {
-          status: 200,
-          body: { choices: [{ message: { role: 'assistant', content: TRANSCRIPT } }] },
-        };
+      // #976 — the ear: OpenRouter's transcription endpoint.
+      if (url.endsWith('/audio/transcriptions')) {
+        const body = JSON.parse(init?.body as string) as Record<string, unknown>;
+        sent.transcription.push({ url, body });
+        const audio = (body['input_audio'] as { data: string }).data;
+        const t =
+          typeof opts.transcription === 'function'
+            ? opts.transcription(audio)
+            : (opts.transcription ?? { status: 200, body: { text: TRANSCRIPT } });
         return new Response(JSON.stringify(t.body), {
           status: t.status,
           headers: { 'content-type': 'application/json' },
         });
       }
+      if (!url.includes('/chat/completions')) throw new Error(`unexpected fetch ${url}`);
+      const body = JSON.parse(init?.body as string) as ChatBody & { model: string };
       const system = systemOf(body);
       const last = textOf(body.messages[body.messages.length - 1]?.content);
       const isFront = (body.tools ?? []).some((t) => t.function.name === 'run_task');
@@ -635,14 +647,16 @@ describe('the voice turn route @cap:parler-a-un-agent/moteur', () => {
     ]);
     expect(evs.find((e) => e.event === 'audio_end')?.data).toEqual({ sentence: 0, complete: true });
     // The bytes the client sent, in order, are what the transcriber received.
-    expect(sent.transcription).toHaveLength(1);
-    const audioPart = (
-      sent.transcription[0]!.messages[0]!.content as Array<Record<string, unknown>>
-    )[1];
-    expect(audioPart).toEqual({
-      type: 'input_audio',
-      input_audio: { data: Buffer.from(FIXTURE).toString('base64'), format: 'wav' },
-    });
+    // #976: through the transcription endpoint, with the stored model.
+    expect(sent.transcription).toEqual([
+      {
+        url: 'https://openrouter.ai/api/v1/audio/transcriptions',
+        body: {
+          model: 'x-ai/grok-stt-1.0',
+          input_audio: { data: Buffer.from(FIXTURE).toString('base64'), format: 'wav' },
+        },
+      },
+    ]);
     // The voice read the agent's words, and the client got the PCM it said,
     // streamed, with the rate it plays at.
     expect(sent.speech).toHaveLength(1);
@@ -687,15 +701,9 @@ describe('the voice turn route @cap:parler-a-un-agent/moteur', () => {
       transcript: TRANSCRIPT,
       durationMs: FIXTURE_MS,
     });
-    const audioPart = (
-      sent.transcription[0]!.messages[0]!.content as Array<Record<string, unknown>>
-    )[1];
-    expect(audioPart).toEqual({
-      type: 'input_audio',
-      input_audio: {
-        data: Buffer.from(pcmToWav(FIXTURE_PCM, { sampleRate: 16_000 })).toString('base64'),
-        format: 'wav',
-      },
+    expect(sent.transcription[0]!.body['input_audio']).toEqual({
+      data: Buffer.from(pcmToWav(FIXTURE_PCM, { sampleRate: 16_000 })).toString('base64'),
+      format: 'wav',
     });
     expect((await rows(conv))[0]).toEqual({
       role: 'user',
@@ -822,10 +830,7 @@ describe('the voice turn route @cap:parler-a-un-agent/moteur', () => {
     const app = createApp(makeDeps(), testEnv);
     const conv = await conversation();
     const sent = network({
-      transcription: {
-        status: 200,
-        body: { choices: [{ message: { role: 'assistant', content: '' } }] },
-      },
+      transcription: { status: 200, body: { text: '' } },
     });
 
     const { status, body } = await say(app, conv, FIXTURE, { format: 'audio/wav' });
@@ -849,7 +854,7 @@ describe('the voice turn route @cap:parler-a-un-agent/moteur', () => {
     expect(status).toBe(502);
     expect(body).toEqual({
       error: 'transcription_failed',
-      detail: 'openrouter: HTTP 402 — Insufficient credits',
+      detail: 'openrouter x-ai/grok-stt-1.0: HTTP 402 — Insufficient credits',
     });
     expect(sent.front).toEqual([]);
     expect(await rows(conv)).toEqual([]);
@@ -897,7 +902,7 @@ describe('the voice turn route @cap:parler-a-un-agent/moteur', () => {
       format: 'audio/wav',
     });
     expect(res.status).toBe(409);
-    expect(await res.json()).toEqual({ error: 'speech_not_configured' });
+    expect(await res.json()).toEqual({ error: 'voice_key_missing', source: 'openrouter' });
   });
 });
 
@@ -1383,10 +1388,10 @@ describe('the voice turn route — the reply spoken as it is written (#943) @cap
     expect(timing).toHaveLength(2);
     // #969: the line names the voice that spoke — identifiers only.
     expect(timing[0]).toMatch(
-      /^\[voice-turn\] timing \{"source":"openrouter","model":"google\/gemini-3\.8-flash-tts","voice":"Kore","transcriptMs":\d+,"firstDeltaMs":\d+,"firstSentenceMs":\d+,"firstSentenceVendorByteMs":\d+,"firstSentenceVendorDoneMs":\d+,"firstAudioMs":\d+,"doneMs":\d+\}$/,
+      /^\[voice-turn\] timing \{"source":"openrouter","model":"google\/gemini-3\.8-flash-tts","voice":"Kore","transcriptionModel":"x-ai\/grok-stt-1\.0","transcriptMs":\d+,"firstDeltaMs":\d+,"firstSentenceMs":\d+,"firstSentenceVendorByteMs":\d+,"firstSentenceVendorDoneMs":\d+,"firstAudioMs":\d+,"doneMs":\d+\}$/,
     );
     expect(timing[1]).toMatch(
-      /^\[voice-turn\] timing \{"source":null,"model":null,"voice":null,"transcriptMs":null,"firstDeltaMs":null,"firstSentenceMs":null,"firstSentenceVendorByteMs":null,"firstSentenceVendorDoneMs":null,"firstAudioMs":null,"doneMs":\d+\}$/,
+      /^\[voice-turn\] timing \{"source":null,"model":null,"voice":null,"transcriptionModel":null,"transcriptMs":null,"firstDeltaMs":null,"firstSentenceMs":null,"firstSentenceVendorByteMs":null,"firstSentenceVendorDoneMs":null,"firstAudioMs":null,"doneMs":\d+\}$/,
     );
     const marks = JSON.parse(timing[0]!.slice('[voice-turn] timing '.length)) as Record<
       string,
@@ -1566,6 +1571,7 @@ const FIRST_VOICE = {
   source: 'openrouter',
   model: 'google/gemini-3.8-flash-tts',
   voice: 'Kore',
+  transcriptionModel: 'x-ai/grok-stt-1.0',
 } as const;
 
 describe('the voice turn speaks with the workspace voice (#969) @cap:parler-a-un-agent/moteur', () => {
@@ -1604,13 +1610,23 @@ describe('the voice turn speaks with the workspace voice (#969) @cap:parler-a-un
 
     const grok = await call(app, 'PUT', '/api/voice/setting', {
       entityId: seed.entityId,
-      setting: { source: 'openrouter', model: 'x-ai/grok-voice-tts-1.0', voice: 'leo' },
+      setting: {
+        source: 'openrouter',
+        model: 'x-ai/grok-voice-tts-1.0',
+        voice: 'leo',
+        transcriptionModel: 'x-ai/grok-stt-1.0',
+      },
     });
     expect(grok.status).toBe(200);
     // A voice that spoke is stored.
     expect(await readVoiceSetting(db as never, seed.entityId)).toEqual({
       ok: true,
-      setting: { source: 'openrouter', model: 'x-ai/grok-voice-tts-1.0', voice: 'leo' },
+      setting: {
+        source: 'openrouter',
+        model: 'x-ai/grok-voice-tts-1.0',
+        voice: 'leo',
+        transcriptionModel: 'x-ai/grok-stt-1.0',
+      },
     });
     const first = await say(app, conv, FIXTURE, { format: 'audio/wav' });
     expect(first.body['speechError']).toBeNull();
@@ -1628,7 +1644,12 @@ describe('the voice turn speaks with the workspace voice (#969) @cap:parler-a-un
 
     const gemini = await call(app, 'PUT', '/api/voice/setting', {
       entityId: seed.entityId,
-      setting: { source: 'google', model: 'gemini-3.8-flash-tts', voice: 'Puck' },
+      setting: {
+        source: 'google',
+        model: 'gemini-3.8-flash-tts',
+        voice: 'Puck',
+        transcriptionModel: 'x-ai/grok-stt-1.0',
+      },
     });
     expect(gemini.status).toBe(200);
     const second = await say(app, conv, FIXTURE, { format: 'audio/wav' });
@@ -1665,6 +1686,7 @@ describe('the voice turn speaks with the workspace voice (#969) @cap:parler-a-un
       source: 'openrouter',
       model: 'minimax/speech-2.8-turbo',
       voice: 'English_CalmWoman',
+      transcriptionModel: 'x-ai/grok-stt-1.0',
     });
     const MP3 = Uint8Array.from([0xff, 0xfb, 0x90, 0x64, 0x00]);
     const sent = network({
@@ -1715,6 +1737,7 @@ describe('the voice turn speaks with the workspace voice (#969) @cap:parler-a-un
         source: 'openrouter',
         model: 'minimax/speech-2.8-turbo',
         voice: 'English_CalmWoman',
+        transcriptionModel: 'x-ai/grok-stt-1.0',
       },
     });
     expect(res.status).toBe(409);
@@ -1755,7 +1778,12 @@ describe('the voice turn speaks with the workspace voice (#969) @cap:parler-a-un
     });
     const saved = await call(app, 'PUT', '/api/voice/setting', {
       entityId: seed.entityId,
-      setting: { source: 'openrouter', model: 'x-ai/grok-voice-tts-1.0', voice: 'leo' },
+      setting: {
+        source: 'openrouter',
+        model: 'x-ai/grok-voice-tts-1.0',
+        voice: 'leo',
+        transcriptionModel: 'x-ai/grok-stt-1.0',
+      },
     });
     const refusal = JSON.stringify(await saved.json());
     expect(saved.status).toBe(409);
@@ -1776,7 +1804,12 @@ describe('the voice turn speaks with the workspace voice (#969) @cap:parler-a-un
     network({});
     const refused = await call(app, 'PUT', '/api/voice/setting', {
       entityId: seed.entityId,
-      setting: { source: 'openrouter', model: 'x-ai/grok-voice-tts-1.0', voice: 'Kore' },
+      setting: {
+        source: 'openrouter',
+        model: 'x-ai/grok-voice-tts-1.0',
+        voice: 'Kore',
+        transcriptionModel: 'x-ai/grok-stt-1.0',
+      },
     });
     expect(refused.status).toBe(409);
     expect(await refused.json()).toEqual({
@@ -1786,7 +1819,12 @@ describe('the voice turn speaks with the workspace voice (#969) @cap:parler-a-un
     });
     const unknown = await call(app, 'PUT', '/api/voice/setting', {
       entityId: seed.entityId,
-      setting: { source: 'openrouter', model: 'nobody/tts', voice: 'leo' },
+      setting: {
+        source: 'openrouter',
+        model: 'nobody/tts',
+        voice: 'leo',
+        transcriptionModel: 'x-ai/grok-stt-1.0',
+      },
     });
     expect(unknown.status).toBe(409);
     expect(((await unknown.json()) as { error: string }).error).toBe('voice_model_not_offered');
@@ -1803,6 +1841,7 @@ describe('the voice turn speaks with the workspace voice (#969) @cap:parler-a-un
       source: 'google',
       model: 'gemini-3.8-flash-tts',
       voice: 'Kore',
+      transcriptionModel: 'x-ai/grok-stt-1.0',
     });
     network({
       front: { text: 'Nine in the evening.' },
@@ -1874,7 +1913,11 @@ describe('the voice turn speaks with the workspace voice (#969) @cap:parler-a-un
     const candidate = await call(app, 'POST', '/api/voice/sample', {
       entityId: seed.entityId,
       text: 'This is how I sound.',
-      setting: { source: 'openrouter', model: 'x-ai/grok-voice-tts-1.0', voice: 'eve' },
+      setting: {
+        source: 'openrouter',
+        model: 'x-ai/grok-voice-tts-1.0',
+        voice: 'eve',
+      },
     });
     const cand: VoiceEvent[] = [];
     await drain(events(candidate), cand);
@@ -1889,9 +1932,218 @@ describe('the voice turn speaks with the workspace voice (#969) @cap:parler-a-un
     const refused = await call(app, 'POST', '/api/voice/sample', {
       entityId: seed.entityId,
       text: 'x',
-      setting: { source: 'openrouter', model: 'x-ai/grok-voice-tts-1.0', voice: 'Kore' },
+      setting: {
+        source: 'openrouter',
+        model: 'x-ai/grok-voice-tts-1.0',
+        voice: 'Kore',
+      },
     });
     expect(refused.status).toBe(409);
     expect(((await refused.json()) as { error: string }).error).toBe('voice_not_offered');
+  });
+});
+
+// ── #976 — the ear: OpenRouter's transcription endpoint, chosen in the setting ─
+
+const ENGLISH_B64 = Buffer.from(FIXTURE).toString('base64');
+
+describe('the voice turn listens with the workspace ear (#976) @cap:parler-a-un-agent/moteur', () => {
+  afterEach(async () => {
+    clearVoiceCatalog();
+    await writeVoiceSetting(db as never, seed.entityId, FIRST_VOICE);
+  });
+
+  // Mutation verified: the turn transcribing with a fixed model instead of the
+  // resolved one → red.
+  it('transcribes with the stored model, through /audio/transcriptions, and the timing line names it', async () => {
+    const lines: string[] = [];
+    const warn = vi.spyOn(console, 'warn').mockImplementation((...args: unknown[]) => {
+      lines.push(args.map(String).join(' '));
+    });
+    try {
+      const app = createApp(makeDeps(), testEnv);
+      const conv = await conversation();
+      await writeVoiceSetting(db as never, seed.entityId, {
+        ...FIRST_VOICE,
+        transcriptionModel: 'openai/gpt-transcribe',
+      });
+      const sent = network({ front: { text: 'Nine in the evening.' } });
+      const { body } = await say(app, conv, FIXTURE, { format: 'audio/wav' });
+      expect(body['transcript']).toBe(TRANSCRIPT);
+      expect(sent.transcription).toEqual([
+        {
+          url: 'https://openrouter.ai/api/v1/audio/transcriptions',
+          body: {
+            model: 'openai/gpt-transcribe',
+            input_audio: { data: ENGLISH_B64, format: 'wav' },
+          },
+        },
+      ]);
+    } finally {
+      warn.mockRestore();
+    }
+    const timing = lines.find((l) => l.startsWith('[voice-turn] timing '))!;
+    expect(timing).toContain('"transcriptionModel":"openai/gpt-transcribe"');
+  });
+
+  // Mutation verified: `logHearingFailure` not called → red.
+  it('a transcription failure is stated to the client and logged with its code, the model and the vendor words', async () => {
+    const lines: string[] = [];
+    const warn = vi.spyOn(console, 'warn').mockImplementation((...args: unknown[]) => {
+      lines.push(args.map(String).join(' '));
+    });
+    let res: Awaited<ReturnType<typeof say>>;
+    try {
+      const app = createApp(makeDeps(), testEnv);
+      const conv = await conversation();
+      network({
+        transcription: { status: 502, body: { error: { message: 'Upstream provider timed out' } } },
+      });
+      res = await say(app, conv, FIXTURE, { format: 'audio/wav' });
+    } finally {
+      warn.mockRestore();
+    }
+    expect(res.status).toBe(502);
+    expect(res.body).toEqual({
+      error: 'transcription_failed',
+      detail: 'openrouter x-ai/grok-stt-1.0: HTTP 502 — Upstream provider timed out',
+    });
+    expect(lines.filter((l) => l.startsWith('[voice-turn] transcription failed'))).toEqual([
+      '[voice-turn] transcription failed {"error":"transcription_failed","status":502,"model":"x-ai/grok-stt-1.0","detail":"openrouter x-ai/grok-stt-1.0: HTTP 502 — Upstream provider timed out"}',
+    ]);
+  });
+
+  it('reads the transcription models OpenRouter serves next to the voices', async () => {
+    const app = createApp(makeDeps(), testEnv);
+    network({});
+    const res = await call(app, 'GET', `/api/voice/setting?entityId=${seed.entityId}`);
+    const state = (await res.json()) as { transcription: { state: string; models?: unknown[] } };
+    expect(state.transcription).toMatchObject({
+      state: 'available',
+      models: [
+        { id: 'x-ai/grok-stt-1.0', label: 'SpaceXAI: Grok STT 1.0' },
+        { id: 'deepgram/nova-3', label: 'Deepgram: Nova-3' },
+        { id: 'openai/gpt-transcribe', label: 'OpenAI: GPT Transcribe' },
+      ],
+      cacheSeconds: 3600,
+    });
+  });
+
+  /** The probe as the voice says it: the stubbed voice's PCM, as one WAV at 24 kHz. */
+  const PROBE_B64 = Buffer.from(pcmToWav(VOICE_PCM, { sampleRate: 24_000 })).toString('base64');
+
+  async function saveEar(
+    model: string,
+    opts: {
+      transcription?: Parameters<typeof network>[0]['transcription'];
+      speech?: Parameters<typeof network>[0]['speech'];
+    },
+  ) {
+    const app = createApp(makeDeps(), testEnv);
+    const sent = network(opts);
+    const res = await call(app, 'PUT', '/api/voice/setting', {
+      entityId: seed.entityId,
+      setting: { ...FIRST_VOICE, transcriptionModel: model },
+    });
+    return { res, sent };
+  }
+
+  // Mutation verified: the ear check skipped (`earProbeRefusal` not called) →
+  // every refusal below is stored instead.
+  it('a model that writes down what the voice says is stored: the voice says "OK.", the model transcribes that audio', async () => {
+    const { res, sent } = await saveEar('openai/gpt-transcribe', {
+      transcription: { status: 200, body: { text: 'Okay.' } },
+    });
+    expect(res.status).toBe(200);
+    // One synthesis with the CURRENT voice, then one transcription of its audio.
+    expect(sent.speech).toEqual([
+      { model: 'google/gemini-3.8-flash-tts', input: 'OK.', voice: 'Kore', response_format: 'pcm' },
+    ]);
+    expect(sent.transcription).toEqual([
+      {
+        url: 'https://openrouter.ai/api/v1/audio/transcriptions',
+        body: { model: 'openai/gpt-transcribe', input_audio: { data: PROBE_B64, format: 'wav' } },
+      },
+    ]);
+    expect(await readVoiceSetting(db as never, seed.entityId)).toEqual({
+      ok: true,
+      setting: { ...FIRST_VOICE, transcriptionModel: 'openai/gpt-transcribe' },
+    });
+  });
+
+  it('a model that answers with an error is refused with its words; the row is unchanged', async () => {
+    const { res } = await saveEar('openai/gpt-transcribe', {
+      transcription: { status: 400, body: { error: { message: 'Unsupported audio format' } } },
+    });
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({
+      error: 'speech_provider_error',
+      source: 'openrouter',
+      detail: 'openrouter openai/gpt-transcribe: HTTP 400 — Unsupported audio format',
+    });
+    expect(await readVoiceSetting(db as never, seed.entityId)).toEqual({
+      ok: true,
+      setting: FIRST_VOICE,
+    });
+  });
+
+  it('a model that writes something else, or nothing, is refused with what it wrote; the row is unchanged', async () => {
+    const answered = await saveEar('openai/gpt-transcribe', {
+      transcription: { status: 200, body: { text: 'It is nine in the evening.' } },
+    });
+    expect(answered.res.status).toBe(409);
+    expect(await answered.res.json()).toEqual({
+      error: 'transcription_not_faithful',
+      source: 'openrouter',
+      detail: 'openai/gpt-transcribe wrote "It is nine in the evening." for the voice saying "OK."',
+    });
+    const empty = await saveEar('deepgram/nova-3', {
+      transcription: { status: 200, body: { text: '' } },
+    });
+    expect(await empty.res.json()).toEqual({
+      error: 'transcription_not_faithful',
+      source: 'openrouter',
+      detail: 'deepgram/nova-3 wrote nothing for the voice saying "OK."',
+    });
+    expect(await readVoiceSetting(db as never, seed.entityId)).toEqual({
+      ok: true,
+      setting: FIRST_VOICE,
+    });
+  });
+
+  // Mutation verified: a voice failure ignored when only the ear changes
+  // (the model accepted untested) → red.
+  it('a voice that cannot speak blocks the check, said as such, and nothing is accepted untested', async () => {
+    const { res, sent } = await saveEar('openai/gpt-transcribe', {
+      speech: () =>
+        new Response(JSON.stringify({ error: { message: 'Insufficient credits' } }), {
+          status: 402,
+          headers: { 'content-type': 'application/json' },
+        }),
+      transcription: { status: 200, body: { text: 'OK' } },
+    });
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({
+      error: 'transcription_needs_voice',
+      source: 'openrouter',
+      detail: 'openrouter google/gemini-3.8-flash-tts: HTTP 402 — Insufficient credits',
+    });
+    expect(sent.transcription).toEqual([]);
+    expect(await readVoiceSetting(db as never, seed.entityId)).toEqual({
+      ok: true,
+      setting: FIRST_VOICE,
+    });
+  });
+
+  it('a model OpenRouter does not serve for transcription is refused before anything is said', async () => {
+    const { res, sent } = await saveEar('google/gemini-2.5-flash', {});
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({
+      error: 'transcription_model_not_offered',
+      source: 'openrouter',
+      detail: 'google/gemini-2.5-flash',
+    });
+    expect(sent.speech).toEqual([]);
+    expect(sent.transcription).toEqual([]);
   });
 });

@@ -1100,6 +1100,13 @@
       "when": 1786436400000,
       "tag": "0158_voice_setting",
       "breakpoints": true
+    },
+    {
+      "idx": 160,
+      "version": "7",
+      "when": 1786436600000,
+      "tag": "0160_voice_transcription",
+      "breakpoints": true
     }
   ]
 }

@@ -899,10 +899,10 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       PRIMARY KEY (entity_id, key)
     );
 
-    -- mirrors migration 0158 (#969) : tout espace naît avec sa voix.
+    -- mirrors migrations 0158 (#969) and 0160 (#976) : tout espace naît avec sa voix et son oreille.
     CREATE OR REPLACE FUNCTION first_voice_setting() RETURNS text
     LANGUAGE sql IMMUTABLE AS $$
-      SELECT '{"source":"openrouter","model":"google/gemini-3.8-flash-tts","voice":"Kore"}'::text
+      SELECT '{"source":"openrouter","model":"google/gemini-3.8-flash-tts","voice":"Kore","transcriptionModel":"x-ai/grok-stt-1.0"}'::text
     $$;
     CREATE OR REPLACE FUNCTION entities_seed_voice_setting() RETURNS trigger
     LANGUAGE plpgsql AS $$

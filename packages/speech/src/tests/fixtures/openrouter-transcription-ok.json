@@ -1,22 +1,4 @@
 {
-  "id": "gen-1754956800-transcription",
-  "provider": "Google",
-  "model": "google/gemini-2.5-flash",
-  "object": "chat.completion",
-  "created": 1754956800,
-  "choices": [
-    {
-      "logprobs": null,
-      "finish_reason": "stop",
-      "native_finish_reason": "STOP",
-      "index": 0,
-      "message": {
-        "role": "assistant",
-        "content": "  Quelle heure est-il à Tokyo ?\n",
-        "refusal": null,
-        "reasoning": null
-      }
-    }
-  ],
-  "usage": { "prompt_tokens": 61, "completion_tokens": 9, "total_tokens": 70 }
+  "text": "  Quelle heure est-il à Tokyo ?\n",
+  "usage": { "seconds": 2 }
 }

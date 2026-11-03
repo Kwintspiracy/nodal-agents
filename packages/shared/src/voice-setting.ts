@@ -7,7 +7,10 @@
 //     ou `google` (la clé Google de l'espace, Gemini en
 //     direct, en flux) ;
 //   - `model` : le modèle de cette source, tel qu'elle le nomme ;
-//   - `voice` : une voix que CE modèle offre.
+//   - `voice` : une voix que CE modèle offre ;
+//   - `transcriptionModel` (#976) : le modèle qui ÉCOUTE, un modèle de
+//     l'endpoint de transcription d'OpenRouter (`/audio/transcriptions`), sur
+//     la clé OpenRouter de l'espace.
 //
 // Le réglage vit dans `entity_settings` (clé `voice`), une ligne par espace,
 // posée par la migration 0158 et à la naissance de chaque espace. Aucun défaut
@@ -30,9 +33,12 @@ export const VoiceSettingSchema = z
     source: z.enum(VOICE_SOURCES),
     model: z.string().trim().min(1),
     voice: z.string().trim().min(1),
+    transcriptionModel: z.string().trim().min(1),
   })
   .strict();
 export type VoiceSetting = z.infer<typeof VoiceSettingSchema>;
+/** La part du réglage qui PARLE : la source, le modèle et la voix. */
+export type SpeakingVoice = Pick<VoiceSetting, 'source' | 'model' | 'voice'>;
 
 /**
  * Les codes de ce qui empêche la voix de parler. Des faits, jamais des
@@ -53,6 +59,10 @@ export const VOICE_FAILURE_CODES = [
   'voice_model_not_offered',
   /** La voix n'est pas parmi celles que le modèle offre. */
   'voice_not_offered',
+  /** Le modèle de transcription n'est pas parmi ceux qu'OpenRouter sert (#976). */
+  'transcription_model_not_offered',
+  /** Le modèle de transcription, essayé sur un échantillon connu, n'a pas rendu ses mots (#976). */
+  'transcription_not_faithful',
 ] as const;
 export type VoiceFailureCode = (typeof VOICE_FAILURE_CODES)[number];
 
@@ -123,12 +133,29 @@ export type VoiceSourceChoices = z.infer<typeof VoiceSourceChoicesSchema>;
  * ligne manque ou ne se lit pas, et `settingProblem` dit pourquoi — l'écran le
  * dit et laisse choisir une voix, il n'en montre jamais une supposée.
  */
+/** Ce que l'endpoint de transcription offre, ou pourquoi il ne l'offre pas (#976). */
+export const TranscriptionChoicesSchema = z.discriminatedUnion('state', [
+  z.object({
+    state: z.literal('available'),
+    models: z.array(z.object({ id: z.string(), label: z.string() })),
+    listedAt: z.string(),
+    cacheSeconds: z.number().int().positive(),
+  }),
+  z.object({
+    state: z.literal('unavailable'),
+    code: z.enum(VOICE_FAILURE_CODES),
+    detail: z.string().optional(),
+  }),
+]);
+export type TranscriptionChoices = z.infer<typeof TranscriptionChoicesSchema>;
+
 export const VoiceStateSchema = z.object({
   setting: VoiceSettingSchema.nullable(),
   settingProblem: z
     .object({ code: z.enum(VOICE_FAILURE_CODES), detail: z.string().optional() })
     .optional(),
   sources: z.array(VoiceSourceChoicesSchema),
+  transcription: TranscriptionChoicesSchema,
 });
 export type VoiceState = z.infer<typeof VoiceStateSchema>;
 
@@ -148,5 +175,6 @@ export const VOICE_SAMPLE_MAX_CHARS = 300;
 export const VoiceSampleRequestSchema = z.object({
   entityId: z.string().guid(),
   text: z.string().trim().min(1).max(VOICE_SAMPLE_MAX_CHARS),
-  setting: VoiceSettingSchema.optional(),
+  // La voix seule : l'essai parle, il n'écoute pas (#976).
+  setting: VoiceSettingSchema.pick({ source: true, model: true, voice: true }).optional(),
 });

@@ -55,7 +55,10 @@ async function voiceOf(db: Db, entityId: string): Promise<string[]> {
   return r.map((x) => x.value);
 }
 
+/** The first value as 0158 wrote it; 0160 (#976) adds the transcription model to it. */
 const FIRST = '{"source":"openrouter","model":"google/gemini-3.8-flash-tts","voice":"Kore"}';
+const FIRST_WITH_EAR =
+  '{"source":"openrouter","model":"google/gemini-3.8-flash-tts","voice":"Kore","transcriptionModel":"x-ai/grok-stt-1.0"}';
 
 /** Le fichier de la migration, rejoué tel quel : ce que drizzle-kit exécute. */
 function migrationStatements(): string[] {
@@ -76,7 +79,8 @@ describe('migration 0158_voice_setting @cap:parler-a-un-agent/moteur', () => {
     const { db, close } = createClient(harness().url, { max: 1 });
     try {
       const entityId = await newEntity(db);
-      expect(await voiceOf(db, entityId)).toEqual([FIRST]);
+      // Every migration applied: the first value carries the ear of 0160.
+      expect(await voiceOf(db, entityId)).toEqual([FIRST_WITH_EAR]);
     } finally {
       await close();
     }

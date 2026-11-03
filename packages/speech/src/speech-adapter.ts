@@ -260,4 +260,12 @@ export interface TranscriptionAdapter {
   readonly provider: SpeechProvider;
   readonly capabilities: TranscriptionCapabilities;
   transcribe(req: TranscribeRequest, connection: SpeechConnection): Promise<TranscribeResult>;
+  /** The models the vendor serves for transcription now, asked of the vendor (#976). */
+  listModels?(connection: SpeechConnection): Promise<readonly TranscriptionModelOffer[]>;
+}
+
+/** A transcription model the vendor says it serves now (#976). */
+export interface TranscriptionModelOffer {
+  id: string;
+  label: string;
 }

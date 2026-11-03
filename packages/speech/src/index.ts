@@ -11,6 +11,7 @@ export type {
   TranscribeResult,
   TranscriptionAdapter,
   TranscriptionCapabilities,
+  TranscriptionModelOffer,
   SpeechModel,
   SpeechModelOffer,
   Voice,
