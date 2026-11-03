@@ -21,6 +21,7 @@ import type { TestDb } from '@nodal-agents/db/test-utils';
 import { eq } from '@nodal-agents/db';
 import {
   agentJobs,
+  agents,
   approvalRequests,
   channelAllowedConversations,
   constatedWrites,
@@ -35,6 +36,8 @@ import {
   executeTool,
   registerBuiltins,
   resolveRunWorkspaces,
+  templateAutonomy,
+  REPLACE_SHARED_FILE_SETTING,
 } from '@nodal-agents/tools';
 import type { ModelAttachmentInput, ToolContext } from '@nodal-agents/tools';
 import type { TelegramUpdate } from '@nodal-agents/delivery';
@@ -1106,9 +1109,9 @@ async function callFileTool(
     // Un modèle qui prend les images et les PDF : `file_read` les lui passe (#905).
     modelInput: { image: { sees: true }, pdf: { sees: true } },
   };
+  // The rows the level writes for this tool and the shared-file setting (#917).
   const res = await executeTool(tool, input as never, ctx, {
-    approvalRules: [],
-    ...(autonomy ? { autonomy } : {}),
+    approvalRules: rowsWrittenFor(tool, name, autonomy ?? 'propose_confirm'),
     onApprovalRequired: async () => {},
   });
   if (res.outcome !== 'success') throw new Error(`${name}: ${JSON.stringify(res)}`);
@@ -1485,9 +1488,37 @@ async function runFileTool(
       turn: 1,
       workspaces,
     },
-    // L'autonomie par défaut (`destructive_gate`), aucune règle : la porte décide seule.
-    { approvalRules: [], ...(autonomy ? { autonomy } : {}), onApprovalRequired: async () => {} },
+    // Les lignes qu'un agent tient sous l'autonomie par défaut (`destructive_gate`,
+    // #917) : l'outil et le réglage « shared file », écrits par le modèle. Aucune
+    // règle posée à la main : la porte applique ces lignes, seule.
+    {
+      approvalRules: rowsWrittenFor(tool, name, autonomy ?? 'destructive_gate'),
+      onApprovalRequired: async () => {},
+    },
   );
+}
+
+/** The rows the level writes for one tool and the shared-file setting (#917). */
+function rowsWrittenFor(
+  tool: Parameters<typeof templateAutonomy>[0],
+  name: string,
+  level: 'propose_confirm' | 'destructive_gate' | 'fully_autonomous',
+) {
+  const template = { level, rules: [], agentId: seed.agentId, entityId: seed.entityId };
+  const row = (toolName: string, action: 'auto_approve' | 'require_approval' | 'block') => ({
+    id: `row-${toolName}`,
+    toolName,
+    action,
+    agentId: seed.agentId,
+    entityId: seed.entityId,
+  });
+  return [
+    row(name, templateAutonomy(tool, template)),
+    row(
+      REPLACE_SHARED_FILE_SETTING,
+      templateAutonomy({ name: REPLACE_SHARED_FILE_SETTING, riskLevel: 'write' }, template),
+    ),
+  ];
 }
 
 const sha256 = (bytes: Uint8Array | string) => createHash('sha256').update(bytes).digest('hex');
@@ -1509,17 +1540,35 @@ async function approvalsOf(jobId: string) {
   return db.select().from(approvalRequests).where(eq(approvalRequests.jobId, jobId));
 }
 
-async function otherJob(): Promise<string> {
+/** Un run de `agentId` (l'agent du test par défaut). */
+async function jobOf(agentId: string = seed.agentId): Promise<string> {
   const [row] = await db
     .insert(agentJobs)
     .values({
       entityId: seed.entityId,
-      agentId: seed.agentId,
+      agentId,
       channel: 'dashboard',
       task: 'un autre run',
     })
     .returning({ id: agentJobs.id });
   return row!.id;
+}
+
+/**
+ * Un run d'un AUTRE agent du même espace. Depuis #917, la porte protège le
+ * travail d'un autre AGENT : un autre run du même agent écrit pour lui.
+ */
+async function otherJob(): Promise<string> {
+  const [agent] = await db
+    .insert(agents)
+    .values({
+      entityId: seed.entityId,
+      name: 'Another Agent',
+      slug: `another-agent-${Date.now()}-${Math.random()}`,
+      personality: 'You are another agent.',
+    })
+    .returning({ id: agents.id });
+  return jobOf(agent!.id);
 }
 
 // #913 : le PDF que le propriétaire envoie sur Telegram est rangé pour son job
@@ -1608,6 +1657,35 @@ describe('a file received for a job is written by that job (#913) @cap:parler-pa
     expect(res).toMatchObject({ outcome: 'success', output: { ok: true, operation: 'moved' } });
     expect(await approvalsOf(jobId)).toEqual([]);
     expect(new Uint8Array(await readFile(join(classement(), 'scan.png')))).toEqual(PNG);
+    await rm(classement(), { recursive: true });
+  });
+
+  // #917, décision A : la réception écrit pour l'AGENT du job. Le run suivant
+  // du même agent range le fichier reçu sans demander à personne.
+  it('Telegram: a later run of the same agent moves the received PDF without asking anyone', async () => {
+    telegramFiles.set('doc-917', INVOICE);
+    const { jobId, outcomes } = await deliver(
+      update({
+        caption: 'Garde moi ça',
+        document: { file_id: 'doc-917', file_name: 'Devis.pdf', mime_type: 'application/pdf' },
+      }),
+    );
+    const received = outcomes[0]!;
+    if (!received.received) throw new Error(`not received: ${received.reason}`);
+
+    const later = await jobOf();
+    expect(later).not.toBe(jobId);
+    const res = await runFileTool(later, 'file_move', {
+      source: received.workspacePath,
+      destination: 'shared/Classement/Devis.pdf',
+      create_dirs: true,
+      purpose: 'Ranger le fichier reçu.',
+    });
+
+    expect(res).toMatchObject({ outcome: 'success', output: { ok: true, operation: 'moved' } });
+    expect(await approvalsOf(later)).toEqual([]);
+    expect(await readFile(join(classement(), 'Devis.pdf'))).toEqual(INVOICE);
+    await expect(stat(received.path)).rejects.toThrow();
     await rm(classement(), { recursive: true });
   });
 

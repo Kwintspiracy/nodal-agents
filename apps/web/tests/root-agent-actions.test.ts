@@ -347,21 +347,33 @@ describe('setRootAgentAction — write paths', () => {
     expect(row?.rootAgentId).toBe(_orchestratorId);
   });
 
-  it('fully_autonomous: no approval_rules rows inserted', async () => {
+  // #917 : the level is a template. A meta-tool the grants hand the ROOT gets
+  // its row when it arrives, with the value the level gives it.
+  it('fully_autonomous: each meta-tool the ROOT holds gets a row, Autonomous except what runs code', async () => {
     await setRoot(_orchestratorId);
     const { setRootAgentAction } = await import('../src/lib/actions.ts');
     await setRootAgentAction({ grants: { ...ALL_ON, autonomy: 'fully_autonomous' } });
-    expect((await metaRules()).length).toBe(0);
+    const rules = await metaRules();
+    expect(rules.length).toBeGreaterThan(0);
+    // Full autonomy never covers starting a local program (CODE_EXECUTION_TOOL_NAMES).
+    const runsCode = ['create_mcp', 'attach_mcp'];
+    for (const r of rules) {
+      expect(r.action, r.toolName).toBe(
+        runsCode.includes(r.toolName) ? 'require_approval' : 'auto_approve',
+      );
+    }
   });
 
-  it('destructive_gate: no approval_rules rows inserted (no destructive meta-tools in MVT)', async () => {
+  it('destructive_gate: each meta-tool gets a row, Autonomous (no destructive meta-tool)', async () => {
     await setRoot(_orchestratorId);
     const { setRootAgentAction } = await import('../src/lib/actions.ts');
     await setRootAgentAction({ grants: { ...ALL_ON, autonomy: 'destructive_gate' } });
-    expect((await metaRules()).length).toBe(0);
+    const rules = await metaRules();
+    expect(rules.length).toBeGreaterThan(0);
+    expect(rules.every((r) => r.action === 'auto_approve')).toBe(true);
   });
 
-  it('switching from propose_confirm to fully_autonomous deletes existing rules', async () => {
+  it('switching the level rewrites NO row: the rows stay as written (Apply to all is the gesture)', async () => {
     await setRoot(_orchestratorId, true);
     const { setRootAgentAction } = await import('../src/lib/actions.ts');
 
@@ -371,7 +383,9 @@ describe('setRootAgentAction — write paths', () => {
     expect((await metaRules()).length).toBe(expectedCount);
 
     await setRootAgentAction({ grants: { ...ALL_ON, autonomy: 'fully_autonomous' } });
-    expect((await metaRules()).length).toBe(0);
+    const after = await metaRules();
+    expect(after.length).toBe(expectedCount);
+    expect(after.every((r) => r.action === 'require_approval')).toBe(true);
   });
 
   it('re-syncing the same propose_confirm grants twice in a row leaves exactly ONE row per meta-tool — R2 (audit #2 follow-up)', async () => {
@@ -456,7 +470,7 @@ describe('setRootAgentAction — approval rules follow "May change its own team"
     }
   });
 
-  it('turning the setting back off clears the three rules on the next sync', async () => {
+  it('turning the setting back off writes nothing for the three tools: their rows stay, dormant, for a tool the ROOT no longer holds', async () => {
     const { setRootAgentAction } = await import('../src/lib/actions.ts');
     await setRoot(_orchestratorId, true);
     await setRootAgentAction({ grants: { ...ALL_ON, autonomy: 'propose_confirm' } });
@@ -470,10 +484,15 @@ describe('setRootAgentAction — approval rules follow "May change its own team"
       .where(eq(agents.id, _orchestratorId));
     await setRootAgentAction({ grants: { ...ALL_ON, autonomy: 'propose_confirm' } });
 
+    // #917: a row is never deleted by a grant; the gate never reaches it
+    // either, because the runner no longer hands the ROOT these tools.
     const toolNames = (await metaRules()).map((r) => r.toolName);
     for (const name of TEAM_TOOLS) {
-      expect(toolNames).not.toContain(name);
+      expect(toolNames).toContain(name);
     }
     expect(toolNames).toContain('create_skill');
+    const { resolveAgentToolNames } = await import('@nodal-agents/orchestration');
+    const held = await resolveAgentToolNames(_testDb! as never, _orchestratorId);
+    for (const name of TEAM_TOOLS) expect(held.has(name), name).toBe(false);
   });
 });

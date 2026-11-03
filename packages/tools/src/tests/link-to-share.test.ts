@@ -15,6 +15,7 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { basename, join, resolve, sep } from 'node:path';
 import { z } from 'zod';
+import { autonomousRows } from './autonomy-rows-fixture';
 
 const FAKE_LINK = 'link-to-share';
 const SHARE_TARGET = '\\\\?\\UNC\\fileserver\\public\\drop';
@@ -107,11 +108,11 @@ describe('a link to a network share is refused like the share itself (#614, revi
           id: 'yolo',
           toolName: 'run_command',
           action: 'auto_approve',
-          agentId: null,
+          agentId: seed.agentId,
           entityId: seed.entityId,
         },
+        ...autonomousRows(seed),
       ],
-      autonomy: 'destructive_gate',
       shellPolicy: DEFAULT_SHELL_POLICY,
       onApprovalRequired: async () => {},
     });

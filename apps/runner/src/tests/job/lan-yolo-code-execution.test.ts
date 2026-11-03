@@ -14,7 +14,7 @@
 // frein relâché → l'autonomie du workspace s'applique à nouveau.
 // Harness copied verbatim from run-command-flow.test.ts.
 
-import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vitest';
 import { mkdtemp, rm, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -286,6 +286,14 @@ async function createJob(): Promise<{ id: string }> {
   if (!job) throw new Error('Failed to create test job');
   return job;
 }
+
+// Each case runs an agent whose rows were written under the level it sets
+// (#917): the rows are written when the job starts, from that level, and an
+// agent keeps its rows from one job to the next. Without this reset the first
+// case's level would decide for every case after it.
+beforeEach(async () => {
+  await db.delete(approvalRules).where(eq(approvalRules.agentId, seed.agentId));
+});
 
 describe('Auto-run brake — code-execution tools beyond run_command', () => {
   it('run_skill_script under destructive_gate + brake ENGAGED → suspends for approval (never auto-executes)', async () => {

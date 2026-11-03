@@ -1081,6 +1081,13 @@
       "breakpoints": true
     },
     {
+      "idx": 156,
+      "version": "7",
+      "when": 1786350000000,
+      "tag": "0156_autonomy_rows",
+      "breakpoints": true
+    },
+    {
       "idx": 157,
       "version": "7",
       "when": 1786436300000,

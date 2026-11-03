@@ -3,17 +3,22 @@
 // pendant qu'une règle plus précise continuait de demander, parce que l'ordre
 // n'était lisible nulle part.
 //
-// Ces tests portent sur la fonction PURE (`explainApprovalRules`) ET sur
-// `matchApprovalRule`, qui en dérive : si les deux divergeaient, la carte
-// mentirait de nouveau.
+// Depuis #917 la chaîne d'EXÉCUTION n'a plus que deux crans : la ligne de
+// l'agent confinée au dossier où le job travaille, puis la ligne de l'agent
+// pour l'outil. Les règles qui nomment un serveur, tous les outils ou tous les
+// agents sont des MODÈLES : elles donnent la valeur d'une ligne quand elle est
+// écrite (`explainTemplateRules`), jamais une décision pour un appel.
+//
+// Ces tests portent sur les fonctions PURES ET sur `matchApprovalRule`, qui en
+// dérive : si les deux divergeaient, la carte mentirait de nouveau.
 
 import { describe, it, expect } from 'vitest';
 import {
   explainApprovalRules,
+  explainTemplateRules,
   matchApprovalRule,
   normaliseWorkspacePath,
   workspaceMatches,
-  resolveToolDefaultApproval,
 } from '../index';
 import type { ApprovalRule } from '../types';
 
@@ -32,149 +37,91 @@ function rule(over: Partial<ApprovalRule> & { id: string }): ApprovalRule {
   };
 }
 
-describe('explainApprovalRules @cap:approuver-une-action/moteur', () => {
-  it('orders every matching rule most specific first, and marks only the first as winning', () => {
+const EVERY_TIER: ApprovalRule[] = [
+  rule({ id: 'entity-wildcard', toolName: '*', agentId: null, action: 'require_approval' }),
+  rule({ id: 'agent-server', toolName: 'mcp_playwright__*', action: 'auto_approve' }),
+  rule({ id: 'entity-tool', agentId: null, action: 'require_approval' }),
+  rule({ id: 'agent-wildcard', toolName: '*', action: 'auto_approve' }),
+  rule({ id: 'entity-server', toolName: 'mcp_playwright__*', agentId: null, action: 'block' }),
+  rule({ id: 'agent-tool', action: 'block' }),
+];
+
+describe('explainApprovalRules: the agent row decides @cap:approuver-une-action/moteur', () => {
+  it('at run time only the agent row for the exact tool applies, whatever else exists', () => {
+    const chain = explainApprovalRules(EVERY_TIER, TOOL, AGENT, ENTITY);
+    expect(chain.map((r) => r.id)).toEqual(['agent-tool']);
+    expect(chain[0]).toMatchObject({ tier: 'agent-tool', scope: 'agent', wins: true });
+    expect(matchApprovalRule(EVERY_TIER, TOOL, AGENT, ENTITY)?.action).toBe('block');
+  });
+
+  it('a server, a `*` or an Everyone rule decides NOTHING for a tool without a row', () => {
+    const templatesOnly = EVERY_TIER.filter((r) => r.id !== 'agent-tool');
+    expect(explainApprovalRules(templatesOnly, TOOL, AGENT, ENTITY)).toEqual([]);
+    // No row: the gate refuses the call, it never borrows a template's value.
+    expect(matchApprovalRule(templatesOnly, TOOL, AGENT, ENTITY)).toBeUndefined();
+  });
+
+  it('ignores rows belonging to another agent', () => {
     const rules: ApprovalRule[] = [
-      rule({ id: 'entity-wildcard', toolName: '*', agentId: null, action: 'require_approval' }),
-      rule({ id: 'agent-server', toolName: 'mcp_playwright__*', action: 'auto_approve' }),
-      rule({ id: 'entity-tool', agentId: null, action: 'require_approval' }),
-      rule({ id: 'agent-wildcard', toolName: '*', action: 'auto_approve' }),
-      rule({
-        id: 'entity-server',
-        toolName: 'mcp_playwright__*',
-        agentId: null,
-        action: 'block',
-      }),
-      rule({ id: 'agent-tool', action: 'block' }),
+      rule({ id: 'other-agent', agentId: OTHER_AGENT, action: 'block' }),
+      rule({ id: 'mine', action: 'require_approval' }),
     ];
+    expect(explainApprovalRules(rules, TOOL, AGENT, ENTITY).map((r) => r.id)).toEqual(['mine']);
+  });
 
-    const chain = explainApprovalRules(rules, TOOL, AGENT, ENTITY);
+  it('hands back the WINNING row even when two rules share an id', () => {
+    // Nothing in the type says ids are distinct, and the test-kit builders hand
+    // out the same one.
+    const rules: ApprovalRule[] = [
+      rule({ id: 'same', toolName: '*', action: 'auto_approve' }),
+      rule({ id: 'same', action: 'require_approval' }),
+    ];
+    expect(matchApprovalRule(rules, TOOL, AGENT, ENTITY)?.action).toBe('require_approval');
+    expect(explainApprovalRules(rules, TOOL, AGENT, ENTITY)[0]?.sourceIndex).toBe(1);
+  });
+});
 
+describe('explainTemplateRules: what a NEW row inherits @cap:regler-autonomie/moteur', () => {
+  it('orders the template rules most specific first, the agent row left out', () => {
+    const chain = explainTemplateRules(EVERY_TIER, TOOL, AGENT, ENTITY);
     expect(chain.map((r) => r.id)).toEqual([
-      'agent-tool',
       'entity-tool',
       'agent-server',
       'entity-server',
       'agent-wildcard',
       'entity-wildcard',
     ]);
-    expect(chain.map((r) => r.wins)).toEqual([true, false, false, false, false, false]);
+    expect(chain.map((r) => r.wins)).toEqual([true, false, false, false, false]);
     expect(chain.map((r) => r.tier)).toEqual([
-      'agent-tool',
       'entity-tool',
       'agent-server',
       'entity-server',
       'agent-all',
       'entity-all',
     ]);
-    expect(chain.map((r) => r.scope)).toEqual([
-      'agent',
-      'entity',
-      'agent',
-      'entity',
-      'agent',
-      'entity',
-    ]);
   });
 
-  it('reproduces issue #346: an Everyone rule NAMING the tool beats the agent server wildcard', () => {
-    const rules: ApprovalRule[] = [
-      // 2026-09-18, entity-wide, names the exact tool.
-      rule({ id: 'everyone-exact', agentId: null, action: 'require_approval' }),
-      // 2026-09-21, the "Always for this server" answer.
-      rule({ id: 'agent-server', toolName: 'mcp_playwright__*', action: 'auto_approve' }),
-    ];
-
-    const chain = explainApprovalRules(rules, TOOL, AGENT, ENTITY);
-
-    expect(chain[0]).toMatchObject({
-      id: 'everyone-exact',
-      action: 'require_approval',
-      scope: 'entity',
-      wins: true,
-    });
-    expect(chain[1]).toMatchObject({ id: 'agent-server', wins: false });
-    expect(matchApprovalRule(rules, TOOL, AGENT, ENTITY)?.id).toBe('everyone-exact');
-  });
-
-  it('ignores rules belonging to another agent or another entity', () => {
-    const rules: ApprovalRule[] = [
-      rule({ id: 'other-agent', agentId: OTHER_AGENT, action: 'block' }),
-      rule({ id: 'other-entity', agentId: null, entityId: 'entity-9', action: 'block' }),
-      rule({ id: 'mine', toolName: '*', action: 'auto_approve' }),
-    ];
-
-    expect(explainApprovalRules(rules, TOOL, AGENT, ENTITY).map((r) => r.id)).toEqual(['mine']);
-  });
-
-  it('returns an empty chain when nothing matches, so the caller falls back to the tool default', () => {
-    expect(explainApprovalRules([], TOOL, AGENT, ENTITY)).toEqual([]);
-    expect(matchApprovalRule([], TOOL, AGENT, ENTITY)).toBeUndefined();
-  });
-
-  it('hands back the WINNING row even when two rules share an id', () => {
-    // Nothing in the type says ids are distinct, and the test-kit builders hand
-    // out the same one. Looking the winner up by id made the gate return the
-    // first rule of the array instead - a `require_approval` silently becoming
-    // an `auto_approve`.
-    const rules: ApprovalRule[] = [
-      rule({ id: 'same', toolName: '*', agentId: null, action: 'auto_approve' }),
-      rule({ id: 'same', action: 'require_approval' }),
-    ];
-    expect(matchApprovalRule(rules, TOOL, AGENT, ENTITY)?.action).toBe('require_approval');
-    expect(explainApprovalRules(rules, TOOL, AGENT, ENTITY)[0]?.sourceIndex).toBe(1);
-  });
-
-  it('never marks a second winner, whatever the array order', () => {
-    const rules: ApprovalRule[] = [
-      rule({ id: 'agent-wildcard', toolName: '*' }),
-      rule({ id: 'agent-tool' }),
-    ];
-    expect(explainApprovalRules(rules, TOOL, AGENT, ENTITY).filter((r) => r.wins)).toHaveLength(1);
-    expect(explainApprovalRules(rules, TOOL, AGENT, ENTITY)[0]?.id).toBe('agent-tool');
-  });
-});
-
-describe("le cas de l'issue #357, de bout en bout @cap:regler-autonomie/moteur", () => {
-  // Ce que l'onglet Approvals promet maintenant en une phrase : « A rule on one
-  // tool wins over the server's rule, whoever that rule was set for. » Elle
-  // n'est vraie que si la chaîne le fait, et c'est le cas rapporté le 21/09 :
-  // garder tout Playwright autonome, et bloquer le seul outil qui exécute du
-  // code arbitraire.
-  it('un serveur autonome, un seul de ses outils bloqué : le blocage gagne', () => {
+  it('issue #357: a server trusted, one of its NEW tools inherits that trust', () => {
     const rules: ApprovalRule[] = [
       rule({ id: 'serveur', toolName: 'mcp_playwright__*', action: 'auto_approve' }),
-      rule({ id: 'outil', toolName: TOOL, action: 'block' }),
     ];
-
-    expect(matchApprovalRule(rules, TOOL, AGENT, ENTITY)).toMatchObject({
-      id: 'outil',
-      action: 'block',
-    });
-    // Et le reste du serveur passe toujours sans demander.
     expect(
-      matchApprovalRule(rules, 'mcp_playwright__browser_snapshot', AGENT, ENTITY),
+      explainTemplateRules(rules, 'mcp_playwright__browser_snapshot', AGENT, ENTITY)[0],
     ).toMatchObject({ id: 'serveur', action: 'auto_approve' });
+    // A built-in never matches a server pattern.
+    expect(explainTemplateRules(rules, 'file_read', AGENT, ENTITY)).toEqual([]);
   });
 
-  it("une règle d'outil posée pour TOUT LE MONDE bat aussi le serveur de l'agent", () => {
+  it('a rule confined to a folder is never a template: a new row is valid everywhere', () => {
     const rules: ApprovalRule[] = [
-      rule({ id: 'serveur', toolName: 'mcp_playwright__*', action: 'auto_approve' }),
-      rule({ id: 'outil-everyone', toolName: TOOL, agentId: null, action: 'block' }),
+      rule({
+        id: 'joker-dossier',
+        toolName: '*',
+        action: 'auto_approve',
+        conditionJson: { workspacePath: '/w' },
+      }),
     ];
-
-    expect(matchApprovalRule(rules, TOOL, AGENT, ENTITY)).toMatchObject({
-      id: 'outil-everyone',
-      action: 'block',
-    });
-  });
-
-  it("sans règle sur l'outil exact, c'est bien celle du serveur qui décide", () => {
-    const rules: ApprovalRule[] = [
-      rule({ id: 'serveur', toolName: 'mcp_playwright__*', action: 'auto_approve' }),
-    ];
-
-    expect(matchApprovalRule(rules, TOOL, AGENT, ENTITY)).toMatchObject({ id: 'serveur' });
+    expect(explainTemplateRules(rules, TOOL, AGENT, ENTITY)).toEqual([]);
   });
 });
 
@@ -186,12 +133,10 @@ describe('explainApprovalRules — the folder condition @cap:approuver-une-actio
     action: 'auto_approve',
     conditionJson: { workspacePath: FOLDER },
   });
+  const everywhere = rule({ id: 'tool-row', toolName: 'run_command', action: 'block' });
 
-  it('applies, and wins over everything, when the job works in that folder', () => {
-    const rules: ApprovalRule[] = [
-      rule({ id: 'everyone-exact', toolName: 'run_command', agentId: null, action: 'block' }),
-      conditioned,
-    ];
+  it('applies, and comes before the tool row, when the job works in that folder', () => {
+    const rules: ApprovalRule[] = [everywhere, conditioned];
     const chain = explainApprovalRules(rules, 'run_command', AGENT, ENTITY, [
       { label: 'nodal', path: FOLDER },
     ]);
@@ -203,23 +148,20 @@ describe('explainApprovalRules — the folder condition @cap:approuver-une-actio
       workspaceLabel: 'nodal',
       wins: true,
     });
-    expect(chain[1]).toMatchObject({ id: 'everyone-exact', wins: false });
+    expect(chain[1]).toMatchObject({ id: 'tool-row', wins: false });
     expect(
       matchApprovalRule(rules, 'run_command', AGENT, ENTITY, [{ label: 'nodal', path: FOLDER }])
         ?.action,
     ).toBe('auto_approve');
   });
 
-  it('is left out entirely when the job works somewhere else, and the next rule decides', () => {
-    const rules: ApprovalRule[] = [
-      rule({ id: 'everyone-exact', toolName: 'run_command', agentId: null, action: 'block' }),
-      conditioned,
-    ];
+  it('is left out entirely when the job works somewhere else, and the tool row decides', () => {
+    const rules: ApprovalRule[] = [everywhere, conditioned];
     const chain = explainApprovalRules(rules, 'run_command', AGENT, ENTITY, [
       { label: 'elsewhere', path: 'D:/APPS/Other' },
     ]);
 
-    expect(chain.map((r) => r.id)).toEqual(['everyone-exact']);
+    expect(chain.map((r) => r.id)).toEqual(['tool-row']);
     expect(chain[0]?.wins).toBe(true);
     expect(
       matchApprovalRule(rules, 'run_command', AGENT, ENTITY, [
@@ -294,15 +236,12 @@ describe('normaliseWorkspacePath @cap:approuver-une-action/moteur', () => {
   });
 
   it('keeps a bare drive prefix, so C: and D: stay different places', () => {
-    // Les deux tombaient sur la chaine vide, donc etaient egaux (revue
-    // Reviewer C, passe 1).
     expect(normaliseWorkspacePath('C:', 'win32')).not.toBe(normaliseWorkspacePath('D:', 'win32'));
     expect(normaliseWorkspacePath('C:', 'win32')).toBe('c:/');
     expect(normaliseWorkspacePath('D:\\', 'win32')).toBe('d:/');
   });
 
   it('keeps a UNC path distinct from a POSIX one', () => {
-    // Les deux rendaient `/serveur/part` (revue Reviewer C, passe 2).
     expect(normaliseWorkspacePath('\\\\serveur\\part', 'linux')).toBe('//serveur/part');
     expect(normaliseWorkspacePath('/serveur/part', 'linux')).toBe('/serveur/part');
     expect(normaliseWorkspacePath('\\\\serveur\\part', 'linux')).not.toBe(
@@ -317,11 +256,9 @@ describe('normaliseWorkspacePath @cap:approuver-une-action/moteur', () => {
 });
 
 describe('une condition ne change pas de tier @cap:approuver-une-action/moteur', () => {
-  it('un joker conditionne ne bat PAS un block pose sur l agent et l outil exact', () => {
-    // Hisser toute regle conditionnee en tete de chaine etait une elevation de
-    // privilege : `setAgentApprovalRuleAction` accepte un `toolName` libre, donc
-    // un joker conditionne est ecrivable, et il annulait un `block` explicite
-    // (revue Reviewer C, passe 1).
+  it('un joker conditionne ne decide RIEN : la ligne de l outil gagne', () => {
+    // Un joker n'est plus une décision à l'exécution (#917) : même confiné au
+    // dossier où le job travaille, il n'annule pas un `block` explicite.
     const rules: ApprovalRule[] = [
       rule({
         id: 'joker-conditionne',
@@ -332,26 +269,9 @@ describe('une condition ne change pas de tier @cap:approuver-une-action/moteur',
       rule({ id: 'block-exact', action: 'block' }),
     ];
     const chain = explainApprovalRules(rules, TOOL, AGENT, ENTITY, [{ label: 'w', path: '/w' }]);
-    expect(chain.map((r) => r.id)).toEqual(['block-exact', 'joker-conditionne']);
+    expect(chain.map((r) => r.id)).toEqual(['block-exact']);
     expect(
       matchApprovalRule(rules, TOOL, AGENT, ENTITY, [{ label: 'w', path: '/w' }])?.action,
     ).toBe('block');
-  });
-});
-
-describe('resolveToolDefaultApproval @cap:approuver-une-action/moteur', () => {
-  it('asks first for every MCP tool, whatever the server', () => {
-    expect(resolveToolDefaultApproval('mcp_anything__whatever')).toBe('require_approval');
-  });
-
-  it('asks first for the safe-by-default product tools', () => {
-    expect(resolveToolDefaultApproval('run_command')).toBe('require_approval');
-    expect(resolveToolDefaultApproval('code_task')).toBe('require_approval');
-    expect(resolveToolDefaultApproval('create_agent')).toBe('require_approval');
-  });
-
-  it('runs without asking for an ordinary tool', () => {
-    expect(resolveToolDefaultApproval('file_read')).toBe('auto_approve');
-    expect(resolveToolDefaultApproval('query_memory')).toBe('auto_approve');
   });
 });

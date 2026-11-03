@@ -58,7 +58,7 @@ export async function writeFileAtomically(
       throw new WorkspaceError(
         'shared_file_changed',
         `Nothing was written: "${basename(path)}" in the shared folder changed since this call ` +
-          `was allowed, and it is no longer content this run wrote. Call again: the owner will ` +
+          `was allowed, and it is no longer content this agent wrote. Call again: the owner will ` +
           `be asked before it is overwritten.`,
       );
     }

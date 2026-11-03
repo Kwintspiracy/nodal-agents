@@ -12,7 +12,7 @@ import { join } from 'node:path';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import * as d from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
-import { matchApprovalRule } from '@nodal-agents/tools';
+import { matchApprovalRule, templateAutonomy } from '@nodal-agents/tools';
 import { SCENARIOS, scenarioById } from '../../workflows/scenarios';
 import { resolveAgentToolNames } from '@nodal-agents/orchestration';
 import { existsSync } from 'node:fs';
@@ -305,8 +305,19 @@ describe('the closed tool list of each scenario (decision 1B)', () => {
         .select()
         .from(d.approvalRules)
         .where(d.eq(d.approvalRules.entityId, entityId));
-      // Any tool the server may offer at the job's start is refused.
-      expect(match(all as never, 'notes_srv__write_note', chef, entityId)?.action).toBe('block');
+      // Any tool the server may offer at the job's start has no row yet, and
+      // the row it gets on arrival is the server tier's: Block (#917).
+      expect(match(all as never, 'notes_srv__write_note', chef, entityId)).toBeUndefined();
+      expect(
+        templateAutonomy(
+          {
+            name: 'notes_srv__write_note',
+            riskLevel: 'write',
+            defaultApproval: 'require_approval',
+          },
+          { level: 'fully_autonomous', rules: all as never, agentId: chef, entityId },
+        ),
+      ).toBe('block');
       // The bench printer, which the list opens, is not.
       expect(match(all as never, 'bench_printer__request_print', chef, entityId)?.action).not.toBe(
         'block',
@@ -369,7 +380,15 @@ describe('the closed tool list of each scenario (decision 1B)', () => {
       scenarioById('print')!.tools,
       journal,
     );
-    // The owner, during the trial, allows xlsx_read for Chef inside a folder.
+    // The owner, during the trial, sets Chef's xlsx_read row to Ask first, and
+    // allows it inside one folder: a folder row lives BESIDE the tool row (#917).
+    await d.setApprovalRuleRepo(db, entityId, {
+      agentId: chef,
+      toolName: 'xlsx_read',
+      action: 'require_approval',
+      scope: 'agent',
+      conditionJson: {},
+    });
     await d.setApprovalRuleRepo(db, entityId, {
       agentId: chef,
       toolName: 'xlsx_read',
@@ -379,29 +398,35 @@ describe('the closed tool list of each scenario (decision 1B)', () => {
     });
     const { changed } = await t.restore();
     expect(changed).toEqual([
-      expect.stringContaining(
-        `xlsx_read of agent ${chef} (now auto_approve {"workspacePath":"D:/owner/work"}`,
-      ),
+      expect.stringContaining(`xlsx_read of agent ${chef} (now require_approval {}`),
     ]);
-    const [row] = await db
+    const rows = await db
       .select({ action: d.approvalRules.action, conditionJson: d.approvalRules.conditionJson })
       .from(d.approvalRules)
       .where(
         d.and(d.eq(d.approvalRules.agentId, chef), d.eq(d.approvalRules.toolName, 'xlsx_read')),
       );
-    expect(row).toEqual({
-      action: 'auto_approve',
-      conditionJson: { workspacePath: 'D:/owner/work' },
-    });
+    expect(rows.map((r) => `${r.action} ${JSON.stringify(r.conditionJson)}`).sort()).toEqual([
+      'auto_approve {"workspacePath":"D:/owner/work"}',
+      'require_approval {}',
+    ]);
     expect(existsSync(journal)).toBe(false);
   });
 
-  it('a stale journal: owner edits made after the kill survive recovery, a rule created since is never deleted, and both are named', async () => {
+  it('a stale journal: owner edits made after the kill survive recovery, and both are named', async () => {
     const chef = applied.agents['chef']!.id;
+    const xlsxBefore = (
+      await db
+        .select({ action: d.approvalRules.action })
+        .from(d.approvalRules)
+        .where(
+          d.and(d.eq(d.approvalRules.agentId, chef), d.eq(d.approvalRules.toolName, 'xlsx_read')),
+        )
+    )[0]?.action;
     await applyScenarioTools(db, entityId, 'print', scenarioById('print')!.tools, journal);
     // After the kill, the owner changes Chef's run_command rule (the bench had blocked it)…
     await d.setRunCommandRuleRepo(db, entityId, chef, 'require_approval');
-    // …and sets a rule on list_models, which had none before the bench blocked it.
+    // …and Chef's list_models row, which the bench had blocked too.
     await d.setApprovalRuleRepo(db, entityId, {
       agentId: chef,
       toolName: 'list_models',
@@ -425,8 +450,10 @@ describe('the closed tool list of each scenario (decision 1B)', () => {
       )[0]?.action ?? null;
     expect(await ruleOf('run_command')).toBe('require_approval');
     expect(await ruleOf('list_models')).toBe('require_approval');
-    // Everything else the bench had written is put back: xlsx_read has no rule again.
-    expect(await ruleOf('xlsx_read')).toBeNull();
+    // Everything else the bench had written is put back: xlsx_read has its row
+    // as it was before the trial (#917: every tool has one).
+    expect(xlsxBefore).toBeDefined();
+    expect(await ruleOf('xlsx_read')).toBe(xlsxBefore);
     expect(existsSync(journal)).toBe(false);
   });
 });

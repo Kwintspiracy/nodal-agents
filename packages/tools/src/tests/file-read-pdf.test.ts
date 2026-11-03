@@ -29,6 +29,7 @@ import {
   type ModelAttachmentInput,
 } from '../model-images';
 import type { ToolContext, ToolExecutionResult } from '../types';
+import { autonomousRows } from './autonomy-rows-fixture';
 
 const SCAN = buildTestPdf([{ text: 'Invoice 4217 from ACME' }, { scanned: 'INVOICE 4217 ACME' }]);
 const SCAN_B64 = SCAN.toString('base64');
@@ -103,7 +104,12 @@ function ctx(modelInput?: ModelAttachmentInput): ToolContext {
   };
 }
 
-const opts = { approvalRules: [], onApprovalRequired: async () => {} } as never;
+const opts = {
+  get approvalRules() {
+    return autonomousRows(seed);
+  },
+  onApprovalRequired: async () => {},
+} as never;
 
 async function read(
   path: string,

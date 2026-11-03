@@ -31,6 +31,7 @@ import { constatedGitWrites, snapshotGitAvant } from '../verification/git-consta
 import { snapshot } from '@nodal-agents/checkpoints';
 import type { ApprovalRule, ExecuteOptions, ToolContext } from '../types';
 import { noWorkspaceSandbox } from '@nodal-agents/sandbox';
+import { autonomousRows } from './autonomy-rows-fixture';
 
 const run = promisify(execFile);
 
@@ -102,7 +103,11 @@ async function genererDans(ws: string, store: string, nom: string, jobId: string
     `require('fs').mkdirSync('outputs', { recursive: true });\n` +
       `require('fs').writeFileSync('outputs/${nom}', 'image ${nom}');\n`,
   );
-  const rule = { ...autoApprouve.approvalRules[0], entityId: seed.entityId } as ApprovalRule;
+  const rule = {
+    ...autoApprouve.approvalRules[0],
+    agentId: seed.agentId,
+    entityId: seed.entityId,
+  } as ApprovalRule;
   const res = await executeTool(
     registry.get('run_command') as never,
     { purpose: 'générer', command: 'node gen.js', cwd: ws },
@@ -116,7 +121,7 @@ async function genererDans(ws: string, store: string, nom: string, jobId: string
       checkpointsRoot: store,
       turn: 1,
     } as unknown as ToolContext,
-    { ...autoApprouve, approvalRules: [rule] } as never,
+    { ...autoApprouve, approvalRules: [rule, ...autonomousRows(seed)] } as never,
   );
   expect(res.outcome, JSON.stringify(res)).toBe('success');
   return db
@@ -203,7 +208,10 @@ describe('a shell write is constated without a git root at the workspace (#590) 
         } as unknown as ToolContext,
         {
           ...autoApprouve,
-          approvalRules: [{ ...autoApprouve.approvalRules[0], entityId: seed.entityId }],
+          approvalRules: [
+            { ...autoApprouve.approvalRules[0], agentId: seed.agentId, entityId: seed.entityId },
+            ...autonomousRows(seed),
+          ],
         } as never,
       );
       expect(res.outcome).toBe('success');
@@ -462,7 +470,11 @@ describe('a call whose after is never read leaves no frozen copy (#590) @cap:tra
     await mkdir(ws, { recursive: true });
     const store = join(racine, 'store-echec');
     const job = await delegue();
-    const rule = { ...autoApprouve.approvalRules[0], entityId: seed.entityId } as ApprovalRule;
+    const rule = {
+      ...autoApprouve.approvalRules[0],
+      agentId: seed.agentId,
+      entityId: seed.entityId,
+    } as ApprovalRule;
     // Le vrai `run_command` — mêmes cibles, même approbation — dont l'exécution
     // lève : l'après n'est jamais lu.
     const qui_leve = {
@@ -484,7 +496,7 @@ describe('a call whose after is never read leaves no frozen copy (#590) @cap:tra
         checkpointsRoot: store,
         turn: 1,
       } as unknown as ToolContext,
-      { ...autoApprouve, approvalRules: [rule] } as never,
+      { ...autoApprouve, approvalRules: [rule, ...autonomousRows(seed)] } as never,
     );
     expect(res.outcome).toBe('error');
     const restes = (await readdir(join(store, 'indexes'))).filter((f) => f.includes('.constat-'));

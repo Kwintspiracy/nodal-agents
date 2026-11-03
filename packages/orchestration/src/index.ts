@@ -163,10 +163,30 @@ export { checkRootJobComplete, getPendingTasksForRoot } from './planner/completi
 
 // ─── Team block (auto-generated from DB) ─────────────────────────────────────
 export { buildTeamBlock } from './team-block';
-export { resolveBuiltinToolNames } from './builtin-tool-names';
+export { resolveBuiltinToolNames, sharedFileToolNames } from './builtin-tool-names';
 // The tool names a job of an agent really receives — the runner's whitelist,
 // read back without running a job (#863: the bench's closed tool lists read it too).
-export { resolveAgentToolNames } from './router/resolve-agent-tools';
+export {
+  resolveAgentToolNames,
+  resolveAgentTools,
+  WIDEST_PLACEMENT,
+  type AgentToolSource,
+  type SourcedAgentTool,
+  type ResolvedAgentTool,
+} from './router/resolve-agent-tools';
+// One autonomy row per agent and tool (#917): the one writer.
+export {
+  applyAutonomyLevelToAll,
+  autonomyRowNames,
+  sharedFileShownBefore917,
+  syncAgentAutonomyRows,
+  templateValuesFor,
+  valueShownBefore917,
+  writeAutonomyRowsAtBoot,
+  writeMissingAutonomyRows,
+  type AutonomyRowTool,
+  type WrittenAutonomyRows,
+} from './autonomy-rows';
 export { resolveMcpToolNames } from './mcp-tool-names';
 export { holdersOfPath } from './path-holders';
 export type { PathHolders, RosterFolders } from './path-holders';

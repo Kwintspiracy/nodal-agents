@@ -28,7 +28,7 @@
 // le seam, qui range la destination créée et la source retirée. L'outil ne
 // rapporte AUCUNE empreinte écrite (`reportWrittenContent`) : il n'a pas
 // produit ces octets, il les a déplacés. Le fichier arrivé dans `shared` n'est
-// donc pas « du contenu que ce run a écrit », et la porte d'écrasement le
+// donc pas « du contenu que cet agent a écrit », et la porte d'écrasement le
 // protège comme le travail d'un autre — le choix prudent.
 //
 // JAMAIS DE REMPLACEMENT SANS `replace: true` (issue #933). Deux jobs de
@@ -864,7 +864,7 @@ async function assertStillOurs(ctx: ToolContext, destroyed: readonly string[]): 
       throw new WorkspaceError(
         'shared_file_changed',
         `Nothing was moved: "${basename(path)}" in the shared folder changed since this ` +
-          'call was allowed, and it is no longer content this run wrote. Call again: the owner ' +
+          'call was allowed, and it is no longer content this agent wrote. Call again: the owner ' +
           'will be asked first.',
       );
     }
@@ -975,26 +975,27 @@ export const fileMoveTool: ToolDefinition<typeof FileMoveInputSchema, FileMoveOu
     );
   },
   // La porte d'écrasement de `file_write`, sur chaque fichier que l'appel
-  // DÉTRUIT (`destroyedBy`) : un fichier existant du dossier partagé que ce run
-  // n'a pas écrit ne se remplace pas, et ne se retire pas, sans personne. Un
+  // DÉTRUIT (`destroyedBy`) : un fichier existant du dossier partagé que cet
+  // agent n'a pas écrit (dans ce run ou un autre, #917) ne se remplace pas, et
+  // ne se retire pas, sans le réglage « shared file ». Un
   // fichier neuf, ou un dossier de l'agent, ne demande rien : l'instantané le
   // défait.
-  computeApproval: async (input, ctx) => {
+  replacesSharedFile: async (input, ctx) => {
     let paths: MovePaths;
     try {
       paths = await resolveMove(ctx, input);
     } catch {
-      return undefined; // execute() échouera sur la même raison
+      return false; // execute() échouera sur la même raison
     }
-    if (!paths.ok) return undefined;
-    if (await isProtectedWorkflowTemplate(ctx, paths.destination)) return undefined;
-    if (!input.copy && (await isProtectedWorkflowTemplate(ctx, paths.source))) return undefined;
+    if (!paths.ok) return false;
+    if (await isProtectedWorkflowTemplate(ctx, paths.destination)) return false;
+    if (!input.copy && (await isProtectedWorkflowTemplate(ctx, paths.source))) return false;
     for (const path of destroyedBy(input, paths)) {
       if ((await computeSharedOverwriteApproval(ctx, path)) === 'require_approval') {
-        return 'require_approval';
+        return true;
       }
     }
-    return undefined;
+    return false;
   },
   execute: async (input, ctx) => {
     let paths: MovePaths;

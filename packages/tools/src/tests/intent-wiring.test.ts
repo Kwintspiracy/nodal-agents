@@ -28,6 +28,7 @@ import { registerBuiltins } from '../builtin';
 import { officeMutationTargets } from '../builtin/office-ops';
 import { executeTool } from '../execute';
 import type { ApprovalRule, ExecuteOptions, ToolContext } from '../types';
+import { autonomousRows } from './autonomy-rows-fixture';
 
 let db: TestDb;
 let seed: { userId: string; entityId: string; agentId: string; jobId: string };
@@ -149,7 +150,7 @@ function autoApproveMutating(): ExecuteOptions {
     agentId: seed.agentId,
     entityId: seed.entityId,
   })) as ApprovalRule[];
-  return { approvalRules: rules, onApprovalRequired: async () => {} };
+  return { approvalRules: [...rules, ...autonomousRows(seed)], onApprovalRequired: async () => {} };
 }
 
 async function statesOf(jobId: string) {
@@ -291,6 +292,7 @@ describe('la sonde — ce que le seam fait d’un outil marqué', () => {
           agentId: seed.agentId,
           entityId: seed.entityId,
         },
+        ...autonomousRows(seed),
       ] as ApprovalRule[],
       onApprovalRequired: async () => {},
     };

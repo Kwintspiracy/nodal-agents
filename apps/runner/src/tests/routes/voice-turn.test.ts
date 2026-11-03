@@ -39,6 +39,10 @@ import {
   conversations,
   entities,
   entityLlmKeys,
+  approvalRules,
+  agentMemory,
+  toolCalls,
+  and,
   eq,
   asc,
 } from '@nodal-agents/db';
@@ -192,7 +196,10 @@ const systemOf = (body: ChatBody) =>
 function network(opts: {
   transcription?: { status: number; body: unknown };
   front?: { text?: string; instruction?: string };
+  /** The tool calls the worker makes, one per request, before it answers 'Done.'. */
+  worker?: Array<{ name: string; args: Record<string, unknown> }>;
 }) {
+  const workerCalls = [...(opts.worker ?? [])];
   const sent = {
     transcription: [] as Array<{ model: string; messages: Sent }>,
     front: [] as ChatBody[],
@@ -242,7 +249,11 @@ function network(opts: {
         }
       } else {
         sent.worker.push(body);
-        text = 'Done.';
+        const next = workerCalls.shift();
+        if (next) {
+          text = '';
+          toolCall = next;
+        } else text = 'Done.';
       }
       const usage = { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 };
       const finish = toolCall ? 'tool_calls' : 'stop';
@@ -493,6 +504,53 @@ describe('the voice turn route @cap:parler-a-un-agent/moteur', () => {
     // The worker's request, as the provider received it, carries the fact.
     expect(sent.worker.length).toBeGreaterThan(0);
     expect(systemOf(sent.worker[0]!)).toContain(SPOKEN_LINE);
+  });
+
+  it('the job a voice turn launches writes its autonomy rows at start, so its tool calls run (#917)', async () => {
+    // The voice turn's `run_task` is the chat surface's own tool: runChatTurn
+    // reads it off the reply, it never goes through the gate. The gate applies
+    // inside the JOB, and the job start writes a row for every tool it holds
+    // (`writeMissingAutonomyRows`, execute.ts). An agent with no row at all:
+    // its first call must run on the written row, never `autonomy_not_set`.
+    await db.delete(approvalRules).where(eq(approvalRules.agentId, agentId));
+    const app = createApp(makeDeps(), testEnv);
+    const conv = await conversation();
+    const fact = `voice-917-${randomUUID()}`;
+    network({
+      front: { text: 'On it.', instruction: '' },
+      worker: [{ name: 'save_memory', args: { fact, category: 'context' } }],
+    });
+
+    const { body } = await say(app, conv, FIXTURE, { format: 'audio/wav' });
+    const jobId = body['spawnedJobId'] as string;
+    await settled(jobId);
+
+    const [job] = await db
+      .select({ status: agentJobs.status, tools: agentJobs.systemPromptTools })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, jobId));
+    expect(job?.status).toBe('completed');
+    const named = new Set(
+      (
+        await db
+          .select({ toolName: approvalRules.toolName })
+          .from(approvalRules)
+          .where(eq(approvalRules.agentId, agentId))
+      ).map((r) => r.toolName),
+    );
+    expect((job?.tools ?? []).filter((t) => !named.has(t))).toEqual([]);
+    const calls = await db
+      .select({ output: toolCalls.toolOutput })
+      .from(toolCalls)
+      .where(and(eq(toolCalls.jobId, jobId), eq(toolCalls.toolName, 'save_memory')));
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.output ?? '').not.toContain('autonomy_not_set');
+    const saved = await db
+      .select({ fact: agentMemory.fact })
+      .from(agentMemory)
+      .where(eq(agentMemory.fact, fact));
+    expect(saved).toHaveLength(1);
+    await db.delete(agentMemory).where(eq(agentMemory.fact, fact));
   });
 
   it('the typed turn is unchanged: no spoken line, no duration, its job rendered as text', async () => {
