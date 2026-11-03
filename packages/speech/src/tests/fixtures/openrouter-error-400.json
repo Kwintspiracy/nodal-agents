@@ -1,0 +1,10 @@
+{
+  "error": {
+    "message": "Provider returned error: Failed to load audio file",
+    "code": 400,
+    "metadata": {
+      "raw": "{\"object\":\"error\",\"message\":\"Failed to load audio file\",\"type\":\"invalid_request_audio\"}",
+      "provider_name": "Mistral"
+    }
+  }
+}

@@ -27,7 +27,6 @@ vi.mock('../transport', () => ({
 const { createLlmClient } = await import('../client');
 const { createEmbeddingClient } = await import('../embeddings');
 const { generateImageWithProvider } = await import('../providers/image-models');
-const { createOpenRouterSpeech } = await import('../providers/speech-models');
 
 beforeEach(() => {
   seen.length = 0;
@@ -77,14 +76,6 @@ describe('provider transport wiring (#608) @cap:choisir-modele/moteur', () => {
     { provider: 'openrouter' as const, model: 'google/gemini-3-pro-image' },
   ])('$provider image generation goes through providerFetch', async (cfg) => {
     await generateImageWithProvider({ ...cfg, apiKey: 'k' }, { prompt: 'a cat' }).catch(
-      () => undefined,
-    );
-
-    expect(seen.length).toBeGreaterThan(0);
-  });
-
-  it('speech goes through providerFetch', async () => {
-    await createOpenRouterSpeech('k')({ model: 'openai/tts', text: 'hi', voice: 'alloy' }).catch(
       () => undefined,
     );
 
