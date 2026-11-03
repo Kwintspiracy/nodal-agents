@@ -297,6 +297,9 @@ async function currentRule(
         d.eq(d.approvalRules.entityId, entityId),
         d.eq(d.approvalRules.agentId, agentId),
         d.eq(d.approvalRules.toolName, toolName),
+        // La ligne de l'outil, pas une ligne de dossier : les deux coexistent
+        // depuis #917 (0156).
+        d.eq(d.approvalRules.conditionFolder, ''),
       ),
     );
   return row
@@ -329,13 +332,18 @@ async function putBack(
       );
       continue;
     }
+    // Pas de ligne avant le banc : il la retire. La ligne d'un outil ne se
+    // retire pas par le chemin de l'écran (#917), d'où la porte à part.
+    if (c.before === null) {
+      await d.removeAgentToolRowRepo(db, entityId, c.agentId, c.toolName);
+      continue;
+    }
     const r = await d.setApprovalRuleRepo(db, entityId, {
       agentId: c.agentId,
       toolName: c.toolName,
-      action: c.before?.action ?? null,
+      action: c.before.action,
       scope: 'agent',
-      conditionJson: c.before?.conditionJson ?? {},
-      confirmWidening: true,
+      conditionJson: c.before.conditionJson,
     });
     if ('refused' in r)
       throw new Error(`scenario_tools_restore_refused: ${c.toolName}: ${r.refused}`);
@@ -391,11 +399,15 @@ export async function applyScenarioTools(
       `scenario_tools_journal_pending: ${journal} holds rules an earlier trial replaced; recover them first (recoverScenarioTools)`,
     );
   const d = await import('@nodal-agents/db');
+  const { syncAgentAutonomyRows } = await import('@nodal-agents/orchestration');
   const agents = await db
     .select({ id: d.agents.id, slug: d.agents.slug, active: d.agents.active })
     .from(d.agents)
     .where(d.eq(d.agents.entityId, entityId))
     .orderBy(d.agents.slug);
+  // Les lignes que chaque agent tiendra au lancement de son job (#917), écrites
+  // avant d'être lues : ce que le banc remplace, puis remet, est la ligne.
+  for (const a of agents.filter((x) => x.active !== false)) await syncAgentAutonomyRows(db, a.id);
 
   // 1. Ce que la liste ferme, et la règle que chaque fermeture remplace : lu, rien n'est écrit.
   const plan: Closed[] = [];
@@ -521,7 +533,7 @@ export async function openOutsideList(
   list: readonly string[],
 ): Promise<string[]> {
   const d = await import('@nodal-agents/db');
-  const { matchApprovalRule } = await import('@nodal-agents/tools');
+  const { matchApprovalRule, explainTemplateRules } = await import('@nodal-agents/tools');
   const rules = await db
     .select({
       id: d.approvalRules.id,
@@ -540,6 +552,10 @@ export async function openOutsideList(
     .orderBy(d.agents.slug);
   const blocked = (t: string, agentId: string): boolean =>
     matchApprovalRule(rules as never, t, agentId, entityId)?.action === 'block';
+  // Un outil que personne n'a encore vu n'a pas de ligne : il reçoit, à son
+  // arrivée, la valeur du palier `<serveur>__*` (#917, `templateAutonomy`).
+  const serverClosed = (probe: string, agentId: string): boolean =>
+    explainTemplateRules(rules as never, probe, agentId, entityId)[0]?.action === 'block';
   const out: string[] = [];
   for (const a of agents.filter((x) => x.active !== false)) {
     for (const t of await agentToolNames(db, a.id)) {
@@ -548,7 +564,7 @@ export async function openOutsideList(
     for (const prefix of await heldMcpPrefixes(db, a.id)) {
       const probe = `${prefix}__${ANY_TOOL_OF_SERVER}`;
       if (listAllows(list, probe)) continue;
-      if (!blocked(probe, a.id)) out.push(`${a.slug}:${prefix}__*`);
+      if (!serverClosed(probe, a.id)) out.push(`${a.slug}:${prefix}__*`);
       for (const t of await ruledToolsOfServer(db, entityId, a.id, prefix)) {
         if (!listAllows(list, t) && !blocked(t, a.id)) out.push(`${a.slug}:${t}`);
       }

@@ -15,6 +15,8 @@ import { executeTool } from '../../execute';
 import { askUserTool } from '../../builtin/ask-user';
 import { ALWAYS_ON_TOOLS } from '../../builtin/index';
 import type { ToolContext, ExecuteOptions, ApprovalRule } from '../../types';
+import type { AutonomyLevel } from '@nodal-agents/shared';
+import { rowsAsWritten } from '../autonomy-rows-fixture';
 
 let db: TestDb;
 let seed: { userId: string; entityId: string; agentId: string; jobId: string };
@@ -47,19 +49,16 @@ function resumeBypassRule(): ApprovalRule {
   return {
     id: 'resume-bypass',
     entityId: seed.entityId,
-    agentId: null,
+    agentId: seed.agentId,
     toolName: 'ask_user',
     action: 'auto_approve',
   };
 }
 
-function makeOpts(
-  rules: ApprovalRule[] = [],
-  autonomy?: ExecuteOptions['autonomy'],
-): ExecuteOptions {
+/** The rows `ask_user` gets under `autonomy` (#917), the case's own first. */
+function makeOpts(rules: ApprovalRule[] = [], autonomy?: AutonomyLevel): ExecuteOptions {
   return {
-    approvalRules: rules,
-    ...(autonomy === undefined ? {} : { autonomy }),
+    approvalRules: rowsAsWritten(seed, [askUserTool], autonomy, rules),
     onApprovalRequired: async () => {},
   };
 }

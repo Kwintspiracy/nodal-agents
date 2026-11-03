@@ -18,13 +18,11 @@
 //     l'exécution, ou un import aliasé (`import { approvalRules as ar }`),
 //     lui échappe ;
 //   - elle dit UNE PORTE, pas UN GARDE (revue Reviewer C, C3). Plusieurs
-//     actions de `lib/actions.ts` écrivent la table, et toutes ne passent pas
-//     par `refuseGlobalGrantOverFolderRule` : les bascules Yolo portent le
-//     garde elles-mêmes, le préréglage lecture seule et la recette n'écrivent
-//     que des `block`, qui RESTREIGNENT. Un composant qui appellerait l'une
-//     d'elles passe donc ici, et c'est la revue qui le voit ;
-//   - le garde d'élargissement lui-même est prouvé ailleurs, sur de vraies
-//     lignes en base (`src/lib/__tests__/approval-rule-folder-condition.test.ts`).
+//     actions de `lib/actions.ts` écrivent la table ; depuis #917 une ligne de
+//     dossier et la ligne de l'outil coexistent, et ce que chaque écriture
+//     touche est prouvé ailleurs, sur de vraies lignes en base
+//     (`src/lib/__tests__/approval-rule-folder-condition.test.ts`,
+//     `src/lib/__tests__/autonomy-rows-actions.test.ts`).
 
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';

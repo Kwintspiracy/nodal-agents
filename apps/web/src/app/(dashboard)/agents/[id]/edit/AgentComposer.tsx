@@ -40,6 +40,7 @@ import {
   listWorkspaceFilesAction,
   deleteWorkspaceFileAction,
   listAgentApprovalRulesAction,
+  listAgentAutonomyToolsAction,
   setAgentApprovalRuleAction,
   listInternalToolsAction,
   setRunCommandRuleAction,
@@ -63,6 +64,7 @@ import {
   type JobRow,
   type SkillRow,
   type ApprovalRuleUiRow,
+  type AutonomyToolUiRow,
   type TelegramConfigRow,
   type TelegramAllowedChatView,
   type DiscordConfigRow,
@@ -72,19 +74,13 @@ import {
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
 import FolderPickerModal from './FolderPickerModal.tsx';
 import { SANDBOX_SETTINGS_HREF } from '@/lib/sandbox-copy.ts';
-import {
-  FOLDER_LIMIT_CONFIRM_LABEL,
-  FOLDER_LIMIT_TITLE,
-  folderLimitPreamble,
-  folderLimitWideningMessage,
-} from './folder-limit-copy.ts';
 import { SectionCard, SectionHead } from './SectionCard.tsx';
-import AutonomyToolRow from './AutonomyToolRow.tsx';
+import AutonomyToolRow, { AUTONOMY_LABEL, type FolderRow } from './AutonomyToolRow.tsx';
 import McpServerTools from './McpServerTools.tsx';
 import CommandAllowlistSection from './CommandAllowlistSection.tsx';
 import ShellChecklistSection from './ShellChecklistSection.tsx';
 import AdvancedShellSection from './AdvancedShellSection.tsx';
-import { runCommandsTruth } from './shell-truth.ts';
+import { RUN_COMMAND_FLOOR, runCommandsTruth } from './shell-truth.ts';
 import TeamChangeSection from './TeamChangeSection.tsx';
 import {
   MODEL_CATALOG,
@@ -93,6 +89,7 @@ import {
   modelToolsSupport,
   cliShellPosture,
   mcpToolPrefix,
+  REPLACE_SHARED_FILE_SETTING,
 } from '@nodal-agents/shared';
 import {
   reasoningOptionValues,
@@ -136,7 +133,7 @@ import {
 import FirstTokenWaitField from './FirstTokenWaitField.tsx';
 import AgentBudgetSection from './AgentBudgetSection.tsx';
 import { ProviderRow } from './CodeTaskProviderRow.tsx';
-import type { OperationDescriptor, RootGrants } from '@nodal-agents/shared';
+import type { OperationDescriptor } from '@nodal-agents/shared';
 import { READONLY_PRESET_TOOLS } from '@nodal-agents/shared';
 
 /**
@@ -276,12 +273,6 @@ interface Props {
   autoRunPaused?: boolean;
   /** Whether the current user is the workspace owner. */
   isOwner?: boolean;
-  /**
-   * The workspace autonomy (`entities.root_grants.autonomy`), for the sentence
-   * that says what really happens to this agent's commands (#464). `null`
-   * when it could not be read: the sentence then says it depends on it.
-   */
-  workspaceAutonomy?: RootGrants['autonomy'] | null;
   /** Channels tab data (see ChannelsTabContent.tsx) — null cfg fields signal
    *  `channelsError` happened; the tab renders a banner in that case. */
   channelsError: string | null;
@@ -307,7 +298,6 @@ export default function AgentComposer({
   allSkills,
   autoRunPaused = false,
   isOwner = false,
-  workspaceAutonomy = null,
   channelsError,
   telegramCfg,
   telegramAllowedChats,
@@ -711,7 +701,6 @@ export default function AgentComposer({
               commandAllowlist={agent.commandAllowlist ?? null}
               mayChangeTeam={agent.mayChangeTeam ?? false}
               shellPolicy={agent.shellPolicy ?? null}
-              workspaceAutonomy={workspaceAutonomy}
             />
           </>
         )}
@@ -1682,6 +1671,24 @@ function ownerTextFor(op: OperationDescriptor): { label: string; summary: string
 
 type ApprovalAction = 'auto_approve' | 'require_approval' | 'block';
 
+/** The shared-file setting's row on this tab (#917): one row per agent. */
+const SHARED_FILE_ROW = {
+  label: 'Replace or remove a shared file this agent did not create',
+  summary:
+    'Writing over, editing, moving or removing a file in the shared folder that another run made. Applies to every file tool, whatever its own setting.',
+} as const;
+
+/** What a few tools do whatever their row says: a floor of the gate (#917). */
+const TOOL_FLOOR_NOTE: Readonly<Record<string, string>> = {
+  create_mcp: 'A local server always asks before it starts, whatever this setting says.',
+  ask_user: 'A question always waits for your answer, whatever this setting says.',
+};
+
+/** The row of the agent for a tool: the one valid everywhere (no folder). */
+function plainRow(rules: readonly ApprovalRuleUiRow[], toolName: string) {
+  return rules.find((r) => r.toolName === toolName && r.workspaceLabel === null);
+}
+
 export function AutonomyTab({
   agentId,
   connectors,
@@ -1693,7 +1700,6 @@ export function AutonomyTab({
   commandAllowlist,
   mayChangeTeam,
   shellPolicy,
-  workspaceAutonomy,
 }: {
   agentId: string;
   connectors: AgentConnectorRow[];
@@ -1708,17 +1714,14 @@ export function AutonomyTab({
   mayChangeTeam: boolean;
   /** agents.shell_policy as stored (#464). */
   shellPolicy: unknown;
-  /** The workspace autonomy, for the honest sentence of "Run commands" (#464). */
-  workspaceAutonomy: RootGrants['autonomy'] | null;
 }) {
   /**
-   * Les règles ET l'agent auxquelles elles appartiennent (revue Reviewer C,
+   * Les lignes ET l'agent auxquelles elles appartiennent (revue Reviewer C,
    * passe 3, C1).
    *
    * Portées ensemble, et non vidées dans un effet : passer d'un agent à
    * l'autre change ce que l'écran LIT, tout de suite, même si la lecture
-   * suivante échoue. Vider dans l'effet marcherait aussi, au prix d'un
-   * `setState` synchrone dans un effet, donc d'un rendu en cascade.
+   * suivante échoue.
    */
   const [rulesState, setRulesState] = useState<{
     agentId: string;
@@ -1736,33 +1739,17 @@ export function AutonomyTab({
     [agentId],
   );
   /**
-   * Numéro de la relecture la plus récente (revue Reviewer C, passe 2, F1).
-   *
-   * `setRules` remplace le TABLEAU ENTIER. Deux changements rapprochés sur deux
-   * outils lancent deux relectures ; si la plus ancienne revient la dernière,
-   * elle repose l'état d'avant la seconde écriture, et une ligne retombe à
-   * l'écran sur une action que la base ne porte plus. Seule la dernière
-   * demandée a le droit d'écrire.
+   * Numéro de la relecture la plus récente (revue Reviewer C, passe 2, F1) :
+   * seule la dernière demandée a le droit d'écrire.
    */
   const lastReload = useRef(0);
   /**
    * Les outils dont l'écriture est encore en vol (revue Reviewer C, passe 3,
-   * C2).
-   *
-   * Une relecture déclenchée par l'outil A peut interroger la base AVANT que
-   * l'écriture de l'outil B, partie entre-temps, y soit visible : elle
-   * ramènerait alors l'ancienne valeur de B et écraserait sa ligne, et comme
-   * la réponse de B ne relit rien, l'écran resterait faux. Le garde de
-   * séquence n'y peut rien : ce n'est pas une réponse périmée, c'est une
-   * lecture prise trop tôt. Une relecture laisse donc en place les lignes dont
-   * personne n'a encore le résultat.
+   * C2) : une relecture laisse en place les lignes dont personne n'a encore le
+   * résultat.
    */
   const savingRef = useRef<ReadonlySet<string>>(new Set());
 
-  // Le ref est la source, l'état n'en est que le reflet pour le rendu : mis à
-  // jour dans l'updater de `setSaving`, il n'aurait pas encore la bonne valeur
-  // quand la relecture, déclenchée dans la même continuation de promesse, le
-  // consulte.
   function markSaving(toolName: string, on: boolean) {
     const next = new Set(savingRef.current);
     if (on) next.add(toolName);
@@ -1780,14 +1767,44 @@ export function AutonomyTab({
   // browser bundle and breaks the page build outright. See
   // listInternalToolsAction.
   const [internalTools, setInternalTools] = useState<InternalToolUiRow[]>([]);
+  /**
+   * Every tool this agent holds (#917), from the list its rows are written
+   * from: what the sections below name, and "Other tools" lists the rest.
+   */
+  const [heldTools, setHeldTools] = useState<{
+    agentId: string;
+    tools: AutonomyToolUiRow[];
+    sharedFileSetting: boolean;
+  } | null>(null);
+  const held = heldTools?.agentId === agentId ? heldTools : null;
 
-  // Load current rules on mount
+  /** Re-read the rows: after a write whose effect is not known here. */
+  const reload = useCallback(() => {
+    const seq = ++lastReload.current;
+    void listAgentApprovalRulesAction(agentId).then((r) => {
+      if (!r.ok || seq !== lastReload.current) return;
+      setRules((prev) => {
+        const inFlight = savingRef.current;
+        if (inFlight.size === 0) return r.data;
+        return [
+          ...r.data.filter((d) => !inFlight.has(d.toolName)),
+          ...prev.filter((p) => inFlight.has(p.toolName)),
+        ];
+      });
+    });
+  }, [agentId, setRules]);
+
+  // Load current rows on mount. Reading them WRITES the missing ones first
+  // (#917): a tool the agent holds is never shown without its row.
   useEffect(() => {
     const seq = ++lastReload.current;
-    listAgentApprovalRulesAction(agentId).then((result) => {
+    void listAgentApprovalRulesAction(agentId).then((result) => {
       if (seq !== lastReload.current) return;
       if (result.ok) setRules(result.data);
       setLoadedFor(agentId);
+    });
+    void listAgentAutonomyToolsAction(agentId).then((result) => {
+      if (result.ok) setHeldTools({ agentId, ...result.data });
     });
   }, [agentId, setRules]);
 
@@ -1818,114 +1835,109 @@ export function AutonomyTab({
 
   const attachedMcpServers = useMemo(() => mcpServers.filter((s) => s.assigned), [mcpServers]);
 
-  function ruleFor(toolName: string): ApprovalAction {
-    return rules.find((r) => r.toolName === toolName)?.action ?? 'auto_approve';
+  /** The agent's row for this tool, or `null`: it has none, the gate refuses it. */
+  function ruleFor(toolName: string): ApprovalAction | null {
+    return plainRow(rules, toolName)?.action ?? null;
   }
 
-  /** A connector operation's rule, or its descriptor's default when it has none (#735). */
-  function operationRule(op: OperationDescriptor): ApprovalAction {
-    return (
-      rules.find((r) => r.toolName === op.slug)?.action ??
-      (op.requiresApproval ? 'require_approval' : 'auto_approve')
+  /** Its rows confined to a folder (#346), as data: the row removes one by its path. */
+  function folderRowsFor(toolName: string): FolderRow[] {
+    return rules.flatMap((r) =>
+      r.toolName === toolName && r.workspaceLabel !== null && r.conditionJson?.workspacePath
+        ? [
+            {
+              label: r.workspaceLabel,
+              action: r.action,
+              workspacePath: r.conditionJson.workspacePath,
+            },
+          ]
+        : [],
     );
   }
 
-  /**
-   * Le dossier auquel la règle de cet outil est confinée, ou `undefined`
-   * (issue #361). Le libellé vient du serveur, qui l'a résolu depuis
-   * `agent_workspaces` ; l'écran ne recalcule rien.
-   */
-  function folderFor(toolName: string): string | undefined {
-    return rules.find((r) => r.toolName === toolName)?.workspaceLabel ?? undefined;
+  function removeFolderRow(toolName: string, workspacePath: string) {
+    markSaving(toolName, true);
+    void setAgentApprovalRuleAction({ agentId, toolName, action: null, workspacePath })
+      .then((result) => {
+        markSaving(toolName, false);
+        if (!result.ok) toast.error(result.message);
+        reload();
+      })
+      .catch(() => {
+        markSaving(toolName, false);
+        toast.error('The rule was not removed. Check your connection and try again.');
+      });
   }
 
   /**
-   * Un changement RESTRICTIF demandé sur une règle de dossier, en attente de
-   * la confirmation. Enregistrer depuis cet onglet retire la condition : le
-   * serveur réécrit `condition_json` à vide. Le dire avant, plutôt que de
-   * laisser le propriétaire découvrir après coup que « seulement dans Dev »
-   * est devenu « partout ».
-   *
-   * La version PERMISSIVE n'est pas ici, et ce n'est pas un oubli (revue
-   * Reviewer C, passe 1, C1) : `refuseGlobalGrantOverFolderRule` la REFUSE.
-   * Annoncer un élargissement qui n'aura pas lieu, puis le faire confirmer,
-   * serait un mensonge. Elle part au serveur, qui répond avec sa propre phrase
-   * et nomme le dossier.
+   * A server's setting about to be changed while some of its tools are set
+   * apart from it: the change rewrites them all (#917), said before.
    */
-  const [pendingWiden, setPendingWiden] = useState<{
-    toolName: string;
-    action: ApprovalAction | null;
-    folder: string;
+  const [pendingServer, setPendingServer] = useState<{
+    pattern: string;
+    label: string;
+    action: ApprovalAction;
+    count: number;
   } | null>(null);
 
-  function requestChange(toolName: string, action: ApprovalAction | null) {
-    const folder = folderFor(toolName);
-    if (folder !== undefined && action !== 'auto_approve') {
-      setPendingWiden({ toolName, action, folder });
+  function requestServerChange(
+    pattern: string,
+    label: string,
+    toolNames: readonly string[],
+    action: ApprovalAction,
+  ) {
+    const current = ruleFor(pattern);
+    const apart = toolNames.filter((t) => {
+      const v = ruleFor(t);
+      return v !== null && v !== current && v !== action;
+    });
+    if (apart.length > 0) {
+      setPendingServer({ pattern, label, action, count: toolNames.length });
       return;
     }
-    handleChange(toolName, action);
+    handleChange(pattern, action, { covers: toolNames });
   }
 
-  function handleChange(toolName: string, action: ApprovalAction | null) {
-    // Optimistic update. The row is KEPT for auto_approve — it used to be
-    // dropped, mirroring the server action's old "no rule needed, the default
-    // is already auto_approve" branch. That stopped being true for MCP tools,
-    // which default to require_approval, so dropping it made the UI show "ask"
-    // on the next load for a server the owner had just trusted.
-    //
-    // SAUF sur une règle de dossier (revue Reviewer C, passe 1, C2) : le
-    // serveur peut refuser l'écriture, et poser tout de suite une ligne sans
-    // condition ferait lire « partout » pendant l'aller-retour, sur une règle
-    // que la base garde confinée. Là, on attend sa réponse et on relit.
-    const conditioned = folderFor(toolName) !== undefined;
-    if (!conditioned) {
-      setRules((prev) => {
-        const without = prev.filter((r) => r.toolName !== toolName);
-        // `null` SUPPRIME la règle (issue #357, « Follow the server ») : la
-        // ligne disparaît, elle ne prend pas une valeur.
-        if (action === null) return without;
-        // Sans condition, et c'est ce que le serveur écrit : changer une règle
-        // depuis cet onglet réécrit `condition_json` à vide (issue #361).
-        return [
-          ...without,
-          { id: '', toolName, action, conditionJson: null, workspaceLabel: null },
-        ];
-      });
-    }
+  function handleChange(
+    toolName: string,
+    action: ApprovalAction,
+    opts: { covers?: readonly string[] } = {},
+  ) {
+    // Optimistic: the row this gesture writes, and, for a server's setting,
+    // the rows of its tools it rewrites (setApprovalRuleRepo does the same).
+    const covers = new Set(opts.covers ?? []);
+    setRules((prev) => {
+      const without = prev.filter(
+        (r) => !(r.workspaceLabel === null && (r.toolName === toolName || covers.has(r.toolName))),
+      );
+      return [
+        ...without,
+        ...[toolName, ...covers].map((name) => ({
+          id: '',
+          toolName: name,
+          action,
+          conditionJson: null,
+          workspaceLabel: null,
+        })),
+      ];
+    });
 
     markSaving(toolName, true);
     void setAgentApprovalRuleAction({ agentId, toolName, action })
       .then((result) => {
         markSaving(toolName, false);
         if (!result.ok) toast.error(result.message);
-        // Relecture après un refus, et après tout changement d'une règle de
-        // dossier : dans les deux cas, ce que la base porte maintenant ne se
-        // devine pas depuis l'écran.
-        if (!result.ok || conditioned) {
-          const seq = ++lastReload.current;
-          listAgentApprovalRulesAction(agentId).then((r) => {
-            if (!r.ok || seq !== lastReload.current) return;
-            setRules((prev) => {
-              const inFlight = savingRef.current;
-              if (inFlight.size === 0) return r.data;
-              return [
-                ...r.data.filter((d) => !inFlight.has(d.toolName)),
-                ...prev.filter((p) => inFlight.has(p.toolName)),
-              ];
-            });
-          });
-        }
+        // Relecture après un refus, et après une ligne de serveur : ce que la
+        // base porte maintenant ne se devine pas depuis l'écran.
+        if (!result.ok || covers.size > 0) reload();
       })
-      // Un REJET (réseau coupé pendant l'envoi, erreur de sérialisation) saute
-      // tout le `then` : sans cette reprise, l'outil restait dans `savingRef`,
-      // donc sa ligne grisée pour toujours ET protégée de toute relecture
-      // ultérieure, sans un mot (revue Reviewer C, passe 4, C1). Enchaîné et
-      // non posé à côté : une branche `.catch` parallèle laisse le rejet du
-      // `.then` sans preneur, ce que la CI compte comme une erreur.
+      // Un REJET (réseau coupé pendant l'envoi) saute tout le `then` : sans
+      // cette reprise, l'outil restait dans `savingRef`, sa ligne grisée pour
+      // toujours (revue Reviewer C, passe 4, C1).
       .catch(() => {
         markSaving(toolName, false);
         toast.error('The rule was not saved. Check your connection and try again.');
+        reload();
       });
   }
 
@@ -1937,12 +1949,26 @@ export function AutonomyTab({
     );
   }
 
+  // The tools the sections below name. Every other tool the agent holds is
+  // listed under "Other tools": a tool with a row is never kept off screen.
+  const hasCommandSkill = attachedSkills.some((s) => s.slug === COMMAND_EXECUTION_SKILL_SLUG);
+  const hasCodeTaskSkill = attachedSkills.some((s) => s.slug === CODE_TASK_SKILL_SLUG);
+  const namedAbove = new Set<string>([
+    ...gateableTools.map((op) => op.slug),
+    ...internalTools.map((op) => op.slug),
+    ...(hasCommandSkill ? [RUN_COMMAND_TOOL] : []),
+    ...(hasCodeTaskSkill ? [CODE_TASK_TOOL] : []),
+  ]);
+  const otherTools = (held?.tools ?? []).filter(
+    (t) => t.source !== 'mcp' && !namedAbove.has(t.name),
+  );
+
   return (
     <div className="space-y-6">
       <SectionCard>
         <SectionHead
           label="Approvals"
-          hint="Choose what this agent can do on its own, what needs your approval, and what it cannot do. Set a rule for each external tool. Built-in tools are listed below."
+          hint="Choose what this agent can do on its own, what needs your approval, and what it cannot do. Every tool it has is listed on this tab with its setting."
         />
         {gateableTools.length === 0 ? (
           <p className="text-body-13 text-ink-3">
@@ -1960,31 +1986,26 @@ export function AutonomyTab({
                 slug={op.slug}
                 {...ownerTextFor(op)}
                 risk={op.risk}
-                value={operationRule(op)}
+                value={ruleFor(op.slug)}
                 saving={saving.has(op.slug)}
-                onChange={(action) => requestChange(op.slug, action)}
-                {...(folderFor(op.slug) === undefined ? {} : { folder: folderFor(op.slug) })}
+                onChange={(action) => handleChange(op.slug, action)}
+                folderRows={folderRowsFor(op.slug)}
+                onRemoveFolder={(path) => removeFolderRow(op.slug, path)}
               />
             ))}
           </div>
         )}
         <p className="mt-4 text-body-12 text-ink-4">
-          Connector tools marked ⚠ in the Connectors tab ask first unless you set a rule. The others
-          run without asking. Third-party tools, commands and the tools that change your workspace
-          ask first. Changes apply at the agent&apos;s next step.
+          A tool starts with the setting of the workspace autonomy level, in Settings. What you set
+          here is what applies, from the agent&apos;s next step.
         </p>
       </SectionCard>
 
       {/*
-        The sixteen built-in tools every agent gets. They were always on and
-        never listed, so the only way to restrain one was the read-only preset,
-        which blocks five write tools at once — no way to say "may read files,
-        may not search the web". Same control and same vocabulary as the outward
-        tools above, so one row reads the same everywhere.
-
+        The built-in tools every agent gets. Same control and same vocabulary as
+        the outward tools above, so one row reads the same everywhere.
         Descriptors come from @nodal-agents/orchestration, derived from the tool
-        definitions themselves: the text the owner reads before switching a tool
-        off cannot drift from what that tool actually does.
+        definitions themselves.
       */}
       <SectionCard>
         <SectionHead
@@ -2004,13 +2025,30 @@ export function AutonomyTab({
               risk={op.risk}
               value={ruleFor(op.slug)}
               saving={saving.has(op.slug)}
-              onChange={(action) => requestChange(op.slug, action)}
-              {...(folderFor(op.slug) === undefined ? {} : { folder: folderFor(op.slug) })}
+              onChange={(action) => handleChange(op.slug, action)}
+              folderRows={folderRowsFor(op.slug)}
+              onRemoveFolder={(path) => removeFolderRow(op.slug, path)}
               {...(op.unblockableReason === undefined
                 ? {}
                 : { lockedReason: op.unblockableReason })}
             />
           ))}
+          {/*
+            The shared-file protection (#917): a setting with its own row, no
+            longer a check hidden inside four tools. It applies whatever the
+            file tools' own rows say.
+          */}
+          {held?.sharedFileSetting === true && (
+            <AutonomyToolRow
+              slug={REPLACE_SHARED_FILE_SETTING}
+              label={SHARED_FILE_ROW.label}
+              summary={SHARED_FILE_ROW.summary}
+              risk="destructive"
+              value={ruleFor(REPLACE_SHARED_FILE_SETTING)}
+              saving={saving.has(REPLACE_SHARED_FILE_SETTING)}
+              onChange={(action) => handleChange(REPLACE_SHARED_FILE_SETTING, action)}
+            />
+          )}
         </div>
         <p className="mt-4 text-body-12 text-ink-4">
           Blocked tools stay visible to the agent. If it tries to use one, it is told the tool is
@@ -2019,22 +2057,15 @@ export function AutonomyTab({
       </SectionCard>
 
       {/*
-        MCP servers were absent from this screen entirely, which left no way to
-        say "stop asking" for a server already attached — the only surface was
-        the button on an approval card, i.e. you had to be interrupted first in
-        order to stop being interrupted. Reported live: repeated prompts just to
-        read a CHANGELOG.
-
-        One row per SERVER, and the tools it exposes UNDER it, folded (issue
-        #357): a server commonly exposes thirty and the ordinary decision is
-        about the server, but until this fold there was nowhere on the agent's
-        page to say "this server yes, that one tool no".
+        One row per SERVER, and the tools it exposes UNDER it, folded (#357).
+        The server's row sets every one of its tools at once, and gives its
+        value to the tools it adds later (#917).
       */}
       {attachedMcpServers.length > 0 && (
         <SectionCard>
           <SectionHead
             label="Third-party tools"
-            hint="Third-party tools ask for approval by default. Trust a server to let its tools run without asking, including tools added to that server later."
+            hint="Each tool of a server has its own setting. The server's setting changes them all at once, and is what tools added to that server later start with."
           />
           <div
             className="divide-y divide-rule-2 overflow-hidden rounded-xl border border-rule-2"
@@ -2044,75 +2075,89 @@ export function AutonomyTab({
               const prefix = mcpToolPrefix(s.slug);
               const pattern = `${prefix}__*`;
               // Ce que l'AGENT détient, pas ce que le serveur expose (revue
-              // Reviewer C, passe 2, Q2) : le runner ne lui donnera jamais que
-              // sa liste blanche, et un outil ajouté au serveur plus tard en
-              // est filtré lui aussi.
-              const held = Array.isArray(s.enabledTools)
+              // Reviewer C, passe 2, Q2).
+              const heldByAgent = Array.isArray(s.enabledTools)
                 ? s.availableTools.filter((t) => s.enabledTools?.includes(t.name))
                 : s.availableTools;
-              // Par NOM et non par identité d'objet : `held` vient d'un
-              // `filter` du même tableau aujourd'hui, mais une comparaison qui
-              // dépend de cela casse en silence le jour où la liste est
-              // recopiée quelque part.
-              const heldNames = new Set(held.map((t) => t.name));
+              const heldNames = new Set(heldByAgent.map((t) => t.name));
               const hiddenWithRules = s.availableTools
                 .map((t) => t.name)
                 .filter(
                   (name) =>
                     !heldNames.has(name) && rules.some((r) => r.toolName === `${prefix}__${name}`),
                 );
+              const toolNames = heldByAgent.map((t) => `${prefix}__${t.name}`);
+              const serverValue = ruleFor(pattern);
               return (
                 <div key={s.mcpServerId}>
                   <AutonomyToolRow
                     slug={pattern}
                     label={`${s.label} server`}
-                    // Avec une liste blanche, cette ligne ne peut pas compter :
-                    // le motif `<prefix>__*` gouverne par NOM, donc aussi un
-                    // outil re-donné demain (revue Reviewer C, passe 3, P0-3).
-                    // Elle dit la PORTÉE ; le dépli, lui, dit ce que l'agent
-                    // tient aujourd'hui.
                     summary={
-                      Array.isArray(s.enabledTools)
-                        ? 'Every tool from this server, including any you give this agent later.'
-                        : `All ${s.availableTools.length} current tools and any added later.`
+                      serverValue === null
+                        ? `Sets all ${heldByAgent.length} tools below. Not set: tools added later start with the workspace autonomy level.`
+                        : `Sets all ${heldByAgent.length} tools below, and the tools this server adds later.`
                     }
                     risk="write"
-                    // Unlike the connector rows above, "no rule" here means ASK:
-                    // every MCP tool ships defaultApproval: 'require_approval'.
-                    value={rules.find((r) => r.toolName === pattern)?.action ?? 'require_approval'}
+                    value={serverValue}
+                    // A server's row is a starting value, never a tool's own:
+                    // without one the tools still run on their rows.
+                    hideUnset
                     saving={saving.has(pattern)}
-                    onChange={(action) => requestChange(pattern, action)}
-                    {...(folderFor(pattern) === undefined ? {} : { folder: folderFor(pattern) })}
+                    onChange={(action) => requestServerChange(pattern, s.label, toolNames, action)}
                   />
                   <McpServerTools
                     prefix={prefix}
                     serverLabel={s.label}
-                    // Les outils que CET agent a, pas ceux que le serveur
-                    // expose (revue Reviewer C, passe 1, C3) : une règle posée
-                    // sur un outil retiré de la liste blanche ne protège rien,
-                    // et la ligne promettrait un contrôle sans effet.
-                    tools={held}
+                    tools={heldByAgent}
                     hiddenWithRules={hiddenWithRules}
-                    ruleFor={(toolName) =>
-                      rules.find((r) => r.toolName === toolName)?.action ?? null
-                    }
-                    isSaving={(toolName) => saving.has(toolName)}
-                    onChange={(toolName, action) => requestChange(toolName, action)}
+                    ruleFor={(toolName) => ruleFor(toolName)}
+                    isSaving={(toolName) => saving.has(toolName) || saving.has(pattern)}
+                    onChange={(toolName, action) => handleChange(toolName, action)}
                   />
                 </div>
               );
             })}
           </div>
-          {/*
-            « whoever that rule was set for » disait vrai du MOTEUR et faux de
-            CET ÉCRAN (revue Reviewer C, passe 4, C1) : `rules` ne porte que les
-            règles de cet agent, une règle d'entité sur le même outil ne s'y
-            voit pas. La phrase dit donc ce que ces lignes montrent.
-          */}
           <p className="mt-4 text-body-12 text-ink-4">
-            A rule on one tool wins over the server&apos;s rule. These rows show the rules set for
-            this agent.
+            These rows show the settings of this agent. Changes apply at its next step.
           </p>
+        </SectionCard>
+      )}
+
+      {/*
+        Every other tool this agent holds (#917): team and workspace tools of a
+        ROOT, delegation, delivery, skill tools. They had a posture computed at
+        run time and were shown nowhere; they have a row now, and it is here.
+      */}
+      {otherTools.length > 0 && (
+        <SectionCard>
+          <SectionHead
+            label="Other tools"
+            hint="The other tools this agent has: delegation, delivery, team and workspace tools."
+          />
+          <div
+            className="divide-y divide-rule-2 overflow-hidden rounded-xl border border-rule-2"
+            data-testid="autonomy-other-list"
+          >
+            {otherTools.map((t) => (
+              <AutonomyToolRow
+                key={t.name}
+                slug={t.name}
+                label={t.label}
+                summary={t.summary}
+                risk={t.risk}
+                value={ruleFor(t.name)}
+                saving={saving.has(t.name)}
+                onChange={(action) => handleChange(t.name, action)}
+                folderRows={folderRowsFor(t.name)}
+                onRemoveFolder={(path) => removeFolderRow(t.name, path)}
+                {...(TOOL_FLOOR_NOTE[t.name] === undefined
+                  ? {}
+                  : { note: TOOL_FLOOR_NOTE[t.name] })}
+              />
+            ))}
+          </div>
         </SectionCard>
       )}
 
@@ -2123,7 +2168,8 @@ export function AutonomyTab({
         onRulesChange={setRules}
         autoRunPaused={autoRunPaused}
         isOwner={isOwner}
-        workspaceAutonomy={workspaceAutonomy}
+        folderRows={folderRowsFor(RUN_COMMAND_TOOL)}
+        onRemoveFolder={(path) => removeFolderRow(RUN_COMMAND_TOOL, path)}
       />
 
       {/*
@@ -2143,7 +2189,7 @@ export function AutonomyTab({
         <CommandAllowlistSection
           agentId={agentId}
           allowlist={commandAllowlist}
-          hasCommandSkill={attachedSkills.some((s) => s.slug === COMMAND_EXECUTION_SKILL_SLUG)}
+          hasCommandSkill={hasCommandSkill}
           isOwner={isOwner}
         />
       </AdvancedShellSection>
@@ -2168,6 +2214,7 @@ export function AutonomyTab({
         agentId={agentId}
         rules={rules}
         onRulesChange={setRules}
+        onSaved={reload}
         isOwner={isOwner}
       />
 
@@ -2175,34 +2222,34 @@ export function AutonomyTab({
       <FileWriteAuthSection agentId={agentId} attachedSkills={attachedSkills} isOwner={isOwner} />
 
       {/*
-        La règle de dossier se perd À DÉCOUVERT (issue #361). Le serveur
-        réécrit `condition_json` à vide quel que soit le sens du changement, et
-        refuse carrément la version permissive : ce que cette boîte annonce est
-        ce qui va arriver, pas une précaution de forme.
+        A server's setting rewrites the row of every one of its tools (#917),
+        the ones set apart from it included: said before, with the count.
       */}
       <ConfirmDialog
-        open={pendingWiden !== null}
-        title={pendingWiden?.action === null ? 'Delete this rule?' : FOLDER_LIMIT_TITLE}
+        open={pendingServer !== null}
+        title="Change every tool of this server?"
         message={
-          pendingWiden === null
+          pendingServer === null
             ? ''
-            : pendingWiden.action === null
-              ? // Ce qui arrive, et rien de plus : promettre que l'outil
-                // « suivra le serveur » serait faux si une règle d'entité sur
-                // le même outil survit et continue de gagner (revue Reviewer
-                // C, passe 4, C2).
-                `${folderLimitPreamble(pendingWiden.folder)} Following the server deletes this agent's rule on the tool.`
-              : folderLimitWideningMessage(pendingWiden.folder)
+            : `This sets all ${pendingServer.count} tools of ${pendingServer.label} to ${AUTONOMY_LABEL[pendingServer.action]}, including the ones you set one by one.`
         }
-        confirmLabel={
-          pendingWiden?.action === null ? 'Delete the rule' : FOLDER_LIMIT_CONFIRM_LABEL
-        }
+        confirmLabel="Change all"
         onConfirm={() => {
-          const pending = pendingWiden;
-          setPendingWiden(null);
-          if (pending) handleChange(pending.toolName, pending.action);
+          const pending = pendingServer;
+          setPendingServer(null);
+          if (!pending) return;
+          const server = attachedMcpServers.find(
+            (s) => `${mcpToolPrefix(s.slug)}__*` === pending.pattern,
+          );
+          const names = server
+            ? (Array.isArray(server.enabledTools)
+                ? server.availableTools.filter((t) => server.enabledTools?.includes(t.name))
+                : server.availableTools
+              ).map((t) => `${mcpToolPrefix(server.slug)}__${t.name}`)
+            : [];
+          handleChange(pending.pattern, pending.action, { covers: names });
         }}
-        onCancel={() => setPendingWiden(null)}
+        onCancel={() => setPendingServer(null)}
       />
     </div>
   );
@@ -2211,13 +2258,9 @@ export function AutonomyTab({
 // ─── Command execution section ────────────────────────────────────────────────
 //
 // Visible only when the agent has the `command-execution` skill assigned.
-// run_command declares defaultApproval:'require_approval', so absence of a rule
-// means every command pauses for human approval. "Yolo mode" = an explicit
-// auto_approve row that bypasses that default.
-//
-// The toggle is disabled (greyed out) when NOT in local-trust mode: on a shared
-// or LAN install, commands always require approval regardless of this setting.
-// The server action also enforces this check independently.
+// `run_command` has a row like every tool (#917): Run without asking, Ask for
+// approval or Block. The catastrophic-command floor applies whatever it says,
+// and the section says so.
 
 const COMMAND_EXECUTION_SKILL_SLUG = 'command-execution';
 const RUN_COMMAND_TOOL = 'run_command';
@@ -2229,7 +2272,8 @@ function CommandExecutionSection({
   onRulesChange,
   autoRunPaused,
   isOwner,
-  workspaceAutonomy,
+  folderRows,
+  onRemoveFolder,
 }: {
   agentId: string;
   attachedSkills: SkillRow[];
@@ -2239,8 +2283,10 @@ function CommandExecutionSection({
   autoRunPaused: boolean;
   /** Whether the current user is the workspace owner. */
   isOwner: boolean;
-  /** The workspace autonomy: what an agent WITHOUT a rule really does (#464). */
-  workspaceAutonomy: RootGrants['autonomy'] | null;
+  /** The agent's run_command rows confined to a folder (#346). */
+  folderRows: FolderRow[];
+  /** Removes one of them, by its folder. */
+  onRemoveFolder: (workspacePath: string) => void;
 }) {
   const hasSkill = attachedSkills.some((s) => s.slug === COMMAND_EXECUTION_SKILL_SLUG);
 
@@ -2249,82 +2295,47 @@ function CommandExecutionSection({
   const isLocalTrust = (process.env['NEXT_PUBLIC_AUTH_MODE'] ?? 'local-trust') === 'local-trust';
 
   const [saving, setSaving] = useState(false);
-  /** Le choix qui attend une confirmation, et laquelle. */
-  const [pending, setPending] = useState<{
-    action: RunCommandChoice;
-    ask: 'grant' | 'dropFolder';
-  } | null>(null);
+  /** « Run without asking » attend sa confirmation. */
+  const [pendingGrant, setPendingGrant] = useState(false);
 
-  /**
-   * La règle de l'agent sur `run_command`, ou `null` : sans règle, AUCUN
-   * choix n'est allumé (#468). En allumer un affirmerait un réglage que
-   * personne n'a fait ; ce qui se passe alors est dit par la phrase de la
-   * section, calculée depuis l'autonomie de l'espace.
-   */
-  const current = rules.find((r) => r.toolName === RUN_COMMAND_TOOL) ?? null;
-  const action: RunCommandChoice = current?.action ?? null;
+  const current = plainRow(rules, RUN_COMMAND_TOOL) ?? null;
+  const action: ApprovalAction | null = current?.action ?? null;
 
-  /**
-   * Le dossier auquel la règle est confinée, s'il y en a un (#361, revue
-   * Reviewer C, passe 4, C3). « Approuvé, mais seulement dans Dev » : changer
-   * la ligne REMPLACE cette règle, et rien sur cet onglet ne sait la recréer.
-   */
-  const folder = current?.workspaceLabel ?? null;
-
-  // 0082 : plus de pré-condition workspace — cette ligne est la SEULE clé
-  // (owner-only hors local-trust, confirmation avant « Run without asking »).
-  // Le frein auto_run_paused ne conditionne pas la règle : il la rend
-  // DORMANTE à l'exécution (8b d'execute.ts), affichée ci-dessous.
+  // 0082 : le propriétaire seul hors local-trust. Le frein auto_run_paused ne
+  // conditionne pas la ligne : il la rend DORMANTE à l'exécution.
   const canChange = isLocalTrust || isOwner;
   const isDormant = action === 'auto_approve' && autoRunPaused;
 
-  function applyOptimistic(next: RunCommandChoice) {
-    const others = rules.filter((r) => r.toolName !== RUN_COMMAND_TOOL);
-    onRulesChange(
-      next === null
-        ? others
-        : [
-            ...others,
-            {
-              id: '',
-              toolName: RUN_COMMAND_TOOL,
-              action: next,
-              conditionJson: null,
-              workspaceLabel: null,
-            },
-          ],
-    );
-  }
-
-  function request(next: RunCommandChoice) {
+  function request(next: ApprovalAction) {
     if (next === action) return;
-    // « Run without asking » par-dessus une règle de dossier, quelle qu'elle
-    // soit, est refusé par le serveur, qui dit pourquoi : aucun dialogue ne
-    // promet un remplacement qui n'aura pas lieu, et rien ne s'allume avant sa
-    // réponse (revue de la PR #481, Reviewer A).
-    if (folder !== null && next === 'auto_approve') void save(next, { optimistic: false });
-    // Les autres choix remplacent ou retirent la règle de dossier après
-    // confirmation : ce que le propriétaire perd a été posé pour ce dossier.
-    else if (folder !== null) setPending({ action: next, ask: 'dropFolder' });
-    else if (next === 'auto_approve') setPending({ action: next, ask: 'grant' });
+    if (next === 'auto_approve') setPendingGrant(true);
     else void save(next);
   }
 
-  async function save(next: RunCommandChoice, { optimistic = true } = {}) {
+  async function save(next: ApprovalAction) {
     const before = current;
     setSaving(true);
-    if (optimistic) applyOptimistic(next);
+    onRulesChange([
+      ...rules.filter((r) => !(r.toolName === RUN_COMMAND_TOOL && r.workspaceLabel === null)),
+      {
+        id: '',
+        toolName: RUN_COMMAND_TOOL,
+        action: next,
+        conditionJson: null,
+        workspaceLabel: null,
+      },
+    ]);
     const result = await setRunCommandRuleAction({ agentId, action: next });
     setSaving(false);
     if (!result.ok) {
       toast.error(result.message);
       onRulesChange([
-        ...rules.filter((r) => r.toolName !== RUN_COMMAND_TOOL),
+        ...rules.filter((r) => !(r.toolName === RUN_COMMAND_TOOL && r.workspaceLabel === null)),
         ...(before ? [before] : []),
       ]);
       return;
     }
-    toast.success(RUN_COMMAND_SAVED[next ?? 'none']);
+    toast.success(RUN_COMMAND_SAVED[next]);
   }
 
   if (!hasSkill) {
@@ -2335,26 +2346,11 @@ function CommandExecutionSection({
     // Anchored for the Playwright journey: the tab holds other controls.
     <div data-testid="command-execution-section">
       <SectionCard>
-        {/*
-        What REALLY happens, not "asks by default" (#464): under
-        destructive_gate an ordinary command ran without asking while this
-        line promised the opposite.
-      */}
         <SectionHead
           label="Run commands"
-          hint={runCommandsTruth({
-            rule: action,
-            paused: autoRunPaused,
-            autonomy: workspaceAutonomy,
-            folder,
-          })}
+          hint={runCommandsTruth({ rule: action, paused: autoRunPaused })}
         />
 
-        {/*
-        The same three choices as every other tool (#468). It was a Yolo
-        switch: Block could not be set from any screen, and Off read as
-        "always asks" where the workspace autonomy may let commands run.
-      */}
         <div className="overflow-hidden rounded-xl border border-rule-2">
           <AutonomyToolRow
             slug={RUN_COMMAND_TOOL}
@@ -2364,30 +2360,15 @@ function CommandExecutionSection({
             value={action}
             saving={saving || !canChange}
             onChange={request}
-            {...(folder === null ? {} : { folder })}
+            folderRows={folderRows}
+            onRemoveFolder={onRemoveFolder}
+            note={RUN_COMMAND_FLOOR}
           />
         </div>
 
-        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-body-12 text-ink-4">
-          {action === null ? (
-            <span data-testid="run-command-no-rule">
-              No choice set: the workspace autonomy decides, as the line above says.
-            </span>
-          ) : (
-            canChange && (
-              <PrimaryButton
-                variant="neutral"
-                size="sm"
-                onClick={() => request(null)}
-                disabled={saving}
-                data-testid="run-command-reset"
-              >
-                Let the workspace autonomy decide
-              </PrimaryButton>
-            )
-          )}
-          {!canChange && <span>Only the workspace owner can change this.</span>}
-        </div>
+        {!canChange && (
+          <p className="mt-2 text-body-12 text-ink-4">Only the workspace owner can change this.</p>
+        )}
 
         {isDormant && (
           <p className="mt-2 text-body-12 text-warn">
@@ -2405,75 +2386,27 @@ function CommandExecutionSection({
 
         {/* Confirm dialogs — ESLint bans window.confirm; use ConfirmDialog instead */}
         <ConfirmDialog
-          open={pending?.ask === 'grant'}
+          open={pendingGrant}
           title="Run commands without asking?"
           message="This agent will run ANY shell command on this machine with no approval, except the kinds of action below set to Ask me or Never. Only do this for an agent you fully trust. Every command is still logged."
           confirmLabel="Run without asking"
           destructive
           onConfirm={() => {
-            const next = pending?.action ?? null;
-            setPending(null);
-            void save(next);
+            setPendingGrant(false);
+            void save('auto_approve');
           }}
-          onCancel={() => setPending(null)}
-        />
-
-        <ConfirmDialog
-          open={pending?.ask === 'dropFolder'}
-          title={
-            pending?.action === null
-              ? 'Remove the rule for this folder?'
-              : 'Replace the rule for this folder?'
-          }
-          message={folderRuleLoss(action, folder ?? '', pending?.action ?? null)}
-          confirmLabel={pending?.action === null ? 'Remove the rule' : 'Replace the rule'}
-          onConfirm={() => {
-            const next = pending?.action ?? null;
-            setPending(null);
-            void save(next);
-          }}
-          onCancel={() => setPending(null)}
+          onCancel={() => setPendingGrant(false)}
         />
       </SectionCard>
     </div>
   );
 }
 
-type RunCommandChoice = 'auto_approve' | 'require_approval' | 'block' | null;
-
-/**
- * What replacing or removing a folder rule loses, said from the rule that
- * exists and the gesture made (review of PR #481, Reviewer A): it said "run
- * without asking only in Dev" for a Block rule, and "replaces" for a removal.
- */
-function folderRuleLoss(
-  existing: RunCommandChoice,
-  folder: string,
-  next: RunCommandChoice,
-): string {
-  const today =
-    existing === 'block'
-      ? `A rule blocks commands in ${folder} today.`
-      : existing === 'require_approval'
-        ? `Every command asks for your approval in ${folder} today.`
-        : `Commands run without asking only in ${folder} today.`;
-  const change =
-    next === null
-      ? 'Removing it drops that rule. The workspace autonomy then decides everywhere.'
-      : 'Changing this replaces that rule with one for every folder.';
-  const back =
-    existing === 'auto_approve'
-      ? ' To put it back, approve a command for that folder again from its approval card.'
-      : '';
-  return `${today} ${change}${back}`;
-}
-
 /** What the toast says once a choice is saved. */
-const RUN_COMMAND_SAVED: Record<NonNullable<RunCommandChoice> | 'none', string> = {
+const RUN_COMMAND_SAVED: Record<ApprovalAction, string> = {
   auto_approve: 'Commands now run without asking.',
   require_approval: 'Every command now asks for your approval.',
   block: 'This agent can no longer run commands.',
-  none: 'The workspace autonomy now decides how commands run.',
 };
 
 // ─── Coding CLI (code_task) section ───────────────────────────────────────────
@@ -2514,43 +2447,31 @@ function CodeTaskSection({
   const [saving, setSaving] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
 
-  const yoloEnabled = rules.some(
-    (r) => r.toolName === CODE_TASK_TOOL && r.action === 'auto_approve',
-  );
-  // Même garde que CommandExecutionSection (revue Reviewer C, passe 4, C3) :
-  // éteindre supprime la règle, et quand elle ne valait que dans un dossier,
-  // c'est une permission posée dossier par dossier qui disparaît.
-  const yoloFolder =
-    rules.find((r) => r.toolName === CODE_TASK_TOOL && r.action === 'auto_approve')
-      ?.workspaceLabel ?? null;
-  const [confirmDropFolder, setConfirmDropFolder] = useState(false);
+  // The tool's own row (#917). A row confined to a folder lives beside it
+  // and is not touched by this switch.
+  const yoloEnabled = plainRow(rules, CODE_TASK_TOOL)?.action === 'auto_approve';
   // 0082 : même contrat que CommandExecutionSection — le toggle est la seule
   // clé (owner-only hors local-trust) ; le frein rend la règle dormante.
   const canToggle = isLocalTrust || isOwner;
   const isDormant = yoloEnabled && autoRunPaused;
 
+  // On = Autonomous, off = Ask first (#917): the row always exists.
   function applyOptimistic(enabled: boolean) {
-    onRulesChange(
-      enabled
-        ? [
-            ...rules.filter((r) => r.toolName !== CODE_TASK_TOOL),
-            {
-              id: '',
-              toolName: CODE_TASK_TOOL,
-              action: 'auto_approve' as const,
-              conditionJson: null,
-              workspaceLabel: null,
-            },
-          ]
-        : rules.filter((r) => r.toolName !== CODE_TASK_TOOL),
-    );
+    onRulesChange([
+      ...rules.filter((r) => !(r.toolName === CODE_TASK_TOOL && r.workspaceLabel === null)),
+      {
+        id: '',
+        toolName: CODE_TASK_TOOL,
+        action: enabled ? ('auto_approve' as const) : ('require_approval' as const),
+        conditionJson: null,
+        workspaceLabel: null,
+      },
+    ]);
   }
 
   function handleToggle(next: boolean) {
     if (next) {
       setConfirmOpen(true);
-    } else if (yoloFolder !== null) {
-      setConfirmDropFolder(true);
     } else {
       void doSet(false);
     }
@@ -2640,18 +2561,6 @@ function CodeTaskSection({
         onCancel={() => setConfirmOpen(false)}
       />
 
-      <ConfirmDialog
-        open={confirmDropFolder}
-        title="Delete the rule for this folder?"
-        message={`Coding tasks run without asking only in ${yoloFolder ?? ''} today. Turning this off deletes that rule. To put it back, approve a coding task for that folder again from its approval card.`}
-        confirmLabel="Delete the rule"
-        onConfirm={() => {
-          setConfirmDropFolder(false);
-          void doSet(false);
-        }}
-        onCancel={() => setConfirmDropFolder(false)}
-      />
-
       <p className="mt-4 text-body-12 text-ink-4">
         Model, effort and diagnostics live in the Tools tab.
       </p>
@@ -2681,11 +2590,14 @@ function ReadOnlyAgentSection({
   agentId,
   rules,
   onRulesChange,
+  onSaved,
   isOwner,
 }: {
   agentId: string;
   rules: ApprovalRuleUiRow[];
   onRulesChange: (rules: ApprovalRuleUiRow[]) => void;
+  /** Re-reads the rows: turning the preset off gives them the level's value (#917). */
+  onSaved: () => void;
   /** Whether the current user is the workspace owner. */
   isOwner: boolean;
 }) {
@@ -2705,22 +2617,21 @@ function ReadOnlyAgentSection({
   const [saving, setSaving] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
 
+  // On is known here: every preset tool blocked. Off gives each the value of
+  // the workspace level (#917), which only the server knows: re-read then.
   function applyOptimistic(next: boolean) {
+    if (!next) return;
     const presetTools: readonly string[] = READONLY_PRESET_TOOLS;
-    onRulesChange(
-      next
-        ? [
-            ...rules.filter((r) => !presetTools.includes(r.toolName)),
-            ...READONLY_PRESET_TOOLS.map((toolName) => ({
-              id: '',
-              toolName,
-              action: 'block' as const,
-              conditionJson: null,
-              workspaceLabel: null,
-            })),
-          ]
-        : rules.filter((r) => !(presetTools.includes(r.toolName) && r.action === 'block')),
-    );
+    onRulesChange([
+      ...rules.filter((r) => !(presetTools.includes(r.toolName) && r.workspaceLabel === null)),
+      ...READONLY_PRESET_TOOLS.map((toolName) => ({
+        id: '',
+        toolName,
+        action: 'block' as const,
+        conditionJson: null,
+        workspaceLabel: null,
+      })),
+    ]);
   }
 
   function handleToggle(next: boolean) {
@@ -2736,9 +2647,9 @@ function ReadOnlyAgentSection({
     applyOptimistic(next);
     const result = await setReviewerReadOnlyPresetAction({ agentId, enabled: next });
     setSaving(false);
+    onSaved();
     if (!result.ok) {
       toast.error(result.message);
-      applyOptimistic(!next);
     } else {
       toast.success(
         next

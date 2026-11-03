@@ -26,6 +26,7 @@ import { registerBuiltins } from '../builtin';
 import { executeTool } from '../execute';
 import { recordConstatedWrites } from '../verification/record-constat';
 import type { ApprovalRule, ExecuteOptions, ToolContext } from '../types';
+import { autonomousRows } from './autonomy-rows-fixture';
 
 const run = promisify(execFile);
 
@@ -122,7 +123,7 @@ function autoApprove(): ExecuteOptions {
       agentId: seed.agentId,
       entityId: seed.entityId,
     })) as ApprovalRule[];
-  return { approvalRules: rules, onApprovalRequired: async () => {} };
+  return { approvalRules: [...rules, ...autonomousRows(seed)], onApprovalRequired: async () => {} };
 }
 
 /** Les lignes rangées pour ce job, telles quelles. */

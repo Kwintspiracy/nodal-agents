@@ -44,6 +44,7 @@ import { fileWriteTool } from '../builtin/file-ops/file-write';
 import { fileEditTool } from '../builtin/file-ops/file-edit';
 import type { ExecuteOptions, ToolContext } from '../types';
 import type * as WrittenFileType from '../verification/written-file-type';
+import { autonomousRows } from './autonomy-rows-fixture';
 
 /**
  * Le geste qui change la table, armé par le test et tiré une seule fois, juste
@@ -131,7 +132,12 @@ function ctx(): ToolContext {
   } as unknown as ToolContext;
 }
 
-const opts: ExecuteOptions = { approvalRules: [], onApprovalRequired: async () => {} };
+const opts: ExecuteOptions = {
+  get approvalRules() {
+    return autonomousRows(seed);
+  },
+  onApprovalRequired: async () => {},
+};
 
 /**
  * D1 : écraser un fichier EXISTANT du partagé demande une approbation, et
@@ -148,6 +154,7 @@ function autoApprove(toolName: string): ExecuteOptions {
         agentId: seed.agentId,
         entityId: seed.entityId,
       },
+      ...autonomousRows(seed),
     ],
     onApprovalRequired: async () => {},
   };

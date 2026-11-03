@@ -28,6 +28,7 @@ import {
   type ModelAttachmentInput,
 } from '../model-images';
 import type { ToolContext, ToolExecutionResult } from '../types';
+import { autonomousRows } from './autonomy-rows-fixture';
 
 // The first bytes each format declares, then a body: the sniffer reads the
 // bytes, never the name.
@@ -97,7 +98,12 @@ function ctx(modelInput?: ModelAttachmentInput): ToolContext {
   };
 }
 
-const opts = { approvalRules: [], onApprovalRequired: async () => {} } as never;
+const opts = {
+  get approvalRules() {
+    return autonomousRows(seed, ['attach_many']);
+  },
+  onApprovalRequired: async () => {},
+} as never;
 
 async function read(path: string, input?: ModelAttachmentInput): Promise<ToolExecutionResult> {
   return executeTool(fileReadTool as never, { path }, ctx(input), opts);

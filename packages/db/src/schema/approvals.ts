@@ -277,6 +277,15 @@ export const approvalRules = pgTable(
     toolName: text('tool_name').notNull(),
     action: text('action').notNull(),
     conditionJson: jsonb('condition_json').default(sql`'{}'::jsonb`),
+    /**
+     * Le dossier de `condition_json` (#917, migration 0156), '' sans
+     * condition. Colonne GÉNÉRÉE : jamais écrite, toujours vraie. Elle entre
+     * dans la contrainte d'unicité, pour que la ligne d'un outil et une ligne
+     * confinée à un dossier pour le même agent coexistent.
+     */
+    conditionFolder: text('condition_folder').generatedAlwaysAs(
+      sql`COALESCE(condition_json->>'workspacePath', '')`,
+    ),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
   },
@@ -294,8 +303,12 @@ export const approvalRules = pgTable(
     // NULL marks an entity-wide rule (e.g. the run_command LAN master-switch),
     // so a plain UNIQUE would treat two NULL rows as distinct and let the
     // duplicate back in; NULLS NOT DISTINCT (PG15+) closes that gap.
+    //
+    // #917 (0156) : la contrainte porte aussi le DOSSIER (`condition_folder`).
+    // Un agent tient une ligne par outil, toujours ; une ligne confinée à un
+    // dossier (#346) vit à côté d'elle, pas à sa place.
     unique('approval_rules_entity_agent_tool_unique')
-      .on(table.entityId, table.agentId, table.toolName)
+      .on(table.entityId, table.agentId, table.toolName, table.conditionFolder)
       .nullsNotDistinct(),
   ],
 );

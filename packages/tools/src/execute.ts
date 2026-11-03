@@ -12,8 +12,8 @@ import {
 import { MessageStructureError, QuotaExhaustedError } from '@nodal-agents/llm';
 import {
   redactSecretsForAudit,
-  isDestructiveOrHeavyCommand,
   surfaceForTool,
+  REPLACE_SHARED_FILE_SETTING,
   explainApprovalRules,
   namespaceOfToolName,
   type ConstatedWrite,
@@ -24,6 +24,7 @@ import {
 } from '@nodal-agents/shared';
 import type { z } from 'zod';
 import type {
+  ApprovalRule,
   ToolDefinition,
   ToolContext,
   ExecuteOptions,
@@ -135,6 +136,22 @@ export function isCodeExecutionTool(toolName: string): boolean {
   return CODE_EXECUTION_TOOL_SET.has(toolName);
 }
 
+// ─── Une ligne d'autonomie manquante ──────────────────────────────────────────
+
+/**
+ * What the model reads when the agent has no autonomy row for the tool it
+ * called (#917). The rows are written whenever a tool becomes available to an
+ * agent; a missing one is a fault of that writer, which the gate states rather
+ * than covers with a guess (invariant #4).
+ */
+export function autonomyRowMissing(name: string): string {
+  return (
+    `autonomy_not_set: "${name}" has no autonomy setting for this agent, so the call was not ` +
+    `run. Every tool an agent holds has one; this one is missing, which is a fault for the ` +
+    `owner to see, not one to work around. Do NOT retry this call: report it in your result.`
+  );
+}
+
 // ─── Questions déjà tranchées ─────────────────────────────────────────────────
 
 /**
@@ -179,21 +196,17 @@ async function hasAnsweredQuestion(ctx: ToolContext, toolName: string): Promise<
  * IMPORTANT: MessageStructureError and QuotaExhaustedError are re-thrown
  * unconditionally — the runner must handle them to fail the job loud.
  *
- * The approval gate:
- *   - rule action 'require_approval' → insert approval_requests row, call
+ * The approval gate applies the agent's ROW for the tool (#917), the value
+ * the Autonomy tab shows:
+ *   - 'require_approval' → insert approval_requests row, call
  *     onApprovalRequired, return { outcome: 'awaiting_approval' }.
- *   - rule action 'block' → return { outcome: 'error', error: 'blocked' }.
- *   - rule action 'auto_approve' → execute normally.
- *   - no matching rule → fall back to the tool's `defaultApproval`: execute for
- *     ordinary tools, or suspend for approval for safe-by-default tools
- *     (run_command). A per-agent auto_approve rule overrides this ("Yolo").
- *   - still no gate → fall back to the tool's `computeApproval` hook, if it
- *     declares one: a PER-CALL check (e.g. file_write/file_edit gating only
- *     an overwrite of an existing file in the shared workspace, D1).
- *
- * Rule matching: tool-specific rules take precedence over wildcard.
- * Agent-scoped rules take precedence over entity-scoped rules.
- * If multiple rules match, the most specific one wins (agent+tool > entity+tool).
+ *   - 'block' → return { outcome: 'error', error: 'blocked: …' }.
+ *   - 'auto_approve' → execute normally.
+ *   - no row → refused with `autonomy_not_set`, logged. Never a default.
+ * A row confined to a folder this job works in comes before the agent's row
+ * (#346). What can only HARDEN the row follows: the shared-file setting, the
+ * agent's shell checklist (#464), and the floors (catastrophic command, stdio
+ * MCP server, a question to the user).
  */
 export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
   tool: ToolDefinition<TInput, TOutput>,
@@ -221,7 +234,71 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
 
   const validatedInput = parsed.data as z.infer<typeof tool.inputSchema>;
 
-  // ── 1.4 An explicit `block` rule wins over everything ──────────────────────
+  // ── 1.3 The agent's ROW for this tool (#917) ──────────────────────────────
+  //
+  // Owner's decision, 2026-11-01: the autonomy an agent applies for a tool is
+  // a row in the database, always. The Autonomy tab shows that row, and this
+  // gate applies it and nothing else. Until #917 a tool without a rule took a
+  // posture computed here (its `defaultApproval`, relaxed by the workspace
+  // autonomy level, then a hidden per-call check) while the screen showed
+  // another one: `file_move` read "Autonomous" and asked.
+  //
+  // The rows are written when a tool becomes available to the agent
+  // (@nodal-agents/orchestration, `autonomy-rows.ts`). A call with no row is a
+  // fault of that writer, and it is REFUSED with the reason (invariant #4):
+  // guessing a value here would put back the computed default the owner
+  // ruled out.
+  //
+  // The commands THIS call will run: read by the shell row below, the
+  // checklist (#464) and the catastrophic floor. `declare_verification` is
+  // one of them because its sequence runs at finalisation, with no approval
+  // of its own: what is not judged here never is.
+  const commandesJugees = shellCommandsOf(tool.name, validatedInput);
+
+  const ownRow = matchApprovalRule(
+    opts.approvalRules,
+    tool.name,
+    ctx.agentId,
+    ctx.entityId,
+    ctx.workspaces,
+  );
+  // A declared proof RUNS SHELL COMMANDS, later and without asking again. The
+  // owner states his consent to a shell on `run_command` (that is where the
+  // Run commands row lives, and where a `block` goes), so a declaration
+  // carrying commands is judged under THAT row when the agent has one: a
+  // `run_command → block` must not become runnable through a declaration
+  // (Codex review, PR #50). A declaration without commands runs nothing and
+  // keeps its own row.
+  const shellRow =
+    tool.name === 'declare_verification' && commandesJugees.length > 0
+      ? matchApprovalRule(
+          opts.approvalRules,
+          'run_command',
+          ctx.agentId,
+          ctx.entityId,
+          ctx.workspaces,
+        )
+      : undefined;
+  const decidingRow = shellRow ?? ownRow;
+  if (!decidingRow) {
+    console.error(
+      `[executeTool] AUTONOMY_ROW_MISSING agent=${ctx.agentId} job=${ctx.jobId} tool=${tool.name}`,
+    );
+    const result: ToolExecutionResult = {
+      outcome: 'error',
+      error: autonomyRowMissing(tool.name),
+    };
+    await _writeToolCall(
+      ctx,
+      auditTool,
+      validatedInput,
+      JSON.stringify(result),
+      Date.now() - startMs,
+    );
+    return result;
+  }
+
+  // ── 1.4 A `block` row wins over everything ─────────────────────────────────
   // Resolved here, ahead of preflight, and this order was argued for rather
   // than assumed (PR #6 review nº2). Three reasons:
   //
@@ -233,14 +310,7 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
   //   - `preflight` receives the full ToolContext and may run async code or
   //     touch the DB. A blocked tool should execute NONE of its own code, and a
   //     doc comment is not a guarantee that some future preflight stays pure.
-  const blockingRule = matchApprovalRule(
-    opts.approvalRules,
-    tool.name,
-    ctx.agentId,
-    ctx.entityId,
-    ctx.workspaces,
-  );
-  if (blockingRule?.action !== 'block' && tool.preflight) {
+  if (decidingRow.action !== 'block' && tool.preflight) {
     // ── 1.5 Preflight — refuse BEFORE anyone is asked to approve ─────────────
     // Ordering is the whole point. Everything below writes an approval request
     // and hands a human a card describing what is about to happen; a call that
@@ -265,229 +335,64 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
     }
   }
 
-  // ── 2. Approval gate ───────────────────────────────────────────────────────
-  const rawMatchedRule = matchApprovalRule(
-    opts.approvalRules,
-    tool.name,
-    ctx.agentId,
-    ctx.entityId,
-    ctx.workspaces,
-  );
-  // Un wildcard `*` auto_approve ne vaut PAS consentement à exécuter du code
-  // (revue sécurité du 25/08). C'est le même trou que la relaxation d'autonomie,
-  // par une autre porte : une règle « tout auto » attrapée en priorité 5/6
-  // devenait un matchedRule, donc la garde ci-dessous — protégée par
-  // `!matchedRule` — ne s'appliquait plus. Le blanc-seing est ignoré ici, et
-  // l'outil retombe sur sa posture par défaut : approbation demandée, à moins
-  // qu'une règle NOMMANT l'outil (le toggle Yolo de l'agent) ne l'autorise.
-  //
-  // Seul le sens permissif est neutralisé : un wildcard `require_approval` ou
-  // `block` continue de s'appliquer — durcir vaut toujours.
-  const matchedRule =
-    rawMatchedRule?.toolName === '*' &&
-    rawMatchedRule.action === 'auto_approve' &&
-    isCodeExecutionTool(tool.name)
-      ? undefined
-      : rawMatchedRule;
-  // An explicit rule always wins. With no matching rule, fall back to the tool's
-  // own default posture: undefined for ordinary tools (→ execute, the historical
-  // default), 'require_approval' for safe-by-default tools like run_command. So a
-  // per-agent `auto_approve` rule (the "Yolo" toggle) is exactly what lets
-  // run_command run without a human in the loop.
-  let effectiveAction = matchedRule?.action ?? tool.defaultApproval;
+  // ── 2. Approval gate: the row, then what only hardens it ───────────────────
+  let effectiveAction: ApprovalRule['action'] = decidingRow.action;
 
-  // ── Les commandes que CET appel fera tourner ────────────────────────────────
+  // ── 2.1 The shared-file setting (#917) ─────────────────────────────────────
   //
-  // UNE seule définition, lue à deux endroits : la relaxation `destructive_gate`
-  // juste en dessous, et le plancher catastrophique plus bas. Les séparer était
-  // le défaut : la passe 1 avait donné ses commandes au plancher, et laissé la
-  // relaxation ne regarder que `run_command` (revue Codex, PR #49, passe 2).
+  // "Replace or remove a shared file this agent did not create": a SETTING of
+  // the agent, with its own row, shown on the Autonomy tab beside the tools.
+  // It applies to every call whose tool declares `replacesSharedFile`
+  // (file_write, file_edit, file_move, generate_speech), WHATEVER that tool's
+  // own row says: the stricter of the two decides. Until #917 it was a check
+  // inside those tools, skipped under any explicit rule and under
+  // `fully_autonomous`, and shown nowhere.
   //
-  // `declare_verification` en fait partie parce que sa séquence s'exécutera à
-  // la finalisation, SANS repasser par une approbation : ce qui n'est pas jugé
-  // ici ne le sera jamais. Un outil qui n'exécute aucun shell rend une liste
-  // vide, et se juge alors sur son seul `riskLevel`, comme avant.
-  const commandesJugees = shellCommandsOf(tool.name, validatedInput);
-
-  // ── La règle du shell suit la commande déclarée ─────────────────────────────
+  // Only consulted when it can change the outcome: a call already held for a
+  // person (tool row Ask first) is only made stricter by a Block.
   //
-  // Le propriétaire exprime son consentement à faire tourner du shell sur
-  // `run_command` : c'est là que vit le toggle Yolo d'un agent, et là qu'il
-  // pose un `block`. Une preuve déclarée fait tourner du shell — à la
-  // finalisation, sans repasser par une approbation. Elle doit donc être jugée
-  // sous CETTE règle, pas sous une règle qui ne porte le nom d'aucun shell.
-  //
-  // Sans ce lien la garde se trompait dans les deux sens (run 20b73ed1,
-  // 09/09/2026, quatre jobs relus) :
-  //
-  //   Trop stricte. Dev C portait `run_command → auto_approve`. Il a fait
-  //   tourner `node -e "…"` deux fois sans que personne ne soit consulté, puis
-  //   a déclaré CETTE MÊME commande : le job s'est arrêté 24 min 28 s — 72 %
-  //   de sa durée totale — à attendre un humain, pour une ligne en base.
-  //
-  //   Trop laxiste, et c'est le vrai trou. Un agent portant
-  //   `run_command → block` (Reviewer C en porte un) voyait sa déclaration
-  //   tomber sur la relaxation d'autonomie ci-dessous, qui ne connaît que
-  //   `require_approval`. Un `block` explicite devenait une question — et une
-  //   question a une réponse « oui ».
-  //
-  // Précédence, du plus fort au plus faible : une règle nommant
-  // `declare_verification` (le propriétaire a parlé de CET outil) ; puis la
-  // règle `run_command` ; puis la relaxation d'autonomie, inchangée. Les
-  // planchers plus bas s'appliquent après, comme toujours.
-  //
-  // Une déclaration sans commande n'est pas concernée : rien ne tournera.
-  //
-  // `shellRuleApplied` garde la relaxation d'autonomie juste en dessous : sans
-  // lui, un `run_command → require_approval` reposé ici serait aussitôt relâché
-  // par `destructive_gate` sur une commande ordinaire, et la règle du
-  // propriétaire n'aurait servi à rien. Une règle explicite gagne sur un niveau
-  // d'autonomie — c'est vrai de `run_command`, ça doit l'être de sa déclaration.
-  // Un joker n'a NOMMÉ aucun outil, et ne doit donc pas court-circuiter la
-  // règle qui, elle, nomme `run_command`. `matchApprovalRule` range déjà
-  // l'exact au-dessus du joker (priorités 1-2 contre 5-6) ; la déclaration suit
-  // le même ordre. Sans cette exception, une entité posée en
-  // `* → require_approval` — une posture prudente parfaitement banale —
-  // annulait le toggle Yolo d'un agent, et rendait un `run_command → block`
-  // simplement approuvable (revue Codex, PR #50).
-  let shellRuleApplied = false;
-  if (
-    (!matchedRule || matchedRule.toolName === '*') &&
-    tool.name === 'declare_verification' &&
-    commandesJugees.length > 0
-  ) {
-    const shellRule = matchApprovalRule(
+  // `sharedFileUnattended`: the setting is not Autonomous and this call passed
+  // it with nobody asked (a new file, or one this agent wrote). The write asks
+  // the same question again right before replacing the file (#505,
+  // `atomic-write.ts`): it may have changed in between.
+  let sharedFileUnattended = false;
+  let sharedFileBlocked = false;
+  if (tool.replacesSharedFile && effectiveAction !== 'block') {
+    const setting = matchApprovalRule(
       opts.approvalRules,
-      'run_command',
+      REPLACE_SHARED_FILE_SETTING,
       ctx.agentId,
       ctx.entityId,
       ctx.workspaces,
     );
-    // Seule une règle qui NOMME `run_command` s'hérite. Un joker retombé ici
-    // est exactement celui déjà en place — il n'y a rien à hériter, et son sens
-    // reste celui qu'il avait. Cette condition remplace la neutralisation du
-    // `* auto_approve` : un joker ne franchit plus cette porte du tout.
-    if (shellRule?.toolName === 'run_command') {
-      effectiveAction = shellRule.action;
-      shellRuleApplied = true;
+    if (!setting) {
+      console.error(
+        `[executeTool] AUTONOMY_ROW_MISSING agent=${ctx.agentId} job=${ctx.jobId} tool=${REPLACE_SHARED_FILE_SETTING}`,
+      );
+      const result: ToolExecutionResult = {
+        outcome: 'error',
+        error: autonomyRowMissing(REPLACE_SHARED_FILE_SETTING),
+      };
+      await _writeToolCall(
+        ctx,
+        auditTool,
+        validatedInput,
+        JSON.stringify(result),
+        Date.now() - startMs,
+      );
+      return result;
     }
-  }
-
-  // ── Autonomy-based relaxation ────────────────────────────────────────────────
-  // The owner's ROOT autonomy level can relax the safe-by-default require_approval
-  // posture. Guarded by `!matchedRule` so any EXPLICIT rule still wins (a user-set
-  // require_approval, and crucially the run_command LAN master-switch's injected
-  // require_approval). The catastrophic hardline floor below still re-forces a human.
-  //   - fully_autonomous → auto-approve everything;
-  //
-  // …avec une EXCEPTION sur `fully_autonomous` × outils d'exécution de code
-  // (revue P0 du 25/08, finding bloquant).
-  //
-  // Avant l'inversion du modèle à deux clés (#24), le runner injectait un
-  // require_approval sur ces outils à chaque job hors local-trust ; ce
-  // `matchedRule` synthétique bloquait toute relaxation. En rendant
-  // l'injection conditionnelle au frein (relâché par défaut), la #24 a
-  // rouvert le chemin : `fully_autonomous` + zéro règle = shell auto-exécuté
-  // sans qu'aucun toggle Yolo par agent n'ait été tourné. Un blanc-seing
-  // « plus jamais de question » ne peut pas valoir consentement à exécuter du
-  // code arbitraire : ce consentement-là s'exprime UNIQUEMENT par une règle
-  // explicite (le toggle Yolo de l'agent), honorée juste au-dessus.
-  //
-  // `destructive_gate` n'est PAS concerné, et c'est délibéré : il ne signe pas
-  // un blanc-seing, il JUGE chaque appel — une commande destructrice ou
-  // lourde reste gatée, run_skill_script/skill_file_write/code_task le sont
-  // par leur riskLevel. C'est la posture documentée « auto, mais garde les
-  // destructions », et la retirer casserait un comportement voulu et testé.
-  //   - destructive_gate → auto-approve ordinary work, but KEEP the gate for a
-  //     `destructive` tool or a destructive/heavy run_command (rm, install, kill…).
-  if (!matchedRule && !shellRuleApplied && effectiveAction === 'require_approval') {
-    if (opts.autonomy === 'fully_autonomous' && !isCodeExecutionTool(tool.name)) {
-      effectiveAction = 'auto_approve';
-    } else if (opts.autonomy === 'destructive_gate') {
-      // What still needs a human under "auto, gate destructive":
-      //  - run_command → only when the command ITSELF is destructive/heavy
-      //    (rm, install, download, kill, disk…); ordinary commands auto-run.
-      //  - run_skill_script → the script's CONTENT is opaque to us (it's not
-      //    inspectable like a shell command string), so it stays gated — falls
-      //    through to the riskLevel check below, and it declares 'destructive'.
-      //  - any other tool → gate when its declared riskLevel is 'destructive'
-      //    (e.g. a connector delete). NOTE run_command declares riskLevel
-      //    'destructive' as a blanket safe-by-default, so it must be judged by
-      //    the command rule, NOT that blanket level — otherwise destructive_gate
-      //    would gate every shell command (the bug).
-      const mcpTransport = String((validatedInput as { transport?: unknown })?.transport ?? '');
-      let isHeavy: boolean;
-      // Jugé sur les COMMANDES, pas sur le riskLevel — pour `run_command` comme
-      // pour `declare_verification`. UNE commande lourde dans la séquence gate
-      // la déclaration entière : elle s'exécutera entière, et la juger sur sa
-      // commande la plus lourde est la seule lecture qui ne laisse pas passer
-      // la lourde. Une liste vide n'est lourde en rien, et c'est exact : rien
-      // ne tournera.
-      //
-      // Avec la liste de l'agent (#464), c'est ELLE qui juge ces commandes,
-      // juste en dessous : ses sortes d'action couvrent ce que le classifieur
-      // lourd couvrait (le code en ligne compris), et le propriétaire y dit,
-      // sorte par sorte, s'il veut qu'on lui demande.
-      if (tool.name === 'run_command' || tool.name === 'declare_verification')
-        isHeavy = opts.shellPolicy
-          ? false
-          : commandesJugees.some((c) => isDestructiveOrHeavyCommand(c, RUN_HOST));
-      // É-2 (audit sécu 2026-07-07): create_mcp with a stdio transport spawns an
-      // arbitrary local subprocess (npx/uvx <cmd>) — RCE-equivalent to
-      // run_command — so it must stay gated under destructive_gate. Its declared
-      // riskLevel is 'write' (correct for the http case), which would otherwise
-      // let this stdio spawn auto-approve. The http case keeps the 'write' path.
-      else if (tool.name === 'create_mcp' && mcpTransport === 'stdio') isHeavy = true;
-      // MCP tools are judged like any other tool here — by their riskLevel.
-      //
-      // MCP-001's fix (2026-08-07, commit 5aba6b0) briefly added
-      // `else if (tool.name.includes('__')) isHeavy = true`, which put EVERY
-      // third-party tool in the heavy bucket. That silently redefined a setting
-      // the owner had chosen: `destructive_gate` says "gate the destructive",
-      // and it started gating `get_post` and a CHANGELOG fetch. Removed after
-      // the owner reported it — an autonomy level that does not mean what it
-      // says is worse than no autonomy level, because the next thing people do
-      // is grant a blanket `*` rule.
-      //
-      // The MCP-001 finding is still closed, at the layer where it belongs:
-      // every MCP tool ships `defaultApproval: 'require_approval'`, so a fresh
-      // install — shipped default autonomy, or `propose_confirm` — still gates
-      // foreign code on first use. What changes here is that an owner who
-      // EXPLICITLY chose "autonomous, gate destructive" gets that.
-      //
-      // The residual risk is real and belongs to that choice: `riskLevel` for
-      // an MCP tool comes from annotations the server supplies, so a hostile
-      // server can declare itself non-destructive. `destructiveHint` can only
-      // RAISE the level (riskFromAnnotations never honours `readOnlyHint` as a
-      // downgrade), and the catastrophic-command and stdio floors below still
-      // apply unconditionally.
-      else isHeavy = tool.riskLevel === 'destructive';
-      if (!isHeavy) effectiveAction = 'auto_approve';
+    const canHarden =
+      setting.action === 'block' ||
+      (setting.action === 'require_approval' && effectiveAction === 'auto_approve');
+    if (canHarden) {
+      if (await tool.replacesSharedFile(validatedInput, ctx)) {
+        effectiveAction = setting.action;
+        sharedFileBlocked = setting.action === 'block';
+      } else if (effectiveAction === 'auto_approve') {
+        sharedFileUnattended = true;
+      }
     }
-  }
-
-  let porteLaisseePasserSansPersonne = false;
-  // ── Per-call dynamic gate (D1) ─────────────────────────────────────────────
-  // Complements the static defaultApproval fallback above: a tool declaring
-  // `computeApproval` decides, PER CALL, whether THIS specific input is
-  // destructive enough to need a human — e.g. file_write/file_edit only when
-  // overwriting an existing file in the shared workspace. Same precedence as
-  // defaultApproval: an explicit rule always wins (guarded by !matchedRule),
-  // and fully_autonomous drops the gate entirely (no hardline floor here —
-  // unlike run_command's catastrophic-command circuit breaker, nothing in
-  // this hook's scope is dangerous enough to warrant overriding Yolo).
-  if (
-    !matchedRule &&
-    effectiveAction !== 'block' &&
-    effectiveAction !== 'require_approval' &&
-    tool.computeApproval &&
-    opts.autonomy !== 'fully_autonomous'
-  ) {
-    const dynamic = await tool.computeApproval(validatedInput, ctx);
-    if (dynamic === 'require_approval') effectiveAction = 'require_approval';
-    // La porte a laissé passer sans personne : l'écriture reposera la même
-    // question juste avant de remplacer le fichier (#505, `atomic-write.ts`).
-    else porteLaisseePasserSansPersonne = true;
   }
 
   // ── La liste de ce que l'agent n'a pas le droit de faire (#464) ─────────────
@@ -536,9 +441,11 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
   // `destructive_gate`, mais APPROUVABLE. La règle vit dans
   // `isInlineInterpreterEvalCommand` / `isDestructiveOrHeavyCommand`, et sa
   // justification complète est à packages/shared/src/catastrophic-command.ts:278.
-  // Les mêmes commandes qu'a jugées la relaxation d'autonomie plus haut : une
-  // preuve déclarée s'exécutera sans repasser ici, elle doit franchir ce
-  // plancher MAINTENANT, ou jamais.
+  // Les mêmes commandes qu'ont jugées la ligne de l'agent et sa liste plus
+  // haut : une preuve déclarée s'exécutera sans repasser ici, elle doit
+  // franchir ce plancher MAINTENANT, ou jamais. Plancher inconditionnel
+  // (#917) : aucune ligne d'autonomie ne le lève, et l'onglet Autonomie le dit
+  // sous « Run commands ».
 
   if (
     commandesJugees.length > 0 &&
@@ -553,12 +460,10 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
   }
 
   // Second hardline floor: `create_mcp` with a STDIO transport (audit
-  // 2026-08-07). É-2 already judged this RCE-equivalent to run_command and gated
-  // it under `destructive_gate` (line ~112 above) — but that branch is only
-  // reached when `effectiveAction` is still 'require_approval', and
-  // `fully_autonomous` flips it to 'auto_approve' first. So the stdio gate
-  // existed in the middle tier and vanished in the top one, which is the
-  // opposite of what a hardline floor means.
+  // 2026-08-07). É-2 judged this RCE-equivalent to run_command: it spawns a
+  // local program. An unconditional floor (#917): whatever the agent's row for
+  // `create_mcp` says, a stdio server asks before it starts, and the Autonomy
+  // tab says so on that row.
   //
   // Scope is deliberately stdio-only: an `http` server spawns nothing locally,
   // and É-2's decision to let it auto-approve under `destructive_gate` still
@@ -625,10 +530,15 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
         ? // Ce que la liste interdit, et sur quoi (#464) : le modèle sait
           // quoi ne pas refaire, au lieu de chercher un détour.
           shellChecklistRefusal(shellBlock)
-        : `blocked: an approval rule forbids "${tool.name}" for this agent. This is an ` +
-          `intentional restriction set by the owner — do NOT retry it and do NOT work around it ` +
-          `via other tools or sub-agents. Use your allowed tools, or report the limitation in ` +
-          `your result.`,
+        : sharedFileBlocked
+          ? `blocked: this agent may not replace or remove a file of the shared workspace that it ` +
+            `did not create. This is an intentional restriction set by the owner — do NOT retry ` +
+            `it and do NOT work around it via other tools or sub-agents. Write a new file ` +
+            `instead, or report the limitation in your result.`
+          : `blocked: an approval rule forbids "${tool.name}" for this agent. This is an ` +
+            `intentional restriction set by the owner — do NOT retry it and do NOT work around it ` +
+            `via other tools or sub-agents. Use your allowed tools, or report the limitation in ` +
+            `your result.`,
     };
     await _writeToolCall(
       ctx,
@@ -847,7 +757,7 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
   const execCtx: ToolContext = {
     ...ctx,
     ...(mutationTargets === null ? {} : { declaredMutationTargets: mutationTargets }),
-    ...(porteLaisseePasserSansPersonne ? { sharedOverwriteUnattended: true } : {}),
+    ...(sharedFileUnattended ? { sharedOverwriteUnattended: true } : {}),
     reportWrittenContent: (absPath, sha256) => contenusEcrits.set(absPath, sha256),
     reportReadContent: (absPath, sha256) => contenusLus.set(absPath, sha256),
     confirmMove: (source, destination) => deplacementsFaits.set(source, destination),

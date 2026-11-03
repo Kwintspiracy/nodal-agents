@@ -11,8 +11,28 @@
 // thing this screen promises, so it is the thing a component test renders.
 
 import SegmentedControl from '@/components/ui/SegmentedControl';
+import PrimaryButton from '@/components/ui/PrimaryButton';
 
 export type AutonomyAction = 'auto_approve' | 'require_approval' | 'block';
+
+/** The words of each value, the same on every row and on the approval card. */
+export const AUTONOMY_LABEL: Readonly<Record<AutonomyAction, string>> = {
+  auto_approve: 'Run without asking',
+  require_approval: 'Ask for approval',
+  block: 'Block',
+};
+
+/**
+ * A row of this agent confined to one folder (#346): it applies there, the
+ * tool's own row everywhere else (#917). Shown under the tool, never in its
+ * place.
+ */
+export interface FolderRow {
+  label: string;
+  action: AutonomyAction;
+  /** The folder's absolute path: what removing the row names. */
+  workspacePath: string;
+}
 
 /**
  * What the agent can reach, in the vocabulary the connector operations already
@@ -33,14 +53,20 @@ export default function AutonomyToolRow({
   saving,
   onChange,
   lockedReason,
-  folder,
+  folderRows = [],
+  onRemoveFolder,
+  note,
+  hideUnset = false,
 }: {
   /** The tool name. Stays visible: it is what the owner sees in a transcript. */
   slug: string;
   label: string;
   summary: string;
   risk: 'read' | 'write' | 'destructive';
-  /** `null` : pas de règle, rien n'est choisi (`run_command`, #468). */
+  /**
+   * The row's value. `null`: the agent has no row for this tool, and the gate
+   * refuses it (#917). Said, never painted as a choice.
+   */
   value: AutonomyAction | null;
   saving: boolean;
   onChange: (action: AutonomyAction) => void;
@@ -52,15 +78,17 @@ export default function AutonomyToolRow({
    * affordance, not the guard.
    */
   lockedReason?: string;
+  /** The rows of this agent for this tool confined to one folder (#346, #361). */
+  folderRows?: readonly FolderRow[];
+  /** Removes one folder row; the tool's row then applies there too. */
+  onRemoveFolder?: (workspacePath: string) => void;
+  /** A line under the summary: what no setting changes (a floor of the gate). */
+  note?: string;
   /**
-   * The folder this rule is confined to, when it carries one (issue #361).
-   *
-   * Since « Approve for this project » (#360) a rule can read « approved, but
-   * only while the agent works there ». Without this the row said « Run
-   * without asking » where the truth was « Run without asking in Dev », and
-   * the owner had no way to see the difference.
+   * A row that is a starting value, not a tool's own (a server's setting):
+   * without a value it refuses nothing, so "Not set" is not said as a fault.
    */
-  folder?: string;
+  hideUnset?: boolean;
 }) {
   return (
     <div className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:gap-4">
@@ -82,22 +110,43 @@ export default function AutonomyToolRow({
           </span>
         </div>
         <p className="mt-0.5 text-body-13 leading-[1.4]! text-ink-3">{summary}</p>
+        {note !== undefined && (
+          <p className="mt-1 text-body-12 text-ink-4" data-testid={`autonomy-note-${slug}`}>
+            {note}
+          </p>
+        )}
         <code className="mt-1 block text-mono-11 text-ink-4">{slug}</code>
+        {folderRows.map((f) => (
+          <p
+            key={f.label}
+            className="mt-1 flex flex-wrap items-center gap-2 text-body-12 text-ink-3"
+            data-testid={`autonomy-folder-${slug}`}
+          >
+            <span>
+              In {f.label}: {AUTONOMY_LABEL[f.action]}
+            </span>
+            {onRemoveFolder !== undefined && (
+              <PrimaryButton
+                variant="neutral"
+                size="sm"
+                onClick={() => onRemoveFolder(f.workspacePath)}
+                disabled={saving}
+                data-testid={`autonomy-folder-remove-${slug}`}
+              >
+                Remove
+              </PrimaryButton>
+            )}
+          </p>
+        ))}
+        {value === null && !hideUnset && (
+          <p className="mt-1 text-body-12 text-err" data-testid={`autonomy-unset-${slug}`}>
+            Not set: this tool is refused until you choose.
+          </p>
+        )}
       </div>
 
       {lockedReason !== undefined ? (
         <div className="flex max-w-xs flex-col items-start gap-1 sm:items-end">
-          {/*
-            Le dossier s'affiche AUSSI sur une ligne verrouillée (revue Reviewer
-            C, passe 3, C4) : le verrou n'interdit que le blocage, une règle de
-            dossier existe ici comme ailleurs, et la taire ferait lire
-            « partout ».
-          */}
-          {folder !== undefined && (
-            <span className="text-body-12 text-ink-4" data-testid={`autonomy-folder-${slug}`}>
-              in {folder}
-            </span>
-          )}
           <p
             className="text-body-12 leading-[1.4]! text-ink-4 sm:text-right"
             data-testid={`autonomy-locked-${slug}`}
@@ -106,41 +155,29 @@ export default function AutonomyToolRow({
           </p>
         </div>
       ) : (
-        /* 3-way control, with the folder the rule is confined to beside it */
+        /* 3-way control: the tool's row, valid everywhere but the folders above */
         <div className="flex flex-col items-start gap-1 sm:items-end">
-          {folder !== undefined && (
-            <span className="text-body-12 text-ink-4" data-testid={`autonomy-folder-${slug}`}>
-              in {folder}
-            </span>
-          )}
           <SegmentedControl
             value={value}
             onChange={onChange}
             disabled={saving}
-            // Le dossier fait partie du NOM de ce réglage : sans lui, un lecteur
-            // d'écran annonce « Run without asking » sans la moitié qui compte
-            // (revue Reviewer C, passe 1, C4).
-            ariaLabel={
-              folder === undefined
-                ? `Approval rule for ${label}`
-                : `Approval rule for ${label}, limited to ${folder}`
-            }
+            ariaLabel={`Approval rule for ${label}`}
             options={[
               {
                 value: 'auto_approve' as const,
-                label: 'Run without asking',
+                label: AUTONOMY_LABEL.auto_approve,
                 activeClassName: 'bg-agent-vivid/15 text-agent-vivid border-agent-vivid/30',
                 testId: `autonomy-btn-${slug}-auto_approve`,
               },
               {
                 value: 'require_approval' as const,
-                label: 'Ask for approval',
+                label: AUTONOMY_LABEL.require_approval,
                 activeClassName: 'bg-warn/15 text-warn border-warn/30',
                 testId: `autonomy-btn-${slug}-require_approval`,
               },
               {
                 value: 'block' as const,
-                label: 'Block',
+                label: AUTONOMY_LABEL.block,
                 activeClassName: 'bg-err/15 text-err border-err/30',
                 testId: `autonomy-btn-${slug}-block`,
               },

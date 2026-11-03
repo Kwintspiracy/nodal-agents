@@ -9,6 +9,7 @@ import { executeTool } from '../execute';
 import type { ToolContext, ExecuteOptions, ApprovalRule } from '../types';
 import { reviewVerdictTool } from '../builtin/review-verdict';
 import { assertNotReadOnlyAgent, ReadOnlyAgentError } from '../builtin/code-task/db';
+import { autonomousRows } from './autonomy-rows-fixture';
 
 let db: TestDb;
 let seed: { userId: string; entityId: string; agentId: string; jobId: string };
@@ -30,7 +31,7 @@ function makeCtx(): ToolContext {
 }
 
 function makeOpts(rules: ApprovalRule[] = []): ExecuteOptions {
-  return { approvalRules: rules, onApprovalRequired: async () => {} };
+  return { approvalRules: [...rules, ...autonomousRows(seed)], onApprovalRequired: async () => {} };
 }
 
 // ─── review_verdict ──────────────────────────────────────────────────────────

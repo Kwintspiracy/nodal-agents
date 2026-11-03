@@ -11,11 +11,25 @@ import { executeTool as gateReel } from '../execute';
 import type {
   ToolDefinition,
   ToolContext,
-  ExecuteOptions,
+  ExecuteOptions as GateOptions,
   ApprovalGateRequest,
   ApprovalRule,
 } from '../types';
 import type { TestDb } from '@nodal-agents/db/test-utils';
+import {
+  DEFAULT_SHELL_POLICY,
+  REPLACE_SHARED_FILE_SETTING,
+  type AutonomyLevel,
+} from '@nodal-agents/shared';
+import { templateAutonomy } from '../autonomy-template';
+import { aRow } from './autonomy-rows-fixture';
+
+/**
+ * The gate's options, plus the workspace level a case runs under (#917). The
+ * level is NOT an option of the gate: the harness below turns it into what it
+ * is in the product, the row written for the tool when it arrives.
+ */
+type ExecuteOptions = GateOptions & { autonomy?: AutonomyLevel };
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -71,15 +85,40 @@ function makeCtx(overrides?: Partial<ToolContext>): ToolContext {
 // harnais la fournit donc, exactement comme un appel réel la fournit, plutôt que
 // de la répéter dans soixante-quinze appels.
 const RAISON = 'Test: why this call is being made.';
-const executeTool: typeof gateReel = ((tool, input, ctx, opts) =>
-  gateReel(
+//
+// Et les LIGNES (#917). La porte applique la ligne de l'agent pour l'outil et
+// refuse un appel qui n'en a pas. Un cas « sous tel niveau » est un agent dont
+// les lignes ont été écrites sous ce niveau : le harnais ajoute, APRÈS les
+// lignes que le cas pose lui-même (elles gagnent), celle que le modèle écrit
+// pour l'outil appelé et pour le réglage « shared file » — `templateAutonomy`,
+// la fonction du produit, avec les règles du cas comme modèles. Le refus d'un
+// appel sans ligne a son propre cas, sur la porte nue (`gateReel`).
+function executeTool<TInput extends z.ZodTypeAny, TOutput>(
+  tool: ToolDefinition<TInput, TOutput>,
+  input: unknown,
+  ctx: ToolContext,
+  opts: ExecuteOptions,
+) {
+  const { autonomy, ...gate } = opts;
+  const scope = { agentId: ctx.agentId, entityId: ctx.entityId };
+  const template = { level: autonomy ?? 'propose_confirm', rules: gate.approvalRules, ...scope };
+  const written = [
+    aRow(tool.name, templateAutonomy(tool, template), scope),
+    aRow(
+      REPLACE_SHARED_FILE_SETTING,
+      templateAutonomy({ name: REPLACE_SHARED_FILE_SETTING, riskLevel: 'write' }, template),
+      scope,
+    ),
+  ];
+  return gateReel(
     tool,
     input !== null && typeof input === 'object' && !Array.isArray(input)
       ? { purpose: RAISON, ...(input as Record<string, unknown>) }
       : input,
     ctx,
-    opts,
-  )) as typeof gateReel;
+    { ...gate, approvalRules: [...gate.approvalRules, ...written] },
+  );
+}
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
@@ -607,76 +646,246 @@ describe('executeTool', () => {
 // builtin/file-ops/overwrite-gate.test.ts. Here we only verify executeTool's
 // wiring: precedence vs explicit rules, and the autonomy relaxation.
 
-describe('executeTool — computeApproval per-call hook (D1)', () => {
-  function makeDynamicTool(
-    decision: 'require_approval' | undefined,
+describe('executeTool — the shared-file setting has its own row (#917) @cap:regler-autonomie/moteur', () => {
+  // A tool that can replace a shared file declares `replacesSharedFile`; the
+  // agent's setting (`REPLACE_SHARED_FILE_SETTING`) decides what happens when
+  // a call does, WHATEVER the tool's own row says: the stricter of the two.
+  function sharedFileTool(
+    replaces: boolean,
+    ran: unknown[] = [],
   ): ToolDefinition<z.ZodObject<{ value: z.ZodString }>, string> {
     return makeSimpleTool({
       name: 'dynamic_tool',
-      computeApproval: async () => decision,
+      riskLevel: 'write',
+      replacesSharedFile: async () => replaces,
+      execute: async (input: SimpleInput, c: ToolContext) => {
+        ran.push(c.sharedOverwriteUnattended ?? false);
+        return `result:${input.value}`;
+      },
     });
   }
+  const row = (toolName: string, action: ApprovalRule['action']) =>
+    aRow(toolName, action, { agentId: seed.agentId, entityId: seed.entityId });
 
-  it('gates when computeApproval returns require_approval, no rule, propose_confirm (undefined autonomy)', async () => {
+  it('tool Autonomous, setting Ask first: a call that replaces a shared file asks', async () => {
     const captured: ApprovalGateRequest[] = [];
+    const ran: unknown[] = [];
     const result = await executeTool(
-      makeDynamicTool('require_approval'),
+      sharedFileTool(true, ran),
       { value: 'x' },
       makeCtx(),
-      makeOpts([], async (req) => {
-        captured.push(req);
-      }),
+      makeOpts(
+        [row('dynamic_tool', 'auto_approve'), row(REPLACE_SHARED_FILE_SETTING, 'require_approval')],
+        async (req) => {
+          captured.push(req);
+        },
+      ),
     );
     expect(result.outcome).toBe('awaiting_approval');
-    expect(captured).toHaveLength(1);
+    expect(captured.map((r) => r.toolName)).toEqual(['dynamic_tool']);
+    expect(ran).toEqual([]);
   });
 
-  it('STILL gates under destructive_gate — this hook is not relaxed by that mode', async () => {
-    const opts = makeOpts([]);
-    opts.autonomy = 'destructive_gate';
+  it('tool Autonomous, setting Autonomous: it runs, and the write is not asked again', async () => {
+    const ran: unknown[] = [];
     const result = await executeTool(
-      makeDynamicTool('require_approval'),
+      sharedFileTool(true, ran),
       { value: 'x' },
       makeCtx(),
-      opts,
+      makeOpts([
+        row('dynamic_tool', 'auto_approve'),
+        row(REPLACE_SHARED_FILE_SETTING, 'auto_approve'),
+      ]),
+    );
+    expect(result.outcome).toBe('success');
+    // Autonomous: no unattended re-check at the write either.
+    expect(ran).toEqual([false]);
+  });
+
+  it('setting Block: the call is refused with what the owner forbade, and nothing runs', async () => {
+    const ran: unknown[] = [];
+    const result = await executeTool(
+      sharedFileTool(true, ran),
+      { value: 'x' },
+      makeCtx(),
+      makeOpts([
+        row('dynamic_tool', 'require_approval'),
+        row(REPLACE_SHARED_FILE_SETTING, 'block'),
+      ]),
+    );
+    expect(result.outcome).toBe('error');
+    if (result.outcome === 'error') {
+      expect(result.error).toContain('may not replace or remove a file of the shared workspace');
+    }
+    expect(ran).toEqual([]);
+  });
+
+  it('tool Ask first, setting Autonomous: the stricter row still asks', async () => {
+    const result = await executeTool(
+      sharedFileTool(true),
+      { value: 'x' },
+      makeCtx(),
+      makeOpts([
+        row('dynamic_tool', 'require_approval'),
+        row(REPLACE_SHARED_FILE_SETTING, 'auto_approve'),
+      ]),
     );
     expect(result.outcome).toBe('awaiting_approval');
   });
 
-  it('does NOT gate under fully_autonomous — dropped entirely, per D1 spec', async () => {
-    const opts = makeOpts([]);
-    opts.autonomy = 'fully_autonomous';
+  it('a call that replaces nothing runs, and the write checks again (#505)', async () => {
+    const ran: unknown[] = [];
     const result = await executeTool(
-      makeDynamicTool('require_approval'),
+      sharedFileTool(false, ran),
       { value: 'x' },
       makeCtx(),
-      opts,
+      makeOpts([
+        row('dynamic_tool', 'auto_approve'),
+        row(REPLACE_SHARED_FILE_SETTING, 'require_approval'),
+      ]),
+    );
+    expect(result.outcome).toBe('success');
+    expect(ran).toEqual([true]);
+  });
+
+  it('a tool that cannot replace a shared file never reads the setting', async () => {
+    const result = await gateReel(
+      makeSimpleTool(),
+      { value: 'x' },
+      makeCtx(),
+      // The tool's row only: no setting row, and none needed.
+      { approvalRules: [row('simple_tool', 'auto_approve')], onApprovalRequired: async () => {} },
     );
     expect(result.outcome).toBe('success');
   });
 
-  it('an explicit rule (even auto_approve) is never consulted — computeApproval is skipped', async () => {
-    const autoRule: ApprovalRule = {
-      id: 'explicit-auto',
-      toolName: 'dynamic_tool',
-      action: 'auto_approve',
-      agentId: seed.agentId,
-      entityId: seed.entityId,
+  it('no setting row: a call of a file tool is refused with its reason, never run', async () => {
+    const ran: unknown[] = [];
+    const result = await gateReel(
+      sharedFileTool(true, ran),
+      { value: 'x', purpose: RAISON },
+      makeCtx(),
+      { approvalRules: [row('dynamic_tool', 'auto_approve')], onApprovalRequired: async () => {} },
+    );
+    expect(result.outcome).toBe('error');
+    if (result.outcome === 'error') {
+      expect(result.error).toContain('autonomy_not_set');
+      expect(result.error).toContain(REPLACE_SHARED_FILE_SETTING);
+    }
+    expect(ran).toEqual([]);
+  });
+
+  it('the level gives the setting its FIRST value only: Ask first, or Autonomous under full autonomy', async () => {
+    // What the writer puts in the row on arrival (templateAutonomy). After
+    // that the row is what applies, whatever the level becomes.
+    for (const [level, expected] of [
+      ['propose_confirm', 'awaiting_approval'],
+      ['destructive_gate', 'awaiting_approval'],
+      ['fully_autonomous', 'success'],
+    ] as const) {
+      const result = await executeTool(sharedFileTool(true), { value: 'x' }, makeCtx(), {
+        ...makeOpts(),
+        autonomy: level,
+      });
+      expect(result.outcome, level).toBe(expected);
+    }
+  });
+});
+
+describe('executeTool — a tool without a row is refused (#917) @cap:regler-autonomie/moteur', () => {
+  it('refuses with the reason, runs nothing, logs it, and writes the audit row', async () => {
+    const ran: unknown[] = [];
+    const tool = makeSimpleTool({
+      name: 'no_row_tool',
+      execute: async (input: SimpleInput) => {
+        ran.push(input);
+        return 'ran';
+      },
+    });
+    const errors: unknown[] = [];
+    const original = console.error;
+    console.error = (...args: unknown[]) => {
+      errors.push(args.join(' '));
     };
-    const result = await executeTool(
-      makeDynamicTool('require_approval'),
-      { value: 'x' },
-      makeCtx(),
-      makeOpts([autoRule]),
-    );
-    expect(result.outcome).toBe('success');
+    let result;
+    try {
+      result = await gateReel(tool, { value: 'x' }, makeCtx(), {
+        // Every other row of the agent, none for this tool.
+        approvalRules: [
+          aRow('other_tool', 'auto_approve', { agentId: seed.agentId, entityId: seed.entityId }),
+        ],
+        onApprovalRequired: async () => {},
+      });
+    } finally {
+      console.error = original;
+    }
+    expect(result.outcome).toBe('error');
+    if (result.outcome === 'error') {
+      expect(result.error).toContain('autonomy_not_set: "no_row_tool"');
+    }
+    expect(ran).toEqual([]);
+    expect(
+      errors.some(
+        (e) => String(e).includes('AUTONOMY_ROW_MISSING') && String(e).includes('no_row_tool'),
+      ),
+    ).toBe(true);
+    const rows = await db.select().from(toolCalls).where(eq(toolCalls.toolName, 'no_row_tool'));
+    expect(rows.length).toBeGreaterThan(0);
   });
 
-  it('computeApproval returning undefined never gates, regardless of mode', async () => {
-    const opts = makeOpts([]);
-    opts.autonomy = 'propose_confirm';
-    const result = await executeTool(makeDynamicTool(undefined), { value: 'x' }, makeCtx(), opts);
-    expect(result.outcome).toBe('success');
+  it('a rule for every agent, a `*` rule or a server rule never stands in for the row', async () => {
+    const tool = makeSimpleTool({ name: 'srv__read_thing' });
+    const result = await gateReel(tool, { value: 'x' }, makeCtx(), {
+      approvalRules: [
+        {
+          id: 'e',
+          toolName: 'srv__read_thing',
+          action: 'auto_approve',
+          agentId: null,
+          entityId: seed.entityId,
+        },
+        {
+          id: 's',
+          toolName: 'srv__*',
+          action: 'auto_approve',
+          agentId: seed.agentId,
+          entityId: seed.entityId,
+        },
+        {
+          id: 'a',
+          toolName: '*',
+          action: 'auto_approve',
+          agentId: seed.agentId,
+          entityId: seed.entityId,
+        },
+      ],
+      onApprovalRequired: async () => {},
+    });
+    expect(result.outcome).toBe('error');
+    if (result.outcome === 'error') expect(result.error).toContain('autonomy_not_set');
+  });
+
+  it('the workspace level is not read at run time: the same row gives the same outcome under every level', async () => {
+    // The gate has no `autonomy` option any more (#917): a row Ask first asks,
+    // a row Autonomous runs, whatever the level the workspace is on.
+    for (const action of ['require_approval', 'auto_approve'] as const) {
+      const outcomes = new Set<string>();
+      for (const level of ['propose_confirm', 'destructive_gate', 'fully_autonomous'] as const) {
+        const res = await executeTool(
+          makeSimpleTool({ name: 'level_blind', defaultApproval: 'require_approval' }),
+          { value: 'x' },
+          makeCtx(),
+          {
+            ...makeOpts([
+              aRow('level_blind', action, { agentId: seed.agentId, entityId: seed.entityId }),
+            ]),
+            autonomy: level,
+          },
+        );
+        outcomes.add(res.outcome);
+      }
+      expect([...outcomes]).toEqual([action === 'auto_approve' ? 'success' : 'awaiting_approval']);
+    }
   });
 });
 
@@ -836,16 +1045,19 @@ describe('executeTool — fully_autonomous workspace @cap:regler-autonomie/moteu
 });
 
 describe('executeTool — destructive_gate workspace @cap:approuver-une-action/moteur', () => {
+  // run_command's row is written Autonomous under destructive_gate (#917); what
+  // holds a heavy command is the agent's checklist, which the runner passes on
+  // every turn (`DEFAULT_SHELL_POLICY` when the owner set nothing).
   function gateOpts(rules: ApprovalRule[] = []): ExecuteOptions {
-    return { ...makeOpts(rules), autonomy: 'destructive_gate' };
+    return { ...makeOpts(rules), autonomy: 'destructive_gate', shellPolicy: DEFAULT_SHELL_POLICY };
   }
 
-  it('auto-approves ORDINARY run_command (no prompt)', async () => {
+  it('auto-approves ORDINARY run_command (no prompt): the row the level wrote says Autonomous', async () => {
     const res = await executeTool(
       makeRunCommandTool(),
       { command: 'curl -s http://127.0.0.1:8188/system_stats' },
       makeCtx(),
-      gateOpts(),
+      { ...makeOpts(), autonomy: 'destructive_gate' },
     );
     expect(res.outcome).toBe('success');
   });
@@ -1073,14 +1285,18 @@ describe('executeTool — declare_verification judged by its COMMANDS (revue pas
     defaultApproval: 'require_approval',
     execute: async () => 'ok',
   };
-  const gateOpts: ExecuteOptions = { ...makeOpts(), autonomy: 'destructive_gate' };
+  const gateOpts: ExecuteOptions = {
+    ...makeOpts(),
+    autonomy: 'destructive_gate',
+    shellPolicy: DEFAULT_SHELL_POLICY,
+  };
 
   it('auto-approves an ORDINARY declared proof (a syntax check)', async () => {
     const res = await executeTool(
       declareTool,
       { project_path: 'C:/p', commands: [{ command: 'node --check app.js' }] },
       makeCtx(),
-      gateOpts,
+      { ...makeOpts(), autonomy: 'destructive_gate' },
     );
     expect(res.outcome).toBe('success');
   });
@@ -1231,17 +1447,25 @@ describe('executeTool — une preuve déclarée est jugée sous la règle de run
     expect(res.outcome).toBe('awaiting_approval');
   });
 
-  it('une règle NOMMANT declare_verification gagne sur celle de run_command', async () => {
+  // #917 : la déclaration a TOUJOURS sa ligne, comme tout outil. Si elle
+  // gagnait sur celle de run_command, un `run_command → block` deviendrait
+  // contournable par une ligne que personne ne regarde. Une déclaration qui
+  // porte des commandes est donc jugée sous la ligne de run_command, quand
+  // l'agent en a une.
+  it('la ligne de run_command décide d’une déclaration à commandes, même si la sienne dit Autonomous', async () => {
     const res = await executeTool(
       declareTool,
       { project_path: 'C:/p', commands: [{ command: NODE_EVAL }] },
       makeCtx(),
       gate([rule('run_command', 'block'), rule('declare_verification', 'auto_approve')]),
     );
-    expect(res.outcome).toBe('success');
+    expect(res.outcome).toBe('error');
+    if (res.outcome === 'error') expect(res.error).toContain('blocked: an approval rule forbids');
   });
 
-  it('une règle run_command PORTÉE PAR L’ENTITÉ s’applique aussi', async () => {
+  // Une règle pour tout l'espace est un MODÈLE (#917) : elle ne décide rien à
+  // l'exécution. Ici, c'est la ligne de la déclaration qui décide.
+  it('une règle run_command PORTÉE PAR L’ENTITÉ ne décide rien à l’exécution', async () => {
     const res = await executeTool(
       declareTool,
       { project_path: 'C:/p', commands: [{ command: NODE_EVAL }] },
@@ -1265,12 +1489,14 @@ describe('executeTool — une preuve déclarée est jugée sous la règle de run
 
   it('un joker `*` auto_approve ne vaut PAS consentement à exécuter du shell', async () => {
     // Même neutralisation que pour run_command lui-même (revue sécurité 25/08) :
-    // un blanc-seing n'est pas un « oui » à du code arbitraire.
+    // un blanc-seing n'est pas un « oui » à du code arbitraire. Depuis #917 il
+    // joue quand la ligne est ÉCRITE : le modèle l'écarte, et la ligne prend la
+    // valeur du niveau (ici le niveau livré, Ask first).
     const res = await executeTool(
       declareTool,
       { project_path: 'C:/p', commands: [{ command: NODE_EVAL }] },
       makeCtx(),
-      gate([rule('*', 'auto_approve')]),
+      { ...makeOpts([rule('*', 'auto_approve')]), autonomy: 'propose_confirm' },
     );
     expect(res.outcome).toBe('awaiting_approval');
   });
@@ -1316,7 +1542,7 @@ describe('executeTool — une preuve déclarée est jugée sous la règle de run
     }
   });
 
-  it('sous un joker, une règle nommant declare_verification gagne toujours', async () => {
+  it('sous un joker, la ligne de run_command décide toujours d’une déclaration à commandes', async () => {
     const res = await executeTool(
       declareTool,
       { project_path: 'C:/p', commands: [{ command: NODE_EVAL }] },
@@ -1327,7 +1553,7 @@ describe('executeTool — une preuve déclarée est jugée sous la règle de run
         rule('declare_verification', 'auto_approve'),
       ]),
     );
-    expect(res.outcome).toBe('success');
+    expect(res.outcome).toBe('error');
   });
 
   it('un joker SEUL continue de s’appliquer — rien à hériter', async () => {

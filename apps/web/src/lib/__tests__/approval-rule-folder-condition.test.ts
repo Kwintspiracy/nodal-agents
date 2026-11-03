@@ -1,5 +1,6 @@
 // approval-rule-folder-condition.test.ts — « Approve for this project » écrit
-// une VRAIE ligne conditionnée, et rien ne peut l'élargir en silence.
+// une VRAIE ligne conditionnée, et depuis #917 elle vit À CÔTÉ de la ligne de
+// l'outil : rien d'écrit sur l'une ne touche l'autre.
 //
 // Ce que ce fichier verrouille (issue #346, constats de Reviewer C passe 1) :
 // une règle agent+outil peut porter `condition_json.workspacePath`, soit
@@ -61,12 +62,17 @@ beforeAll(async () => {
   });
 });
 
+/** The row confined to the folder when there is one, else the tool's row. */
 async function rowFor(toolName: string) {
-  const [row] = await testDb
+  const rows = await rowsFor(toolName);
+  return rows.find((r) => r.conditionFolder !== '') ?? rows[0];
+}
+
+async function rowsFor(toolName: string) {
+  return testDb
     .select()
     .from(approvalRules)
     .where(and(eq(approvalRules.entityId, seed.entityId), eq(approvalRules.toolName, toolName)));
-  return row;
 }
 
 async function poserRegleDossier(toolName: string) {
@@ -115,7 +121,7 @@ describe('la règle confinée à un dossier @cap:approuver-une-action/moteur', (
     expect(await rowFor('mcp_x__everyone')).toBeUndefined();
   });
 
-  it('un changement qui RESTREINT retire la condition, et c’est voulu', async () => {
+  it('la ligne de l’outil et sa ligne de dossier COEXISTENT : changer l’une ne touche pas l’autre (#917)', async () => {
     const { setAgentApprovalRuleAction } = await import('../actions.ts');
     expect((await poserRegleDossier('mcp_x__restrict')).ok).toBe(true);
     const r = await setAgentApprovalRuleAction({
@@ -125,9 +131,11 @@ describe('la règle confinée à un dossier @cap:approuver-une-action/moteur', (
       scope: 'agent',
     });
     expect(r.ok).toBe(true);
-    const row = await rowFor('mcp_x__restrict');
-    expect(row!.action).toBe('require_approval');
-    expect(row!.conditionJson).toEqual({});
+    const rows = await rowsFor('mcp_x__restrict');
+    expect(rows.map((x) => `${x.action}@${x.conditionFolder}`).sort()).toEqual([
+      `auto_approve@${FOLDER}`,
+      'require_approval@',
+    ]);
   });
 
   it('un changement qui garde le dossier le GARDE vraiment', async () => {
@@ -148,114 +156,71 @@ describe('la règle confinée à un dossier @cap:approuver-une-action/moteur', (
   });
 });
 
-describe('rien n’élargit une règle de dossier en silence @cap:approuver-une-action/moteur', () => {
-  it('une autorisation GLOBALE sur le même outil est refusée, et nomme le dossier', async () => {
+describe('une permission partout ne touche jamais une ligne de dossier (#917) @cap:approuver-une-action/moteur', () => {
+  // Avant #917, la ligne de dossier et la permission partout étaient la MÊME
+  // ligne : écrire l'une effaçait l'autre, d'où un garde qui refusait. Elles
+  // coexistent : la permission partout est la ligne de l'outil, la ligne de
+  // dossier reste ce que le propriétaire a posé pour ce dossier.
+  it('une autorisation GLOBALE sur le même outil écrit la ligne de l’outil, et laisse le dossier', async () => {
     const { setAgentApprovalRuleAction } = await import('../actions.ts');
     expect((await poserRegleDossier('mcp_x__widen')).ok).toBe(true);
-
     const r = await setAgentApprovalRuleAction({
       agentId: seed.agentId,
       toolName: 'mcp_x__widen',
-      action: 'auto_approve',
+      action: 'block',
       scope: 'agent',
-    });
-    expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.message).toContain(FOLDER);
-
-    // LA LIGNE N'A PAS BOUGÉ : le refus n'est pas qu'un message.
-    const row = await rowFor('mcp_x__widen');
-    expect(row!.conditionJson).toEqual({ workspacePath: FOLDER });
-  });
-
-  it('la bascule Yolo de run_command est refusée plutôt que d’écraser le dossier', async () => {
-    const { setAgentApprovalRuleAction, setRunCommandRuleAction } = await import('../actions.ts');
-    expect((await poserRegleDossier('run_command')).ok).toBe(true);
-
-    const r = await setRunCommandRuleAction({ agentId: seed.agentId, action: 'auto_approve' });
-    expect(r.ok).toBe(false);
-
-    const row = await rowFor('run_command');
-    expect(row!.conditionJson).toEqual({ workspacePath: FOLDER });
-    expect(row!.action).toBe('auto_approve');
-
-    // Et l'éteindre reste possible : cela ne fait que retirer une permission.
-    expect((await setRunCommandRuleAction({ agentId: seed.agentId, action: null })).ok).toBe(true);
-    expect(await rowFor('run_command')).toBeUndefined();
-    void setAgentApprovalRuleAction;
-  });
-
-  it('la bascule Yolo de code_task est refusée de la même façon', async () => {
-    const { setCodeTaskYoloAction } = await import('../actions.ts');
-    expect((await poserRegleDossier('code_task')).ok).toBe(true);
-    expect((await setCodeTaskYoloAction({ agentId: seed.agentId, enabled: true })).ok).toBe(false);
-    expect((await rowFor('code_task'))!.conditionJson).toEqual({ workspacePath: FOLDER });
-  });
-
-  // Issue #401. L'onglet Connectors écrit une règle sur le MOTIF du serveur
-  // (`<prefix>__*`) au moment où le propriétaire dit « faire confiance ». Ce
-  // motif est une règle comme une autre : s'il porte déjà une limite de
-  // dossier, la confiance la remplacerait par une permission valable partout.
-  it('le motif MCP de l’onglet Connectors est refusé quand il porte une limite de dossier', async () => {
-    const { setAgentApprovalRuleAction } = await import('../actions.ts');
-    expect((await poserRegleDossier('cogni_cortex__*')).ok).toBe(true);
-
-    const r = await setAgentApprovalRuleAction({
-      agentId: seed.agentId,
-      toolName: 'cogni_cortex__*',
-      action: 'auto_approve',
-      scope: 'agent',
-    });
-    expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.message).toContain(FOLDER);
-
-    const row = await rowFor('cogni_cortex__*');
-    expect(row!.conditionJson).toEqual({ workspacePath: FOLDER });
-  });
-
-  it('le drapeau explicite, lui, retire la condition et laisse une règle sans dossier', async () => {
-    // `confirmWidening` n'est envoyé que par le chemin qui a MONTRÉ la perte
-    // en nommant le dossier et reçu un oui. Ce que le garde protégeait, c'est
-    // le silence ; ici il n'y en a plus, et la ligne doit donc bouger.
-    const { setAgentApprovalRuleAction } = await import('../actions.ts');
-    expect((await poserRegleDossier('cogni_cortex__confirme')).ok).toBe(true);
-
-    const r = await setAgentApprovalRuleAction({
-      agentId: seed.agentId,
-      toolName: 'cogni_cortex__confirme',
-      action: 'auto_approve',
-      scope: 'agent',
-      confirmWidening: true,
     });
     expect(r.ok).toBe(true);
-
-    const row = await rowFor('cogni_cortex__confirme');
-    expect(row!.action).toBe('auto_approve');
-    expect(row!.conditionJson).toEqual({});
+    const rows = await rowsFor('mcp_x__widen');
+    expect(rows.map((x) => `${x.action}@${x.conditionFolder}`).sort()).toEqual([
+      `auto_approve@${FOLDER}`,
+      'block@',
+    ]);
   });
 
-  it('le drapeau à false ne vaut pas accord', async () => {
-    const { setAgentApprovalRuleAction } = await import('../actions.ts');
-    expect((await poserRegleDossier('cogni_cortex__faux')).ok).toBe(true);
+  it('Run commands et la bascule code_task écrivent la ligne de l’outil, jamais celle du dossier', async () => {
+    const { setRunCommandRuleAction, setCodeTaskYoloAction } = await import('../actions.ts');
+    expect((await poserRegleDossier('run_command')).ok).toBe(true);
+    expect((await setRunCommandRuleAction({ agentId: seed.agentId, action: 'block' })).ok).toBe(
+      true,
+    );
+    expect(
+      (await rowsFor('run_command')).map((x) => `${x.action}@${x.conditionFolder}`).sort(),
+    ).toEqual([`auto_approve@${FOLDER}`, 'block@']);
 
+    expect((await poserRegleDossier('code_task')).ok).toBe(true);
+    // Off is Ask first: the row stays, it is never deleted (#917).
+    expect((await setCodeTaskYoloAction({ agentId: seed.agentId, enabled: false })).ok).toBe(true);
+    expect(
+      (await rowsFor('code_task')).map((x) => `${x.action}@${x.conditionFolder}`).sort(),
+    ).toEqual([`auto_approve@${FOLDER}`, 'require_approval@']);
+  });
+
+  it('la ligne d’un outil ne se retire pas : sans elle, la porte refuserait l’outil', async () => {
+    const { setAgentApprovalRuleAction } = await import('../actions.ts');
+    await setAgentApprovalRuleAction({
+      agentId: seed.agentId,
+      toolName: 'mcp_x__stays',
+      action: 'block',
+      scope: 'agent',
+    });
     const r = await setAgentApprovalRuleAction({
       agentId: seed.agentId,
-      toolName: 'cogni_cortex__faux',
-      action: 'auto_approve',
+      toolName: 'mcp_x__stays',
+      action: null,
       scope: 'agent',
-      confirmWidening: false,
     });
     expect(r.ok).toBe(false);
-    expect((await rowFor('cogni_cortex__faux'))!.conditionJson).toEqual({
-      workspacePath: FOLDER,
-    });
+    expect((await rowFor('mcp_x__stays'))!.action).toBe('block');
   });
 });
 
 describe('la chaîne d’une demande SANS agent @cap:approuver-une-action/moteur', () => {
-  it('lit quand même les règles Everyone, au lieu de dire « Tool default »', async () => {
+  it('ne montre aucune ligne : une règle pour tous les agents ne décide d’aucun appel (#917)', async () => {
     // Une demande dont la ligne porte `agent_id` NULL (agent supprimé, job
-    // système) affichait « Tool default » comme gagnante alors qu'une règle
-    // d'entité décidait : le mensonge même que #346 ferme (Reviewer C, passe 1).
+    // système). Depuis #917 la porte n'obéit qu'à la ligne d'un agent ; une
+    // règle « Everyone » est un modèle. La carte ne montre donc rien qui
+    // n'ait décidé, et le dit.
     const { setAgentApprovalRuleAction, listApprovalsAction } = await import('../actions.ts');
     expect(
       (
@@ -285,9 +250,46 @@ describe('la chaîne d’une demande SANS agent @cap:approuver-une-action/moteur
     if (!lecture.ok) return;
     const carte = lecture.data.find((r) => r.id === ligne!.id);
     expect(carte).toBeDefined();
+    expect(carte!.ruleChain).toEqual([]);
+  });
+
+  it('pour un outil qui remplace un fichier partagé, la carte montre aussi le réglage, gagnant quand l’outil est Autonomous', async () => {
+    const { setAgentApprovalRuleAction, listApprovalsAction } = await import('../actions.ts');
+    for (const [toolName, action] of [
+      ['file_move', 'auto_approve'],
+      ['setting:replace_shared_file', 'require_approval'],
+    ] as const) {
+      expect(
+        (
+          await setAgentApprovalRuleAction({
+            agentId: seed.agentId,
+            toolName,
+            action,
+            scope: 'agent',
+          })
+        ).ok,
+      ).toBe(true);
+    }
+    const [ligne] = await testDb
+      .insert(approvalRequests)
+      .values({
+        entityId: seed.entityId,
+        jobId: seed.jobId,
+        agentId: seed.agentId,
+        toolName: 'file_move',
+        toolInput: {},
+        status: 'pending',
+      })
+      .returning();
+    const lecture = await listApprovalsAction({ status: 'pending', jobIds: [seed.jobId] });
+    if (!lecture.ok) throw new Error(lecture.message);
+    const carte = lecture.data.find((r) => r.id === ligne!.id);
     expect(
-      carte!.ruleChain.map((r) => ({ tool: r.toolName, scope: r.scope, wins: r.wins })),
-    ).toEqual([{ tool: 'mcp_orphan__read', scope: 'entity', wins: true }]);
+      carte!.ruleChain.map((r) => ({ tool: r.toolName, action: r.action, wins: r.wins })),
+    ).toEqual([
+      { tool: 'file_move', action: 'auto_approve', wins: false },
+      { tool: 'setting:replace_shared_file', action: 'require_approval', wins: true },
+    ]);
   });
 });
 

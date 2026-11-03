@@ -116,14 +116,14 @@ export const fileEditTool: ToolDefinition<typeof FileEditInputSchema, FileEditOu
   // whether that file lives in the shared workspace. Same gate as file_write.
   // P4: a protected workflow template is refused outright at execute() —
   // never surface an approval prompt for a call that can never succeed.
-  computeApproval: async (input, ctx) => {
+  replacesSharedFile: async (input, ctx) => {
     try {
       const path = await resolveAndCheckPath(ctx, input.path);
-      if (await isProtectedWorkflowTemplate(ctx, path)) return undefined;
+      if (await isProtectedWorkflowTemplate(ctx, path)) return false;
     } catch {
-      return undefined; // resolution failure — execute() will fail loud on it
+      return false; // resolution failure — execute() will fail loud on it
     }
-    return computeSharedOverwriteApproval(ctx, input.path);
+    return (await computeSharedOverwriteApproval(ctx, input.path)) === 'require_approval';
   },
   execute: async (input, ctx) => {
     try {

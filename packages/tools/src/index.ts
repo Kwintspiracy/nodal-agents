@@ -138,6 +138,7 @@ export {
   executeTool,
   isCatastrophicCall,
   matchApprovalRule,
+  autonomyRowMissing,
   namespaceOf,
   namespaceRulePattern,
   isCodeExecutionTool,
@@ -159,18 +160,27 @@ export type { PurposeExposureContext } from './purpose-exposure';
 // approval-impact line (shared, rendered by runner AND web) can reuse the
 // SAME verdicts as the gate — re-exported here so existing consumers
 // (runner) keep importing them from tools.
-// The approval-rule chain, and the tool-default posture the card falls back to,
-// live in @nodal-agents/shared so the dashboard can render exactly what the gate
-// obeys (issue #346). `matchApprovalRule` above DERIVES from `explainApprovalRules`
-// - one truth, not two copies. Re-exported here so tools consumers keep one import.
+// The approval-rule chain lives in @nodal-agents/shared so the dashboard can
+// render exactly what the gate obeys (issue #346). `matchApprovalRule` above
+// DERIVES from `explainApprovalRules` - one truth, not two copies. Re-exported
+// here so tools consumers keep one import.
 export {
   explainApprovalRules,
+  explainTemplateRules,
+  isPatternToolName,
+  REPLACE_SHARED_FILE_SETTING,
   normaliseWorkspacePath,
   workspaceMatches,
   namespaceOfToolName,
-  resolveToolDefaultApproval,
-  SAFE_BY_DEFAULT_TOOL_NAMES,
 } from '@nodal-agents/shared';
+// The value a NEW autonomy row is written with (#917): the workspace autonomy
+// level as a template, never a run-time decision.
+export {
+  levelTemplate,
+  sharedFileLevelTemplate,
+  templateAutonomy,
+  type TemplateTool,
+} from './autonomy-template';
 export type {
   ApprovalRuleForChain,
   ExplainedApprovalRule,

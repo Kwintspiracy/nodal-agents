@@ -20,6 +20,7 @@ import { registerBuiltins } from '../builtin';
 import { executeTool } from '../execute';
 import type { ApprovalRule, ExecuteOptions, ToolContext, ToolDefinition } from '../types';
 import type { z } from 'zod';
+import { autonomousRows } from './autonomy-rows-fixture';
 
 const registry = createToolRegistry();
 registerBuiltins(registry);
@@ -47,6 +48,7 @@ const opts = (toolName: string): ExecuteOptions => ({
       agentId: seed.agentId,
       entityId: seed.entityId,
     } as ApprovalRule,
+    ...autonomousRows(seed),
   ],
   onApprovalRequired: async () => {},
 });

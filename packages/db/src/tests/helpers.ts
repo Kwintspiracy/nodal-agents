@@ -86,7 +86,9 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
         CHECK (max_run_hours >= 0 AND max_run_hours <= 72),
       -- mirrors migration 0153
       sandbox_enabled boolean NOT NULL DEFAULT true,
-      sandbox_folders jsonb NOT NULL DEFAULT '{"added":[],"removed":[]}'
+      sandbox_folders jsonb NOT NULL DEFAULT '{"added":[],"removed":[]}',
+      -- mirrors migration 0156
+      autonomy_rows_written_at timestamptz DEFAULT now()
     );
 
     CREATE TABLE IF NOT EXISTS entity_members (
@@ -511,9 +513,12 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       tool_name text NOT NULL,
       action text NOT NULL CHECK (action IN ('auto_approve','require_approval','block')),
       condition_json jsonb DEFAULT '{}',
+      -- mirrors migration 0156
+      condition_folder text GENERATED ALWAYS AS (COALESCE(condition_json->>'workspacePath', '')) STORED,
       created_at timestamptz DEFAULT now(),
       updated_at timestamptz DEFAULT now(),
-      UNIQUE NULLS NOT DISTINCT (entity_id, agent_id, tool_name)
+      CONSTRAINT approval_rules_entity_agent_tool_unique
+        UNIQUE NULLS NOT DISTINCT (entity_id, agent_id, tool_name, condition_folder)
     );
 
     CREATE TABLE IF NOT EXISTS agent_memory (
