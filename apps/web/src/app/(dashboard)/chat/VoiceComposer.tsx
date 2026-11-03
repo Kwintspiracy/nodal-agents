@@ -50,7 +50,7 @@ export type VoicePhase = 'idle' | 'listening' | 'transcribing';
 export type VoiceNote =
   | { kind: 'cancelled' }
   | { kind: 'blocked' }
-  | { kind: 'nothing_heard' }
+  | { kind: 'nothing_heard'; model: string | null }
   | { kind: 'error'; text: string; detail?: string };
 
 type Active = {
@@ -193,7 +193,7 @@ export function useVoiceTurn(opts: {
     }
     setPhase('idle');
     if (outcome.kind === 'nothing_heard') {
-      setNote({ kind: 'nothing_heard' });
+      setNote({ kind: 'nothing_heard', model: outcome.model });
       await unused(me);
       return;
     }
@@ -445,7 +445,11 @@ export function VoiceNoteLine({ note }: { note: VoiceNote }) {
       dot = <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-err" />;
       break;
     case 'nothing_heard':
-      text = 'Nothing heard. Keep holding the button while you speak.';
+      // Le modèle est nommé quand l'audio lui est parvenu (#976) : un modèle sans
+      // détection de langue peut rendre un texte vide pour une voix bien réelle.
+      text = note.model
+        ? `Nothing heard by ${note.model}. Keep holding the button while you speak.`
+        : 'Nothing heard. Keep holding the button while you speak.';
       break;
     case 'error':
       text = note.text;

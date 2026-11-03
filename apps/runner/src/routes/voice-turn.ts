@@ -18,7 +18,7 @@
 // journal du runner avec son code. Rien n'est rangé. Sinon la
 // réponse est `text/event-stream`, et ses événements sont, dans cet ordre :
 //
-//   event: nothing_heard  data: { durationMs }         SEUL événement du flux : aucun mot
+//   event: nothing_heard  data: { durationMs, model }  SEUL événement du flux : aucun mot
 //                                                      entendu, rien n'est rangé
 //   event: transcript     data: { transcript, durationMs }   le message de la personne,
 //                                                      dès qu'il existe (rangé comme dit)
@@ -240,7 +240,9 @@ export async function voiceTurnEndRoute(
       void (async () => {
         try {
           if (heard.outcome === 'nothing_heard') {
-            send('nothing_heard', { durationMs: heard.durationMs });
+            // Le modèle qui n'a rien écrit (#976), pour que l'écran le nomme ;
+            // `null` : aucun échantillon, rien n'est parti au fournisseur.
+            send('nothing_heard', { durationMs: heard.durationMs, model: heard.model });
             return;
           }
           await speakVoiceTurn(deps, runnerEnv, u, heard, send, {

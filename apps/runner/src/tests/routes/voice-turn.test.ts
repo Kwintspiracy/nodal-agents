@@ -820,7 +820,7 @@ describe('the voice turn route @cap:parler-a-un-agent/moteur', () => {
     });
 
     expect(status).toBe(200);
-    expect(body).toEqual({ outcome: 'nothing_heard', durationMs: 0 });
+    expect(body).toEqual({ outcome: 'nothing_heard', durationMs: 0, model: null });
     expect(sent.transcription).toEqual([]);
     expect(sent.front).toEqual([]);
     expect(await rows(conv)).toEqual([]);
@@ -836,7 +836,12 @@ describe('the voice turn route @cap:parler-a-un-agent/moteur', () => {
     const { status, body } = await say(app, conv, FIXTURE, { format: 'audio/wav' });
 
     expect(status).toBe(200);
-    expect(body).toEqual({ outcome: 'nothing_heard', durationMs: FIXTURE_MS });
+    expect(body).toEqual({
+      outcome: 'nothing_heard',
+      durationMs: FIXTURE_MS,
+      // #976: the model that wrote nothing, for the screen to name.
+      model: 'x-ai/grok-stt-1.0',
+    });
     expect(sent.transcription).toHaveLength(1);
     expect(sent.front).toEqual([]);
     expect(await rows(conv)).toEqual([]);

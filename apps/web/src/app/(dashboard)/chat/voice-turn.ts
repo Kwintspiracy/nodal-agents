@@ -62,7 +62,8 @@ export type VoiceFailure = {
 
 export type VoiceTurnOutcome =
   | { kind: 'replied'; reply: VoiceReply }
-  | { kind: 'nothing_heard' }
+  /** `model` : le modèle qui n'a rien écrit (#976) ; `null` : rien n'est parti. */
+  | { kind: 'nothing_heard'; model: string | null }
   | { kind: 'cancelled' }
   /** La personne a arrêté la réponse : le flux a été abandonné (`abort`). */
   | { kind: 'aborted' }
@@ -250,7 +251,7 @@ async function readEnd(
       const data = JSON.parse(msg.data) as Record<string, unknown>;
       switch (msg.event) {
         case 'nothing_heard':
-          return { kind: 'nothing_heard' };
+          return { kind: 'nothing_heard', model: str(data['model']) };
         case 'transcript':
           transcript = str(data['transcript']) ?? '';
           durationMs = typeof data['durationMs'] === 'number' ? data['durationMs'] : 0;
