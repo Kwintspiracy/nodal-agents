@@ -103,6 +103,8 @@ export const AGENT_POLICY = {
   personality: 'copy',
   model: 'copy',
   reasoningEffort: 'copy',
+  // #977 : l'effort d'un tour dit, un réglage de l'agent comme Reasoning.
+  spokenReasoningEffort: 'copy',
   llmKeyId: 'map',
   fallbackChain: 'map',
   active: 'copy',
