@@ -98,7 +98,7 @@ test.afterAll(async () => {
 });
 
 /** Du silence en PCM 16 bits mono à 8 kHz, en base64 : un morceau de voix tel
- * que la route l'envoie. Assez long (10 s par morceau, deux morceaux) pour
+ * que la route l'envoie. Assez long (20 s par morceau, deux morceaux) pour
  * jouer encore quand le fil relu paraît, même en `next dev` qui compile à la
  * première visite ; le parcours le coupe par Stop. */
 function silentPcmBase64(seconds: number): string {
@@ -201,7 +201,7 @@ test.describe('the chat microphone @cap:parler-a-un-agent/ecran', () => {
       } finally {
         await close();
       }
-      const voice = { mimeType: 'audio/pcm', sampleRate: 8000, base64: silentPcmBase64(10) };
+      const voice = { mimeType: 'audio/pcm', sampleRate: 8000, base64: silentPcmBase64(20) };
       await route.fulfill({
         status: 200,
         contentType: 'text/event-stream; charset=utf-8',
@@ -248,17 +248,20 @@ test.describe('the chat microphone @cap:parler-a-un-agent/ecran', () => {
     await page.mouse.up();
 
     // La transcription, à droite, avec sa durée dite ; la réponse qui parle.
+    // D'abord la copie en attente, posée par l'événement `transcript` (#943),
+    // puis le fil relu, qui la remplace — sa relecture compile la route en
+    // `next dev` à la première visite, d'où le délai large.
     await expect(page.getByText(transcript)).toBeVisible({ timeout: 20_000 });
-    await expect(page.getByTestId('feed-spoken')).toHaveText('Spoken · 0:03');
     await expect(page.getByText('Speaking', { exact: true })).toBeVisible();
-    const stop = page.getByTestId('composer-stop-speaking');
-    await expect(stop).toHaveAccessibleName('Stop speaking');
-    // Deux morceaux de 10 s, programmés bout à bout : le second part où le premier finit.
+    // Deux morceaux de 20 s, programmés bout à bout : le second part où le premier finit.
     const played = await page.evaluate(
       () => (window as unknown as { __played: Array<{ at: number; duration: number }> }).__played,
     );
-    expect(played.map((p) => p.duration)).toEqual([10, 10]);
-    expect(played[1]!.at).toBeCloseTo(played[0]!.at + 10, 6);
+    expect(played.map((p) => p.duration)).toEqual([20, 20]);
+    expect(played[1]!.at).toBeCloseTo(played[0]!.at + 20, 6);
+    await expect(page.getByTestId('feed-spoken')).toHaveText('Spoken · 0:03', { timeout: 20_000 });
+    const stop = page.getByTestId('composer-stop-speaking');
+    await expect(stop).toHaveAccessibleName('Stop speaking');
 
     // Les morceaux sont partis DANS L'ORDRE, puis la fin, et rien d'autre.
     const order = seen.map((s) => `${s.method} ${s.path}`);
