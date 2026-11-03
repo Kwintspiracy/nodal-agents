@@ -35,6 +35,8 @@ const mic = vi.hoisted(() => ({
   tail: null as Uint8Array | null,
   stopped: false,
   refuse: null as Error | null,
+  /** Tant qu'elle n'est pas tenue, le micro « s'ouvre » (invite de permission, worklet). */
+  gate: null as Promise<void> | null,
 }));
 vi.mock('@/lib/mic-capture.ts', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/mic-capture.ts')>();
@@ -44,6 +46,7 @@ vi.mock('@/lib/mic-capture.ts', async (importOriginal) => {
       onChunk: (pcm: Uint8Array) => void;
       onLevel: (level: number) => void;
     }) => {
+      if (mic.gate) await mic.gate;
       if (mic.refuse) throw mic.refuse;
       mic.handlers = handlers;
       return {
@@ -93,6 +96,7 @@ beforeEach(() => {
   mic.tail = null;
   mic.stopped = false;
   mic.refuse = null;
+  mic.gate = null;
   refresh.mockClear();
   startReply = () => json({ turnId: 'turn-1' }, 201);
   chunkReply = () => json({ received: 1 });
@@ -593,5 +597,86 @@ describe('the microphone on a screen whose conversation does not exist yet (P8, 
     expect(onSent.mock.calls).toEqual([['conv-new']]);
     expect(onSendFailed.mock.calls).toEqual([]);
     expect(noteText()).toBeNull();
+  });
+});
+
+describe('leaving the screen in the middle of a gesture (review of #964, pass 1) @cap:parler-a-un-agent/ecran', () => {
+  it('while the mic is still opening: its tracks are stopped, no turn opens, no conversation is created', async () => {
+    let grant: () => void = () => {};
+    mic.gate = new Promise<void>((r) => (grant = r));
+    const onBeforeSend = vi.fn(async () => 'conv-new');
+    await render(
+      <ThreadComposer conversationId="" onBeforeSend={onBeforeSend} onSendFailed={vi.fn()} />,
+    );
+    await hold();
+    await act(async () => {
+      root.unmount();
+    });
+    // La permission arrive APRÈS le départ de l'écran.
+    await act(async () => {
+      grant();
+    });
+    await settle();
+    expect(mic.stopped).toBe(true);
+    expect(requests()).toEqual([]);
+    expect(onBeforeSend.mock.calls).toEqual([]);
+  });
+
+  it('while recording: the turn is cancelled with exactly one DELETE, and no end', async () => {
+    await render(<ThreadComposer conversationId="conv-1" />);
+    await hold();
+    await act(async () => {
+      mic.handlers?.onChunk(new Uint8Array([1, 2]));
+    });
+    await settle();
+    await act(async () => {
+      root.unmount();
+    });
+    await settle();
+    expect(mic.stopped).toBe(true);
+    expect(requests()).toEqual([
+      'POST /api/voice/turns',
+      'POST /api/voice/turns/turn-1/chunks/0',
+      'DELETE /api/voice/turns/turn-1',
+    ]);
+  });
+
+  it('after the release: the turn the person sent is NOT cancelled, `end` goes through, nothing plays', async () => {
+    let answer: (r: Response) => void = () => {};
+    endReply = () => new Promise<Response>((r) => (answer = r));
+    const onSent = vi.fn();
+    await render(
+      <ThreadComposer
+        conversationId=""
+        onBeforeSend={async () => 'conv-new'}
+        onSendFailed={vi.fn()}
+        onSent={onSent}
+      />,
+    );
+    await hold();
+    await releaseAt();
+    await act(async () => {
+      root.unmount();
+    });
+    await act(async () => {
+      answer(
+        json({
+          outcome: 'replied',
+          transcript: 'Hi',
+          durationMs: 900,
+          reply: 'Hello.',
+          spawnedJobId: null,
+          stopped: false,
+          cutReason: null,
+          audio: { mimeType: 'audio/wav', base64: WAV_BASE64 },
+          speechError: null,
+        }),
+      );
+    });
+    await settle();
+    expect(requests()).toEqual(['POST /api/voice/turns', 'POST /api/voice/turns/turn-1/end']);
+    // L'écran est parti : il ne revient pas sur la conversation, et rien ne parle.
+    expect(onSent.mock.calls).toEqual([]);
+    expect(audios).toEqual([]);
   });
 });

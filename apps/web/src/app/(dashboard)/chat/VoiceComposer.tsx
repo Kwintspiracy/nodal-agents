@@ -54,6 +54,8 @@ type Active = {
   /** Le bouton relâché (`send`) ou abandonné (`cancel`) ; `null` : encore tenu. */
   ending: 'send' | 'cancel' | null;
   settling: boolean;
+  /** L'écran est parti pendant le geste : plus rien ne s'affiche, et rien de neuf ne part. */
+  abandoned: boolean;
 };
 
 export interface VoiceTurnControls {
@@ -119,6 +121,13 @@ export function useVoiceTurn(opts: {
     const outcome = await session.finish();
     busy.current = false;
     active.current = null;
+    if (me.abandoned) {
+      // L'écran est parti après le relâchement : le tour envoyé est rangé par
+      // le runner, et la conversation le montrera rouverte. Rien ne joue, rien
+      // ne ramène sur elle ; seule une conversation neuve restée vide est rendue.
+      if (outcome.kind !== 'replied') await unused(me);
+      return;
+    }
     setPhase('idle');
     if (outcome.kind === 'nothing_heard') {
       setNote({ kind: 'nothing_heard' });
@@ -166,6 +175,7 @@ export function useVoiceTurn(opts: {
       target: null,
       ending: null,
       settling: false,
+      abandoned: false,
     };
     active.current = me;
     // Parler à l'agent coupe sa voix : on ne parle pas par-dessus.
@@ -193,6 +203,12 @@ export function useVoiceTurn(opts: {
       } else {
         setNote({ kind: 'error', text: err instanceof Error ? err.message : String(err) });
       }
+      return;
+    }
+    // L'écran est parti pendant que le micro s'ouvrait : le micro est rendu
+    // aussitôt, et ni conversation ni tour ne s'ouvrent.
+    if (me.abandoned) {
+      capture.stop();
       return;
     }
     setBlocked(false);
@@ -226,11 +242,20 @@ export function useVoiceTurn(opts: {
     if (me.capture !== null) void settle(me, me.ending);
   }
 
-  // L'écran quitte le fil en plein geste : le micro est rendu, le tour annulé.
+  // L'écran quitte le fil en plein geste. Ce qui arrive au geste dépend de
+  // l'endroit où il en est, et c'est la seule chose qui en décide :
+  //   - le micro s'ouvre encore : le geste est abandonné, et `press` rend le
+  //     micro dès qu'il s'ouvre, sans ouvrir de tour ;
+  //   - le bouton est encore tenu : le tour est annulé (un DELETE) ;
+  //   - le bouton a été relâché (`settling`) : le tour envoyé va au bout. Un
+  //     DELETE ici courrait contre `end` et pourrait jeter, sans trace, ce que
+  //     la personne a choisi d'envoyer.
   useEffect(
     () => () => {
       const me = active.current;
       if (me === null) return;
+      me.abandoned = true;
+      if (me.settling) return;
       me.settling = true;
       me.capture?.stop();
       void me.session?.cancel();
