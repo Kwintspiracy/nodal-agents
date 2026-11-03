@@ -10,7 +10,8 @@
 // Deux formes de voix, choisies par le fait que l'adaptateur déclare, jamais
 // par son nom :
 //   - `capabilities.streamOutput` : les octets passent à mesure qu'ils
-//     arrivent (`synthesizeStream`), dans le format que l'adaptateur déclare ;
+//     arrivent (`synthesizeStream`), chacun dans le format de SA réponse
+//     (#969 : un modèle répond en pcm, un autre en mp3) ;
 //   - sinon, le fichier entier de chaque phrase (`synthesize`) est un morceau.
 //
 // Une voix en échec arrête la voix, pas la réponse : le texte continue, et
@@ -23,6 +24,8 @@ import { SpeechError, type AudioMimeType, type BoundSpeech } from '@nodal-agents
 export interface SpokenChunk {
   /** Le rang du morceau dans la réponse, à partir de 0, sans trou. */
   seq: number;
+  /** Le rang de la phrase dont il est un morceau. */
+  sentence: number;
   mimeType: AudioMimeType;
   /** Présent pour `audio/pcm` : des échantillons bruts ne disent pas leur fréquence. */
   sampleRate?: number;
@@ -60,6 +63,10 @@ interface Job {
   abandoned: boolean;
   chunks: Array<{ audio: Uint8Array; mimeType: AudioMimeType; sampleRate?: number }>;
   error: unknown;
+  /** Combien de ses morceaux sont sortis. */
+  emitted: number;
+  /** Sa fin (`onSentenceEnd`) est dite : une fois, jamais deux. */
+  closed: boolean;
 }
 
 /** Combien de phrases peuvent être chez le fournisseur en même temps. */
@@ -88,11 +95,15 @@ export function createReplySpeech(opts: {
   voiceId: string;
   onChunk: (chunk: SpokenChunk) => void;
   /**
-   * Tout l'audio de la phrase `sentence` est sorti. Un lecteur qui ne sait
-   * décoder qu'une unité entière (un MP3 n'est pas découpable n'importe où,
-   * contrairement à des échantillons PCM) attend ce signal pour la jouer.
+   * La phrase `sentence` est finie, et rien d'elle ne sortira plus. Rappelé
+   * UNE fois pour CHAQUE phrase dont un morceau est sorti, quelle que soit
+   * l'issue : `complete` vrai quand le fournisseur l'a rendue en entier, faux
+   * quand elle s'est arrêtée en route (échec, phrase abandonnée par `reset`,
+   * Stop). Un lecteur qui ne sait décoder qu'une unité entière (un MP3 n'est
+   * pas découpable n'importe où, contrairement à des échantillons PCM) joue la
+   * phrase complète et jette l'autre.
    */
-  onSentenceEnd?: (sentence: number) => void;
+  onSentenceEnd?: (sentence: number, complete: boolean) => void;
   onVendor?: (event: VendorEvent, sentence: number) => void;
   inFlight?: number;
 }): ReplySpeech {
@@ -131,16 +142,15 @@ export function createReplySpeech(opts: {
   const run = async (job: Job): Promise<void> => {
     try {
       if (stream) {
-        const mimeType = stream.capabilities.streamOutput!;
         let first = true;
         for await (const piece of stream.synthesizeStream!({ text: job.text, model, voiceId })) {
           if (job.abandoned || cancelled) return;
           if (first) opts.onVendor?.('firstByte', job.index);
           first = false;
-          // La fréquence est celle de la RÉPONSE, portée avec ses octets.
+          // Le format et la fréquence sont ceux de la RÉPONSE, portés avec ses octets.
           job.chunks.push({
             audio: piece.audio,
-            mimeType,
+            mimeType: piece.mimeType,
             ...(piece.sampleRate !== undefined ? { sampleRate: piece.sampleRate } : {}),
           });
           notify();
@@ -174,9 +184,19 @@ export function createReplySpeech(opts: {
     }
   };
 
+  /** La fin d'une phrase dont un morceau est sorti, dite une seule fois. */
+  const close = (job: Job | undefined, complete: boolean): void => {
+    if (!job || job.closed || job.emitted === 0) return;
+    job.closed = true;
+    opts.onSentenceEnd?.(job.index, complete);
+  };
+
   const done = (async (): Promise<SpeechFailure | null> => {
     for (;;) {
-      if (cancelled) return null;
+      if (cancelled) {
+        close(jobs[head], false);
+        return null;
+      }
       const job = jobs[head];
       if (!job) {
         if (ended) return null;
@@ -186,17 +206,23 @@ export function createReplySpeech(opts: {
       startJobs();
       while (job.chunks.length > 0 && !cancelled && !job.abandoned) {
         const c = job.chunks.shift()!;
-        onChunk({ seq: seq++, ...c });
+        job.emitted++;
+        onChunk({ seq: seq++, sentence: job.index, ...c });
       }
-      if (job.abandoned) continue;
+      if (job.abandoned) {
+        close(job, false);
+        continue;
+      }
       if (job.error !== null && job.error !== undefined) {
-        // La voix s'arrête ici : les phrases suivantes ne partent plus.
+        // La voix s'arrête ici : les phrases suivantes ne partent plus. La
+        // phrase en échec est dite finie, incomplète, avant l'échec lui-même.
+        close(job, false);
         cancelled = true;
         for (const j of jobs) j.abandoned = true;
         return failureOf(job.error);
       }
       if (job.finished) {
-        opts.onSentenceEnd?.(job.index);
+        close(job, true);
         head++;
         continue;
       }
@@ -215,6 +241,8 @@ export function createReplySpeech(opts: {
         abandoned: false,
         chunks: [],
         error: undefined,
+        emitted: 0,
+        closed: false,
       });
       startJobs();
       notify();
@@ -224,11 +252,14 @@ export function createReplySpeech(opts: {
       notify();
     },
     reset() {
+      // La phrase à moitié sortie finit ICI, incomplète, avant celles qui suivent.
+      close(jobs[head], false);
       for (let i = head; i < jobs.length; i++) jobs[i]!.abandoned = true;
       jobs.splice(head);
       notify();
     },
     cancel() {
+      close(jobs[head], false);
       cancelled = true;
       for (const j of jobs) j.abandoned = true;
       notify();

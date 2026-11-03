@@ -66,7 +66,9 @@ const WAV = new Uint8Array([
 ]);
 
 /** A bound speech that answers `audio` (or throws `error`) for every request. */
-function fakeSpeech(answer: { audio?: Uint8Array; error?: Error } = {}): {
+function fakeSpeech(
+  answer: { audio?: Uint8Array; error?: Error; mimeType?: 'audio/wav' | 'audio/mpeg' } = {},
+): {
   calls: SynthesizeRequest[];
   speech: BoundSpeech;
 } {
@@ -79,7 +81,7 @@ function fakeSpeech(answer: { audio?: Uint8Array; error?: Error } = {}): {
     synthesize: async (request) => {
       calls.push(request);
       if (answer.error) throw answer.error;
-      return { audio: answer.audio ?? WAV, mimeType: 'audio/wav', latencyMs: 0 };
+      return { audio: answer.audio ?? WAV, mimeType: answer.mimeType ?? 'audio/wav', latencyMs: 0 };
     },
   };
   return { calls, speech };
@@ -259,6 +261,27 @@ describe('generate_speech @cap:travailler-sur-des-fichiers/moteur', () => {
     expect(res).toEqual({
       ok: false,
       reason: 'google/gemini-3.8-flash-tts answered, but not with audio. Nothing was written.',
+    });
+    await expect(readFile(join(WORKSPACE, 'a.wav'))).rejects.toThrow();
+  });
+
+  // #969. Mutation verified: the container check removed → red (the reason says
+  // the model did not answer with audio, which is false).
+  it('a model that answers mp3 is said as such, and nothing is written', async () => {
+    const res = await generateSpeechTool.execute(
+      input({ text: 'x', path: 'a.wav' }),
+      ctx({
+        speech: voiced(
+          fakeSpeech({ audio: Uint8Array.from([0xff, 0xfb, 0x90, 0x64]), mimeType: 'audio/mpeg' })
+            .speech,
+          { source: 'openrouter', model: 'minimax/speech-2.8-turbo', voice: 'English_CalmWoman' },
+        ),
+      }),
+    );
+    expect(res).toEqual({
+      ok: false,
+      reason:
+        'minimax/speech-2.8-turbo answered audio/mpeg, and this tool writes WAV files. Nothing was written.',
     });
     await expect(readFile(join(WORKSPACE, 'a.wav'))).rejects.toThrow();
   });

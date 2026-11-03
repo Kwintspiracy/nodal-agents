@@ -215,28 +215,31 @@ describe('openrouterSpeechAdapter @cap:travailler-sur-des-fichiers/moteur', () =
   });
 
   // #969: MiniMax answers mp3 only (measured 2026-11-03). Mutation verified:
-  // the pcm check removed from `openSpeech` → red (the mp3 bytes come back
-  // wrapped in a WAV, and streamed as samples).
-  it('an answer in another container than pcm is said, never wrapped nor played as samples', async () => {
-    const mp3 = new Uint8Array([0xff, 0xfb, 0x90, 0x64]);
+  // the container read away (every answer taken as pcm) → red (the mp3 bytes
+  // come back wrapped in a WAV, and streamed as samples).
+  it('an mp3 answer travels as mp3, bytes untouched, in the file and in the stream', async () => {
+    // Five bytes: an odd count, which pcm would refuse as a cut stream.
+    const mp3 = new Uint8Array([0xff, 0xfb, 0x90, 0x64, 0x00]);
+    const MINIMAX = { model: 'minimax/speech-2.8-turbo', text: 'x', voiceId: 'English_CalmWoman' };
+    const file = await adapter.synthesize(MINIMAX, stub(mp3, [], 'audio/mpeg'));
+    expect({ mimeType: file.mimeType, audio: [...file.audio] }).toEqual({
+      mimeType: 'audio/mpeg',
+      audio: [...mp3],
+    });
+    const chunks: Array<{ mimeType: string; sampleRate?: number; audio: number[] }> = [];
+    for await (const c of adapter.synthesizeStream!(MINIMAX, stub(mp3, [], 'audio/mpeg'))) {
+      chunks.push({ ...c, audio: [...c.audio] });
+    }
+    expect(chunks).toEqual([{ mimeType: 'audio/mpeg', audio: [...mp3] }]);
+  });
+
+  it('a container nothing here plays is said, never played', async () => {
     await expect(
       adapter.synthesize(
-        { model: 'minimax/speech-2.8-turbo', text: 'x', voiceId: 'English_CalmWoman' },
-        stub(mp3, [], 'audio/mpeg'),
+        { model: 'some/tts', text: 'x', voiceId: 'v' },
+        stub(new Uint8Array([1, 2]), [], 'audio/x-unknown'),
       ),
-    ).rejects.toThrow(
-      'minimax/speech-2.8-turbo answered audio/mpeg, where Nodal reads pcm from this route',
-    );
-    await expect(
-      (async () => {
-        for await (const _ of adapter.synthesizeStream!(
-          { model: 'minimax/speech-2.8-turbo', text: 'x', voiceId: 'English_CalmWoman' },
-          stub(mp3, [], 'audio/mpeg'),
-        )) {
-          // drained
-        }
-      })(),
-    ).rejects.toThrow('answered audio/mpeg');
+    ).rejects.toThrow('some/tts answered audio/x-unknown, a container Nodal does not play');
   });
 
   // #969: the choices come from OpenRouter. A trimmed copy of the real answer
@@ -355,7 +358,11 @@ describe('openrouterSpeechAdapter.synthesizeStream (#943) @cap:parler-a-un-agent
     held.write([1, 0, 2, 0]);
     expect(await first).toEqual({
       done: false,
-      value: { audio: Uint8Array.from([1, 0, 2, 0]), sampleRate: GEMINI_TTS_SAMPLE_RATE },
+      value: {
+        audio: Uint8Array.from([1, 0, 2, 0]),
+        mimeType: 'audio/pcm',
+        sampleRate: GEMINI_TTS_SAMPLE_RATE,
+      },
     });
     // The answer is still open: the second read waits for it.
     const second = it.next();
@@ -363,7 +370,11 @@ describe('openrouterSpeechAdapter.synthesizeStream (#943) @cap:parler-a-un-agent
     held.end();
     expect(await second).toEqual({
       done: false,
-      value: { audio: Uint8Array.from([3, 0]), sampleRate: GEMINI_TTS_SAMPLE_RATE },
+      value: {
+        audio: Uint8Array.from([3, 0]),
+        mimeType: 'audio/pcm',
+        sampleRate: GEMINI_TTS_SAMPLE_RATE,
+      },
     });
     expect(await it.next()).toEqual({ done: true, value: undefined });
     expect(held.sent[0]!.body).toEqual(

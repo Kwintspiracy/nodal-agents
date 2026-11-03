@@ -396,7 +396,13 @@ function validateSynthesis(req: SynthesizeRequest): void {
 async function openSpeech(
   req: SynthesizeRequest,
   connection: SpeechConnection,
-): Promise<{ res: Response; model: string; contentType: string; t0: number }> {
+): Promise<{
+  res: Response;
+  model: string;
+  contentType: string;
+  container: AudioMimeType;
+  t0: number;
+}> {
   // The voice is not checked here: the caller checked it against the model's
   // `supported_voices` when the setting was chosen, and OpenRouter's own
   // refusal names the voice when a list has moved since.
@@ -433,20 +439,89 @@ async function openSpeech(
       res.status,
     );
   }
-  // Every path reads the body as the pcm it asked for. A model that answers
-  // another container (MiniMax answers mp3 only, measured 2026-11-03) is said,
-  // never wrapped into a WAV of mp3 bytes nor streamed as samples, which
-  // would play as noise. Playing it needs the container to travel with the
-  // audio, end to end: not done yet, and refused until it is (#969).
-  if (contentType !== '' && !/^audio\/(?:pcm|l16)\b/i.test(contentType)) {
+  // The container is the ANSWER's (#969): pcm is asked for, and most models
+  // answer it, but MiniMax answers mp3 only (measured 2026-11-03). Its bytes
+  // travel as what they are, with their media type, and the player decodes
+  // them; they are never wrapped into a WAV of mp3 bytes nor read as samples,
+  // which would play as noise. A container nothing here names is refused.
+  const container = containerOf(contentType);
+  if (container === null) {
     await res.body?.cancel().catch(() => {});
     throw new SpeechError(
       'speech_provider_error',
-      `${model} answered ${contentType}, where Nodal reads pcm from this route: this model cannot speak here yet`,
+      `${model} answered ${contentType}, a container Nodal does not play`,
       res.status,
     );
   }
-  return { res, model, contentType, t0 };
+  return { res, model, contentType, container, t0 };
+}
+
+/**
+ * The container of an answer, from its content type. No type at all is the
+ * pcm that was asked for (the odd-length check still catches a cut stream);
+ * `audio/l16` is pcm under its RFC name.
+ */
+function containerOf(contentType: string): AudioMimeType | null {
+  const type = contentType.split(';')[0]!.trim().toLowerCase();
+  switch (type) {
+    case '':
+    case 'audio/pcm':
+    case 'audio/l16':
+      return 'audio/pcm';
+    case 'audio/mpeg':
+    case 'audio/mp3':
+      return 'audio/mpeg';
+    case 'audio/wav':
+    case 'audio/wave':
+    case 'audio/x-wav':
+      return 'audio/wav';
+    case 'audio/ogg':
+    case 'audio/opus':
+      return 'audio/ogg';
+    case 'audio/flac':
+      return 'audio/flac';
+    case 'audio/aac':
+    case 'audio/mp4':
+      return 'audio/mp4';
+    default:
+      return null;
+  }
+}
+
+/**
+ * A compressed answer as it arrives: its bytes, untouched, with their media
+ * type. A compressed frame cannot be cut anywhere, so the player joins a
+ * sentence's chunks and decodes them once the sentence is complete (#968).
+ */
+async function* streamCompressed(
+  res: Response,
+  model: string,
+  container: AudioMimeType,
+): AsyncGenerator<SpeechStreamChunk> {
+  if (!res.body) {
+    throw new SpeechError('speech_provider_error', `${model} answered 200 with no audio`);
+  }
+  const reader = res.body.getReader();
+  let total = 0;
+  let finished = false;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) {
+        finished = true;
+        break;
+      }
+      if (value.byteLength === 0) continue;
+      total += value.byteLength;
+      yield { audio: value, mimeType: container };
+    }
+  } finally {
+    if (finished) reader.releaseLock();
+    else await reader.cancel().catch(() => {});
+  }
+  if (total === 0) {
+    throw new SpeechError('speech_provider_error', `${model} answered 200 with no audio`);
+  }
 }
 
 /**
@@ -466,7 +541,11 @@ async function* streamPcm(
   req: SynthesizeRequest,
   connection: SpeechConnection,
 ): AsyncGenerator<SpeechStreamChunk> {
-  const { res, model, contentType } = await openSpeech(req, connection);
+  const { res, model, contentType, container } = await openSpeech(req, connection);
+  if (container !== 'audio/pcm') {
+    yield* streamCompressed(res, model, container);
+    return;
+  }
   // The rate is the ANSWER's, read from its content type, never assumed
   // (one OpenRouter model answers pcm at 44 100 Hz). A layout the samples
   // cannot be played as — more than one channel — is refused, never guessed.
@@ -505,7 +584,7 @@ async function* streamPcm(
       if (whole < bytes.byteLength) carry = bytes.slice(whole);
       if (whole === 0) continue;
       total += whole;
-      yield { audio: bytes.slice(0, whole), sampleRate };
+      yield { audio: bytes.slice(0, whole), mimeType: 'audio/pcm', sampleRate };
     }
   } finally {
     // The caller stopped reading (the person said Stop, the reader left): the
@@ -528,7 +607,8 @@ export const openrouterSpeechAdapter: SpeechAdapter = {
   provider: 'openrouter',
   capabilities: {
     // WAV, because the one-shot path wraps the raw PCM the API returns.
-    outputs: ['audio/wav'],
+    // WAV for a pcm answer; any other container is returned as the model answered it (#969).
+    outputs: ['audio/wav', 'audio/mpeg', 'audio/ogg', 'audio/flac', 'audio/mp4'],
     // The models and their voices are OpenRouter's, read at runtime (#969).
     dynamicVoices: true,
     // The stream is the raw PCM itself (#943): signed 16-bit little-endian,
@@ -558,12 +638,14 @@ export const openrouterSpeechAdapter: SpeechAdapter = {
     connection: SpeechConnection,
   ): Promise<SynthesizeResult> {
     validateSynthesis(req);
-    const { res, model, contentType, t0 } = await openSpeech(req, connection);
+    const { res, model, contentType, container, t0 } = await openSpeech(req, connection);
     const pcm = new Uint8Array(await res.arrayBuffer());
     const latencyMs = Date.now() - t0;
     if (pcm.byteLength === 0) {
       throw new SpeechError('speech_provider_error', `${model} answered 200 with no audio`);
     }
+    // A compressed answer (#969) is already a file: it is returned as what it is.
+    if (container !== 'audio/pcm') return { audio: pcm, mimeType: container, latencyMs };
     // 16-bit samples come in pairs of bytes: an odd count is a cut stream, and
     // its WAV would be malformed (review of PR #489).
     if (pcm.byteLength % 2 !== 0) {

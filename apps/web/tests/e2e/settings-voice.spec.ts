@@ -95,8 +95,8 @@ async function stubVoice(page: Page, sources: unknown[]): Promise<Seen[]> {
   await page.route('**/api/voice/sample', async (route) => {
     note(route);
     const body = [
-      `event: audio\ndata: ${JSON.stringify({ seq: 0, mimeType: 'audio/pcm', sampleRate: 24_000, base64: SILENT_PCM })}\n\n`,
-      `event: audio_end\ndata: ${JSON.stringify({ sentence: 0 })}\n\n`,
+      `event: audio\ndata: ${JSON.stringify({ seq: 0, sentence: 0, mimeType: 'audio/pcm', sampleRate: 24_000, base64: SILENT_PCM })}\n\n`,
+      `event: audio_end\ndata: ${JSON.stringify({ sentence: 0, complete: true })}\n\n`,
       `event: done\ndata: ${JSON.stringify({ speechError: null, source: 'google', model: 'gemini-3.8-flash-tts', voice: 'Puck' })}\n\n`,
     ].join('');
     await route.fulfill({ status: 200, headers: { 'content-type': 'text/event-stream' }, body });

@@ -10,7 +10,7 @@
 
 import { VoiceStateSchema, type VoiceSetting, type VoiceState } from '@nodal-agents/shared';
 import { readSseMessages } from '@/lib/sse.ts';
-import type { SpokenChunk } from '../chat/voice-playback.ts';
+import { readSpokenEvent, type SpokenChunk } from '../chat/voice-playback.ts';
 
 /** Un refus du runner, tel qu'il l'a codé. */
 export type VoiceRefusal = { error: string; source?: string; detail?: string };
@@ -73,8 +73,8 @@ export async function playVoiceSample(opts: {
   setting?: VoiceSetting;
   signal: AbortSignal;
   onAudio: (chunk: SpokenChunk) => void;
-  /** Tout l'audio d'une phrase est arrivé (`audio_end`) : une voix compressée se décode alors. */
-  onAudioEnd: () => void;
+  /** Une phrase est finie (`audio_end`), complète ou non : une voix compressée se joue alors. */
+  onAudioEnd: (sentence: number, complete: boolean) => void;
 }): Promise<VoiceResult<SampleDone> | { ok: 'aborted' }> {
   let res: Response;
   try {
@@ -94,16 +94,14 @@ export async function playVoiceSample(opts: {
   try {
     for await (const msg of readSseMessages(res.body!)) {
       const data = JSON.parse(msg.data) as Record<string, unknown>;
-      if (msg.event === 'audio') {
-        opts.onAudio({
-          seq: Number(data['seq']),
-          mimeType: String(data['mimeType']),
-          ...(typeof data['sampleRate'] === 'number' ? { sampleRate: data['sampleRate'] } : {}),
-          bytes: Uint8Array.from(atob(String(data['base64'])), (c) => c.charCodeAt(0)),
-        });
-      } else if (msg.event === 'audio_end') {
-        opts.onAudioEnd();
-      } else if (msg.event === 'done') {
+      // La voix se lit comme celle d'un tour dit : le même lecteur d'événements.
+      const spoken = readSpokenEvent(msg.event, data);
+      if (spoken?.kind === 'invalid') {
+        return { ok: false, refusal: { error: 'runner_contract' } };
+      }
+      if (spoken?.kind === 'audio') opts.onAudio(spoken.chunk);
+      else if (spoken?.kind === 'audio_end') opts.onAudioEnd(spoken.sentence, spoken.complete);
+      else if (msg.event === 'done') {
         return { ok: true, data: data as unknown as SampleDone };
       } else if (msg.event === 'error') {
         return { ok: false, refusal: { error: String(data['error'] ?? 'sample_failed') } };

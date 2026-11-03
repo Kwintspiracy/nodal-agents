@@ -241,7 +241,13 @@ function requests(): string[] {
 }
 
 /** La voix d'une phrase : trois échantillons PCM à 24 kHz. */
-const VOICE = { seq: 0, mimeType: 'audio/pcm', sampleRate: 24_000, base64: pcmBase64([1, 2, 3]) };
+const VOICE = {
+  seq: 0,
+  sentence: 0,
+  mimeType: 'audio/pcm',
+  sampleRate: 24_000,
+  base64: pcmBase64([1, 2, 3]),
+};
 
 describe('the chat microphone, state by state (#942) @cap:parler-a-un-agent/ecran', () => {
   it('idle: a round mic button named "Hold to talk", with the same hover tooltip', async () => {
@@ -805,16 +811,42 @@ describe('the spoken reply arrives as it is written (#943) @cap:parler-a-un-agen
     await act(async () => {
       held.write('transcript', { transcript: 'Hi', durationMs: 900 });
       held.write('delta', { text: 'Hello. ' });
-      held.write('audio', { seq: 0, mimeType: 'audio/mpeg', base64: frame });
+      held.write('audio', { seq: 0, sentence: 0, mimeType: 'audio/mpeg', base64: frame });
     });
     await settle();
     expect(audio.scheduled).toEqual([]);
     await act(async () => {
-      held.write('audio_end', { sentence: 0 });
+      held.write('audio_end', { sentence: 0, complete: true });
     });
     await settle();
     expect(audio.scheduled.map((s) => s.samples)).toEqual([[0.5, 0.25]]);
     expect(noteText()).toBeNull();
+  });
+
+  it('a compressed sentence the voice cut is not played, and the failure is the voice’s, not a decoding one', async () => {
+    const held = heldStream();
+    endReply = async () => held.response;
+    await renderThread();
+    await hold();
+    await releaseAt();
+    const half = Buffer.from([0x49, 0x44, 0x33, 4, 128, 64]).toString('base64');
+    await act(async () => {
+      held.write('transcript', { transcript: 'Hi', durationMs: 900 });
+      held.write('delta', { text: 'Hello. ' });
+      held.write('audio', { seq: 0, sentence: 0, mimeType: 'audio/mpeg', base64: half });
+      held.write('audio_end', { sentence: 0, complete: false });
+      held.write('done', {
+        reply: 'Hello.',
+        ...DONE,
+        speechError: { code: 'speech_failed', detail: 'vendor dropped' },
+      });
+      held.close();
+    });
+    await settle();
+    expect(audio.scheduled).toEqual([]);
+    expect(noteText()).toBe(
+      'The reply is written above, but it could not be spoken (speech_failed).',
+    );
   });
 
   it('a new gesture during the reply silences it: nothing of the old reply plays over the new one', async () => {

@@ -315,6 +315,7 @@ function eventAudio(data: string, model: string): SpeechStreamChunk | null {
   }
   return {
     audio: Uint8Array.from(Buffer.from(inline.data, 'base64')),
+    mimeType: 'audio/pcm',
     sampleRate: sampleRateFromMimeType(mimeType),
   };
 }
@@ -365,6 +366,7 @@ async function* streamTts(
     total += whole;
     yield {
       audio: bytes.slice(0, whole),
+      mimeType: 'audio/pcm',
       ...(piece.sampleRate !== undefined ? { sampleRate: piece.sampleRate } : {}),
     };
   }

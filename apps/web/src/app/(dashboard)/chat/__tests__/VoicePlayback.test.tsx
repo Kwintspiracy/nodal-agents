@@ -58,9 +58,21 @@ describe('the spoken reply plays its chunks in order, back to back (#943) @cap:p
     const voice = startSpokenStream({ reply: 'Hi.', onError: () => {} });
     audio.currentTime = 1;
     // 0.5 s, 0.25 s and 0.5 s at 4 Hz: easy to read.
-    voice.push({ seq: 0, mimeType: 'audio/pcm', sampleRate: 4, bytes: pcm([16384, 0]) });
-    voice.push({ seq: 1, mimeType: 'audio/pcm', sampleRate: 4, bytes: pcm([-16384]) });
-    voice.push({ seq: 2, mimeType: 'audio/pcm', sampleRate: 4, bytes: pcm([8192, 8192]) });
+    voice.push({
+      seq: 0,
+      sentence: 0,
+      mimeType: 'audio/pcm',
+      sampleRate: 4,
+      bytes: pcm([16384, 0]),
+    });
+    voice.push({ seq: 1, sentence: 1, mimeType: 'audio/pcm', sampleRate: 4, bytes: pcm([-16384]) });
+    voice.push({
+      seq: 2,
+      sentence: 2,
+      mimeType: 'audio/pcm',
+      sampleRate: 4,
+      bytes: pcm([8192, 8192]),
+    });
     await flush();
     expect(audio.scheduled.map((s) => [s.at, s.duration, s.samples])).toEqual([
       [1.03, 0.5, [0.5, 0]],
@@ -71,8 +83,9 @@ describe('the spoken reply plays its chunks in order, back to back (#943) @cap:p
 
   it('a WAV chunk decoded slower than the PCM after it still plays first', async () => {
     const voice = startSpokenStream({ reply: 'Hi.', onError: () => {} });
-    voice.push({ seq: 0, mimeType: 'audio/wav', bytes: wav([16384, 16384], 4) });
-    voice.push({ seq: 1, mimeType: 'audio/pcm', sampleRate: 4, bytes: pcm([-16384]) });
+    voice.push({ seq: 0, sentence: 0, mimeType: 'audio/wav', bytes: wav([16384, 16384], 4) });
+    voice.endSentence(0, true);
+    voice.push({ seq: 1, sentence: 1, mimeType: 'audio/pcm', sampleRate: 4, bytes: pcm([-16384]) });
     await flush();
     await flush();
     expect(audio.scheduled.map((s) => s.samples)).toEqual([[0.5, 0.5], [-0.5]]);
@@ -93,12 +106,12 @@ describe('the spoken reply plays its chunks in order, back to back (#943) @cap:p
     });
     const voice = startSpokenStream({ reply: 'One.', onError: () => {} });
     await act(async () => {
-      voice.push({ seq: 0, mimeType: 'audio/pcm', sampleRate: 4, bytes: pcm([1]) });
+      voice.push({ seq: 0, sentence: 0, mimeType: 'audio/pcm', sampleRate: 4, bytes: pcm([1]) });
       await flush();
     });
     await act(async () => {
       voice.setReply('One. Two.');
-      voice.push({ seq: 1, mimeType: 'audio/pcm', sampleRate: 4, bytes: pcm([2]) });
+      voice.push({ seq: 1, sentence: 1, mimeType: 'audio/pcm', sampleRate: 4, bytes: pcm([2]) });
       await flush();
     });
     await act(async () => {
@@ -119,32 +132,35 @@ describe('the spoken reply plays its chunks in order, back to back (#943) @cap:p
 
   it('Stop: every scheduled chunk is cut, and what arrives after is not played', async () => {
     const voice = startSpokenStream({ reply: 'Hi.', onError: () => {} });
-    voice.push({ seq: 0, mimeType: 'audio/pcm', sampleRate: 4, bytes: pcm([1]) });
-    voice.push({ seq: 1, mimeType: 'audio/pcm', sampleRate: 4, bytes: pcm([2]) });
+    voice.push({ seq: 0, sentence: 0, mimeType: 'audio/pcm', sampleRate: 4, bytes: pcm([1]) });
+    voice.push({ seq: 1, sentence: 1, mimeType: 'audio/pcm', sampleRate: 4, bytes: pcm([2]) });
     await flush();
     stopSpeaking();
     expect(audio.scheduled.map((s) => s.stopped)).toEqual([true, true]);
     expect(voice.stopped).toBe(true);
-    voice.push({ seq: 2, mimeType: 'audio/pcm', sampleRate: 4, bytes: pcm([3]) });
+    voice.push({ seq: 2, sentence: 2, mimeType: 'audio/pcm', sampleRate: 4, bytes: pcm([3]) });
     await flush();
     expect(audio.scheduled).toHaveLength(2);
   });
 
-  // Review of #968, pass 1 (P2-2). Mutations verified: the pcm/wav-only gate
-  // restored → red; a compressed chunk decoded on its own instead of per
-  // sentence → red (a cut frame does not decode).
-  it('a compressed voice (MP3) plays per sentence, its chunks joined, in order, back to back', async () => {
+  // Review of #968, passes 1 (P2-2) and 2 (P2-B). Mutations verified: the
+  // pcm/wav-only gate restored → "plays per sentence" red; one buffer shared
+  // by every sentence (no key) → "an abandoned sentence" red; a sentence
+  // played without its `complete` (or flushed at `end`) → "cut", "stream cut"
+  // red.
+  it('a compressed voice (MP3) plays per sentence, complete, its chunks joined, in order, back to back', async () => {
     const errors: string[] = [];
     const voice = startSpokenStream({ reply: 'Hi.', onError: (m) => errors.push(m) });
     // Sentence 0: one MP3 frame cut across two network chunks.
-    voice.push({ seq: 0, mimeType: 'audio/mpeg', bytes: mp3([128, 64, 32, 16]).slice(0, 5) });
-    voice.push({ seq: 1, mimeType: 'audio/mpeg', bytes: mp3([128, 64, 32, 16]).slice(5) });
+    const frame = mp3([128, 64, 32, 16]);
+    voice.push({ seq: 0, sentence: 0, mimeType: 'audio/mpeg', bytes: frame.slice(0, 5) });
+    voice.push({ seq: 1, sentence: 0, mimeType: 'audio/mpeg', bytes: frame.slice(5) });
     await flush();
     // Nothing plays before the sentence is complete: half a frame is not sound.
     expect(audio.scheduled).toEqual([]);
-    voice.endSentence();
-    // Sentence 1, a frame of its own; the stream ends.
-    voice.push({ seq: 2, mimeType: 'audio/mpeg', bytes: mp3([8, 4]) });
+    voice.endSentence(0, true);
+    voice.push({ seq: 2, sentence: 1, mimeType: 'audio/mpeg', bytes: mp3([8, 4]) });
+    voice.endSentence(1, true);
     voice.end();
     await flush();
     await flush();
@@ -156,14 +172,72 @@ describe('the spoken reply plays its chunks in order, back to back (#943) @cap:p
     expect(audio.scheduled[1]!.at).toBeCloseTo(audio.scheduled[0]!.at + 4 / 8000, 9);
   });
 
+  it('a compressed sentence the voice cut is thrown away, never played, never called a decode error', async () => {
+    const errors: string[] = [];
+    const voice = startSpokenStream({ reply: 'Hi.', onError: (m) => errors.push(m) });
+    voice.push({ seq: 0, sentence: 0, mimeType: 'audio/mpeg', bytes: mp3([128, 64]) });
+    voice.endSentence(0, true);
+    // Sentence 1: two chunks, then the vendor failed.
+    const frame = mp3([32, 16, 8, 4]);
+    voice.push({ seq: 1, sentence: 1, mimeType: 'audio/mpeg', bytes: frame.slice(0, 5) });
+    voice.push({ seq: 2, sentence: 1, mimeType: 'audio/mpeg', bytes: frame.slice(5, 6) });
+    voice.endSentence(1, false);
+    voice.end();
+    await flush();
+    await flush();
+    expect(errors).toEqual([]);
+    expect(audio.scheduled.map((s) => s.samples)).toEqual([[0.5, 0.25]]);
+  });
+
+  it('an abandoned sentence then a new one: two buffers, and only the complete one plays', async () => {
+    const voice = startSpokenStream({ reply: 'Hi.', onError: () => {} });
+    voice.push({
+      seq: 0,
+      sentence: 0,
+      mimeType: 'audio/mpeg',
+      bytes: mp3([1, 2, 3, 4]).slice(0, 5),
+    });
+    voice.push({ seq: 1, sentence: 1, mimeType: 'audio/mpeg', bytes: mp3([128, 64]) });
+    voice.endSentence(0, false);
+    voice.endSentence(1, true);
+    await flush();
+    await flush();
+    // Sentence 1 alone, whole: sentence 0's bytes never merged into it.
+    expect(audio.scheduled.map((s) => s.samples)).toEqual([[0.5, 0.25]]);
+  });
+
+  it('a stream cut before `audio_end`: nothing joined is played', async () => {
+    const errors: string[] = [];
+    const voice = startSpokenStream({ reply: 'Hi.', onError: (m) => errors.push(m) });
+    voice.push({ seq: 0, sentence: 0, mimeType: 'audio/mpeg', bytes: mp3([128, 64]) });
+    voice.end();
+    await flush();
+    expect(audio.scheduled).toEqual([]);
+    expect(errors).toEqual([]);
+  });
+
+  it('a PCM sentence the voice cut keeps what already played: it stops where the voice stopped', async () => {
+    const voice = startSpokenStream({ reply: 'Hi.', onError: () => {} });
+    voice.push({ seq: 0, sentence: 0, mimeType: 'audio/pcm', sampleRate: 4, bytes: pcm([16384]) });
+    voice.endSentence(0, false);
+    voice.end();
+    await flush();
+    expect(audio.scheduled.map((s) => s.samples)).toEqual([[0.5]]);
+  });
+
   it('a missing rank, or a voice the browser cannot decode, is said, and the voice stops', async () => {
     const errors: string[] = [];
     const gap = startSpokenStream({ reply: 'Hi.', onError: (m) => errors.push(m) });
-    gap.push({ seq: 1, mimeType: 'audio/pcm', sampleRate: 4, bytes: pcm([1]) });
+    gap.push({ seq: 1, sentence: 0, mimeType: 'audio/pcm', sampleRate: 4, bytes: pcm([1]) });
     expect(gap.stopped).toBe(true);
     const unknown = startSpokenStream({ reply: 'Hi.', onError: (m) => errors.push(m) });
-    unknown.push({ seq: 0, mimeType: 'audio/x-unknown', bytes: new Uint8Array([1, 2, 3]) });
-    unknown.end();
+    unknown.push({
+      seq: 0,
+      sentence: 0,
+      mimeType: 'audio/x-unknown',
+      bytes: new Uint8Array([1, 2, 3]),
+    });
+    unknown.endSentence(0, true);
     await flush();
     expect(unknown.stopped).toBe(true);
     expect(errors).toEqual([

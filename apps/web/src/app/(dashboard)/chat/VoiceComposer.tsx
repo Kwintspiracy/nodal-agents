@@ -175,7 +175,7 @@ export function useVoiceTurn(opts: {
         });
         voice.current.push(chunk);
       },
-      onAudioEnd: () => voice.current?.endSentence(),
+      onAudioEnd: (sentence, complete) => voice.current?.endSentence(sentence, complete),
     });
     voice.current?.end();
     busy.current = false;

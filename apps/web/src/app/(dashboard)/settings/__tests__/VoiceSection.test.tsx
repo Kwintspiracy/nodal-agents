@@ -101,9 +101,15 @@ beforeEach(() => {
         sseBody([
           [
             'audio',
-            { seq: 0, mimeType: 'audio/pcm', sampleRate: 24_000, base64: pcmBase64([1000, -1000]) },
+            {
+              seq: 0,
+              sentence: 0,
+              mimeType: 'audio/pcm',
+              sampleRate: 24_000,
+              base64: pcmBase64([1000, -1000]),
+            },
           ],
-          ['audio_end', { sentence: 0 }],
+          ['audio_end', { sentence: 0, complete: true }],
           ['done', { speechError: null, source: 'openrouter', model: 'x', voice: 'y' }],
         ]),
         { headers: { 'content-type': 'text/event-stream' } },
@@ -270,6 +276,54 @@ describe('the Voice section @cap:parler-a-un-agent/ecran', () => {
     expect(seen.find((s) => s.url === '/api/voice/sample')!.body).toEqual({
       text: 'Hello, this is how I sound when I answer you.',
     });
+  });
+
+  // A voice that answers mp3 (MiniMax) plays through the SAME player as a
+  // turn's voice (#968): its chunks are joined per sentence and decoded at a
+  // complete `audio_end`. Mutation verified: `endSentence` not called by the
+  // sample → red (nothing plays).
+  it('a sample in mp3 plays through the turn player: joined per sentence, decoded once complete', async () => {
+    // The fake MP3 frame `fake-audio.ts` decodes: `ID3`, a length, the bytes.
+    const frame = Buffer.from([0x49, 0x44, 0x33, 4, 128, 64, 32, 16]);
+    answers.sample = () =>
+      new Response(
+        sseBody([
+          [
+            'audio',
+            {
+              seq: 0,
+              sentence: 0,
+              mimeType: 'audio/mpeg',
+              base64: frame.subarray(0, 5).toString('base64'),
+            },
+          ],
+          [
+            'audio',
+            {
+              seq: 1,
+              sentence: 0,
+              mimeType: 'audio/mpeg',
+              base64: frame.subarray(5).toString('base64'),
+            },
+          ],
+          ['audio_end', { sentence: 0, complete: true }],
+          [
+            'done',
+            {
+              speechError: null,
+              source: 'openrouter',
+              model: 'minimax/speech-2.8-turbo',
+              voice: 'English_CalmWoman',
+            },
+          ],
+        ]),
+        { headers: { 'content-type': 'text/event-stream' } },
+      );
+    await render();
+    await click(q('voice-sample'));
+    await act(async () => {});
+    expect(audio.scheduled.map((s) => s.samples)).toEqual([[0.5, 0.25, 0.125, 0.063]]);
+    expect(q('voice-sample-error')).toBeNull();
   });
 
   it('errors are said: a refused save, a sample without credit, a runner that does not answer', async () => {

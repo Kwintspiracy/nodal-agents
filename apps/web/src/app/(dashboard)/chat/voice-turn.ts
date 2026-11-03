@@ -26,7 +26,7 @@
 
 import { chatFailureText } from '@/lib/chat-failure.ts';
 import { readSseMessages } from '@/lib/sse.ts';
-import type { SpokenChunk } from './voice-playback.ts';
+import { readSpokenEvent, type SpokenChunk } from './voice-playback.ts';
 
 const BASE = '/api/voice/turns';
 
@@ -48,8 +48,8 @@ export interface VoiceStreamHandlers {
   onText?: (text: string) => void;
   /** Un morceau de voix, dans l'ordre de son rang. */
   onAudio?: (chunk: SpokenChunk) => void;
-  /** Tout l'audio d'une phrase est arrivé (`audio_end`). */
-  onAudioEnd?: () => void;
+  /** Une phrase est finie (`audio_end`), complète ou non. */
+  onAudioEnd?: (sentence: number, complete: boolean) => void;
 }
 
 /** Une étape refusée : où, avec quel statut, et le code tel que la route l'a dit. */
@@ -263,23 +263,15 @@ async function readEnd(
           handlers.onText?.(accumulated);
           break;
         }
-        case 'audio': {
-          const base64 = str(data['base64']);
-          const mimeType = str(data['mimeType']);
-          if (base64 === null || mimeType === null || typeof data['seq'] !== 'number') {
-            return broken('invalid_response');
-          }
-          handlers.onAudio?.({
-            seq: data['seq'],
-            mimeType,
-            ...(typeof data['sampleRate'] === 'number' ? { sampleRate: data['sampleRate'] } : {}),
-            bytes: Uint8Array.from(atob(base64), (c) => c.charCodeAt(0)),
-          });
+        case 'audio':
+        case 'audio_end': {
+          // Lu par le lecteur commun aux portes qui parlent (`readSpokenEvent`, #969).
+          const spoken = readSpokenEvent(msg.event, data);
+          if (!spoken || spoken.kind === 'invalid') return broken('invalid_response');
+          if (spoken.kind === 'audio') handlers.onAudio?.(spoken.chunk);
+          else handlers.onAudioEnd?.(spoken.sentence, spoken.complete);
           break;
         }
-        case 'audio_end':
-          handlers.onAudioEnd?.();
-          break;
         case 'done': {
           // La réponse entière remplace ce qui a été accumulé, comme au chat écrit.
           const reply = str(data['reply']) ?? '';

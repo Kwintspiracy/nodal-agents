@@ -197,7 +197,7 @@ export default function VoiceSection() {
       ...(dirty ? { setting: draft } : {}),
       signal: ctrl.signal,
       onAudio: (chunk) => spoken.push(chunk),
-      onAudioEnd: () => spoken.endSentence(),
+      onAudioEnd: (sentence, complete) => spoken.endSentence(sentence, complete),
     });
     spoken.end();
     if (sampleAbort.current === ctrl) sampleAbort.current = null;

@@ -208,9 +208,11 @@ test.describe('the chat microphone @cap:parler-a-un-agent/ecran', () => {
         body: sseBody([
           ['transcript', { transcript, durationMs: 3000 }],
           ['delta', { text: 'Canberra, ' }],
-          ['audio', { seq: 0, ...voice }],
+          ['audio', { seq: 0, sentence: 0, ...voice }],
+          ['audio_end', { sentence: 0, complete: true }],
           ['delta', { text: 'not Sydney.' }],
-          ['audio', { seq: 1, ...voice }],
+          ['audio', { seq: 1, sentence: 1, ...voice }],
+          ['audio_end', { sentence: 1, complete: true }],
           [
             'done',
             {

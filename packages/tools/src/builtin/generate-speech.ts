@@ -182,6 +182,14 @@ export const generateSpeechTool: ToolDefinition<
       if (audio.byteLength === 0) {
         return { ok: false, reason: `${model} returned no audio for this text.` };
       }
+      // A model that answers another container (MiniMax: mp3, #969) is said as
+      // such: its bytes are audio, just not the WAV this tool writes.
+      if (spoken.mimeType !== 'audio/wav') {
+        return {
+          ok: false,
+          reason: `${model} answered ${spoken.mimeType}, and this tool writes WAV files. Nothing was written.`,
+        };
+      }
       if (!looksLikeWav(audio)) {
         return {
           ok: false,

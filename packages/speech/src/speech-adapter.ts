@@ -191,16 +191,19 @@ export interface SpeechConnection {
 }
 
 /**
- * One piece of a streamed synthesis, in `capabilities.streamOutput`.
+ * One piece of a streamed synthesis.
  *
- * The sample rate travels WITH the bytes, not in the capabilities: it belongs
- * to the answer, not to the vendor. Measured by the orchestrator on
- * 2026-11-03 through OpenRouter: most speech models answer
- * `audio/pcm;rate=24000;channels=1`, one answers pcm at 44 100 Hz. A rate
- * declared once per adapter would play that one at the wrong pitch.
+ * The container and the sample rate travel WITH the bytes, not in the
+ * capabilities: they belong to the answer, not to the vendor. Measured by the
+ * orchestrator on 2026-11-03 through OpenRouter: most speech models answer
+ * `audio/pcm;rate=24000;channels=1`, one answers pcm at 44 100 Hz, and MiniMax
+ * answers mp3 only. A container or a rate declared once per adapter would play
+ * those as noise, or at the wrong pitch (#969).
  */
 export interface SpeechStreamChunk {
   audio: Uint8Array;
+  /** The container of THIS answer. `capabilities.streamOutput` is only the usual one. */
+  mimeType: AudioMimeType;
   /** Present for `audio/pcm`: raw samples do not say how fast they play. */
   sampleRate?: number;
 }
