@@ -18,6 +18,7 @@
 // code, 3221226505 (0xC0000409) a fail-fast abort (V8's out-of-memory
 // included), 134 an abort on Unix; a signal is only ever set on Unix.
 
+import type { ChildProcess } from 'node:child_process';
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { dirname, relative } from 'node:path';
 import { ForksPoolWorker } from 'vitest/node';
@@ -52,9 +53,36 @@ export interface ExitReportingOptions {
   logFile?: string;
 }
 
+// WHO DECIDES "UNEXPECTED" (#970). The exit is vitest's own when vitest asked
+// the child to stop while it was still there; it is unexpected when the child
+// was LOST first. Vitest asks in one of two ways: the `stop` message (a
+// graceful stop; its worker answers `stopped`, drops its listeners and leaves
+// on its own with code 0, often before the pool reaches `stop()`), or
+// `stop()` itself (a forced stop sends no message). The first of the two is
+// the request.
+//
+// The `exit` event is not the moment of death either: a reply vitest
+// sends to a child that has just died fails (`write EPIPE`, or `Channel
+// closed` once the pipe is down), the child emits `error`, and vitest's pool
+// answers that error with `stop()`, all before the `exit` event arrives
+// (measured on Windows: 16 of 36 runs of the `dies-mid-reply` fixture, a
+// worker killed with replies in flight). A flag set by `stop()` and read at
+// `exit` then took vitest's cleanup for a stop it had asked for, and the line
+// was dropped.
+//
+// So the child is lost at the FIRST of its signs, `error`, `disconnect` or
+// `exit`, and the listeners that record it are PREPENDED to the child's own:
+// they run before any other listener of the same event, whoever registered
+// first, so a listener that asks for the stop synchronously still finds the
+// child marked lost.
+const LOST_SIGNS = ['error', 'disconnect', 'exit'] as const;
+
+type Child = Pick<ChildProcess, 'pid' | 'prependListener'>;
+
 class ExitReportingForksWorker extends ForksPoolWorker {
   override readonly name = EXIT_REPORTING_POOL;
-  private stopping = false;
+  private lost = false;
+  private stopRequested = false;
   private files: readonly string[] = [];
 
   constructor(
@@ -69,22 +97,38 @@ class ExitReportingForksWorker extends ForksPoolWorker {
     if (message.type === 'run' || message.type === 'collect') {
       this.files = message.context.files.map((f) => relative(this.root, f.filepath));
     }
+    if (message.type === 'stop') this.requestStop();
     super.send(message);
+  }
+
+  private requestStop(): void {
+    if (!this.lost) this.stopRequested = true;
   }
 
   override async start(): Promise<void> {
     await super.start();
-    // `_fork` is private to vitest's class; its pid is read for the line only,
-    // and a vitest that renames the field prints `pid=undefined`, nothing worse.
-    const pid = (this as unknown as { _fork?: { pid?: number } })._fork?.pid;
+    // `_fork` is private to vitest's class. Without it, nothing here could tell
+    // a lost child from a stopped one: a vitest that renames it fails the run.
+    const child = (this as unknown as { _fork?: Child })._fork;
+    if (child === undefined) {
+      throw new Error(
+        `[vitest-worker-exit] vitest's ForksPoolWorker has no _fork after start(): ` +
+          `this pool cannot tell a dead worker from a stopped one on this vitest version`,
+      );
+    }
+    const pid = child.pid;
+    const markLost = (): void => {
+      this.lost = true;
+    };
+    for (const sign of LOST_SIGNS) child.prependListener(sign, markLost);
     this.on('exit', (code: number | null, signal?: string | null) => {
-      if (this.stopping) return;
+      if (this.stopRequested) return;
       this.report(describeWorkerExit({ pid, code, signal: signal ?? null, files: this.files }));
     });
   }
 
   override async stop(): Promise<void> {
-    this.stopping = true;
+    this.requestStop();
     await super.stop();
   }
 }
