@@ -242,6 +242,9 @@ importers:
       '@nodal-agents/shared':
         specifier: workspace:*
         version: link:../../packages/shared
+      '@nodal-agents/speech':
+        specifier: workspace:*
+        version: link:../../packages/speech
       '@nodal-agents/tools':
         specifier: workspace:*
         version: link:../../packages/tools
@@ -1166,6 +1169,19 @@ importers:
         specifier: workspace:*
         version: link:../test-kit
 
+  packages/speech:
+    dependencies:
+      '@nodal-agents/shared':
+        specifier: workspace:*
+        version: link:../shared
+    devDependencies:
+      '@nodal-agents/test-kit':
+        specifier: workspace:*
+        version: link:../test-kit
+      '@types/node':
+        specifier: ^25.7.0
+        version: 25.7.0
+
   packages/test-kit:
     dependencies:
       koffi:
@@ -1208,6 +1224,9 @@ importers:
       '@nodal-agents/shared':
         specifier: workspace:*
         version: link:../shared
+      '@nodal-agents/speech':
+        specifier: workspace:*
+        version: link:../speech
       cron-parser:
         specifier: ^5.5.0
         version: 5.5.0

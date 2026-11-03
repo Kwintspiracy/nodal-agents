@@ -26,6 +26,7 @@
     "@nodal-agents/sandbox": "workspace:*",
     "@nodal-agents/secrets": "workspace:*",
     "@nodal-agents/shared": "workspace:*",
+    "@nodal-agents/speech": "workspace:*",
     "@nodal-agents/tools": "workspace:*",
     "@slack/bolt": "^4.7.3",
     "@slack/web-api": "^7.19.0",

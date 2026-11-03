@@ -92,7 +92,7 @@ import {
 import type { NodalLlmClient } from '@nodal-agents/llm';
 import { liveCallProgress, watchCallProgress } from './call-progress.ts';
 import { resolveAgentLlmClient } from './resolve-llm.ts';
-import { resolveSpeechGenerator } from './resolve-speech.ts';
+import { resolveSpeech } from './resolve-speech.ts';
 import { makeLlmCallSink } from '../llm/call-sink.ts';
 import { runCliRuntimeJob } from '../cli-runtime/run-job.ts';
 import { deferredToolNames, toolsLoadedByCalls, toolsSentThisTurn } from './tool-loading.ts';
@@ -2784,8 +2784,8 @@ async function runJobTracked(
   // generate_speech (#487): built on the workspace OpenRouter key, like
   // searchBackend, and only for a job whose agent has the tool: no key read or
   // decrypted for the others (review of PR #488).
-  const speechGenerator = toolDefs.some((t) => t.name === 'generate_speech')
-    ? await resolveSpeechGenerator(db, job.entityId ?? null)
+  const speech = toolDefs.some((t) => t.name === 'generate_speech')
+    ? await resolveSpeech(db, job.entityId ?? null)
     : undefined;
 
   // La personnalité contredit-elle la liste ? (issue #62) Dev C disait « via
@@ -3364,7 +3364,7 @@ async function runJobTracked(
                   fileWritableSkillSlugs,
                   provisioning: TOOL_PROVISIONING,
                   searchBackend,
-                  ...(speechGenerator ? { speechGenerator } : {}),
+                  ...(speech ? { speech } : {}),
                   resolveAgentToolNames: (targetAgentId: string, placement?: JobPlacement) =>
                     resolveAgentToolNames(db, targetAgentId, placement),
                   requestUserInput,
@@ -5766,7 +5766,7 @@ async function runJobTracked(
         fileWritableSkillSlugs,
         provisioning: TOOL_PROVISIONING,
         searchBackend,
-        ...(speechGenerator ? { speechGenerator } : {}),
+        ...(speech ? { speech } : {}),
         resolveAgentToolNames: (targetAgentId: string, placement?: JobPlacement) =>
           resolveAgentToolNames(db, targetAgentId, placement),
         requestUserInput,
@@ -6086,7 +6086,7 @@ async function runJobTracked(
                 fileWritableSkillSlugs,
                 provisioning: TOOL_PROVISIONING,
                 searchBackend,
-                ...(speechGenerator ? { speechGenerator } : {}),
+                ...(speech ? { speech } : {}),
                 resolveAgentToolNames: (targetAgentId: string, placement?: JobPlacement) =>
                   resolveAgentToolNames(db, targetAgentId, placement),
                 modelInput: modelInputNow(),

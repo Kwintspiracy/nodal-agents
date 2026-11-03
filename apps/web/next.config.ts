@@ -94,6 +94,7 @@ const nextConfig: NextConfig = {
     '@nodal-agents/orchestration',
     '@nodal-agents/sandbox',
     '@nodal-agents/shared',
+    '@nodal-agents/speech',
     '@nodal-agents/tools',
   ],
   // Empty turbopack config silences the "webpack config exists, no turbopack

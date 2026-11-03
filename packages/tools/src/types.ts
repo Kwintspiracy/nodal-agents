@@ -3,7 +3,8 @@
 
 import type { z } from 'zod';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
-import type { EmbeddingClient, SpeechGenerator } from '@nodal-agents/llm';
+import type { EmbeddingClient } from '@nodal-agents/llm';
+import type { BoundSpeech } from '@nodal-agents/speech';
 import type {
   ApprovalRuleCondition,
   ShellGateReason,
@@ -250,12 +251,13 @@ export interface ToolContext {
     query: string,
   ) => Promise<{ results: Array<{ title: string; url: string; snippet: string }> }>;
   /**
-   * Turns text into audio for the `generate_speech` builtin (#487), on the
-   * workspace's OpenRouter key. Injected by the runner, like `searchBackend`:
-   * the key is decrypted there, never in packages/tools. Absent ⇒ the
-   * workspace has no active OpenRouter key, and `generate_speech` says so.
+   * Turns text into audio for the `generate_speech` builtin (#487): the
+   * OpenRouter SpeechAdapter of packages/speech, bound to the workspace's
+   * OpenRouter key (#940). Injected by the runner, like `searchBackend`: the
+   * key is decrypted there, never in packages/tools. Absent ⇒ the workspace
+   * has no active OpenRouter key, and `generate_speech` says so.
    */
-  speechGenerator?: SpeechGenerator;
+  speech?: BoundSpeech;
   /**
    * Resolve the REAL tool-name whitelist of an arbitrary agent in this
    * workspace (not necessarily the caller). Injected by the runner
