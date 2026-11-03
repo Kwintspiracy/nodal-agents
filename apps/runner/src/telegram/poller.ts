@@ -9,7 +9,7 @@
 // the bot from the dashboard, which respawns a fresh poller.
 // On other errors: exponential backoff (1s → 30s) then retry.
 
-import { eq, and } from '@nodal-agents/db';
+import { eq, and, inTransaction } from '@nodal-agents/db';
 import { agents, telegramAllowedChats, channelBindings } from '@nodal-agents/db';
 import {
   getTelegramUpdates,
@@ -428,7 +428,7 @@ export async function runTelegramPoller(opts: PollerOpts): Promise<PollerExit> {
       try {
         // Atomic: create job + advance offset. If anything throws, the txn
         // rolls back and we re-deliver this update on the next loop.
-        await deps.db.transaction(async (tx) => {
+        await inTransaction(deps.db, async (tx) => {
           const result = await handleTelegramUpdate({
             update,
             receivingAgentId: agentId,

@@ -4,7 +4,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi, type MockInstance } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { eq } from '@nodal-agents/db';
+import { eq, listenToTransitions } from '@nodal-agents/db';
 import {
   agents,
   agentJobs,
@@ -595,6 +595,16 @@ describe('runTelegramPoller', () => {
       return Promise.resolve(fakeResponse(200, { ok: true, result: [] }));
     });
 
+    // #944 — l'arrêt passe par la porte des fins de job, et le flux l'apprend
+    // APRÈS le COMMIT de la transaction du message (jamais `lost`).
+    const announced: string[] = [];
+    const lost: string[] = [];
+    const unlisten = listenToTransitions({
+      committed: async (_db, t) => {
+        announced.push(...t.endedJobIds);
+      },
+      lost: (reason) => lost.push(reason),
+    });
     const exit = await runTelegramPoller({
       agentId: seed.agentId,
       agentEntityId: seed.entityId,
@@ -606,6 +616,9 @@ describe('runTelegramPoller', () => {
       env: testEnv,
       longPollSeconds: 1,
     });
+    unlisten();
+    expect(announced).toEqual([run!.id]);
+    expect(lost).toEqual([]);
 
     expect(exit.finalOffset).toBe(301);
     const jobs = await db

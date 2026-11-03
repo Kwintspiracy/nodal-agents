@@ -1,15 +1,10 @@
 // router/delegate.ts — suspend parent job, create child job
 // Called by the runner when it catches DelegationPendingError from an assign_* tool.
 
-import { eq, and, notInArray, insertChildJob, designateChat } from '@nodal-agents/db';
+import { eq, and, cancelJobs, insertChildJob, designateChat } from '@nodal-agents/db';
 import { agentJobs, agents } from '@nodal-agents/db';
 import { OrchestrationError } from '../errors';
 
-// Job statuses that must never be overwritten — a cancelled/completed/failed
-// child row is already final. Mirrors apps/runner/src/job/state.ts
-// TERMINAL_STATUSES; kept local because orchestration must not depend on the
-// runner app.
-const TERMINAL_JOB_STATUSES = ['completed', 'failed', 'cancelled'];
 import type {
   AgentId,
   EntityId,
@@ -190,13 +185,9 @@ export async function handleDelegation(
     // Don't leave the child we just inserted running with no parent to return
     // to — flip it to cancelled (guarded to non-terminal so we never rewrite a
     // row that already finished).
-    // agent_jobs-write: orphan-child — la ligne d'un AUTRE job, gardée non terminale.
-    await db
-      .update(agentJobs)
-      .set({ status: 'cancelled', updatedAt: new Date() })
-      .where(
-        and(eq(agentJobs.id, childJob.id), notInArray(agentJobs.status, TERMINAL_JOB_STATUSES)),
-      );
+    // La ligne d'un AUTRE job, par la PORTE (a) (#944) : annulée tant qu'elle
+    // vit encore, et annoncée.
+    await cancelJobs(db, { ids: [childJob.id] });
     throw new OrchestrationError(
       'parent_not_delegatable',
       `Parent job ${parentJob.id} is no longer processing (cancelled?) — delegation aborted`,

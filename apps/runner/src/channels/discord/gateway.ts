@@ -33,7 +33,7 @@ import {
   ButtonStyle,
 } from 'discord.js';
 import type { Message, ButtonInteraction, Interaction, SendableChannels } from 'discord.js';
-import { eq } from '@nodal-agents/db';
+import { eq, inTransaction } from '@nodal-agents/db';
 import { channelAllowedConversations } from '@nodal-agents/db';
 import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';
@@ -188,7 +188,7 @@ export function startDiscordGateway(opts: DiscordGatewayOpts): DiscordGatewayHan
 
     let result: DiscordHandleResult;
     try {
-      result = await deps.db.transaction((tx) =>
+      result = await inTransaction(deps.db, (tx) =>
         handleDiscordMessage({
           message: inbound,
           receivingAgentId: agentId,

@@ -29,7 +29,7 @@
 
 import { App, SocketModeReceiver } from '@slack/bolt';
 import type { WebClient } from '@slack/web-api';
-import { eq } from '@nodal-agents/db';
+import { eq, inTransaction } from '@nodal-agents/db';
 import { channelAllowedConversations } from '@nodal-agents/db';
 import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';
@@ -302,7 +302,7 @@ export function startSlackSocket(opts: SlackSocketOpts): SlackSocketHandle {
   ): Promise<void> {
     let result: SlackHandleResult;
     try {
-      result = await deps.db.transaction((tx) =>
+      result = await inTransaction(deps.db, (tx) =>
         handleSlackMessage({
           message: inbound,
           receivingAgentId: agentId,

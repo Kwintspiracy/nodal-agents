@@ -91,7 +91,17 @@
 // des données.
 
 import { randomUUID } from 'node:crypto';
-import { and, eq, isNull, lt, or, sql, ownJobRow, workspaceSandboxReader } from '@nodal-agents/db';
+import {
+  and,
+  eq,
+  inTransaction,
+  isNull,
+  lt,
+  or,
+  sql,
+  ownJobRow,
+  workspaceSandboxReader,
+} from '@nodal-agents/db';
 import {
   agentJobs,
   entities,
@@ -1047,7 +1057,10 @@ export async function finalizeJobSuccess(
   }
 
   // ─── Transaction 2 : décision, statut terminal ────────────────────────────
-  const committed = await db.transaction(
+  // `inTransaction` (#944) : la fin du job que `completeJob` ou `failJob`
+  // annonce ici n'est remise au flux qu'après le COMMIT, jamais sur un ROLLBACK.
+  const committed = await inTransaction(
+    db,
     async (
       tx,
     ): Promise<{
@@ -1413,7 +1426,8 @@ export async function finalizeJobFailure(
   if (input.delivery && !deps.prepareDelivery) {
     throw new Error(`${DELIVERY_PREPARE_UNAVAILABLE}: ${input.delivery.channel}`);
   }
-  return db.transaction(async (tx) => {
+  // `inTransaction` (#944) : l'échec annoncé par `failJob` part après le COMMIT.
+  return inTransaction(db, async (tx) => {
     const landed = await failJob(
       tx,
       input.jobId,

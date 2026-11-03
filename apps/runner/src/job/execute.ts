@@ -20,6 +20,7 @@ import {
   approvalsOldestFirst,
   decryptMcpServerEnv,
   workspaceSandboxReader,
+  cancelJobs,
 } from '@nodal-agents/db';
 import {
   agentJobs,
@@ -1446,11 +1447,9 @@ export async function maybeResumeParent(
     // `awaiting_delegation` (Nodal review of #575): read above, it may have
     // been resumed to `pending` since by resumeDelegated — a live parent is
     // never cancelled by a stale read.
-    // agent_jobs-write: parent-cascade — la ligne d'un AUTRE job, gardée.
-    await db
-      .update(agentJobs)
-      .set({ status: 'cancelled', updatedAt: new Date() })
-      .where(and(eq(agentJobs.id, parentJobId), eq(agentJobs.status, 'awaiting_delegation')));
+    // La ligne d'un AUTRE job, par la PORTE (a) (#944) : annulée et annoncée,
+    // seulement si elle attend encore ce délégué.
+    await cancelJobs(db, { ids: [parentJobId], onlyFrom: ['awaiting_delegation'] });
     return;
   }
 
@@ -6208,8 +6207,14 @@ async function runJobTracked(
                 // still be 'processing' since cancellation was scoped to the
                 // child); orphan-cleanup would catch it eventually but
                 // surfacing it now matches user intent.
-                // Under this run's claim (#566), like every write of the run.
-                if (!(await setJobStatus(db, jobId as string, 'cancelled'))) {
+                // Under this run's claim (#566), like every write of the run,
+                // and through the door of job ends (#944): announced to the
+                // stream, once, when it lands.
+                const annule = await cancelJobs(db, {
+                  ids: [jobId as string],
+                  guard: ownJobRow(jobId as string),
+                });
+                if (annule.length === 0) {
                   return await ecritureRefusee('cascade_cancel');
                 }
                 await cancelJob(db, jobId as string, runStats(), messages);

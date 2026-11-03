@@ -756,32 +756,6 @@ describe('run-job : les écritures d’audit en vol sont attendues avant de lire
     return row && row.registeredAt ? row : null;
   };
 
-  /**
-   * Une base dont les insertions dans `tool_calls` prennent `delayMs` (ou ne se
-   * règlent JAMAIS) : c'est la course réelle — l'enregistreur d'événements
-   * lance chaque ligne sans l'attendre, et le dernier événement d'un tour est
-   * justement une écriture.
-   */
-  const dbWithSlowAudit = (delayMs: number | 'never') =>
-    new Proxy(db, {
-      get(target, prop, receiver) {
-        if (prop !== 'insert') return Reflect.get(target, prop, receiver);
-        return (table: unknown) => {
-          const q = (
-            target as unknown as { insert: (t: unknown) => { values: (v: unknown) => unknown } }
-          ).insert(table);
-          if (table !== toolCalls) return q;
-          return {
-            values: (v: unknown) =>
-              new Promise((resolve, reject) => {
-                if (delayMs === 'never') return;
-                setTimeout(() => Promise.resolve(q.values(v)).then(resolve, reject), delayMs);
-              }),
-          };
-        };
-      },
-    });
-
   const runWith = (dbLike: unknown, jobId: string) =>
     runCliRuntimeJob({
       db: dbLike as Parameters<typeof runCliRuntimeJob>[0]['db'],
@@ -902,22 +876,56 @@ describe('run-job : les écritures d’audit en vol sont attendues avant de lire
   });
 
   it('une insertion d’audit qui ne se règle JAMAIS ne gèle pas le tour : borne, code, et le tour finit', async () => {
+    // La borne est prouvée sur une horloge qu'on conduit, pas sur la durée du
+    // tour (#960) : le travail de base du job, lui, tourne en temps réel et sa
+    // durée dépend de la charge du runner. Seuls `setTimeout`/`clearTimeout`
+    // sont simulés, et seulement entre « le tour attend l'écriture » et « le
+    // tour a fini » ; tout ce qui précède et suit est en temps réel.
+    const { proxy, gate } = dbWithHeldAudit();
     const jobId = await newJob();
     ecritureParEvenement();
     const erreurs = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const debut = Date.now();
+    const loggedTimeout = () =>
+      erreurs.mock.calls.some((c) =>
+        c.map(String).join(' ').includes(`CLI_AUDIT_WRITES_TIMEOUT job=${jobId}`),
+      );
+    // Rendre la main à la boucle d'événements quelques fois : assez pour que
+    // tout ce qui est déjà débloqué se déroule, sans durée à régler.
+    const flush = async () => {
+      for (let i = 0; i < 50; i++) await new Promise((r) => setImmediate(r));
+    };
+    let finished = false;
+    let outcome: Awaited<ReturnType<typeof runWith>> | undefined;
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     try {
-      const outcome = await runWith(dbWithSlowAudit('never'), jobId);
-      expect(outcome.status).toBe('completed');
-      const attendu = Date.now() - debut;
-      expect(attendu).toBeGreaterThanOrEqual(AUDIT_WRITES_WAIT_MS - 50);
-      expect(attendu).toBeLessThan(AUDIT_WRITES_WAIT_MS + 5_000);
-      const logged = erreurs.mock.calls.map((c) => c.map(String).join(' '));
-      expect(logged.some((l) => l.includes(`CLI_AUDIT_WRITES_TIMEOUT job=${jobId}`))).toBe(true);
+      const running = runWith(proxy, jobId).then((o) => {
+        finished = true;
+        outcome = o;
+      });
+      // Le tour attend l'écriture : la borne est armée à cet instant.
+      while (!gate.awaited && !finished) await new Promise((r) => setImmediate(r));
+      expect(gate.awaited, 'le tour n’a jamais attendu l’écriture d’audit').toBe(true);
+
+      // Une milliseconde avant la borne : toujours en attente, rien de dit.
+      vi.advanceTimersByTime(AUDIT_WRITES_WAIT_MS - 1);
+      await flush();
+      expect(finished, 'le tour a fini avant la borne').toBe(false);
+      expect(loggedTimeout(), 'le code est sorti avant la borne').toBe(false);
+
+      // À la borne : le code est dit et le tour finit, sans que l'écriture
+      // (jamais libérée) se soit réglée.
+      vi.advanceTimersByTime(1);
+      await flush();
+      expect(loggedTimeout(), 'la borne est tombée sans dire CLI_AUDIT_WRITES_TIMEOUT').toBe(true);
+      expect(finished, 'le tour est resté gelé après la borne').toBe(true);
+      await running;
+      expect(gate.released).toBe(false);
     } finally {
+      vi.useRealTimers();
       erreurs.mockRestore();
     }
-    // Rien n'a été lu : la ligne n'a jamais été posée, alpha n'est pas déclaré.
+    expect(outcome?.status).toBe('completed');
+    // L'écriture n'a jamais été posée : alpha n'est pas déclaré.
     expect(await ligneDeclaree(alpha)).toBeNull();
   }, 20_000);
 });

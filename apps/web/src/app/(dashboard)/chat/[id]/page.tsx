@@ -25,6 +25,7 @@ import ThreadComposer from '../ThreadComposer.tsx';
 import ThreadScreen from './ThreadScreen.tsx';
 import ThreadHeader from './ThreadHeader.tsx';
 import ConversationApprovals from './ConversationApprovals.tsx';
+import ConversationEvents from './ConversationEvents.tsx';
 import PendingTurn, { PendingTurnProvider } from '../PendingTurn.tsx';
 import { feedAwaitsReply, feedRequests } from '../feed-requests.ts';
 
@@ -174,6 +175,10 @@ export default async function ChatThreadPage({ params }: { params: Promise<{ id:
           }
         >
           <LiveRefresh live={live} />
+          {/* #944 — ce que le runner pousse pour cette conversation (un job
+              fini, une question, une approbation) relit la page TOUT DE SUITE,
+              sans attendre le tour de LiveRefresh ni celui du rail. */}
+          <ConversationEvents conversationId={conversation.id} />
           <ConversationFeedView
             feed={feed}
             deliverables={verification.deliverables}

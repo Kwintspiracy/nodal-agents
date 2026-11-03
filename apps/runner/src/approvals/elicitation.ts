@@ -31,6 +31,7 @@ import {
   inArray,
   approvalRequests,
   approvalRequestAttachments,
+  expirePendingRequests,
   type AnyDrizzleDb,
 } from '@nodal-agents/db';
 import {
@@ -233,11 +234,11 @@ async function waitForAnswer(
  * réponse écrite juste avant gagne.
  */
 async function closeUnanswered(db: AnyDrizzleDb, id: string, resolvedBy: string): Promise<void> {
-  const closed = await db
-    .update(approvalRequests)
-    .set({ status: 'expired', resolvedAt: new Date(), resolvedBy })
-    .where(and(eq(approvalRequests.id, id), eq(approvalRequests.status, 'pending')))
-    .returning({ id: approvalRequests.id });
+  // PORTE (b) : expirée sous la garde `pending`, et annoncée (#944).
+  const closed = await expirePendingRequests(db, {
+    where: eq(approvalRequests.id, id),
+    resolvedBy,
+  });
   if (closed.length === 0) return;
   console.warn(`[elicitation] request ${id} closed without an answer (${resolvedBy})`);
   try {
@@ -282,21 +283,14 @@ export async function closeElicitationsOfLostJobs(
   jobIds: readonly string[],
 ): Promise<number> {
   if (jobIds.length === 0) return 0;
-  const closed = await db
-    .update(approvalRequests)
-    .set({
-      status: 'expired',
-      resolvedAt: new Date(),
-      resolvedBy: ELICITATION_CLOSED_BY.runnerRestarted,
-    })
-    .where(
-      and(
-        eq(approvalRequests.kind, 'elicitation'),
-        eq(approvalRequests.status, 'pending'),
-        inArray(approvalRequests.jobId, [...jobIds]),
-      ),
-    )
-    .returning({ id: approvalRequests.id });
+  // PORTE (b) : expirées sous la garde `pending`, et annoncées (#944).
+  const closed = await expirePendingRequests(db, {
+    where: and(
+      eq(approvalRequests.kind, 'elicitation'),
+      inArray(approvalRequests.jobId, [...jobIds]),
+    ),
+    resolvedBy: ELICITATION_CLOSED_BY.runnerRestarted,
+  });
   if (closed.length > 0) {
     await settleApprovalCards(db, { approvalRequestIds: closed.map((r) => r.id) });
   }
