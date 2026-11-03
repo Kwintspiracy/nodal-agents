@@ -115,10 +115,10 @@ describe('bindSpeech / bindTranscription', () => {
     const minimax = bindSpeech(getSpeechAdapter('minimax'), connection);
     const chunks: number[] = [];
     for await (const c of minimax.synthesizeStream!({ text: 'x', voiceId: 'French_CasualMan' })) {
-      chunks.push(...c);
+      chunks.push(...c.audio);
     }
     expect(chunks).toEqual([0xaa, 0xbb]);
-    expect(bindSpeech(getSpeechAdapter('openrouter'), connection).synthesizeStream).toBeUndefined();
+    expect(bindSpeech(getSpeechAdapter('google'), connection).synthesizeStream).toBeUndefined();
   });
 
   it('a bound transcription transcribes with its connection', async () => {

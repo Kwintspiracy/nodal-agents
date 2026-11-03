@@ -611,7 +611,11 @@ function replyRenderingLine(ctx: JobContext): string | null {
     '- rendering: spoken — your reply is turned into speech and heard, not read. ' +
     'Short sentences carry it; tables, lists, headings, links and other markup do not ' +
     'survive being read aloud, and numbers, dates and units are heard as they are written, ' +
-    'so write them the way they are said.'
+    'so write them the way they are said. ' +
+    // #943 : la réponse est dite phrase par phrase, et la première part en
+    // voix dès qu'elle est écrite. Une première phrase courte, c'est le
+    // premier son plus tôt. Une consigne au modèle, jamais un texte du runner.
+    'Open with one short sentence: it is spoken while the rest is still being written.'
   );
 }
 

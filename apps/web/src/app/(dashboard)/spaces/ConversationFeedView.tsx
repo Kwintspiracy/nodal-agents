@@ -4,13 +4,14 @@
 // qu'il ne sait pas dessiner, il le montre brut et le dit.
 
 import Link from 'next/link';
-import { ArrowSquareOut, Microphone, PaperPlaneTilt } from '@phosphor-icons/react/dist/ssr';
+import { ArrowSquareOut, PaperPlaneTilt } from '@phosphor-icons/react/dist/ssr';
 import AgentAvatar from '@/components/ui/AgentAvatar';
 import StatusPill from '@/components/ui/StatusPill';
 import StopRunButton from '@/components/ui/StopRunButton';
 import { canStopRun } from '@/lib/job-live.ts';
 import { openRunHref } from '@/lib/run-page.ts';
 import ClampedText from './ClampedText.tsx';
+import SpokenMark from './SpokenMark.tsx';
 import Table, { THead, Th, Tr, Td, CellMono } from '@/components/ui/Table';
 import { MonoMicroTag } from '@/components/ui/MonoMicroTag';
 import type { CardPayloadFor, TableEntry } from '@nodal-agents/shared';
@@ -47,7 +48,7 @@ import DelegationBlock from './DelegationBlock.tsx';
 import Handoff from './Handoff.tsx';
 import RunSummaryRow from './RunSummaryRow.tsx';
 import { DEFAULT_FEED_DENSITY, type FeedDensity } from '@/lib/feed-density.ts';
-import { clockDuration, formatCost, formatMs, formatTokens, originLabel } from './format.ts';
+import { formatCost, formatMs, formatTokens, originLabel } from './format.ts';
 import SpeakingPill from '@/app/(dashboard)/chat/SpeakingPill.tsx';
 
 type ToolStep = Extract<Step, { kind: 'tool' }>;
@@ -168,13 +169,7 @@ function FeedItemView({
             {/* Une demande DITE (#942) : sa durée, rangée par le runner. Une
                 demande tapée n'en a pas, et rien ne s'affiche. */}
             {typeof item.spokenMs === 'number' && item.spokenMs > 0 && (
-              <p
-                className="mt-1.5 flex items-center justify-end gap-1 text-mono-11 text-ink-4"
-                data-testid="feed-spoken"
-              >
-                <Microphone size={12} weight="regular" aria-hidden="true" />
-                {`Spoken · ${clockDuration(item.spokenMs)}`}
-              </p>
+              <SpokenMark ms={item.spokenMs} testId="feed-spoken" />
             )}
           </div>
         </div>

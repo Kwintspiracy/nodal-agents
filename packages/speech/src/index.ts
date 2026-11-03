@@ -4,6 +4,7 @@ export type {
   SpeechCapabilities,
   SpeechConnection,
   SpeechProvider,
+  SpeechStreamChunk,
   SynthesizeRequest,
   SynthesizeResult,
   TranscribeRequest,
@@ -23,6 +24,13 @@ export {
   transcriptionProviders,
 } from './registry.ts';
 export { pcmToWav, readWav, sampleRateFromMimeType, type WavInfo } from './wav.ts';
+export {
+  createSentenceChunker,
+  splitSentences,
+  SENTENCE_BOUNDS,
+  type SentenceChunker,
+  type SentenceChunkerOptions,
+} from './sentence-chunker.ts';
 export { isAudioChunk, languageBoostFor } from './providers/minimax.ts';
 export { GEMINI_VOICES } from './providers/google.ts';
 export {

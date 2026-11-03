@@ -45,6 +45,7 @@ export * from './untrusted';
 export * from './mcp-tool-result';
 export * from './tool-result-budget';
 export * from './redact-transcript';
+export * from './redact-stream';
 export * from './agent-slug';
 export * from './catastrophic-command';
 export * from './run-budget';

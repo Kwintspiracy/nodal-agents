@@ -1,20 +1,75 @@
-// routes/voice-turn.ts — le geste `say` : un tour dit, reçu par morceaux (#941).
+// routes/voice-turn.ts — le geste `say` : un tour dit, reçu par morceaux (#941),
+// sa réponse rendue en flux, phrase par phrase (#943).
 //
 //   POST   /api/voice/turns                       { entityId, conversationId, format, sampleRate? }
 //                                                 → 201 { turnId }
 //   POST   /api/voice/turns/:turnId/chunks/:seq   corps = octets audio bruts → 200 { received }
-//   POST   /api/voice/turns/:turnId/end           → 200 le résultat du tour (`VoiceTurnResult`)
+//   POST   /api/voice/turns/:turnId/end           → 200 un flux d'événements (SSE, ci-dessous)
 //   DELETE /api/voice/turns/:turnId               → 200 { cancelled }   (le geste `cancel`)
 //
 // Pourquoi trois requêtes et pas un corps en flux : voir chat/voice-utterances.ts.
+//
+// LA FIN DU TOUR (#943). Tout ce qui se refuse est refusé AVANT le flux, en
+// JSON avec son statut, comme toute autre route : `turn_not_found` 404,
+// `audio_malformed` 400, `speech_not_configured` 409, `transcription_failed`
+// 502 (avec `detail`, les mots du fournisseur). Rien n'est rangé. Sinon la
+// réponse est `text/event-stream`, et ses événements sont, dans cet ordre :
+//
+//   event: nothing_heard  data: { durationMs }         SEUL événement du flux : aucun mot
+//                                                      entendu, rien n'est rangé
+//   event: transcript     data: { transcript, durationMs }   le message de la personne,
+//                                                      dès qu'il existe (rangé comme dit)
+//   event: delta          data: { text }               un fragment de la réponse, comme
+//                                                      `/api/chat/stream`
+//   event: audio          data: { seq, sentence, mimeType, sampleRate?, base64 }
+//                                                      la voix, en morceaux NUMÉROTÉS
+//                                                      depuis 0, sans trou, à jouer
+//                                                      bout à bout dans l'ordre de `seq`.
+//                                                      `audio/pcm` : 16 bits signés
+//                                                      little-endian, mono, à `sampleRate` ;
+//                                                      les autres types (`audio/wav`, `audio/mpeg`…)
+//                                                      ne se décodent que par phrase entière
+//   event: audio_end      data: { sentence, complete } la phrase `sentence` (son rang,
+//                                                      depuis 0) est finie : UNE fois pour
+//                                                      chaque phrase dont un `audio` est
+//                                                      sorti, toujours avant `done`.
+//                                                      `complete` faux : elle s'est arrêtée
+//                                                      en route (échec de la voix, phrase
+//                                                      abandonnée, Stop). Un type compressé
+//                                                      se joue à ce signal s'il est complet,
+//                                                      et se jette sinon ; un PCM déjà joué
+//                                                      s'arrête là où la voix s'est arrêtée
+//   event: done           data: { reply, spawnedJobId, streamed, stopped, cutReason,
+//                                 speechError }      le DERNIER événement, après tout l'audio
+//   event: error          data: { error, detail? }     le tour a échoué après la
+//                                                      transcription (les codes du chat)
+//
+// `delta` et `audio` se mêlent : la voix d'une phrase part dès qu'elle est
+// écrite, pendant que la suivante s'écrit. `done.reply` est la réponse ENTIÈRE
+// et fait foi, comme pour `/api/chat/stream` ; `streamed` dit si les `delta`
+// la disaient. `speechError` { code, detail? } : la voix a échoué, le texte
+// reste. `stopped` : la personne a dit Stop (`/api/chat/stop`, le même Stop que
+// le chat écrit) ; plus aucun audio ne suit. Les secrets que la réponse
+// citerait sont masqués dans `delta`, dans `done.reply` ET dans ce qui est
+// dit (chat/run-voice-turn.ts) ; la ligne rangée en base reste intacte.
+//
 // Un client de vingt lignes :
 //
 //   const { turnId } = await post('/api/voice/turns', { entityId, conversationId,
 //                                  format: 'audio/pcm', sampleRate: 16000 });
 //   let seq = 0;
 //   for await (const pcm of microphone()) await postBytes(`/api/voice/turns/${turnId}/chunks/${seq++}`, pcm);
-//   const turn = await post(`/api/voice/turns/${turnId}/end`);
-//   if (turn.outcome === 'replied') play(turn.audio);
+//   for await (const ev of sse(await post(`/api/voice/turns/${turnId}/end`))) {
+//     if (ev.event === 'audio') speaker.play(ev.data);   // dans l'ordre de seq
+//     if (ev.event === 'done' || ev.event === 'nothing_heard' || ev.event === 'error') break;
+//   }
+//
+// Chaque tour écrit une ligne `[voice-turn] timing {…}` : les millisecondes
+// depuis la requête de fin jusqu'à la transcription, au premier fragment, à la
+// première phrase complète, au premier octet que le fournisseur de voix rend
+// pour elle et à la fin de sa réponse (proches : il rend un fichier ; écartés :
+// il diffuse), au premier octet de voix envoyé et à `done`. Des nombres
+// seulement, jamais les mots de la personne.
 //
 // L'ORIGINE EST UNE DONNÉE (règle du #948) : le tour appartient à la
 // conversation qu'il nomme, et l'agent est celui de cette conversation. Aucune
@@ -34,7 +89,8 @@ import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
 import { resolveTranscription } from '../job/resolve-speech.ts';
 import { readBoundedBody } from '../lib/read-bounded-body.ts';
-import { runVoiceTurn } from '../chat/run-voice-turn.ts';
+import { createVoiceTiming, hearVoiceTurn, speakVoiceTurn } from '../chat/run-voice-turn.ts';
+import { sseEvent, SSE_HEADERS } from './sse.ts';
 import {
   VOICE_FORMATS,
   VOICE_LIMITS,
@@ -143,19 +199,70 @@ export async function voiceTurnEndRoute(
   deps: RunnerDeps,
   runnerEnv: RunnerEnv,
 ): Promise<Response> {
+  const startedAt = Date.now();
   const turnId = c.req.param('turnId') ?? '';
   if (!ownTurn(c, turnId)) return c.json({ error: 'turn_not_found' }, 404);
   const u = takeUtterance(turnId);
   if (!u) return c.json({ error: 'turn_not_found' }, 404);
 
-  const result = await runVoiceTurn(deps, runnerEnv, u);
-  if (result.outcome === 'failed') {
+  const heard = await hearVoiceTurn(deps, u);
+  if (heard.outcome === 'failed') {
     return c.json(
-      { error: result.error, ...(result.detail ? { detail: result.detail } : {}) },
-      result.status,
+      { error: heard.error, ...(heard.detail ? { detail: heard.detail } : {}) },
+      heard.status,
     );
   }
-  return c.json(result);
+
+  const timing = createVoiceTiming(startedAt);
+  const readerGone = new AbortController();
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      let closed = false;
+      const send = (event: string, data: unknown): void => {
+        if (closed) return;
+        try {
+          controller.enqueue(encoder.encode(sseEvent(event, data)));
+        } catch {
+          // Le lecteur est parti : la voix se tait, le tour écrit sa ligne.
+          closed = true;
+          readerGone.abort();
+        }
+      };
+
+      void (async () => {
+        try {
+          if (heard.outcome === 'nothing_heard') {
+            send('nothing_heard', { durationMs: heard.durationMs });
+            return;
+          }
+          await speakVoiceTurn(deps, runnerEnv, u, heard, send, {
+            timing,
+            readerGone: readerGone.signal,
+          });
+        } catch (err) {
+          console.error('[voiceTurnRoute] turn failed:', err);
+          send('error', { error: 'chat_failed' });
+        } finally {
+          timing.mark('done');
+          // `warn` : le canal des lignes de journal du runner (comme
+          // `llm_call_progress`), pas une alerte.
+          console.warn(timing.line());
+          closed = true;
+          try {
+            controller.close();
+          } catch {
+            // Déjà fermé par le lecteur.
+          }
+        }
+      })();
+    },
+    cancel() {
+      readerGone.abort();
+    },
+  });
+
+  return new Response(stream, { headers: { ...SSE_HEADERS } });
 }
 
 export function voiceTurnCancelRoute(c: Context): Response {

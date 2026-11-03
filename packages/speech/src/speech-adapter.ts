@@ -38,6 +38,9 @@ export type SpeechProvider = (typeof SPEECH_PROVIDERS)[number];
  *  provider has ever heard of and discover it at runtime. */
 export type AudioMimeType =
   | 'audio/wav'
+  /** Raw signed 16-bit little-endian mono samples, no header: the rate travels
+   *  beside the bytes (`SpeechStreamChunk.sampleRate`), never inside. */
+  | 'audio/pcm'
   | 'audio/mpeg'
   | 'audio/ogg'
   | 'audio/webm'
@@ -187,6 +190,21 @@ export interface SpeechConnection {
   baseURL?: string;
 }
 
+/**
+ * One piece of a streamed synthesis, in `capabilities.streamOutput`.
+ *
+ * The sample rate travels WITH the bytes, not in the capabilities: it belongs
+ * to the answer, not to the vendor. Measured by the orchestrator on
+ * 2026-11-03 through OpenRouter: most speech models answer
+ * `audio/pcm;rate=24000;channels=1`, one answers pcm at 44 100 Hz. A rate
+ * declared once per adapter would play that one at the wrong pitch.
+ */
+export interface SpeechStreamChunk {
+  audio: Uint8Array;
+  /** Present for `audio/pcm`: raw samples do not say how fast they play. */
+  sampleRate?: number;
+}
+
 /** Text → audio. */
 export interface SpeechAdapter {
   readonly provider: SpeechProvider;
@@ -211,7 +229,7 @@ export interface SpeechAdapter {
   synthesizeStream?(
     req: SynthesizeRequest,
     connection: SpeechConnection,
-  ): AsyncIterable<Uint8Array>;
+  ): AsyncIterable<SpeechStreamChunk>;
 }
 
 /** Audio → text. */

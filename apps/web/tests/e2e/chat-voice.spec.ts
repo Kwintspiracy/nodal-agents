@@ -7,6 +7,8 @@
  *   — tenir, parler, relâcher : des morceaux de PCM partent PENDANT que le
  *     bouton est tenu, puis la fin ; la transcription paraît dans le fil avec
  *     « Spoken · 0:03 », la réponse porte « Speaking » et sa voix joue ;
+ *   — la fin est un FLUX d'événements (#943) : la voix arrive en morceaux
+ *     numérotés, que la page programme BOUT À BOUT sur un AudioContext ;
  *   — glisser hors du bouton puis relâcher : « Cancelled. Nothing was sent. »,
  *     un DELETE du tour, et aucune fin ;
  *   — le micro refusé par le navigateur : « Microphone blocked… », sans boîte
@@ -15,7 +17,7 @@
  * Aucun runner ni modèle : les routes du tour sont interceptées À LA PORTE WEB
  * (`/api/voice/turns…`), et la fin écrit en base les deux tours que le runner
  * aurait écrits (la demande DITE avec sa durée, puis la réponse), pour que le
- * fil relu les montre. Ce que le runner fait du tour est prouvé côté moteur
+ * fil relu les montre, puis rend le flux tel que la route l'écrit. Ce que le runner fait du tour est prouvé côté moteur
  * (apps/runner/src/tests/routes/voice-turn.test.ts, #958).
  *
  * Conventions : requireLiveStack() en beforeAll, storageState via la config,
@@ -95,27 +97,17 @@ test.afterAll(async () => {
   }
 });
 
-/** Du silence, en WAV 16 bits mono à 8 kHz : une réponse qui joue. Assez longue
- * (20 s) pour jouer encore quand le fil relu paraît, même en `next dev` qui
- * compile à la première visite ; le parcours la coupe par Stop. */
-function silentWavBase64(seconds: number): string {
-  const rate = 8000;
-  const samples = rate * seconds;
-  const buf = Buffer.alloc(44 + samples * 2);
-  buf.write('RIFF', 0);
-  buf.writeUInt32LE(36 + samples * 2, 4);
-  buf.write('WAVE', 8);
-  buf.write('fmt ', 12);
-  buf.writeUInt32LE(16, 16);
-  buf.writeUInt16LE(1, 20);
-  buf.writeUInt16LE(1, 22);
-  buf.writeUInt32LE(rate, 24);
-  buf.writeUInt32LE(rate * 2, 28);
-  buf.writeUInt16LE(2, 32);
-  buf.writeUInt16LE(16, 34);
-  buf.write('data', 36);
-  buf.writeUInt32LE(samples * 2, 40);
-  return buf.toString('base64');
+/** Du silence en PCM 16 bits mono à 8 kHz, en base64 : un morceau de voix tel
+ * que la route l'envoie. Assez long (20 s par morceau, deux morceaux) pour
+ * jouer encore quand le fil relu paraît, même en `next dev` qui compile à la
+ * première visite ; le parcours le coupe par Stop. */
+function silentPcmBase64(seconds: number): string {
+  return Buffer.alloc(8000 * seconds * 2).toString('base64');
+}
+
+/** Le corps SSE d'une fin de tour, tel que la route du runner l'écrit (#943). */
+function sseBody(events: Array<[string, unknown]>): string {
+  return events.map(([e, d]) => `event: ${e}\ndata: ${JSON.stringify(d)}\n\n`).join('');
 }
 
 type Seen = { method: string; path: string; bytes: number };
@@ -157,15 +149,19 @@ async function stubVoiceRoutes(
   return seen;
 }
 
-/** Ce que la page a demandé à jouer, noté avant tout script de la page. */
+/** Ce que la page a programmé sur son AudioContext, noté avant tout script de la page. */
 async function recordPlayback(page: Page): Promise<void> {
   await page.addInitScript(() => {
-    const w = window as unknown as { __played: string[] };
+    const w = window as unknown as { __played: Array<{ at: number; duration: number }> };
     w.__played = [];
-    const play = HTMLMediaElement.prototype.play;
-    HTMLMediaElement.prototype.play = function (this: HTMLMediaElement) {
-      w.__played.push(this.src.slice(0, 22));
-      return play.call(this);
+    const start = AudioBufferSourceNode.prototype.start;
+    AudioBufferSourceNode.prototype.start = function (
+      this: AudioBufferSourceNode,
+      when?: number,
+      ...rest: number[]
+    ) {
+      w.__played.push({ at: when ?? 0, duration: this.buffer?.duration ?? 0 });
+      return start.call(this, when, ...rest);
     };
   });
 }
@@ -205,20 +201,30 @@ test.describe('the chat microphone @cap:parler-a-un-agent/ecran', () => {
       } finally {
         await close();
       }
+      const voice = { mimeType: 'audio/pcm', sampleRate: 8000, base64: silentPcmBase64(20) };
       await route.fulfill({
         status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({
-          outcome: 'replied',
-          transcript,
-          durationMs: 3000,
-          reply: 'Canberra, not Sydney.',
-          spawnedJobId: null,
-          stopped: false,
-          cutReason: null,
-          audio: { mimeType: 'audio/wav', base64: silentWavBase64(20) },
-          speechError: null,
-        }),
+        contentType: 'text/event-stream; charset=utf-8',
+        body: sseBody([
+          ['transcript', { transcript, durationMs: 3000 }],
+          ['delta', { text: 'Canberra, ' }],
+          ['audio', { seq: 0, sentence: 0, ...voice }],
+          ['audio_end', { sentence: 0, complete: true }],
+          ['delta', { text: 'not Sydney.' }],
+          ['audio', { seq: 1, sentence: 1, ...voice }],
+          ['audio_end', { sentence: 1, complete: true }],
+          [
+            'done',
+            {
+              reply: 'Canberra, not Sydney.',
+              spawnedJobId: null,
+              streamed: true,
+              stopped: false,
+              cutReason: null,
+              speechError: null,
+            },
+          ],
+        ]),
       });
     });
 
@@ -244,15 +250,20 @@ test.describe('the chat microphone @cap:parler-a-un-agent/ecran', () => {
     await page.mouse.up();
 
     // La transcription, à droite, avec sa durée dite ; la réponse qui parle.
+    // D'abord la copie en attente, posée par l'événement `transcript` (#943),
+    // puis le fil relu, qui la remplace — sa relecture compile la route en
+    // `next dev` à la première visite, d'où le délai large.
     await expect(page.getByText(transcript)).toBeVisible({ timeout: 20_000 });
-    await expect(page.getByTestId('feed-spoken')).toHaveText('Spoken · 0:03');
     await expect(page.getByText('Speaking', { exact: true })).toBeVisible();
+    // Deux morceaux de 20 s, programmés bout à bout : le second part où le premier finit.
+    const played = await page.evaluate(
+      () => (window as unknown as { __played: Array<{ at: number; duration: number }> }).__played,
+    );
+    expect(played.map((p) => p.duration)).toEqual([20, 20]);
+    expect(played[1]!.at).toBeCloseTo(played[0]!.at + 20, 6);
+    await expect(page.getByTestId('feed-spoken')).toHaveText('Spoken · 0:03', { timeout: 20_000 });
     const stop = page.getByTestId('composer-stop-speaking');
     await expect(stop).toHaveAccessibleName('Stop speaking');
-    const played = await page.evaluate(
-      () => (window as unknown as { __played: string[] }).__played,
-    );
-    expect(played).toEqual(['data:audio/wav;base64,']);
 
     // Les morceaux sont partis DANS L'ORDRE, puis la fin, et rien d'autre.
     const order = seen.map((s) => `${s.method} ${s.path}`);

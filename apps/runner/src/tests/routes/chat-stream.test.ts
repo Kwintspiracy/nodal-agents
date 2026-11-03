@@ -433,7 +433,12 @@ describe('POST /api/chat/stream — la réponse mot à mot @cap:parler-a-un-agen
     expect(c1.deltas.join('')).not.toContain(BLOCK_TEXT);
 
     const c2 = await collect(r2);
-    expect(c2.deltas).toEqual(SECOND_CHUNKS);
+    // Masqués par `playChatTurn` avant tout consommateur (revue de #968,
+    // passe 2), les fragments sortent coupés sur les espaces : le masqueur
+    // garde le mot en cours jusqu'à l'espace suivante, ou jusqu'au texte
+    // fixé. Le texte est le même, mot pour mot.
+    expect(c2.deltas).toEqual(['And ', 'then ', 'this.']);
+    expect(c2.deltas.join('')).toBe(SECOND_REPLY);
     expect(c2.done?.reply).toBe(SECOND_REPLY);
     expect(c2.done?.streamed).toBe(true);
 

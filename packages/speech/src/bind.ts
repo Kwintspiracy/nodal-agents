@@ -15,6 +15,7 @@ import type {
   SpeechCapabilities,
   SpeechConnection,
   SpeechProvider,
+  SpeechStreamChunk,
   SynthesizeRequest,
   SynthesizeResult,
   TranscribeRequest,
@@ -29,7 +30,7 @@ export interface BoundSpeech {
   readonly capabilities: SpeechCapabilities;
   listVoices(): Promise<readonly Voice[]>;
   synthesize(req: SynthesizeRequest): Promise<SynthesizeResult>;
-  synthesizeStream?(req: SynthesizeRequest): AsyncIterable<Uint8Array>;
+  synthesizeStream?(req: SynthesizeRequest): AsyncIterable<SpeechStreamChunk>;
 }
 
 export interface BoundTranscription {

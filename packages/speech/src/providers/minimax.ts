@@ -30,6 +30,7 @@ import type {
   AudioMimeType,
   SpeechAdapter,
   SpeechConnection,
+  SpeechStreamChunk,
   SynthesizeRequest,
   SynthesizeResult,
   Voice,
@@ -343,9 +344,12 @@ export const minimaxSpeechAdapter: SpeechAdapter = {
   synthesizeStream(
     req: SynthesizeRequest,
     connection: SpeechConnection,
-  ): AsyncIterable<Uint8Array> {
+  ): AsyncIterable<SpeechStreamChunk> {
     validate(req);
-    return streamChunks(req, connection);
+    // MP3 frames carry their own rate: no `sampleRate` beside them.
+    return (async function* () {
+      for await (const audio of streamChunks(req, connection)) yield { audio };
+    })();
   },
 };
 
