@@ -217,6 +217,12 @@ export async function playMeasuredTurn(
       await tx.execute(
         sql`CREATE TEMP TABLE agents (LIKE public.agents INCLUDING DEFAULTS) ON COMMIT DROP`,
       );
+      // Une base qui n'a pas encore la migration 0159 (la stack qui tourne,
+      // avant le merge) : la colonne n'existe que sur la copie, en dernière
+      // position, où le `SELECT *` ci-dessous la laisse à NULL. Déjà là : rien.
+      await tx.execute(
+        sql`ALTER TABLE pg_temp.agents ADD COLUMN IF NOT EXISTS spoken_reasoning_effort text`,
+      );
       await tx.execute(
         sql`INSERT INTO pg_temp.agents SELECT * FROM public.agents WHERE entity_id = ${opts.entityId}`,
       );

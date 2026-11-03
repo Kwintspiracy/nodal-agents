@@ -94,7 +94,8 @@ try {
       model: agents.model,
       llmKeyId: agents.llmKeyId,
       reasoningEffort: agents.reasoningEffort,
-      spokenReasoningEffort: agents.spokenReasoningEffort,
+      // Pas `spokenReasoningEffort` : la base mesurée peut ne pas avoir encore
+      // la migration 0159 (spoken-reasoning.ts, la copie de chaque tour).
     })
     .from(agents)
     .where(
@@ -132,8 +133,8 @@ try {
       `catalog control ${JSON.stringify(control)}`,
   );
   say(
-    `stored: reasoning ${agent.reasoningEffort ?? 'auto'}, ` +
-      `when spoken to ${agent.spokenReasoningEffort ?? 'auto'} (left as stored: each turn reads its own copy)`,
+    `stored Reasoning ${agent.reasoningEffort ?? 'auto'} (unchanged: each turn sets the measured ` +
+      `effort on its own rolled-back copy)`,
   );
   say(
     `${efforts.length} efforts × ${requests.length} requests × ${runs} runs = ` +

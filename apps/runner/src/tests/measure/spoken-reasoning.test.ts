@@ -19,6 +19,7 @@ import {
   conversations,
   eq,
   llmCalls,
+  sql,
   type AnyDrizzleDb,
 } from '@nodal-agents/db';
 import {
@@ -236,6 +237,39 @@ describe('the #977 measurement tool', () => {
       .from(agents)
       .where(eq(agents.id, agentId));
     expect(row).toEqual({ reasoning: 'high', spoken: 'max' });
+  });
+
+  // The orchestrator measures on the running stack's database, which does not
+  // have migration 0159 before the merge. The column exists on the turn's copy
+  // only, and the database is still left as it was.
+  // Mutation verified: the ALTER on the copy removed → red (the turn fails).
+  it('measures a database that does not have the column yet, and does not add it', async () => {
+    const own = (await spinUpTestDb()).db;
+    const { entityId, agentId } = await seedJob(own, { model: MODEL, role: 'orchestrator' });
+    await own.execute(sql`ALTER TABLE agents DROP COLUMN spoken_reasoning_effort`);
+
+    const bodies = scriptedProvider();
+    const [record] = await measureSpokenReasoning(own as unknown as AnyDrizzleDb, {
+      entityId,
+      agentId,
+      efforts: ['low'],
+      runs: 1,
+      requests: [REQUESTS[2]!],
+    });
+    vi.unstubAllGlobals();
+
+    expect({ error: record?.error, asked: record?.calls[0]?.reasoningEffort }).toEqual({
+      error: undefined,
+      asked: 'low',
+    });
+    expect(bodies.find((b) => b.messages.some((m) => m.role === 'system'))?.reasoning).toEqual({
+      enabled: true,
+      effort: 'low',
+    });
+    const columns = await own.execute(
+      sql`SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'agents' AND column_name = 'spoken_reasoning_effort'`,
+    );
+    expect((columns as unknown as { rows: unknown[] }).rows).toEqual([]);
   });
 
   it('the default requests are 6 that need a task and 6 that do not', () => {
