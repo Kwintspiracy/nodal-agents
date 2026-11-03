@@ -52,7 +52,7 @@
 // La destination ne montre donc jamais un fichier à moitié écrit, et un appel
 // qui échoue laisse la source en place (`claimName`, `removeSource`).
 
-import { createHash, randomBytes } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import {
   copyFile,
   link,
@@ -259,20 +259,19 @@ function systemFailure(err: unknown, verb: 'move' | 'copy', input: FileMoveInput
  * Une copie COMPLÈTE de `source` dans un fichier temporaire caché du dossier de
  * destination, avec la date de modification de la source : `copyFile` la garde
  * sous Windows, pas partout, et le geste doit être le même sur les trois
- * systèmes. Rend le chemin du temporaire et l'EMPREINTE de ses octets — ceux
- * que l'appel pose, lus dans son propre fichier, jamais dans la source qui a
- * pu changer depuis (revue A de #938, passe 4) ; le retire si la copie échoue.
+ * systèmes. Rend le chemin du temporaire et son IDENTITÉ (`placedId`), relevée
+ * avant de le poser ; le retire si la copie échoue.
  */
 async function copyToTemp(
   source: string,
   destination: string,
-): Promise<{ tmp: string; digest: string }> {
+): Promise<{ tmp: string; id: BigIntStats }> {
   const tmp = `${dirname(destination)}/.${basename(destination)}.${randomBytes(6).toString('hex')}.tmp`;
   try {
     await copyFile(source, tmp);
     const st = await stat(source);
     await utimes(tmp, st.atime, st.mtime);
-    return { tmp, digest: await digestOf(tmp) };
+    return { tmp, id: await placedId(tmp) };
   } catch (err) {
     await unlink(tmp).catch(() => undefined);
     throw err;
@@ -283,19 +282,19 @@ async function copyToTemp(
  * `replace: true` — pose `source` à `destination` par une copie : un fichier
  * temporaire du dossier de destination, renommé par-dessus la cible. Une copie
  * interrompue ne laisse jamais une destination à moitié écrite. Rend
- * l'empreinte de ce qui a été posé.
+ * l'identité de ce qui a été posé.
  */
 async function copyIntoPlace(
   ctx: ToolContext,
   source: string,
   destination: string,
   destroyed: readonly string[],
-): Promise<string> {
-  const { tmp, digest } = await copyToTemp(source, destination);
+): Promise<BigIntStats> {
+  const { tmp, id } = await copyToTemp(source, destination);
   try {
     await assertStillOurs(ctx, destroyed);
     await rename(tmp, destination);
-    return digest;
+    return id;
   } catch (err) {
     await unlink(tmp).catch(() => undefined);
     throw err;
@@ -340,12 +339,15 @@ function sameFile(a: BigIntStats, b: BigIntStats): boolean {
  *   - une réservation porte une marque unique, écrite par l'appel : elle est
  *     retirée si elle ne porte que cette marque (ou un début de celle-ci, si
  *     l'écriture a été interrompue) ;
- *   - un fichier posé (un lien ou une copie de la source) se reconnaît à
- *     l'EMPREINTE de ses octets, prise par l'appel au moment où il l'a posé
- *     (`Placed`) — jamais aux octets ACTUELS de la source, qui a pu changer ou
- *     disparaître entre-temps (revue A de #938, passe 4). Un fichier aux
- *     octets différents, celui d'un programme qui a écrasé la destination
- *     exprès entre-temps, reste où il est.
+ *   - un fichier posé (un lien ou une copie de la source) se reconnaît à son
+ *     IDENTITÉ, relevée en O(1) au moment de la pose (`Placed`, `sameIdentity`)
+ *     — jamais aux octets ACTUELS de la source, qui a pu changer ou disparaître
+ *     entre-temps (revue A de #938, passe 4). Le chemin qui réussit ne lit
+ *     AUCUN octet de plus (arbitrage du 03/11) : un déplacement sur un même
+ *     volume reste O(1), même pour une vidéo de plusieurs Go. Seul un
+ *     déplacement déjà inachevé peut lire des octets, et seulement pour un lien
+ *     sur un volume sans numéros de fichier. Un fichier écrit par-dessus
+ *     exprès entre-temps reste où il est.
  */
 const RESERVATION_MARK = 'nodal file_move: this name is reserved, the file arrives now ';
 
@@ -409,29 +411,65 @@ async function renameOntoReservation(from: string, destination: string, mark: Bu
   }
 }
 
-/** L'empreinte (SHA-256) des octets d'un fichier, lus par morceaux : un fichier peut être gros. */
-async function digestOf(path: string): Promise<string> {
-  const handle = await open(path, 'r');
+/** L'identité d'un fichier, relevée en O(1) (`lstat`) : rien n'en est lu. */
+async function placedId(path: string): Promise<BigIntStats> {
+  return lstat(path, { bigint: true });
+}
+
+/**
+ * Ce que l'appel a posé à destination : l'identité relevée au moment de la
+ * pose, et, pour un lien de la source sur le même volume, le chemin de cette
+ * source — tant que le lien tient, la source et la destination SONT le même
+ * fichier.
+ */
+type Placed = { id: BigIntStats; linkOf?: string };
+
+/** Le volume donne-t-il de vrais numéros de fichier, des deux côtés ? */
+function hasIds(a: BigIntStats, b: BigIntStats): boolean {
+  return a.ino !== BigInt(0) && b.ino !== BigInt(0);
+}
+
+/**
+ * `now` est-il le fichier relevé dans `ref` ? Par le volume et le numéro de
+ * fichier quand le volume en donne ; sinon par la taille, la date de
+ * modification et la date de création, à la nanoseconde. Un programme qui
+ * écrit par-dessus change au moins la date de modification ; un fichier
+ * étranger qui porterait les trois à l'identique est le seul cas que cette
+ * preuve ne distingue pas.
+ */
+function sameIdentity(now: BigIntStats, ref: BigIntStats): boolean {
+  if (hasIds(now, ref)) return now.dev === ref.dev && now.ino === ref.ino;
+  return (
+    now.size === ref.size && now.mtimeNs === ref.mtimeNs && now.birthtimeNs === ref.birthtimeNs
+  );
+}
+
+/** Les octets des deux fichiers sont-ils les mêmes ? Lus par morceaux, et seulement sur un chemin d'échec. */
+async function sameBytes(a: string, b: string): Promise<boolean> {
+  const [sa, sb] = await Promise.all([lstat(a), lstat(b)]);
+  if (!sa.isFile() || !sb.isFile() || sa.size !== sb.size) return false;
+  const [ha, hb] = await Promise.all([open(a, 'r'), open(b, 'r')]);
   try {
-    const hash = createHash('sha256');
-    const chunk = Buffer.alloc(1 << 20);
+    const [ba, bb] = [Buffer.alloc(1 << 20), Buffer.alloc(1 << 20)];
     for (;;) {
-      const { bytesRead } = await handle.read(chunk, 0, chunk.length, null);
-      if (bytesRead === 0) return hash.digest('hex');
-      hash.update(chunk.subarray(0, bytesRead));
+      const [ra, rb] = await Promise.all([
+        ha.read(ba, 0, ba.length, null),
+        hb.read(bb, 0, bb.length, null),
+      ]);
+      if (ra.bytesRead !== rb.bytesRead) return false;
+      if (ra.bytesRead === 0) return true;
+      if (!ba.subarray(0, ra.bytesRead).equals(bb.subarray(0, rb.bytesRead))) return false;
     }
   } finally {
-    await handle.close();
+    await Promise.all([ha.close(), hb.close()]);
   }
 }
 
-/** Ce que l'appel a posé à destination : l'empreinte de ses octets, ou pourquoi elle n'a pas pu être prise. */
-type Placed = { digest: string } | { error: unknown };
-
-/** Retire `path` s'il porte toujours ce que l'appel y a posé (son empreinte). */
-async function removeIfPlaced(path: string, digest: string): Promise<Removal> {
-  if ((await lstat(path).catch(() => null)) === null) return 'removed';
-  return (await digestOf(path).catch(() => null)) === digest ? unlinkOurs(path) : 'not_ours';
+/** Retire `path` s'il est toujours ce que l'appel y a posé (son identité). */
+async function removeIfPlaced(path: string, id: BigIntStats): Promise<Removal> {
+  const now = await lstat(path, { bigint: true }).catch(() => null);
+  if (now === null) return 'removed';
+  return sameIdentity(now, id) ? unlinkOurs(path) : 'not_ours';
 }
 
 /**
@@ -495,19 +533,20 @@ async function claimName(from: string, destination: string): Promise<'linked' | 
  * Pose une copie complète de `source` au nom `destination`, sans jamais
  * remplacer : la copie se fait dans un temporaire du dossier de destination,
  * que `claimName` pose. Aucun temporaire ne reste, que l'appel réussisse ou
- * non. Rend l'empreinte de ce qui a été posé.
+ * non. Rend l'identité de ce qui a été posé : celle du temporaire, relevée
+ * avant la pose — un lien ou un renommage garde le même fichier.
  */
-async function placeCopy(source: string, destination: string): Promise<string> {
-  const { tmp, digest } = await copyToTemp(source, destination);
+async function placeCopy(source: string, destination: string): Promise<BigIntStats> {
+  const { tmp, id } = await copyToTemp(source, destination);
   try {
     if ((await claimName(tmp, destination)) === 'linked') {
       try {
         await unlink(tmp);
       } catch (err) {
-        throw withLeftover(err, destination, await removeIfPlaced(destination, digest));
+        throw withLeftover(err, destination, await removeIfPlaced(destination, id));
       }
     }
-    return digest;
+    return id;
   } catch (err) {
     await unlink(tmp).catch(() => undefined);
     throw err;
@@ -527,20 +566,16 @@ async function moveWithoutReplacing(
   source: string,
   destination: string,
 ): Promise<{ unlinkErr: unknown; seen: Seen } | undefined> {
-  let placed: Placed;
+  // L'identité de ce que l'appel va poser, relevée en O(1) AVANT la pose : un
+  // lien est le même fichier que la source.
+  let placed: Placed = { id: await placedId(source), linkOf: source };
   try {
     if ((await claimName(source, destination)) === 'renamed') return undefined;
-    // Un lien : l'empreinte de ce que l'appel vient de poser, prise avant toute
-    // autre chose, pour le reconnaître si la suite échoue.
-    placed = await digestOf(destination).then(
-      (digest): Placed => ({ digest }),
-      (error: unknown): Placed => ({ error }),
-    );
   } catch (err) {
     // Deux volumes (un autre disque, un partage monté) : un lien n'y traverse
     // pas, le fichier y arrive par une copie.
     if (errnoOf(err) !== 'EXDEV') throw err;
-    placed = { digest: await placeCopy(source, destination) };
+    placed = { id: await placeCopy(source, destination) };
   }
   try {
     await unlink(source);
@@ -562,9 +597,16 @@ async function moveWithoutReplacing(
 /**
  * Ce qu'un déplacement inachevé laisse sur le disque, vu UNE fois, sur tous
  * les chemins (`replace: true` compris) : la source est-elle encore là, et
- * qu'y a-t-il à destination — ce que l'appel y a posé (son empreinte), autre
+ * qu'y a-t-il à destination — ce que l'appel y a posé (son identité), autre
  * chose, ou rien. Une lecture qui échoue est rapportée comme telle, jamais
  * prise pour l'un de ces cas.
+ *
+ * Un lien de la source, sur un volume sans numéros de fichier, se reconnaît
+ * aussi à ses octets : tant que le lien tient, la source et la destination
+ * sont le même fichier, et un programme qui écrit dans la source écrit aussi
+ * dans la destination (sa date change, ses octets restent ceux de la source).
+ * C'est le seul cas qui lit des octets, et seulement ici, sur un déplacement
+ * déjà inachevé.
  */
 type Seen =
   | { readError: { path: string; error: unknown } }
@@ -590,9 +632,17 @@ async function observePartialMove(
     return { readError: { path: source, error } };
   }
   try {
-    if (!(await there(destination))) return { sourceThere, atDestination: 'absent' };
-    if ('error' in placed) return { readError: { path: destination, error: placed.error } };
-    const ours = (await digestOf(destination)) === placed.digest;
+    const now = await lstat(destination, { bigint: true }).catch((error: unknown) => {
+      if (errnoOf(error) === 'ENOENT') return null;
+      throw error;
+    });
+    if (now === null) return { sourceThere, atDestination: 'absent' };
+    const ours =
+      sameIdentity(now, placed.id) ||
+      (placed.linkOf !== undefined &&
+        sourceThere &&
+        !hasIds(now, placed.id) &&
+        (await sameBytes(destination, placed.linkOf)));
     return { sourceThere, atDestination: ours ? 'ours' : 'foreign' };
   } catch (error) {
     return { readError: { path: destination, error } };
@@ -896,7 +946,7 @@ export const fileMoveTool: ToolDefinition<typeof FileMoveInputSchema, FileMoveOu
         // traverse pas. Le déplacement se fait alors en deux temps, copie puis
         // suppression.
         if (errnoOf(err) !== 'EXDEV') throw err;
-        const digest = await copyIntoPlace(ctx, source, destination, destroyed);
+        const id = await copyIntoPlace(ctx, source, destination, destroyed);
         try {
           await unlink(source);
           // Copié PUIS supprimé : le déplacement est fait (#916).
@@ -904,7 +954,7 @@ export const fileMoveTool: ToolDefinition<typeof FileMoveInputSchema, FileMoveOu
         } catch (unlinkErr) {
           // La copie a eu lieu, la suppression non : ce qui est sur le disque
           // se regarde, et se dit tel quel (invariant #4), comme sans replace.
-          const seen = await observePartialMove(source, destination, { digest });
+          const seen = await observePartialMove(source, destination, { id });
           return partialMove(input, destination, unlinkErr, seen);
         }
       }

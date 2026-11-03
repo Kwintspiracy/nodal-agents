@@ -58,6 +58,10 @@ const panne = vi.hoisted(() => ({
   /** Après un `unlink(unlinkOf)` raté, le premier `lstat` de ce chemin lève EIO. */
   lstatEchoueApres: null as string | null,
   lstatEchoue: null as string | null,
+  /** Pendant le `unlink(unlinkOf)` raté, un programme ajoute ces octets à la fin de ce chemin. */
+  ajouteAvantRetour: null as { path: string; text: string } | null,
+  /** Les fichiers ouverts EN LECTURE (`open` sans « wx », `readFile`) : ce que le code lit. */
+  lectures: [] as string[],
   /** Après la copie de ce chemin (`copyFile`), un programme ajoute ces octets à sa fin. */
   ajouteApresCopie: null as { path: string; text: string } | null,
   /**
@@ -125,8 +129,15 @@ vi.mock('node:fs/promises', async (importOriginal) => {
       await arrive(to);
       return actual.link(from, to);
     },
+    readFile: async (...args: Parameters<typeof actual.readFile>) => {
+      panne.lectures.push(String(args[0]));
+      return actual.readFile(...args);
+    },
     open: async (path: string, flags?: string, mode?: number) => {
-      if (flags !== 'wx') return actual.open(path, flags, mode);
+      if (flags !== 'wx') {
+        if (flags === undefined || flags === 'r') panne.lectures.push(String(path));
+        return actual.open(path, flags, mode);
+      }
       await arrive(path);
       const handle = await actual.open(path, flags, mode);
       if (panne.marqueEchoue) handle.writeFile = async () => leve('EIO');
@@ -147,6 +158,12 @@ vi.mock('node:fs/promises', async (importOriginal) => {
           await actual.writeFile(autre, e.content);
           await actual.rename(autre, e.path);
         }
+      }
+      const ajout = panne.ajouteAvantRetour;
+      if (ajout !== null) {
+        panne.ajouteAvantRetour = null;
+        panne.levees.push('ajouté');
+        await actual.appendFile(ajout.path, ajout.text);
       }
       panne.lstatEchoue = panne.lstatEchoueApres;
       panne.lstatEchoueApres = null;
@@ -178,7 +195,12 @@ import { cheminConstate } from '../../verification/record-constat';
 import { executeTool } from '../../execute';
 import { presentToolResult } from '../../cards';
 import { SHARED_WORKSPACE_LABEL } from './workspace';
-import { fileMoveTool, RESERVATION_BYTES, type FileMoveOutput } from './file-move';
+import {
+  fileMoveTool,
+  FileMoveInputSchema,
+  RESERVATION_BYTES,
+  type FileMoveOutput,
+} from './file-move';
 import { fileWriteTool } from './file-write';
 import type { ExecuteOptions, ToolContext } from '../../types';
 
@@ -222,6 +244,8 @@ afterEach(async () => {
   panne.lstatEchoueApres = null;
   panne.lstatEchoue = null;
   panne.ajouteApresCopie = null;
+  panne.ajouteAvantRetour = null;
+  panne.lectures = [];
   panne.renameVers = null;
   panne.levees = [];
   await rm(racine, { recursive: true, force: true }).catch(() => undefined);
@@ -1420,5 +1444,78 @@ describe('file_move — un déplacement inachevé se dit d’après le disque, v
     });
     expect(await readFile(cible)).toEqual(OCTETS);
     expect(await readFile(join(DOCS, 'scan.pdf'))).toEqual(OCTETS);
+  });
+});
+
+describe('file_move — le chemin qui réussit ne lit aucun octet du fichier posé (arbitrage du 03/11) @cap:travailler-sur-des-fichiers/moteur', () => {
+  // Un déplacement sur un même volume est un lien : O(1), quelle que soit la
+  // taille du fichier. Ce que l'outil LIT pendant l'appel se compte au seam :
+  // rien, sur un déplacement, une copie, un déplacement entre deux volumes ou
+  // sans liens physiques. (L'appel passe par `execute` seul : le seam de
+  // constat, qui photographie les fichiers, n'est pas ce que l'arbitrage vise.)
+  const executer = async (input: Record<string, unknown>): Promise<FileMoveOutput> =>
+    fileMoveTool.execute(FileMoveInputSchema.parse(input), ctx());
+
+  for (const cas of [
+    { nom: 'un déplacement sur le même volume', copy: false, panne: () => undefined },
+    { nom: 'une copie', copy: true, panne: () => undefined },
+    {
+      nom: 'un déplacement entre deux volumes',
+      copy: false,
+      panne: async () => {
+        panne.link = [{ from: await realpath(join(DOCS, 'scan.pdf')), code: 'EXDEV' }];
+      },
+    },
+    {
+      nom: 'un déplacement sans liens physiques',
+      copy: false,
+      panne: () => {
+        panne.link = [{ from: '*', code: 'EPERM' }];
+      },
+    },
+  ]) {
+    it(`${cas.nom} : aucune lecture`, async () => {
+      await writeFile(join(DOCS, 'scan.pdf'), OCTETS);
+      await cas.panne();
+
+      const out = await executer({
+        source: 'docs/scan.pdf',
+        destination: 'archive/',
+        copy: cas.copy,
+      });
+
+      expect(out.ok).toBe(true);
+      expect(panne.lectures).toEqual([]);
+      expect(await readFile(join(ARCHIVE, 'scan.pdf'))).toEqual(OCTETS);
+    });
+  }
+});
+
+describe('file_move — un lien sur un volume sans numéros de fichier se reconnaît à ses octets (arbitrage du 03/11) @cap:travailler-sur-des-fichiers/moteur', () => {
+  // Tant que le lien tient, la source et la destination SONT le même fichier :
+  // un programme qui écrit dans la source écrit aussi dans la destination. Sa
+  // date change, ses octets restent ceux de la source : c'est toujours le
+  // fichier de l'appel, et le retour en arrière le retire.
+  it('la source complétée pendant le retrait raté : le lien est reconnu, retiré, rien n’a bougé', async () => {
+    panne.inoNul = true;
+    await writeFile(join(DOCS, 'scan.pdf'), OCTETS);
+    const src = await realpath(join(DOCS, 'scan.pdf'));
+    panne.unlinkOf = src;
+    panne.ajouteAvantRetour = { path: src, text: ' -- ajouté' };
+
+    const out = await deplacer({ source: 'docs/scan.pdf', destination: 'archive/' });
+
+    expect(panne.levees).toEqual(['ajouté', 'EBUSY']);
+    expect(out).toEqual({
+      ok: false,
+      reason:
+        'Could not move "docs/scan.pdf" to "archive/" (EBUSY: EBUSY: simulated). The file may be ' +
+        'open in another program, still being written, or read-only. Call again once it is ' +
+        'complete and closed.',
+    });
+    await seulement(ARCHIVE, []);
+    expect(await readFile(join(DOCS, 'scan.pdf'))).toEqual(
+      Buffer.concat([OCTETS, Buffer.from(' -- ajouté')]),
+    );
   });
 });
