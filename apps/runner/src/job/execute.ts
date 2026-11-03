@@ -20,6 +20,7 @@ import {
   approvalsOldestFirst,
   decryptMcpServerEnv,
   workspaceSandboxReader,
+  cancelJobs,
 } from '@nodal-agents/db';
 import {
   agentJobs,
@@ -93,7 +94,7 @@ import {
 import type { NodalLlmClient } from '@nodal-agents/llm';
 import { liveCallProgress, watchCallProgress } from './call-progress.ts';
 import { resolveAgentLlmClient } from './resolve-llm.ts';
-import { resolveSpeechGenerator } from './resolve-speech.ts';
+import { resolveSpeech } from './resolve-speech.ts';
 import { makeLlmCallSink } from '../llm/call-sink.ts';
 import { runCliRuntimeJob } from '../cli-runtime/run-job.ts';
 import { deferredToolNames, toolsLoadedByCalls, toolsSentThisTurn } from './tool-loading.ts';
@@ -1448,11 +1449,9 @@ export async function maybeResumeParent(
     // `awaiting_delegation` (Nodal review of #575): read above, it may have
     // been resumed to `pending` since by resumeDelegated — a live parent is
     // never cancelled by a stale read.
-    // agent_jobs-write: parent-cascade — la ligne d'un AUTRE job, gardée.
-    await db
-      .update(agentJobs)
-      .set({ status: 'cancelled', updatedAt: new Date() })
-      .where(and(eq(agentJobs.id, parentJobId), eq(agentJobs.status, 'awaiting_delegation')));
+    // La ligne d'un AUTRE job, par la PORTE (a) (#944) : annulée et annoncée,
+    // seulement si elle attend encore ce délégué.
+    await cancelJobs(db, { ids: [parentJobId], onlyFrom: ['awaiting_delegation'] });
     return;
   }
 
@@ -2786,8 +2785,8 @@ async function runJobTracked(
   // generate_speech (#487): built on the workspace OpenRouter key, like
   // searchBackend, and only for a job whose agent has the tool: no key read or
   // decrypted for the others (review of PR #488).
-  const speechGenerator = toolDefs.some((t) => t.name === 'generate_speech')
-    ? await resolveSpeechGenerator(db, job.entityId ?? null)
+  const speech = toolDefs.some((t) => t.name === 'generate_speech')
+    ? await resolveSpeech(db, job.entityId ?? null)
     : undefined;
 
   // La personnalité contredit-elle la liste ? (issue #62) Dev C disait « via
@@ -3397,7 +3396,7 @@ async function runJobTracked(
                   fileWritableSkillSlugs,
                   provisioning: TOOL_PROVISIONING,
                   searchBackend,
-                  ...(speechGenerator ? { speechGenerator } : {}),
+                  ...(speech ? { speech } : {}),
                   resolveAgentToolNames: (targetAgentId: string, placement?: JobPlacement) =>
                     resolveAgentToolNames(db, targetAgentId, placement),
                   requestUserInput,
@@ -5798,7 +5797,7 @@ async function runJobTracked(
         fileWritableSkillSlugs,
         provisioning: TOOL_PROVISIONING,
         searchBackend,
-        ...(speechGenerator ? { speechGenerator } : {}),
+        ...(speech ? { speech } : {}),
         resolveAgentToolNames: (targetAgentId: string, placement?: JobPlacement) =>
           resolveAgentToolNames(db, targetAgentId, placement),
         requestUserInput,
@@ -6119,7 +6118,7 @@ async function runJobTracked(
                 fileWritableSkillSlugs,
                 provisioning: TOOL_PROVISIONING,
                 searchBackend,
-                ...(speechGenerator ? { speechGenerator } : {}),
+                ...(speech ? { speech } : {}),
                 resolveAgentToolNames: (targetAgentId: string, placement?: JobPlacement) =>
                   resolveAgentToolNames(db, targetAgentId, placement),
                 modelInput: modelInputNow(),
@@ -6237,8 +6236,14 @@ async function runJobTracked(
                 // still be 'processing' since cancellation was scoped to the
                 // child); orphan-cleanup would catch it eventually but
                 // surfacing it now matches user intent.
-                // Under this run's claim (#566), like every write of the run.
-                if (!(await setJobStatus(db, jobId as string, 'cancelled'))) {
+                // Under this run's claim (#566), like every write of the run,
+                // and through the door of job ends (#944): announced to the
+                // stream, once, when it lands.
+                const annule = await cancelJobs(db, {
+                  ids: [jobId as string],
+                  guard: ownJobRow(jobId as string),
+                });
+                if (annule.length === 0) {
                   return await ecritureRefusee('cascade_cancel');
                 }
                 await cancelJob(db, jobId as string, runStats(), messages);

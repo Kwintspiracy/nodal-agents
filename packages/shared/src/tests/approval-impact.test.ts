@@ -191,18 +191,43 @@ describe('computeApprovalImpactLine — other tools (unchanged shape)', () => {
 });
 
 describe('computeApprovalImpactLine — file_move : le geste, puis l’écrasement (#879) @cap:travailler-sur-des-fichiers/ecran', () => {
-  it('un déplacement dit « Moves A to B » et qu’il remplace ou retire un fichier partagé', () => {
+  it('un déplacement avec replace:true dit « Moves A to B » et qu’il remplace ou retire un fichier partagé', () => {
     expect(
       computeApprovalImpactLine('file_move', {
         source: 'docs/scan.pdf',
         destination: 'shared/inbox/',
+        replace: true,
       }),
     ).toBe(
       'Moves "docs/scan.pdf" to "shared/inbox/", replacing or removing a file in the shared workspace that this agent did not create.',
     );
   });
 
-  it('une copie dit « Copies A to B »', () => {
+  it('un déplacement sans replace ne remplace jamais (#933) : la carte ne dit que la source retirée', () => {
+    expect(
+      computeApprovalImpactLine('file_move', {
+        source: 'shared/brief.pdf',
+        destination: 'docs/',
+      }),
+    ).toBe(
+      'Moves "shared/brief.pdf" to "docs/", removing from the shared workspace a file that this agent did not create.',
+    );
+  });
+
+  it('une copie avec replace:true dit « Copies A to B » et qu’elle écrase le fichier là', () => {
+    expect(
+      computeApprovalImpactLine('file_move', {
+        source: 'docs/scan.pdf',
+        destination: 'shared/scan.pdf',
+        copy: true,
+        replace: true,
+      }),
+    ).toBe(
+      'Copies "docs/scan.pdf" to "shared/scan.pdf", overwriting the existing file there in the shared workspace.',
+    );
+  });
+
+  it('une copie sans replace ne remplace jamais (#933) : la carte le dit, sans écrasement', () => {
     expect(
       computeApprovalImpactLine('file_move', {
         source: 'docs/scan.pdf',
@@ -210,7 +235,7 @@ describe('computeApprovalImpactLine — file_move : le geste, puis l’écraseme
         copy: true,
       }),
     ).toBe(
-      'Copies "docs/scan.pdf" to "shared/scan.pdf", overwriting the existing file there in the shared workspace.',
+      'Copies "docs/scan.pdf" to "shared/scan.pdf". An existing file there is never replaced: the copy is refused instead.',
     );
   });
 });

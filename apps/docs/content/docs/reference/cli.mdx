@@ -182,10 +182,15 @@ from `~/.nodalai/config.json` (the same resolution `up` uses) — there is no
 fails loud if no config exists (`nodal-agents init` first), and it refuses to
 serve while the **MCP server** switch in Settings is off.
 
-The server exposes a single tool, `run_task`, which creates a tracked job for
-the workspace's root agent (or a chosen agent by slug). Jobs run under the
-agent's own approval rules and budgets, and can never use the configuration
-tools. A client may also state the workspace it expects (`expectedWorkspaceId`):
+The server exposes two tools. `run_task` creates a tracked job for the
+workspace's root agent (or a chosen agent by slug) and returns its job id.
+`get_task` reads that job back, read-only: its status (the whole run, delegated
+work included), the agent's result or error, its deliverables, and any approval
+or question waiting for a person, which is still answered on the dashboard.
+Pass `waitSeconds` (0 to 60) to hold the call until the run finishes or needs a
+person. `get_task` answers only for jobs this workspace started over MCP.
+Jobs run under the agent's own approval rules and budgets, and can never use
+the configuration tools. A client may also state the workspace it expects (`expectedWorkspaceId`):
 when the server speaks for another one, `run_task` refuses
 (`mcp_workspace_mismatch`) and creates nothing. It is a check, never a choice:
 the workspace is always the one of the agent the server serves. When the client

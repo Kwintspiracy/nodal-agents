@@ -6,7 +6,16 @@
 // executes or rejects the gated tool in execute.ts step 11.7). `resolvedBy`
 // records WHERE the decision came from ('api' = dashboard, 'telegram' = button).
 
-import { eq, and, isNull, sql, lockRunHead, writeToRunHeadInbox } from '@nodal-agents/db';
+import {
+  eq,
+  and,
+  isNull,
+  sql,
+  decidePendingRequest,
+  inTransaction,
+  lockRunHead,
+  writeToRunHeadInbox,
+} from '@nodal-agents/db';
 import { approvalRequests, agentJobs, agents } from '@nodal-agents/db';
 import type { AnyDrizzleDb, RunHeadLookup } from '@nodal-agents/db';
 import { z } from 'zod';
@@ -300,34 +309,28 @@ export async function resolveApprovalDecision(
   // passe 1) : une tête introuvable est rendue avec sa raison, et la décision
   // s'écrit quand même. Seule la remise manque, et elle est dite.
   const headEntityId = job.entityId;
-  const { updated, handOff } = await deps.db.transaction(async (tx) => {
-    const t = tx as unknown as AnyDrizzleDb;
+  // `inTransaction` (#944) : la décision que la porte annonce n'est poussée
+  // qu'après le COMMIT de cette transaction.
+  const { decided, handOff } = await inTransaction(deps.db as AnyDrizzleDb, async (t) => {
     const head: RunHeadLookup | null =
       words === null
         ? null
         : headEntityId === null
           ? { found: false, reason: `job ${jobId} has no entity` }
           : await lockRunHead(t, { entityId: headEntityId, jobId });
-    const rows = await t
-      .update(approvalRequests)
-      .set({
-        status: input.decision === 'approve' ? 'approved' : 'rejected',
-        resolvedAt: new Date(),
-        resolvedBy: input.resolvedBy,
-        notes,
-        answer: answerToStore,
-        response: responseToStore,
-      })
-      .where(
-        and(
-          eq(approvalRequests.id, input.approvalRequestId),
-          eq(approvalRequests.status, 'pending'),
-          ...(input.expectedDraft === undefined ? [] : [draftIs(input.expectedDraft)]),
-        ),
-      )
-      .returning({ id: approvalRequests.id });
+    // PORTE (b) : trancher, sous la garde `pending` (F-14) et, pour une
+    // élicitation remplie depuis un canal, celle du brouillon attendu.
+    const won = await decidePendingRequest(t, {
+      id: input.approvalRequestId,
+      status: input.decision === 'approve' ? 'approved' : 'rejected',
+      resolvedBy: input.resolvedBy,
+      notes,
+      answer: answerToStore,
+      response: responseToStore,
+      extraWhere: input.expectedDraft === undefined ? [] : [draftIs(input.expectedDraft)],
+    });
     let result: CardWordsHandOff = { kind: 'no_words' };
-    if (rows.length > 0 && words !== null && head !== null) {
+    if (won && words !== null && head !== null) {
       if (!head.found) {
         result = { kind: 'no_head', reason: head.reason };
       } else {
@@ -342,7 +345,7 @@ export async function resolveApprovalDecision(
             : { kind: 'head_finished', headJobId: d.headJobId, status: d.status };
       }
     }
-    return { updated: rows, handOff: result };
+    return { decided: won, handOff: result };
   });
   if (handOff.kind === 'head_finished') {
     // La tête a fini : la personne a répondu à un délégué qui tourne encore
@@ -360,7 +363,7 @@ export async function resolveApprovalDecision(
     );
   }
 
-  if (updated.length === 0) {
+  if (!decided) {
     // Lost the race — re-read to report the status the winner left behind.
     const [current] = await deps.db
       .select({ status: approvalRequests.status })

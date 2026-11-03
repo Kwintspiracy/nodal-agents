@@ -1,15 +1,16 @@
 // Built-in: generate_speech — text in, a WAV audio file written in the
 // agent's folders (#487). WAV, not mp3: Gemini TTS through OpenRouter only
-// answers raw PCM (it refused mp3 in run 16052ae6), which packages/llm wraps
+// answers raw PCM (it refused mp3 in run 16052ae6), which packages/speech wraps
 // in a WAV header; there is no encoder to make an mp3 of it.
 //
 // The owner, 2026-09-25: "ce que je veux, c'est être capable de générer des
 // fichiers audio à partir de texte". Not a talking agent: a file, like any
 // other the agent writes.
 //
-// The audio comes from `ctx.speechGenerator`, which the runner builds on the
-// workspace's OpenRouter key (packages/tools never sees a key, same rule as
-// web_search's premium backend). The file is written like `file_write` writes:
+// The audio comes from `ctx.speech`: the OpenRouter SpeechAdapter of
+// packages/speech, the one speech path of the platform (#940), which the
+// runner binds to the workspace's OpenRouter key (packages/tools never sees a
+// key, same rule as web_search's premium backend). The file is written like `file_write` writes:
 // the same folder resolution (never outside the agent's folders), the same
 // atomic tempfile-then-rename, the same gate before overwriting a file in the
 // shared workspace.
@@ -21,7 +22,11 @@ import { mkdir } from 'node:fs/promises';
 import { dirname, extname } from 'node:path';
 import { writeFileAtomically } from './file-ops/atomic-write';
 import { z } from 'zod';
-import { DEFAULT_SPEECH_VOICE, SPEECH_MODELS, SPEECH_MODEL_IDS } from '@nodal-agents/shared';
+import {
+  DEFAULT_GEMINI_VOICE,
+  OPENROUTER_SPEECH_MODELS,
+  type OpenRouterSpeechModelId,
+} from '@nodal-agents/speech';
 import type { ToolDefinition } from '../types';
 import { failureText, writtenFile } from '../presenters';
 import { deliverableTypeForWrittenFile } from '../verification/written-file-type';
@@ -40,6 +45,11 @@ export const MAX_SPEECH_CHARS = 5_000;
 
 /** An audio file can be larger than a text file; still bounded. */
 export const MAX_SPEECH_BYTES = 20 * MAX_WRITE_BYTES;
+
+const SPEECH_MODEL_IDS = OPENROUTER_SPEECH_MODELS.map((m) => m.id) as [
+  OpenRouterSpeechModelId,
+  ...OpenRouterSpeechModelId[],
+];
 
 export const GenerateSpeechInputSchema = z.object({
   text: z
@@ -61,14 +71,14 @@ export const GenerateSpeechInputSchema = z.object({
     .enum(SPEECH_MODEL_IDS)
     .optional()
     .default(SPEECH_MODEL_IDS[0])
-    .describe(SPEECH_MODELS.map((m) => `${m.id}: ${m.summary}`).join(' ')),
+    .describe(OPENROUTER_SPEECH_MODELS.map((m) => `${m.id}: ${m.note}`).join(' ')),
   voice: z
     .string()
     .min(1)
     .optional()
-    .default(DEFAULT_SPEECH_VOICE)
+    .default(DEFAULT_GEMINI_VOICE)
     .describe(
-      `The voice name, as the model's provider names it (default "${DEFAULT_SPEECH_VOICE}").`,
+      `The voice name, as the model's provider names it (default "${DEFAULT_GEMINI_VOICE}").`,
     ),
   style: z
     .string()
@@ -153,7 +163,7 @@ export const generateSpeechTool: ToolDefinition<
         reason: `The file is WAV: "${input.path}" must end in .wav (or have no extension).`,
       };
     }
-    if (!ctx.speechGenerator) {
+    if (!ctx.speech) {
       return {
         ok: false,
         reason:
@@ -163,36 +173,37 @@ export const generateSpeechTool: ToolDefinition<
     }
     try {
       const path = await resolveAndCheckPath(ctx, target);
-      const audio = await ctx.speechGenerator({
+      const spoken = await ctx.speech.synthesize({
         model: input.model,
         text: input.text,
-        voice: input.voice,
+        voiceId: input.voice,
         ...(input.style !== undefined ? { style: input.style } : {}),
       });
-      if (audio.bytes.byteLength === 0) {
+      const audio = spoken.audio;
+      if (audio.byteLength === 0) {
         return { ok: false, reason: `${input.model} returned no audio for this text.` };
       }
-      if (!looksLikeWav(audio.bytes)) {
+      if (!looksLikeWav(audio)) {
         return {
           ok: false,
           reason: `${input.model} answered, but not with audio. Nothing was written.`,
         };
       }
-      if (audio.bytes.byteLength > MAX_SPEECH_BYTES) {
+      if (audio.byteLength > MAX_SPEECH_BYTES) {
         return {
           ok: false,
-          reason: `The audio is ${audio.bytes.byteLength} bytes (max ${MAX_SPEECH_BYTES}). Split the text.`,
+          reason: `The audio is ${audio.byteLength} bytes (max ${MAX_SPEECH_BYTES}). Split the text.`,
         };
       }
       const dir = dirname(path);
       await mkdir(dir, { recursive: true });
       // Atomic write, last ownership check and written-content fingerprint (#505).
-      await writeFileAtomically(ctx, path, audio.bytes);
+      await writeFileAtomically(ctx, path, audio);
       return {
         ok: true,
         written: true,
         path,
-        bytes: audio.bytes.byteLength,
+        bytes: audio.byteLength,
         model: input.model,
         voice: input.voice,
       };

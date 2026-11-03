@@ -755,7 +755,7 @@ describe('file_move : l’instantané couvre les DEUX dossiers, par le vrai seam
     await writeFile(join(ws, 'rapport.pdf'), 'ancienne version');
     const res = await executeTool(
       fileMoveTool as never,
-      { source: 'export.bin', destination: 'rapport.pdf', copy: true },
+      { source: 'export.bin', destination: 'rapport.pdf', copy: true, replace: true },
       // Un dossier de l'agent, pas `shared` : là, remplacer passerait par la porte.
       ctx({ turn: 72, workspaces: [{ label: 'dossier', path: ws }] as never }),
       opts,

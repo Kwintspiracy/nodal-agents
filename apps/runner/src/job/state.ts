@@ -3,6 +3,7 @@
 
 import { and, eq, notInArray, or, isNull, sql } from '@nodal-agents/db';
 import { agentJobs, toolCalls, heldBy, ownJobRow, RUN_ACTS_WHILE } from '@nodal-agents/db';
+import { announceTransitions } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import type { JobFailureHint, JobResultKind } from '@nodal-agents/shared';
 import { isInboxMessage } from '@nodal-agents/shared';
@@ -29,6 +30,18 @@ export type JobStatus =
   | 'awaiting_approval'
   | 'awaiting_delegation'
   | 'cancelled';
+
+/** Les statuts d'où un job ne repart plus. */
+export type TerminalJobStatus = Extract<JobStatus, 'completed' | 'failed' | 'cancelled'>;
+
+/**
+ * Ce que `setJobStatus` peut écrire : tout SAUF un statut terminal (#944, revue
+ * de #956, passe 2). Un statut terminal ne s'écrit que par une PORTE, qui
+ * l'annonce au flux (`completeJob`, `failJob`, `cancelRootJob` ici,
+ * `cancelJobs` dans @nodal-agents/db) ; c'est le compilateur qui le refuse
+ * ici, pas seulement le test d'architecture.
+ */
+export type NonTerminalJobStatus = Exclude<JobStatus, TerminalJobStatus>;
 
 // ─── JobStateError ────────────────────────────────────────────────────────────
 
@@ -87,12 +100,15 @@ export function assertTransition(jobId: string, from: JobStatus, to: JobStatus):
 /**
  * Update a job's status in DB. Does NOT validate transition — caller must call
  * assertTransition() first. Used by execute.ts where we've already validated.
+ *
+ * Jamais un statut terminal : le type le refuse (`NonTerminalJobStatus`), et
+ * `extra` ne peut pas en glisser un par la bande (`status?: never`).
  */
 export async function setJobStatus(
   db: AnyDrizzleDb,
   jobId: string,
-  status: JobStatus,
-  extra: Record<string, unknown> = {},
+  status: NonTerminalJobStatus,
+  extra: Record<string, unknown> & { status?: never } = {},
 ): Promise<boolean> {
   // Écrite par le run qui tient ce job : seulement sous sa prise (#566).
   const rows = await db
@@ -555,6 +571,10 @@ export async function completeJob(
     if (messages !== undefined) await fillResultFromFinalTextIfEmpty(db, jobId, messages);
     await fillResultFromChildrenIfEmpty(db, jobId);
   }
+  // #944 — PORTE (a) : le succès qui atterrit est annoncé. Son unique appelante
+  // (`finalizeJobSuccess`) l'écrit dans une transaction `inTransaction` :
+  // l'annonce part après le COMMIT, avec le résultat rempli ci-dessus.
+  if (landed) await announceTransitions(db, { endedJobIds: [jobId] });
   return landed;
 }
 
@@ -590,6 +610,10 @@ export async function completeJob(
  * plutôt que de laisser la valeur en place est volontaire — cette écriture est
  * la PREMIÈRE à poser un état terminal sur la ligne (elle est gardée par
  * « statut non terminal »), donc aucun geste antérieur n'est effacé.
+ *
+ * #944 — PORTE (a) : l'échec qui ATTERRIT est annoncé (`announceTransitions`,
+ * @nodal-agents/db). Dans une transaction ouverte par `inTransaction`, l'annonce
+ * attend son COMMIT ; hors transaction, elle part tout de suite.
  */
 export async function failJob(
   db: AnyDrizzleDb,
@@ -678,6 +702,7 @@ export async function failJob(
       );
   }
 
+  if (landed) await announceTransitions(db, { endedJobIds: [jobId] });
   return landed;
 }
 
@@ -709,7 +734,10 @@ export async function cancelRootJob(
     })
     .where(and(ownJobRow(jobId), notInArray(agentJobs.status, TERMINAL_STATUSES)))
     .returning({ id: agentJobs.id });
-  return rows.length > 0 && rows[0]?.id === jobId;
+  const landed = rows.length > 0 && rows[0]?.id === jobId;
+  // #944 — PORTE (a) : la fin du root est annoncée, une fois.
+  if (landed) await announceTransitions(db, { endedJobIds: [jobId] });
+  return landed;
 }
 
 /**

@@ -20,6 +20,9 @@ import { chatRoute } from './routes/chat.ts';
 import { chatStreamRoute } from './routes/chat-stream.ts';
 import { chatStopRoute } from './routes/chat-stop.ts';
 import { chatLiveRoute } from './routes/chat-live.ts';
+import { eventsRoute } from './routes/events.ts';
+import { transitionListener } from './events/publish.ts';
+import { listenToTransitions } from '@nodal-agents/db';
 import { webhookRoute } from './routes/webhook.ts';
 import { codeTaskDoctorRoute } from './routes/code-task-doctor.ts';
 import { sandboxRoute } from './routes/sandbox.ts';
@@ -95,6 +98,10 @@ export function createApp(
   whatsappManager: WhatsAppManagerHandle | null = null,
 ): Hono {
   const app = new Hono();
+
+  // #944 — ce que les portes annoncent (un job fini, une demande tranchée ou
+  // expirée), une fois commis, devient le flux de `GET /api/events`.
+  listenToTransitions(transitionListener());
 
   // ── requireTrustedOrigin ─────────────────────────────────────────────────────
   //
@@ -229,6 +236,9 @@ export function createApp(
   app.use('/api/chat/stream', requireRunnerAuth);
   app.use('/api/chat/stop', requireRunnerAuth);
   app.use('/api/chat/live', requireRunnerAuth);
+  // #944 — le flux poussé des événements de job. Même garde que /api/chat* :
+  // c'est par elle, et par elle seule, que le jeton d'appareil de #946 entrera.
+  app.use('/api/events', requireRunnerAuth);
   app.use('/api/approve', requireRunnerAuth);
   app.use('/api/cron', requireRunnerAuth);
   // P11 — le diff d'un fichier écrit par un tour. Même garde que /api/approve :
@@ -252,6 +262,7 @@ export function createApp(
   app.post('/api/chat/stream', (c) => chatStreamRoute(c, deps, runnerEnv));
   app.post('/api/chat/stop', (c) => chatStopRoute(c, deps));
   app.post('/api/chat/live', (c) => chatLiveRoute(c, deps));
+  app.get('/api/events', (c) => eventsRoute(c, deps));
 
   app.post('/api/approve', (c) => approveRoute(c, deps, runnerEnv));
 
@@ -334,6 +345,10 @@ export function installProcessErrorHandlers(): void {
 
 async function main(): Promise<void> {
   installProcessErrorHandlers();
+  // #944 — l'écouteur des transitions avant TOUT ce qui peut en écrire : le
+  // gestionnaire WhatsApp, démarré avant `createApp`, reçoit déjà des messages
+  // (un `/stop`). `createApp` le rebranche, à l'identique.
+  listenToTransitions(transitionListener());
   const runnerEnv = parseEnv();
   // Before anything reads or writes the home (secrets.key, workspaces, the
   // sandbox): declare this instance to the others, then create it. A runner

@@ -153,6 +153,15 @@ export type {
   ApprovalCardLocation,
 } from './repos/approval-cards.ts';
 export {
+  announceTransitions,
+  cancelJobs,
+  decidePendingRequest,
+  expirePendingRequests,
+  inTransaction,
+  listenToTransitions,
+} from './repos/transitions.ts';
+export type { TransitionListener, Transitions } from './repos/transitions.ts';
+export {
   cancelJobTree,
   insertChildJob,
   listConversationRuns,

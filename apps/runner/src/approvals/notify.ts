@@ -49,6 +49,7 @@ import {
 } from '@nodal-agents/delivery';
 import type { ApprovalGateRequest } from '@nodal-agents/tools';
 import type { RunnerDeps } from '../deps.ts';
+import { publishApprovalRequested } from '../events/publish.ts';
 import { loadElicitationCard, renderElicitationCardFor } from './elicitation-card-view.ts';
 
 /** callback_data carried by the buttons. Parsed by approval-callback.ts. Stays well under Telegram's 64-byte cap. */
@@ -518,6 +519,11 @@ export async function notifyApprovalCreated(
   deps: RunnerDeps,
   req: ApprovalGateRequest,
 ): Promise<void> {
+  // #944 — la demande est posée : elle est poussée à tout client qui écoute son
+  // espace, AVANT et indépendamment de toute carte de canal. Tous les genres
+  // passent ici — approbation, `ask_user`, question d'un serveur MCP —, c'est
+  // donc la seule porte de publication.
+  await publishApprovalRequested(deps.db, req);
   try {
     // ── 0145 — la question d'un serveur MCP va là où la DEMANDE est née ──────
     // Sa propre livraison : la conversation d'ORIGINE (pas celle du
