@@ -95,7 +95,9 @@ test.afterAll(async () => {
   }
 });
 
-/** Deux secondes de silence, en WAV 16 bits mono à 8 kHz : une réponse qui joue. */
+/** Du silence, en WAV 16 bits mono à 8 kHz : une réponse qui joue. Assez longue
+ * (20 s) pour jouer encore quand le fil relu paraît, même en `next dev` qui
+ * compile à la première visite ; le parcours la coupe par Stop. */
 function silentWavBase64(seconds: number): string {
   const rate = 8000;
   const samples = rate * seconds;
@@ -214,7 +216,7 @@ test.describe('the chat microphone @cap:parler-a-un-agent/ecran', () => {
           spawnedJobId: null,
           stopped: false,
           cutReason: null,
-          audio: { mimeType: 'audio/wav', base64: silentWavBase64(4) },
+          audio: { mimeType: 'audio/wav', base64: silentWavBase64(20) },
           speechError: null,
         }),
       });
