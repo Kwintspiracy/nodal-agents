@@ -53,9 +53,15 @@ export interface ExitReportingOptions {
   logFile?: string;
 }
 
-// WHO DECIDES "UNEXPECTED" (#970). The exit is vitest's own when its `stop()`
-// reached a child that was still there; it is unexpected when the child was
-// LOST first. The `exit` event is not the moment of death: a reply vitest
+// WHO DECIDES "UNEXPECTED" (#970). The exit is vitest's own when vitest asked
+// the child to stop while it was still there; it is unexpected when the child
+// was LOST first. Vitest asks in one of two ways: the `stop` message (a
+// graceful stop; its worker answers `stopped`, drops its listeners and leaves
+// on its own with code 0, often before the pool reaches `stop()`), or
+// `stop()` itself (a forced stop sends no message). The first of the two is
+// the request.
+//
+// The `exit` event is not the moment of death either: a reply vitest
 // sends to a child that has just died fails (`write EPIPE`, or `Channel
 // closed` once the pipe is down), the child emits `error`, and vitest's pool
 // answers that error with `stop()`, all before the `exit` event arrives
@@ -67,8 +73,8 @@ export interface ExitReportingOptions {
 // So the child is lost at the FIRST of its signs, `error`, `disconnect` or
 // `exit`, and the listeners that record it are PREPENDED to the child's own:
 // they run before any other listener of the same event, whoever registered
-// first, so a listener that calls `stop()` synchronously still finds the child
-// marked lost.
+// first, so a listener that asks for the stop synchronously still finds the
+// child marked lost.
 const LOST_SIGNS = ['error', 'disconnect', 'exit'] as const;
 
 type Child = Pick<ChildProcess, 'pid' | 'prependListener'>;
@@ -76,7 +82,7 @@ type Child = Pick<ChildProcess, 'pid' | 'prependListener'>;
 class ExitReportingForksWorker extends ForksPoolWorker {
   override readonly name = EXIT_REPORTING_POOL;
   private lost = false;
-  private stoppedByVitest = false;
+  private stopRequested = false;
   private files: readonly string[] = [];
 
   constructor(
@@ -91,7 +97,12 @@ class ExitReportingForksWorker extends ForksPoolWorker {
     if (message.type === 'run' || message.type === 'collect') {
       this.files = message.context.files.map((f) => relative(this.root, f.filepath));
     }
+    if (message.type === 'stop') this.requestStop();
     super.send(message);
+  }
+
+  private requestStop(): void {
+    if (!this.lost) this.stopRequested = true;
   }
 
   override async start(): Promise<void> {
@@ -111,13 +122,13 @@ class ExitReportingForksWorker extends ForksPoolWorker {
     };
     for (const sign of LOST_SIGNS) child.prependListener(sign, markLost);
     this.on('exit', (code: number | null, signal?: string | null) => {
-      if (this.stoppedByVitest) return;
+      if (this.stopRequested) return;
       this.report(describeWorkerExit({ pid, code, signal: signal ?? null, files: this.files }));
     });
   }
 
   override async stop(): Promise<void> {
-    if (!this.lost) this.stoppedByVitest = true;
+    this.requestStop();
     await super.stop();
   }
 }

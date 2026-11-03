@@ -294,6 +294,34 @@ describe('the pool decides "unexpected" whatever the order of the exit listeners
     },
   );
 
+  // vitest's own worker, once it has answered `stopped`, drops its `message`
+  // listeners and leaves on its own with code 0, often before the pool gets to
+  // `stop()` (seen in CI Windows run 41659236343: `code=0` on a green run).
+  it.each([
+    {
+      signs: 'disconnect, then exit 0',
+      lose: (c: FakeChild) => {
+        c.connected = false;
+        c.emit('disconnect');
+        c.exit(0);
+      },
+    },
+    { signs: 'exit 0 alone', lose: (c: FakeChild) => c.exit(0) },
+  ])(
+    'a child asked to stop that leaves on its own before stop() ($signs): nothing is written',
+    async ({ lose }) => {
+      const out = await drive(async (worker, child) => {
+        await worker.start();
+        worker.send(RUN);
+        worker.send({ type: 'stop' } as unknown as WorkerRequest);
+        child.die();
+        lose(child);
+        await worker.stop();
+      });
+      expect(out).toEqual({ stderr: [], logFile: [] });
+    },
+  );
+
   it('a child vitest stops while it lives: nothing is written, even when the stop is answered by a write error', async () => {
     const out = await drive(async (worker, child) => {
       await worker.start();
