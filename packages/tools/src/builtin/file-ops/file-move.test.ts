@@ -66,6 +66,12 @@ const panne = vi.hoisted(() => ({
    * même nom.
    */
   remplaceSource: null as string | null,
+  /** `stat` et `lstat` ne donnent pas la date de création (elle vaut 0), comme certains volumes. */
+  sansNaissance: false,
+  /** Pendant le retrait raté (de la source, ou du temporaire), un sosie remplace ce chemin. */
+  sosie: null as string | null,
+  /** Le premier `unlink` d'un temporaire (`….tmp`) lève EBUSY. */
+  tmpEchoue: false,
   /** Les fichiers ouverts EN LECTURE (`open` sans « wx », `readFile`) : ce que le code lit. */
   lectures: [] as string[],
   /** Après la copie de ce chemin (`copyFile`), un programme ajoute ces octets à sa fin. */
@@ -98,7 +104,24 @@ vi.mock('node:fs/promises', async (importOriginal) => {
   };
   const sansNumero = <T extends { ino: number | bigint } | undefined>(st: T): T => {
     if (panne.inoNul && st !== undefined) st.ino = typeof st.ino === 'bigint' ? BigInt(0) : 0;
+    if (panne.sansNaissance && st !== undefined) {
+      const b = st as unknown as { birthtimeMs: number | bigint; birthtimeNs?: bigint };
+      b.birthtimeMs = typeof b.birthtimeMs === 'bigint' ? BigInt(0) : 0;
+      if (b.birthtimeNs !== undefined) b.birthtimeNs = BigInt(0);
+    }
     return st;
+  };
+  /**
+   * Un SOSIE remplace le fichier à `path` : même taille, même date de
+   * modification, d'autres octets — ce que pose un outil qui garde les dates.
+   */
+  const poseSosie = async (path: string): Promise<void> => {
+    const st = await actual.stat(path);
+    const autre = `${path}.sosie`;
+    await actual.writeFile(autre, Buffer.alloc(Number(st.size), 0x58));
+    await actual.utimes(autre, st.atime, st.mtime);
+    await actual.rename(autre, path);
+    panne.levees.push('sosie');
   };
   return {
     ...actual,
@@ -151,7 +174,17 @@ vi.mock('node:fs/promises', async (importOriginal) => {
     },
     unlink: async (path: string) => {
       if (meme(path, panne.unlinkAussi)) return leve('EBUSY');
+      if (panne.tmpEchoue && path.endsWith('.tmp')) {
+        panne.tmpEchoue = false;
+        if (panne.sosie !== null) await poseSosie(panne.sosie);
+        panne.sosie = null;
+        return leve('EBUSY');
+      }
       if (!meme(path, panne.unlinkOf)) return actual.unlink(path);
+      if (panne.sosie !== null) {
+        await poseSosie(panne.sosie);
+        panne.sosie = null;
+      }
       const e = panne.ecraseAvantRetour;
       if (e !== null) {
         panne.ecraseAvantRetour = null;
@@ -260,6 +293,9 @@ afterEach(async () => {
   panne.ajouteApresCopie = null;
   panne.ajouteAvantRetour = null;
   panne.remplaceSource = null;
+  panne.sansNaissance = false;
+  panne.sosie = null;
+  panne.tmpEchoue = false;
   panne.lectures = [];
   panne.renameVers = null;
   panne.levees = [];
@@ -1367,10 +1403,11 @@ describe('file_move — un déplacement inachevé se dit d’après le disque, v
     });
   }
 
-  it('entre deux volumes, la source complétée pendant la copie : la copie de l’appel est reconnue, et retirée', async () => {
+  it('entre deux volumes, la source complétée pendant la copie : la copie de l’appel est reconnue, et gardée', async () => {
     // La destination porte la copie que l'appel a faite, pas les octets
-    // ACTUELS de la source : c'est bien la sienne, et le retour en arrière la
-    // retire. La source, complétée, reste : rien n'a bougé.
+    // ACTUELS de la source : c'est bien la sienne. Mais ses octets ne restent
+    // plus à la source, complétée depuis : le retour en arrière ne la retire
+    // pas (revue A, passe 5), et l'agent apprend que les deux sont gardés.
     const { src, cible } = await preparer({ exdev: true });
     panne.ajouteApresCopie = { path: src, text: AJOUT };
 
@@ -1380,11 +1417,11 @@ describe('file_move — un déplacement inachevé se dit d’après le disque, v
     expect(out).toEqual({
       ok: false,
       reason:
-        'Could not move "docs/scan.pdf" to "archive/" (EBUSY: EBUSY: simulated). The file may be ' +
-        'open in another program, still being written, or read-only. Call again once it is ' +
-        'complete and closed.',
+        `"docs/scan.pdf" was placed at "${cible}", but the original could not be removed ` +
+        '(EBUSY: EBUSY: simulated), and "docs/scan.pdf" no longer holds the same bytes as ' +
+        `"${cible}": both are kept. Look at both before doing anything else, and tell the person.`,
     });
-    expect(await existe(cible)).toBe(false);
+    expect(await readFile(cible)).toEqual(OCTETS);
     expect(await readFile(join(DOCS, 'scan.pdf'))).toEqual(
       Buffer.concat([OCTETS, Buffer.from(AJOUT)]),
     );
@@ -1606,5 +1643,69 @@ describe('file_move — une source remplacée pendant l’appel n’est jamais p
     });
     expect(await readFile(cible, 'utf8')).toBe('écrit par un autre programme');
     expect(await readFile(join(DOCS, 'scan.pdf'), 'utf8')).toBe('un autre fichier, au même nom');
+  });
+});
+
+describe('file_move — un retrait n’a lieu que si les octets restent ailleurs (revue A de #938, passe 5) @cap:travailler-sur-des-fichiers/moteur', () => {
+  // Sans numéros de fichier ni date de création, un SOSIE (même taille, même
+  // date de modification, d'autres octets, comme en pose un outil qui garde
+  // les dates) ressemble à l'original. Cette ressemblance choisit le texte ;
+  // elle n'autorise jamais un retrait : la destination, seul exemplaire,
+  // reste.
+  beforeEach(() => {
+    panne.inoNul = true;
+    panne.sansNaissance = true;
+  });
+
+  for (const cas of [
+    { nom: 'un lien sur le même volume', exdev: false, levees: ['sosie', 'EBUSY'] },
+    { nom: 'une copie entre deux volumes', exdev: true, levees: ['EXDEV', 'sosie', 'EBUSY'] },
+  ]) {
+    it(`${cas.nom} : un sosie posé sur la source ne fait pas retirer la destination`, async () => {
+      await writeFile(join(DOCS, 'scan.pdf'), OCTETS);
+      // Une date à la seconde, comme la garde un outil de synchronisation.
+      const date = new Date('2026-03-31T10:00:00Z');
+      await utimes(join(DOCS, 'scan.pdf'), date, date);
+      const src = await realpath(join(DOCS, 'scan.pdf'));
+      const cible = join(await realpath(ARCHIVE), 'scan.pdf');
+      if (cas.exdev) panne.link = [{ from: src, code: 'EXDEV' }];
+      panne.unlinkOf = src;
+      panne.sosie = src;
+
+      const out = await deplacer({ source: 'docs/scan.pdf', destination: 'archive/' });
+
+      expect(panne.levees).toEqual(cas.levees);
+      expect(out).toEqual({
+        ok: false,
+        reason:
+          `"docs/scan.pdf" was placed at "${cible}", but the original could not be removed ` +
+          '(EBUSY: EBUSY: simulated), and "docs/scan.pdf" no longer holds the same bytes as ' +
+          `"${cible}": both are kept. Look at both before doing anything else, and tell the ` +
+          'person.',
+      });
+      expect(await readFile(cible)).toEqual(OCTETS);
+      expect(await readFile(join(DOCS, 'scan.pdf'))).toEqual(Buffer.alloc(OCTETS.length, 0x58));
+    });
+  }
+
+  it('une copie dont le temporaire ne se retire pas : un sosie à destination n’est pas retiré, et c’est dit', async () => {
+    await writeFile(join(DOCS, 'scan.pdf'), OCTETS);
+    const cible = join(await realpath(ARCHIVE), 'scan.pdf');
+    panne.tmpEchoue = true;
+    panne.sosie = cible;
+
+    const out = await deplacer({ source: 'docs/scan.pdf', destination: 'archive/', copy: true });
+
+    expect(panne.levees).toEqual(['sosie', 'EBUSY']);
+    expect(out).toEqual({
+      ok: false,
+      reason:
+        'Could not copy "docs/scan.pdf" to "archive/" (EBUSY: EBUSY: simulated; nothing was ' +
+        `removed from "${cible}": what is there could not be proven to be this call's copy). ` +
+        'The file may be open in another program, still being written, or read-only. Call ' +
+        'again once it is complete and closed.',
+    });
+    expect(await readFile(cible)).toEqual(Buffer.alloc(OCTETS.length, 0x58));
+    expect(await readFile(join(DOCS, 'scan.pdf'))).toEqual(OCTETS);
   });
 });

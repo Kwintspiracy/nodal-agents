@@ -360,7 +360,7 @@ function reservationMark(): Buffer {
 export const RESERVATION_BYTES = reservationMark().length;
 
 /** Ce que peut rendre un retrait : fait, refusé (ce n'est pas ce que l'appel a posé), ou l'erreur du système. */
-type Removal = 'removed' | 'not_ours' | { error: unknown };
+type Removal = 'removed' | 'not_ours' | 'kept' | { error: unknown };
 
 async function unlinkOurs(path: string): Promise<Removal> {
   return unlink(path).then(
@@ -432,10 +432,14 @@ function hasIds(a: BigIntStats, b: BigIntStats): boolean {
 /**
  * `now` est-il le fichier relevé dans `ref` ? Par le volume et le numéro de
  * fichier quand le volume en donne ; sinon par la taille, la date de
- * modification et la date de création, à la nanoseconde. Un programme qui
- * écrit par-dessus change au moins la date de modification ; un fichier
- * étranger qui porterait les trois à l'identique est le seul cas que cette
- * preuve ne distingue pas.
+ * modification et la date de création, à la nanoseconde.
+ *
+ * Sans numéros de fichier, cette réponse peut être TROMPÉE : un outil qui
+ * garde les dates (rsync -t, robocopy /COPY:T, une restauration) pose un
+ * fichier de même taille et de même date ; un volume qui ne donne pas la date
+ * de création, ou la date à 2 s de FAT, complète la ressemblance (revue A de
+ * #938, passe 5). Elle ne sert donc qu'à CHOISIR le texte dit à l'agent ;
+ * elle n'autorise jamais seule un retrait (`bytesRemainAt`).
  */
 function sameIdentity(now: BigIntStats, ref: BigIntStats): boolean {
   if (hasIds(now, ref)) return now.dev === ref.dev && now.ino === ref.ino;
@@ -465,11 +469,33 @@ async function sameBytes(a: string, b: string): Promise<boolean> {
   }
 }
 
-/** Retire `path` s'il est toujours ce que l'appel y a posé (son identité). */
-async function removeIfPlaced(path: string, id: BigIntStats): Promise<Removal> {
+/**
+ * Un retrait ne détruit rien seulement si les octets de `path` restent
+ * ailleurs : `path` et `other` sont le même fichier par un VRAI numéro de
+ * fichier, ou portent les mêmes octets — comparés à eux-mêmes, sur un chemin
+ * d'échec seulement. La ressemblance de taille et de dates ne suffit jamais.
+ */
+async function bytesRemainAt(path: string, other: string): Promise<boolean> {
+  const [a, b] = await Promise.all([
+    lstat(path, { bigint: true }).catch(() => null),
+    lstat(other, { bigint: true }).catch(() => null),
+  ]);
+  if (a === null || b === null) return false;
+  if (hasIds(a, b) && a.dev === b.dev && a.ino === b.ino) return true;
+  return sameBytes(path, other);
+}
+
+/**
+ * Retire `path`, ce que l'appel y a posé, s'il est prouvé être le sien par un
+ * VRAI numéro de fichier (`id`), ou que ses octets restent à `original`.
+ * Sinon il reste, et le dit (`kept`).
+ */
+async function removeIfPlaced(path: string, id: BigIntStats, original: string): Promise<Removal> {
   const now = await lstat(path, { bigint: true }).catch(() => null);
   if (now === null) return 'removed';
-  return sameIdentity(now, id) ? unlinkOurs(path) : 'not_ours';
+  const own = hasIds(now, id) && now.dev === id.dev && now.ino === id.ino;
+  if (own || (await bytesRemainAt(path, original).catch(() => false))) return unlinkOurs(path);
+  return 'kept';
 }
 
 /**
@@ -477,6 +503,15 @@ async function removeIfPlaced(path: string, id: BigIntStats): Promise<Removal> {
  * avait posé : l'agent l'apprend, avec le chemin (invariant #4).
  */
 function withLeftover(err: unknown, path: string, removal: Removal): unknown {
+  if (removal === 'kept') {
+    return Object.assign(
+      new Error(
+        `${err instanceof Error ? err.message : String(err)}; nothing was removed from ` +
+          `"${path}": what is there could not be proven to be this call's copy`,
+      ),
+      { code: errnoOf(err) },
+    );
+  }
   if (typeof removal === 'string') return err;
   const left = removal.error;
   return Object.assign(
@@ -543,7 +578,7 @@ async function placeCopy(source: string, destination: string): Promise<BigIntSta
       try {
         await unlink(tmp);
       } catch (err) {
-        throw withLeftover(err, destination, await removeIfPlaced(destination, id));
+        throw withLeftover(err, destination, await removeIfPlaced(destination, id, source));
       }
     }
     return id;
@@ -587,10 +622,14 @@ async function moveWithoutReplacing(
     // Le retour en arrière retire la destination : seulement quand la source
     // est TOUJOURS le fichier de départ. Si un autre fichier l'a remplacée, la
     // destination porte le seul exemplaire de l'original (arbitrage du 03/11).
+    // … et seulement quand les octets de la destination restent à la source
+    // (`bytesRemain`) : la seule identité, sans numéros de fichier, peut être
+    // trompée (revue A, passe 5).
     if (
       'source' in seen &&
       seen.source === 'original' &&
       seen.atDestination === 'ours' &&
+      seen.bytesRemain === true &&
       (await unlinkOurs(destination)) === 'removed'
     ) {
       throw err;
@@ -619,6 +658,12 @@ type Seen =
   | {
       source: 'original' | 'replaced' | 'absent';
       atDestination: 'ours' | 'foreign' | 'absent';
+      /**
+       * Source d'origine ET destination de l'appel : les octets de la
+       * destination restent-ils à la source (`bytesRemainAt`) ? Seule cette
+       * preuve autorise le retour en arrière.
+       */
+      bytesRemain?: boolean;
     };
 
 async function observePartialMove(
@@ -657,6 +702,13 @@ async function observePartialMove(
     ) {
       sourceIs = 'original';
       atDestination = 'ours';
+    }
+    if (sourceIs === 'original' && atDestination === 'ours') {
+      return {
+        source: sourceIs,
+        atDestination,
+        bytesRemain: await bytesRemainAt(destination, source),
+      };
     }
     return { source: sourceIs, atDestination };
   } catch (error) {
@@ -727,6 +779,13 @@ function partialMove(
     );
   }
   if (seen.source === 'original') {
+    if (seen.atDestination === 'ours' && seen.bytesRemain === false) {
+      return fail(
+        `"${a}" was placed at "${destination}", but the original could not be removed ` +
+          `(${why}), and "${a}" no longer holds the same bytes as "${destination}": both are ` +
+          'kept. Look at both before doing anything else, and tell the person.',
+      );
+    }
     if (seen.atDestination === 'ours') {
       return fail(
         `"${a}" was placed at "${destination}", but the original could not be removed ` +
