@@ -8,6 +8,7 @@
 
 import { and, eq, gte, inArray, isNull, lt, or } from '@nodal-agents/db';
 import { agentJobs, agentTasks, approvalRequests, CALL_GATE_KINDS } from '@nodal-agents/db';
+import { expirePendingRequests } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { appendDeliveredVerdicts, readJobDeliverable } from '@nodal-agents/orchestration';
 import { sendTelegramMessage } from '@nodal-agents/delivery';
@@ -18,7 +19,6 @@ import { takeLostRun } from './take-lost-run.ts';
 import { resolveTelegramDeliveryTarget } from '../approvals/notify.ts';
 import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
-import { publishApprovalsResolved } from '../events/publish.ts';
 
 // User-facing failure notices for the cron reapers. These are the deliberate,
 // minimal exceptions to invariant #2 that invariant #4 (no silent failures)
@@ -423,20 +423,13 @@ export async function expireStaleApprovals(
   runnerEnv?: RunnerEnv,
 ): Promise<number> {
   const now = new Date();
-  const expired = await db
-    .update(approvalRequests)
-    .set({ status: 'expired', resolvedAt: now, resolvedBy: 'system:ttl_expired' })
-    .where(and(eq(approvalRequests.status, 'pending'), lt(approvalRequests.expiresAt, now)))
-    .returning({
-      id: approvalRequests.id,
-      jobId: approvalRequests.jobId,
-      kind: approvalRequests.kind,
-    });
-  // #944 — chaque demande échue est poussée : une carte ouverte ailleurs se ferme.
-  await publishApprovalsResolved(
-    db,
-    expired.map((r) => r.id),
-  );
+  // PORTE (b) : expirées sous la garde `pending`, et annoncées (#944) — une
+  // carte ouverte ailleurs se ferme.
+  const expired = await expirePendingRequests(db, {
+    where: lt(approvalRequests.expiresAt, now),
+    resolvedBy: 'system:ttl_expired',
+    now,
+  });
 
   // Une demande par job suffit à le réveiller : le job relit TOUTES ses lignes
   // ouvertes à la reprise (execute.ts, 11.7). Deux demandes échues sur le même

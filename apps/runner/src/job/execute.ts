@@ -20,6 +20,7 @@ import {
   approvalsOldestFirst,
   decryptMcpServerEnv,
   workspaceSandboxReader,
+  cancelJobs,
 } from '@nodal-agents/db';
 import {
   agentJobs,
@@ -1446,11 +1447,9 @@ export async function maybeResumeParent(
     // `awaiting_delegation` (Nodal review of #575): read above, it may have
     // been resumed to `pending` since by resumeDelegated — a live parent is
     // never cancelled by a stale read.
-    // agent_jobs-write: parent-cascade — la ligne d'un AUTRE job, gardée.
-    await db
-      .update(agentJobs)
-      .set({ status: 'cancelled', updatedAt: new Date() })
-      .where(and(eq(agentJobs.id, parentJobId), eq(agentJobs.status, 'awaiting_delegation')));
+    // La ligne d'un AUTRE job, par la PORTE (a) (#944) : annulée et annoncée,
+    // seulement si elle attend encore ce délégué.
+    await cancelJobs(db, { ids: [parentJobId], onlyFrom: ['awaiting_delegation'] });
     return;
   }
 

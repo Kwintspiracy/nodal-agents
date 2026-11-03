@@ -26,7 +26,7 @@
 // Pairing state (qr/status) is NEVER persisted — module-scoped, in-memory
 // only inside this handle, cleared the moment a binding despawns.
 
-import { eq, and } from '@nodal-agents/db';
+import { eq, and, inTransaction } from '@nodal-agents/db';
 import {
   agents,
   channelBindings,
@@ -287,7 +287,7 @@ export function startWhatsAppManager(
 
     let result: WhatsAppHandleResult;
     try {
-      result = await deps.db.transaction((tx) =>
+      result = await inTransaction(deps.db, (tx) =>
         handleWhatsAppMessage({
           message,
           receivingAgentId: agentId,

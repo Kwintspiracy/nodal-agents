@@ -1,21 +1,30 @@
-// events/publish.ts — les portes où l'état change déposent leur événement (#944).
+// events/publish.ts — ce que le runner pousse quand l'état change (#944).
 //
-// Chaque fonction ici est appelée par UNE porte, APRÈS que son écriture est
-// commise et seulement si c'est elle qui l'a posée (`landed`) : un événement
-// dit un fait de la base, jamais une intention qu'une transaction pourrait
-// encore défaire, et il n'est dit qu'une fois. Les portes :
+// Deux transitions ne sont jamais publiées d'ici directement : la fin d'un job
+// (`job.finished`, `job.failed`) et une demande tranchée ou expirée
+// (`approval.resolved`). Leurs écritures sont des PORTES qui les ANNONCENT
+// (`announceTransitions`, packages/db/src/repos/transitions.ts) ; l'annonce
+// est remise à l'écouteur de ce processus — `runnerTransitionListener`, branché
+// par `createApp` — après le COMMIT de la transaction qui la porte, et
+// seulement pour les lignes que la garde de la porte a laissées passer. Les
+// portes :
 //
-//   job.finished / job.failed   `finalizeJobSuccess` et `finalizeJobFailure`
-//                               (après leur transaction), `failJob` (hors
-//                               transaction), `cancelRootJob` — job/state.ts,
-//                               job/finalize.ts ;
-//   approval.requested /        `notifyApprovalCreated`, le passage obligé de
-//   question.asked              toute demande posée : la porte d'approbation et
-//                               `ask_user` (packages/tools) comme la question
-//                               d'un serveur MCP (approvals/elicitation.ts) ;
-//   approval.resolved           `resolveApprovalDecision` (tableau de bord,
-//                               cartes de canal, API), la fermeture d'une
-//                               question MCP sans réponse, l'expiration.
+//   (a) un job atteint un statut terminal   `completeJob`, `failJob`,
+//       `cancelRootJob` (job/state.ts) ; `cancelJobs` (packages/db), par
+//       lequel passent l'arrêt d'un arbre (`cancelJobTree` : bouton Stop,
+//       outil `stop_conversation_run`, commande `/stop` d'un canal), la
+//       cascade d'un enfant annulé vers son parent, l'enfant d'une délégation
+//       avortée et le job né pendant un Stop ;
+//   (b) une demande quitte `pending`       `decidePendingRequest` (approuvée
+//       ou refusée, `resolveApprovalDecision`) et `expirePendingRequests`
+//       (arrêt d'un arbre, échéance, question MCP close) — packages/db.
+//
+// Le test d'architecture du runner refuse une telle écriture hors des portes.
+//
+// La création d'une demande, elle, n'est pas une transition d'état : elle est
+// publiée par `notifyApprovalCreated`, le passage obligé de toute demande
+// posée (approbation, `ask_user`, question d'un serveur MCP), une fois la ligne
+// commise.
 //
 // Le texte est RELU sur la ligne, puis masqué de ses secrets (SECRET-001) ICI,
 // une fois, pour tout client : le tableau de bord et un module externe
@@ -27,7 +36,7 @@
 // elle le dit aux clients par un `resync` (invariant #4).
 
 import { eq, inArray, agentJobs, approvalRequests } from '@nodal-agents/db';
-import type { AnyDrizzleDb } from '@nodal-agents/db';
+import type { AnyDrizzleDb, TransitionListener } from '@nodal-agents/db';
 import {
   readElicitationToolInput,
   readQuestionToolInput,
@@ -222,4 +231,20 @@ export async function publishApprovalsResolved(
   } catch (err) {
     lost(bus, `the resolution of ${approvalIds.join(', ')}`, err);
   }
+}
+
+/**
+ * L'écouteur des transitions de ce processus : ce que les portes ont annoncé,
+ * une fois COMMIS, devient les événements du flux. `lost` (une annonce faite
+ * dans une transaction dont le COMMIT ne peut pas être suivi) dit à chaque
+ * espace de relire la base.
+ */
+export function transitionListener(bus: JobEventBus = jobEvents): TransitionListener {
+  return {
+    committed: async (db, t) => {
+      for (const jobId of t.endedJobIds) await publishJobEnded(db, jobId, bus);
+      await publishApprovalsResolved(db, t.settledRequestIds, bus);
+    },
+    lost: () => bus.resyncEverywhere('event_lost'),
+  };
 }

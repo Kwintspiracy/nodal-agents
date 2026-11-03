@@ -3,6 +3,7 @@
 
 import { and, eq, notInArray, or, isNull, sql } from '@nodal-agents/db';
 import { agentJobs, toolCalls, heldBy, ownJobRow, RUN_ACTS_WHILE } from '@nodal-agents/db';
+import { announceTransitions } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import type { JobFailureHint, JobResultKind } from '@nodal-agents/shared';
 import { isInboxMessage } from '@nodal-agents/shared';
@@ -18,7 +19,6 @@ import {
   runnerNotesValue,
   toDbSafeString,
 } from './transcript-text.ts';
-import { publishJobEnded } from '../events/publish.ts';
 
 // ─── JobState ─────────────────────────────────────────────────────────────────
 
@@ -556,6 +556,10 @@ export async function completeJob(
     if (messages !== undefined) await fillResultFromFinalTextIfEmpty(db, jobId, messages);
     await fillResultFromChildrenIfEmpty(db, jobId);
   }
+  // #944 — PORTE (a) : le succès qui atterrit est annoncé. Son unique appelante
+  // (`finalizeJobSuccess`) l'écrit dans une transaction `inTransaction` :
+  // l'annonce part après le COMMIT, avec le résultat rempli ci-dessus.
+  if (landed) await announceTransitions(db, { endedJobIds: [jobId] });
   return landed;
 }
 
@@ -592,33 +596,11 @@ export async function completeJob(
  * la PREMIÈRE à poser un état terminal sur la ligne (elle est gardée par
  * « statut non terminal »), donc aucun geste antérieur n'est effacé.
  *
- * #944 — l'échec qui ATTERRIT est poussé (`job.failed`), une fois, après
- * l'écriture. `db` est donc la base, jamais une transaction : un événement
- * publié avant un COMMIT dirait un échec qu'un ROLLBACK peut défaire. Une porte
- * qui échoue un job DANS sa transaction appelle `writeJobFailure` et publie
- * elle-même après le commit (job/finalize.ts).
+ * #944 — PORTE (a) : l'échec qui ATTERRIT est annoncé (`announceTransitions`,
+ * @nodal-agents/db). Dans une transaction ouverte par `inTransaction`, l'annonce
+ * attend son COMMIT ; hors transaction, elle part tout de suite.
  */
 export async function failJob(
-  db: AnyDrizzleDb,
-  jobId: string,
-  errorCode: string,
-  stats?: RunStats,
-  rawMessages?: unknown[],
-  userMessage?: string,
-  hint?: JobFailureHint,
-): Promise<boolean> {
-  const landed = await writeJobFailure(db, jobId, errorCode, stats, rawMessages, userMessage, hint);
-  if (landed) await publishJobEnded(db, jobId);
-  return landed;
-}
-
-/**
- * L'écriture de `failJob`, SANS l'événement : pour une porte qui échoue le job
- * dans sa propre transaction et publie après son commit. Elle n'a pas d'autre
- * appelant hors de la primitive (test d'architecture du runner) : ailleurs,
- * un échec écrit par ici serait un échec que personne n'apprend.
- */
-export async function writeJobFailure(
   db: AnyDrizzleDb,
   jobId: string,
   errorCode: string,
@@ -705,6 +687,7 @@ export async function writeJobFailure(
       );
   }
 
+  if (landed) await announceTransitions(db, { endedJobIds: [jobId] });
   return landed;
 }
 
@@ -737,8 +720,8 @@ export async function cancelRootJob(
     .where(and(ownJobRow(jobId), notInArray(agentJobs.status, TERMINAL_STATUSES)))
     .returning({ id: agentJobs.id });
   const landed = rows.length > 0 && rows[0]?.id === jobId;
-  // #944 — la fin du root est poussée (`job.finished`, `cancelled`), une fois.
-  if (landed) await publishJobEnded(db, jobId);
+  // #944 — PORTE (a) : la fin du root est annoncée, une fois.
+  if (landed) await announceTransitions(db, { endedJobIds: [jobId] });
   return landed;
 }
 

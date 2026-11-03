@@ -9,7 +9,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { eq, asc } from '@nodal-agents/db';
+import { eq, asc, listenToTransitions } from '@nodal-agents/db';
 import { agentJobs, channelAllowedConversations, conversations } from '@nodal-agents/db';
 import type { RunnerDeps } from '../../../deps.ts';
 import type { RunnerEnv } from '../../../env.ts';
@@ -186,10 +186,23 @@ describe('Discord gateway: a message sent while the work runs gets no reaction, 
       })
       .returning({ id: agentJobs.id });
 
+    // #944 — l'arrêt passe par la porte des fins de job, et le flux l'apprend
+    // APRÈS le COMMIT de la transaction du message (jamais `lost`).
+    const announced: string[] = [];
+    const lost: string[] = [];
+    const unlisten = listenToTransitions({
+      committed: async (_db, t) => {
+        announced.push(...t.endedJobIds);
+      },
+      lost: (reason) => lost.push(reason),
+    });
     const reactions: string[] = [];
     const onMessageCreate = fake.listeners.get(Events.MessageCreate);
     onMessageCreate!(fakeMessage('/stop', reactions));
     await vi.waitFor(() => expect(reactions).toEqual(['👌']));
+    unlisten();
+    expect(announced).toEqual([run!.id]);
+    expect(lost).toEqual([]);
 
     const jobs = await db
       .select({ id: agentJobs.id, status: agentJobs.status })

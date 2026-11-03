@@ -31,6 +31,7 @@ import {
   inArray,
   approvalRequests,
   approvalRequestAttachments,
+  expirePendingRequests,
   type AnyDrizzleDb,
 } from '@nodal-agents/db';
 import {
@@ -44,7 +45,6 @@ import {
 import type { UserInputRequest, UserInputResponse } from '@nodal-agents/tools';
 import type { RunnerDeps } from '../deps.ts';
 import { notifyApprovalCreated } from './notify.ts';
-import { publishApprovalsResolved } from '../events/publish.ts';
 import { settleApprovalCards } from './card-settlement.ts';
 
 /** Délai par défaut d'une question : 10 minutes, ce que la spec du serveur suggère. */
@@ -234,14 +234,13 @@ async function waitForAnswer(
  * réponse écrite juste avant gagne.
  */
 async function closeUnanswered(db: AnyDrizzleDb, id: string, resolvedBy: string): Promise<void> {
-  const closed = await db
-    .update(approvalRequests)
-    .set({ status: 'expired', resolvedAt: new Date(), resolvedBy })
-    .where(and(eq(approvalRequests.id, id), eq(approvalRequests.status, 'pending')))
-    .returning({ id: approvalRequests.id });
+  // PORTE (b) : expirée sous la garde `pending`, et annoncée (#944).
+  const closed = await expirePendingRequests(db, {
+    where: eq(approvalRequests.id, id),
+    resolvedBy,
+  });
   if (closed.length === 0) return;
   console.warn(`[elicitation] request ${id} closed without an answer (${resolvedBy})`);
-  await publishApprovalsResolved(db, [id]);
   try {
     await settleApprovalCards(db, { approvalRequestIds: [id] });
   } catch (err) {
@@ -284,26 +283,15 @@ export async function closeElicitationsOfLostJobs(
   jobIds: readonly string[],
 ): Promise<number> {
   if (jobIds.length === 0) return 0;
-  const closed = await db
-    .update(approvalRequests)
-    .set({
-      status: 'expired',
-      resolvedAt: new Date(),
-      resolvedBy: ELICITATION_CLOSED_BY.runnerRestarted,
-    })
-    .where(
-      and(
-        eq(approvalRequests.kind, 'elicitation'),
-        eq(approvalRequests.status, 'pending'),
-        inArray(approvalRequests.jobId, [...jobIds]),
-      ),
-    )
-    .returning({ id: approvalRequests.id });
+  // PORTE (b) : expirées sous la garde `pending`, et annoncées (#944).
+  const closed = await expirePendingRequests(db, {
+    where: and(
+      eq(approvalRequests.kind, 'elicitation'),
+      inArray(approvalRequests.jobId, [...jobIds]),
+    ),
+    resolvedBy: ELICITATION_CLOSED_BY.runnerRestarted,
+  });
   if (closed.length > 0) {
-    await publishApprovalsResolved(
-      db,
-      closed.map((r) => r.id),
-    );
     await settleApprovalCards(db, { approvalRequestIds: closed.map((r) => r.id) });
   }
   return closed.length;

@@ -26,6 +26,7 @@ import { agentTasks } from '../schema/tasks.ts';
 import { approvalRequests, approvalsOldestFirst } from '../schema/approvals.ts';
 import { agents } from '../schema/agents.ts';
 import { descendRunTree } from './run-tree.ts';
+import { cancelJobs, expirePendingRequests, inTransaction } from './transitions.ts';
 
 /** Statuts d'une tâche du tableau qui n'a pas fini — ceux que l'arrêt coupe. */
 const OPEN_TASK_STATUSES = ['todo', 'in_progress'];
@@ -94,8 +95,9 @@ export async function cancelJobTree(
   input: { entityId: string; jobId: string },
 ): Promise<CancelledTree> {
   const { entityId, jobId } = input;
-  return db.transaction(async (tx) => {
-    const t = tx as unknown as AnyDrizzleDb;
+  // `inTransaction` : les jobs arrêtés et les demandes closes sont annoncés
+  // après le COMMIT de l'arrêt (transitions.ts), jamais avant.
+  return inTransaction(db, async (t) => {
     const [target] = await t
       .select({ id: agentJobs.id })
       .from(agentJobs)
@@ -153,11 +155,7 @@ export async function cancelJobTree(
         ),
       );
     const now = new Date();
-    const jobs = await t
-      .update(agentJobs)
-      .set({ status: 'cancelled', updatedAt: now })
-      .where(and(inArray(agentJobs.id, tree), eq(agentJobs.entityId, entityId), liveJob()))
-      .returning({ id: agentJobs.id });
+    const jobIds = await cancelJobs(t, { ids: tree, entityId, now });
     const tasks = await t
       .update(agentTasks)
       .set({ status: 'cancelled', updatedAt: now })
@@ -169,19 +167,13 @@ export async function cancelJobTree(
         ),
       )
       .returning({ id: agentTasks.id });
-    const requests = await t
-      .update(approvalRequests)
-      .set({ status: 'expired', resolvedAt: now, resolvedBy: 'system:job_cancelled' })
-      .where(
-        and(
-          inArray(approvalRequests.jobId, tree),
-          eq(approvalRequests.entityId, entityId),
-          eq(approvalRequests.status, 'pending'),
-        ),
-      )
-      .returning({ id: approvalRequests.id });
+    const requests = await expirePendingRequests(t, {
+      where: and(inArray(approvalRequests.jobId, tree), eq(approvalRequests.entityId, entityId)),
+      resolvedBy: 'system:job_cancelled',
+      now,
+    });
     return {
-      jobIds: jobs.map((r) => r.id),
+      jobIds,
       taskIds: tasks.map((r) => r.id),
       requestIds: requests.map((r) => r.id),
       discardedMessages: queued.flatMap((q) => [

@@ -91,7 +91,17 @@
 // des données.
 
 import { randomUUID } from 'node:crypto';
-import { and, eq, isNull, lt, or, sql, ownJobRow, workspaceSandboxReader } from '@nodal-agents/db';
+import {
+  and,
+  eq,
+  inTransaction,
+  isNull,
+  lt,
+  or,
+  sql,
+  ownJobRow,
+  workspaceSandboxReader,
+} from '@nodal-agents/db';
 import {
   agentJobs,
   entities,
@@ -114,8 +124,7 @@ import type {
   ProofScope,
   ReadyConfig,
 } from '../verification/registry.ts';
-import { TERMINAL_STATUSES, completeJob, lastTextOfRun, writeJobFailure } from './state.ts';
-import { publishJobEnded } from '../events/publish.ts';
+import { TERMINAL_STATUSES, completeJob, failJob, lastTextOfRun } from './state.ts';
 import { watchJobEnd } from './process-scopes.ts';
 import { runnerNotesValue, toDbSafeString } from './transcript-text.ts';
 
@@ -1048,7 +1057,10 @@ export async function finalizeJobSuccess(
   }
 
   // ─── Transaction 2 : décision, statut terminal ────────────────────────────
-  const committed = await db.transaction(
+  // `inTransaction` (#944) : la fin du job que `completeJob` ou `failJob`
+  // annonce ici n'est remise au flux qu'après le COMMIT, jamais sur un ROLLBACK.
+  const committed = await inTransaction(
+    db,
     async (
       tx,
     ): Promise<{
@@ -1251,8 +1263,7 @@ export async function finalizeJobSuccess(
           (row?.result ?? '').trim() ||
           lastTextOfRun(input.messages, row?.task ?? '');
         const result = toDbSafeString([texte, line].filter((t) => t !== '').join('\n\n'));
-        // L'écriture seule : l'événement part après le COMMIT, plus bas.
-        const failed = await writeJobFailure(
+        const failed = await failJob(
           tx,
           jobId,
           DELIVERABLE_NOT_VERIFIED,
@@ -1336,10 +1347,6 @@ export async function finalizeJobSuccess(
   if (!committed) return alreadyTerminal;
 
   const { decisions, repair, failure } = committed;
-  // #944 — le statut terminal est COMMIS : il est poussé maintenant, une fois
-  // (`job.finished`, ou `job.failed` pour une promesse non tenue). Un tour de
-  // réparation n'a rien posé de terminal, et ne dit donc rien.
-  if (!repair) await publishJobEnded(db, jobId);
   if (failure) {
     log(VERIFY_DECLARED_NOT_VERIFIED, {
       jobId,
@@ -1419,9 +1426,9 @@ export async function finalizeJobFailure(
   if (input.delivery && !deps.prepareDelivery) {
     throw new Error(`${DELIVERY_PREPARE_UNAVAILABLE}: ${input.delivery.channel}`);
   }
-  const landed = await db.transaction(async (tx) => {
-    // L'écriture seule : l'événement part après le COMMIT (#944).
-    const landed = await writeJobFailure(
+  // `inTransaction` (#944) : l'échec annoncé par `failJob` part après le COMMIT.
+  return inTransaction(db, async (tx) => {
+    const landed = await failJob(
       tx,
       input.jobId,
       input.errorCode,
@@ -1445,6 +1452,4 @@ export async function finalizeJobFailure(
     }
     return landed;
   });
-  if (landed) await publishJobEnded(db, input.jobId);
-  return landed;
 }

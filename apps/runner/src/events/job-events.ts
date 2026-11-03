@@ -34,11 +34,14 @@
 // chemin par lequel un client de l'espace A lirait un événement de B, ni même
 // le nombre d'événements de B (un compteur commun l'aurait laissé deviner).
 //
-// Ce bus vit dans le processus du runner : il voit ce que CE runner écrit. Les
-// jobs d'une installation tournent dans son runner (`/api/worker` est appelé
-// sur lui-même) ; ce qu'un AUTRE processus écrit en base (l'annulation par
-// l'action du tableau de bord) ne passe pas par ici — c'est la suite de #944,
-// qui fait passer ces gestes par une route du runner.
+// Ce bus vit dans le processus du runner, et il voit ce que ce processus
+// écrit : les fins de job et les demandes tranchées passent par des PORTES qui
+// les annoncent (packages/db/src/repos/transitions.ts), et le test
+// d'architecture du runner refuse une telle écriture hors d'une porte. Ce
+// qu'un AUTRE processus écrit en base ne passe pas par ici : ces écrivains-là
+// sont nommés, un par un, dans `OUT_OF_PROCESS_WRITERS` du même test (le
+// bouton Stop du tableau de bord, que #955 fait passer par le runner ; le banc
+// d'essai).
 
 import { randomBytes } from 'node:crypto';
 

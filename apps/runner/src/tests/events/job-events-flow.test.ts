@@ -18,15 +18,16 @@ import { MockLanguageModelV3 } from 'ai/test';
 import { generateText } from 'ai';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { and, eq } from '@nodal-agents/db';
+import { and, cancelJobs, eq, inTransaction } from '@nodal-agents/db';
 import { agentJobs, agents, approvalRequests, conversations } from '@nodal-agents/db';
-import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
+import { createToolRegistry, registerBuiltins, stopConversationRunTool } from '@nodal-agents/tools';
 import { createEmbeddingClient } from '@nodal-agents/llm';
 import { LocalTrustProvider } from '@nodal-agents/auth';
 import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';
 import { createApp } from '../../server.ts';
-import { executeJob } from '../../job/execute.ts';
+import { executeJob, maybeResumeParent } from '../../job/execute.ts';
+import { takeChannelTurn } from '../../channels/turn.ts';
 import { failJob } from '../../job/state.ts';
 import { finalizeJobFailure, finalizeJobSuccess } from '../../job/finalize.ts';
 import { notifyApprovalCreated } from '../../approvals/notify.ts';
@@ -709,5 +710,186 @@ describe('GET /api/events — la garde (#944) @cap:se-connecter/moteur', () => {
       { Authorization: 'Bearer session-of-other' },
     );
     expect(own.res.status).toBe(200);
+  });
+});
+
+describe("l'arrêt d'un run et la cascade passent par la porte des fins de job (#944, revue de #956) @cap:suivre-execution/moteur", () => {
+  /** Un run vivant de `conv` : sa tête, un délégué suspendu sur une question. */
+  async function liveRun(conv: string) {
+    const head = await newJob({ status: 'awaiting_delegation', conversationId: conv });
+    const [child] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'api',
+        task: 'delegated step',
+        status: 'awaiting_approval',
+        messages: [],
+        chainCount: 0,
+        parentJobId: head,
+        conversationId: conv,
+      })
+      .returning({ id: agentJobs.id });
+    const [question] = await db
+      .insert(approvalRequests)
+      .values({
+        entityId: seed.entityId,
+        jobId: child!.id,
+        agentId: seed.agentId,
+        toolName: 'ask_user',
+        toolInput: { question: 'Which one?', options: ['A', 'B'] },
+        kind: 'question',
+        status: 'pending',
+      })
+      .returning({ id: approvalRequests.id });
+    return { head, child: child!.id, question: question!.id };
+  }
+
+  const statusOf = async (jobId: string) =>
+    (await db.select({ s: agentJobs.status }).from(agentJobs).where(eq(agentJobs.id, jobId)))[0]?.s;
+
+  it("stop_conversation_run : un job.finished par job de l'arbre, un approval.resolved par question close", async () => {
+    const app = createApp(makeDeps(), testEnv);
+    const conv = await newConversation();
+    const caller = await newJob({ status: 'processing', conversationId: conv });
+    const run = await liveRun(conv);
+    const stream = await listen(app, { entityId: seed.entityId, conversationId: conv });
+
+    const out = await stopConversationRunTool.execute({}, {
+      db,
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      jobId: caller,
+    } as never);
+    expect(out.stopped).toEqual([
+      expect.objectContaining({ run_id: run.head, closed_request_ids: [run.question] }),
+    ]);
+    expect(await statusOf(run.head)).toBe('cancelled');
+    expect(await statusOf(run.child)).toBe('cancelled');
+
+    await waitFor(() => stream.jobEvents().length >= 3);
+    await settle();
+    const events = stream.jobEvents();
+    expect(events).toHaveLength(3);
+    expect(ofJob(events, run.head).map((e) => e.data)).toEqual([
+      expect.objectContaining({ type: 'job.finished', status: 'cancelled', parentJobId: null }),
+    ]);
+    expect(ofJob(events, run.child).map((e) => e.event)).toEqual([
+      'job.finished',
+      'approval.resolved',
+    ]);
+    expect(events.find((e) => e.event === 'approval.resolved')!.data).toMatchObject({
+      approvalId: run.question,
+      kind: 'question',
+      status: 'expired',
+    });
+    // L'appelant n'est pas arrêté : rien sur lui.
+    expect(ofJob(events, caller)).toEqual([]);
+  });
+
+  it("/stop d'un canal : poussé APRÈS le COMMIT de la transaction du message, et jamais sur un ROLLBACK", async () => {
+    const app = createApp(makeDeps(), testEnv);
+    const [conv] = await db
+      .insert(conversations)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        title: 'Telegram',
+        channel: 'telegram',
+        chatId: '4242',
+      })
+      .returning({ id: conversations.id });
+    const stream = await listen(app, { entityId: seed.entityId, conversationId: conv!.id });
+    const stop = (tx: never) =>
+      takeChannelTurn({
+        tx,
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'telegram',
+        chatId: '4242',
+        text: '/stop',
+        groupPrefix: null,
+        botHandle: null,
+      });
+
+    // Le message est rejeté après l'arrêt : rien n'a eu lieu, rien n'est dit.
+    const head = await newJob({ status: 'processing', conversationId: conv!.id });
+    await expect(
+      inTransaction(db as never, async (tx) => {
+        await stop(tx as never);
+        throw new Error('the inbound transaction fails');
+      }),
+    ).rejects.toThrow('the inbound transaction fails');
+    expect(await statusOf(head)).toBe('processing');
+    await settle();
+    expect(stream.jobEvents()).toEqual([]);
+
+    // Commis : la tête annulée est poussée, une fois, après le COMMIT.
+    let seenInside = -1;
+    await inTransaction(db as never, async (tx) => {
+      await stop(tx as never);
+      await settle();
+      seenInside = stream.jobEvents().length;
+    });
+    expect(seenInside).toBe(0);
+    expect(await statusOf(head)).toBe('cancelled');
+    await waitFor(() => stream.jobEvents().length >= 1);
+    await settle();
+    expect(stream.jobEvents()).toEqual([
+      expect.objectContaining({
+        event: 'job.finished',
+        data: expect.objectContaining({ jobId: head, status: 'cancelled' }),
+      }),
+    ]);
+  });
+
+  it("un enfant annulé fait annuler le parent qui l'attendait : UN job.finished pour le parent", async () => {
+    const app = createApp(makeDeps(), testEnv);
+    const conv = await newConversation();
+    const stream = await listen(app, { entityId: seed.entityId, conversationId: conv });
+    const parent = await newJob({ status: 'awaiting_delegation', conversationId: conv });
+    const [child] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'api',
+        task: 'child',
+        status: 'cancelled',
+        messages: [],
+        chainCount: 0,
+        parentJobId: parent,
+      })
+      .returning({ id: agentJobs.id });
+
+    await maybeResumeParent(child!.id as JobId, { status: 'cancelled' }, { db: db as never });
+    // Rejouée : le parent n'attend plus, la garde ne laisse rien passer.
+    await maybeResumeParent(child!.id as JobId, { status: 'cancelled' }, { db: db as never });
+
+    expect(await statusOf(parent)).toBe('cancelled');
+    await waitFor(() => ofJob(stream.jobEvents(), parent).length >= 1);
+    await settle();
+    expect(ofJob(stream.jobEvents(), parent)).toEqual([
+      expect.objectContaining({
+        event: 'job.finished',
+        data: expect.objectContaining({ status: 'cancelled', parentJobId: null }),
+      }),
+    ]);
+  });
+
+  it('une porte passée dans une transaction que personne ne suit : aucun fait, un resync', async () => {
+    const app = createApp(makeDeps(), testEnv);
+    const all = await listen(app, { entityId: seed.entityId });
+    const job = await newJob({ status: 'processing' });
+    await db.transaction(async (tx) => {
+      await cancelJobs(tx as never, { ids: [job] });
+    });
+    await waitFor(() => all.events.some((e) => e.event === 'resync'));
+    expect(ofJob(all.events, job)).toEqual([]);
+    expect(all.events.find((e) => e.event === 'resync')!.data).toEqual({
+      type: 'resync',
+      reason: 'event_lost',
+    });
   });
 });
