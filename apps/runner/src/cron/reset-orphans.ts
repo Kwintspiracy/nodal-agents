@@ -18,6 +18,7 @@ import { takeLostRun } from './take-lost-run.ts';
 import { resolveTelegramDeliveryTarget } from '../approvals/notify.ts';
 import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
+import { publishApprovalsResolved } from '../events/publish.ts';
 
 // User-facing failure notices for the cron reapers. These are the deliberate,
 // minimal exceptions to invariant #2 that invariant #4 (no silent failures)
@@ -426,7 +427,16 @@ export async function expireStaleApprovals(
     .update(approvalRequests)
     .set({ status: 'expired', resolvedAt: now, resolvedBy: 'system:ttl_expired' })
     .where(and(eq(approvalRequests.status, 'pending'), lt(approvalRequests.expiresAt, now)))
-    .returning({ jobId: approvalRequests.jobId, kind: approvalRequests.kind });
+    .returning({
+      id: approvalRequests.id,
+      jobId: approvalRequests.jobId,
+      kind: approvalRequests.kind,
+    });
+  // #944 — chaque demande échue est poussée : une carte ouverte ailleurs se ferme.
+  await publishApprovalsResolved(
+    db,
+    expired.map((r) => r.id),
+  );
 
   // Une demande par job suffit à le réveiller : le job relit TOUTES ses lignes
   // ouvertes à la reprise (execute.ts, 11.7). Deux demandes échues sur le même

@@ -44,6 +44,7 @@ import {
 import type { UserInputRequest, UserInputResponse } from '@nodal-agents/tools';
 import type { RunnerDeps } from '../deps.ts';
 import { notifyApprovalCreated } from './notify.ts';
+import { publishApprovalsResolved } from '../events/publish.ts';
 import { settleApprovalCards } from './card-settlement.ts';
 
 /** Délai par défaut d'une question : 10 minutes, ce que la spec du serveur suggère. */
@@ -240,6 +241,7 @@ async function closeUnanswered(db: AnyDrizzleDb, id: string, resolvedBy: string)
     .returning({ id: approvalRequests.id });
   if (closed.length === 0) return;
   console.warn(`[elicitation] request ${id} closed without an answer (${resolvedBy})`);
+  await publishApprovalsResolved(db, [id]);
   try {
     await settleApprovalCards(db, { approvalRequestIds: [id] });
   } catch (err) {
@@ -298,6 +300,10 @@ export async function closeElicitationsOfLostJobs(
     )
     .returning({ id: approvalRequests.id });
   if (closed.length > 0) {
+    await publishApprovalsResolved(
+      db,
+      closed.map((r) => r.id),
+    );
     await settleApprovalCards(db, { approvalRequestIds: closed.map((r) => r.id) });
   }
   return closed.length;

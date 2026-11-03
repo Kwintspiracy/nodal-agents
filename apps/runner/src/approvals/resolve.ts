@@ -25,6 +25,7 @@ import { settleApprovalCards } from './card-settlement.ts';
 import { cardCarriesWords, personWordsOnCard } from './card-words.ts';
 import type { ApprovalDecision } from './card-words.ts';
 import { readResponder } from './responders.ts';
+import { publishApprovalsResolved } from '../events/publish.ts';
 import type { AnsweredBy } from './responders.ts';
 
 export type { ApprovalDecision };
@@ -372,6 +373,9 @@ export async function resolveApprovalDecision(
     }
     return { ok: false, code: 'already_resolved', status: current?.status ?? null };
   }
+
+  // #944 — la décision est commise : un second client ferme sa carte.
+  await publishApprovalsResolved(deps.db, [input.approvalRequestId]);
 
   // #637 — la décision est écrite : chaque carte livrée pour cette demande,
   // sur quelque canal que ce soit, la dit maintenant (texte final, boutons

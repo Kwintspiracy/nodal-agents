@@ -114,7 +114,8 @@ import type {
   ProofScope,
   ReadyConfig,
 } from '../verification/registry.ts';
-import { TERMINAL_STATUSES, completeJob, failJob, lastTextOfRun } from './state.ts';
+import { TERMINAL_STATUSES, completeJob, lastTextOfRun, writeJobFailure } from './state.ts';
+import { publishJobEnded } from '../events/publish.ts';
 import { watchJobEnd } from './process-scopes.ts';
 import { runnerNotesValue, toDbSafeString } from './transcript-text.ts';
 
@@ -1250,7 +1251,8 @@ export async function finalizeJobSuccess(
           (row?.result ?? '').trim() ||
           lastTextOfRun(input.messages, row?.task ?? '');
         const result = toDbSafeString([texte, line].filter((t) => t !== '').join('\n\n'));
-        const failed = await failJob(
+        // L'écriture seule : l'événement part après le COMMIT, plus bas.
+        const failed = await writeJobFailure(
           tx,
           jobId,
           DELIVERABLE_NOT_VERIFIED,
@@ -1334,6 +1336,10 @@ export async function finalizeJobSuccess(
   if (!committed) return alreadyTerminal;
 
   const { decisions, repair, failure } = committed;
+  // #944 — le statut terminal est COMMIS : il est poussé maintenant, une fois
+  // (`job.finished`, ou `job.failed` pour une promesse non tenue). Un tour de
+  // réparation n'a rien posé de terminal, et ne dit donc rien.
+  if (!repair) await publishJobEnded(db, jobId);
   if (failure) {
     log(VERIFY_DECLARED_NOT_VERIFIED, {
       jobId,
@@ -1413,8 +1419,9 @@ export async function finalizeJobFailure(
   if (input.delivery && !deps.prepareDelivery) {
     throw new Error(`${DELIVERY_PREPARE_UNAVAILABLE}: ${input.delivery.channel}`);
   }
-  return db.transaction(async (tx) => {
-    const landed = await failJob(
+  const landed = await db.transaction(async (tx) => {
+    // L'écriture seule : l'événement part après le COMMIT (#944).
+    const landed = await writeJobFailure(
       tx,
       input.jobId,
       input.errorCode,
@@ -1438,4 +1445,6 @@ export async function finalizeJobFailure(
     }
     return landed;
   });
+  if (landed) await publishJobEnded(db, input.jobId);
+  return landed;
 }

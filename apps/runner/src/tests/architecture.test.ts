@@ -21,6 +21,7 @@ import {
   scanForMutatingSpawnOutsideIntent,
   scanForDirectTerminalCompleted,
   scanForCompleteJobCallers,
+  scanForPattern,
   scanForTerminalSendOutsideOutbox,
   RUNNER_NON_TERMINAL_SENDERS,
   scanFilesForDeliverableTypeLiterals,
@@ -106,6 +107,19 @@ describe('architecture — une seule porte terminale de succès (V&C T13)', () =
     const violations = scanForCompleteJobCallers({ srcDir: SRC_DIR, skipFiles: TERMINAL_WRITERS });
     if (violations.length > 0) {
       expect.fail(formatViolations('Appel de completeJob hors de la primitive', violations));
+    }
+  });
+
+  // #944 — `writeJobFailure` est l'écriture d'échec SANS l'événement poussé :
+  // la porte qui l'appelle dans sa transaction publie après son commit. Un
+  // appel ailleurs serait un échec qu'aucun client n'apprend.
+  it('writeJobFailure n’a aucun appelant hors de la primitive (failJob publie, elle non)', () => {
+    const violations = scanForPattern(
+      { srcDir: SRC_DIR, skipFiles: TERMINAL_WRITERS },
+      { pattern: /\bwriteJobFailure\(/, rule: 'no-job-failure-write-outside-primitive' },
+    );
+    if (violations.length > 0) {
+      expect.fail(formatViolations('Appel de writeJobFailure hors de la primitive', violations));
     }
   });
 

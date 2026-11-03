@@ -18,6 +18,7 @@ import {
   runnerNotesValue,
   toDbSafeString,
 } from './transcript-text.ts';
+import { publishJobEnded } from '../events/publish.ts';
 
 // ─── JobState ─────────────────────────────────────────────────────────────────
 
@@ -590,8 +591,34 @@ export async function completeJob(
  * plutôt que de laisser la valeur en place est volontaire — cette écriture est
  * la PREMIÈRE à poser un état terminal sur la ligne (elle est gardée par
  * « statut non terminal »), donc aucun geste antérieur n'est effacé.
+ *
+ * #944 — l'échec qui ATTERRIT est poussé (`job.failed`), une fois, après
+ * l'écriture. `db` est donc la base, jamais une transaction : un événement
+ * publié avant un COMMIT dirait un échec qu'un ROLLBACK peut défaire. Une porte
+ * qui échoue un job DANS sa transaction appelle `writeJobFailure` et publie
+ * elle-même après le commit (job/finalize.ts).
  */
 export async function failJob(
+  db: AnyDrizzleDb,
+  jobId: string,
+  errorCode: string,
+  stats?: RunStats,
+  rawMessages?: unknown[],
+  userMessage?: string,
+  hint?: JobFailureHint,
+): Promise<boolean> {
+  const landed = await writeJobFailure(db, jobId, errorCode, stats, rawMessages, userMessage, hint);
+  if (landed) await publishJobEnded(db, jobId);
+  return landed;
+}
+
+/**
+ * L'écriture de `failJob`, SANS l'événement : pour une porte qui échoue le job
+ * dans sa propre transaction et publie après son commit. Elle n'a pas d'autre
+ * appelant hors de la primitive (test d'architecture du runner) : ailleurs,
+ * un échec écrit par ici serait un échec que personne n'apprend.
+ */
+export async function writeJobFailure(
   db: AnyDrizzleDb,
   jobId: string,
   errorCode: string,
@@ -709,7 +736,10 @@ export async function cancelRootJob(
     })
     .where(and(ownJobRow(jobId), notInArray(agentJobs.status, TERMINAL_STATUSES)))
     .returning({ id: agentJobs.id });
-  return rows.length > 0 && rows[0]?.id === jobId;
+  const landed = rows.length > 0 && rows[0]?.id === jobId;
+  // #944 — la fin du root est poussée (`job.finished`, `cancelled`), une fois.
+  if (landed) await publishJobEnded(db, jobId);
+  return landed;
 }
 
 /**
