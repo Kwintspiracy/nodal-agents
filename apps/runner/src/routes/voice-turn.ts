@@ -21,7 +21,7 @@
 //                                                      dès qu'il existe (rangé comme dit)
 //   event: delta          data: { text }               un fragment de la réponse, comme
 //                                                      `/api/chat/stream`
-//   event: audio          data: { seq, mimeType, sampleRate?, base64 }
+//   event: audio          data: { seq, sentence, mimeType, sampleRate?, base64 }
 //                                                      la voix, en morceaux NUMÉROTÉS
 //                                                      depuis 0, sans trou, à jouer
 //                                                      bout à bout dans l'ordre de `seq`.
@@ -29,9 +29,16 @@
 //                                                      little-endian, mono, à `sampleRate` ;
 //                                                      les autres types (`audio/wav`, `audio/mpeg`…)
 //                                                      ne se décodent que par phrase entière
-//   event: audio_end      data: { sentence }           tout l'audio de la phrase `sentence`
-//                                                      (son rang, depuis 0) est sorti : un
-//                                                      type compressé se décode à ce signal
+//   event: audio_end      data: { sentence, complete } la phrase `sentence` (son rang,
+//                                                      depuis 0) est finie : UNE fois pour
+//                                                      chaque phrase dont un `audio` est
+//                                                      sorti, toujours avant `done`.
+//                                                      `complete` faux : elle s'est arrêtée
+//                                                      en route (échec de la voix, phrase
+//                                                      abandonnée, Stop). Un type compressé
+//                                                      se joue à ce signal s'il est complet,
+//                                                      et se jette sinon ; un PCM déjà joué
+//                                                      s'arrête là où la voix s'est arrêtée
 //   event: done           data: { reply, spawnedJobId, streamed, stopped, cutReason,
 //                                 speechError }      le DERNIER événement, après tout l'audio
 //   event: error          data: { error, detail? }     le tour a échoué après la

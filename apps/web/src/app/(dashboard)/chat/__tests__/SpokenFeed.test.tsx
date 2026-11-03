@@ -84,7 +84,13 @@ describe('a spoken turn in the thread (#942) @cap:parler-a-un-agent/ecran', () =
 
     await act(async () => {
       const voice = startSpokenStream({ reply: 'Canberra.', onError: () => {} });
-      voice.push({ seq: 0, mimeType: 'audio/pcm', sampleRate: 24_000, bytes: new Uint8Array(4) });
+      voice.push({
+        seq: 0,
+        sentence: 0,
+        mimeType: 'audio/pcm',
+        sampleRate: 24_000,
+        bytes: new Uint8Array(4),
+      });
       await new Promise((r) => setTimeout(r, 0));
     });
     // Sur le tour de « Canberra. », pas sur l'autre réponse.

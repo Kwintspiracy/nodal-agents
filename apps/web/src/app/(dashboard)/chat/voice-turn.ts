@@ -48,8 +48,8 @@ export interface VoiceStreamHandlers {
   onText?: (text: string) => void;
   /** Un morceau de voix, dans l'ordre de son rang. */
   onAudio?: (chunk: SpokenChunk) => void;
-  /** Tout l'audio d'une phrase est arrivé (`audio_end`). */
-  onAudioEnd?: () => void;
+  /** Une phrase est finie (`audio_end`), complète ou non. */
+  onAudioEnd?: (sentence: number, complete: boolean) => void;
 }
 
 /** Une étape refusée : où, avec quel statut, et le code tel que la route l'a dit. */
@@ -266,11 +266,17 @@ async function readEnd(
         case 'audio': {
           const base64 = str(data['base64']);
           const mimeType = str(data['mimeType']);
-          if (base64 === null || mimeType === null || typeof data['seq'] !== 'number') {
+          if (
+            base64 === null ||
+            mimeType === null ||
+            typeof data['seq'] !== 'number' ||
+            typeof data['sentence'] !== 'number'
+          ) {
             return broken('invalid_response');
           }
           handlers.onAudio?.({
             seq: data['seq'],
+            sentence: data['sentence'],
             mimeType,
             ...(typeof data['sampleRate'] === 'number' ? { sampleRate: data['sampleRate'] } : {}),
             bytes: Uint8Array.from(atob(base64), (c) => c.charCodeAt(0)),
@@ -278,7 +284,8 @@ async function readEnd(
           break;
         }
         case 'audio_end':
-          handlers.onAudioEnd?.();
+          if (typeof data['sentence'] !== 'number') return broken('invalid_response');
+          handlers.onAudioEnd?.(data['sentence'], data['complete'] === true);
           break;
         case 'done': {
           // La réponse entière remplace ce qui a été accumulé, comme au chat écrit.

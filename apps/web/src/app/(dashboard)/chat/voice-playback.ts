@@ -22,8 +22,17 @@
 //   - tout autre type (`audio/wav`, `audio/mpeg`, …) : un conteneur ou un
 //     format compressé, qu'un morceau de flux ne contient pas forcément en
 //     entier (une trame MP3 coupée ne se décode pas). Ses morceaux sont
-//     réunis par PHRASE, et la phrase se décode (`decodeAudioData`) quand la
-//     route dit que son audio est complet (`audio_end`, `endSentence`).
+//     réunis par PHRASE — un tampon par rang de phrase, jamais deux phrases
+//     dans un même tampon —, et la phrase se décode (`decodeAudioData`) quand
+//     la route dit qu'elle est finie (`audio_end`, `endSentence`) ET complète.
+//     Une phrase finie incomplète (la voix a échoué, la phrase a été
+//     abandonnée, Stop) est JETÉE : on n'en joue jamais un bout comme s'il
+//     était entier. L'échec est celui de la voix, que `done.speechError` dit
+//     déjà ; ce n'est pas une erreur de décodage. Un tampon dont la fin n'est
+//     jamais venue (le flux coupé) n'est jamais joué non plus : la coupure se
+//     dit ailleurs, comme toujours.
+//   - un PCM déjà programmé reste joué : une phrase PCM incomplète s'arrête là
+//     où la voix s'est arrêtée.
 // Ce que le navigateur ne sait pas décoder se dit, il ne se joue pas à
 // l'aveugle (invariant #4).
 
@@ -34,6 +43,8 @@ export type Speaking = { reply: string } | null;
 /** Un morceau de voix, tel que la route du tour l'a numéroté. */
 export type SpokenChunk = {
   seq: number;
+  /** Le rang de sa phrase : les morceaux d'un type compressé se réunissent par phrase. */
+  sentence: number;
   mimeType: string;
   sampleRate?: number;
   bytes: Uint8Array;
@@ -42,8 +53,11 @@ export type SpokenChunk = {
 export interface SpokenStream {
   /** Le morceau suivant, dans l'ordre de `seq`. */
   push(chunk: SpokenChunk): void;
-  /** Tout l'audio de la phrase en cours est arrivé (`audio_end`) : elle se décode. */
-  endSentence(): void;
+  /**
+   * La phrase `sentence` est finie (`audio_end`). Complète, un type compressé
+   * se décode et se joue ; incomplète, son tampon est jeté.
+   */
+  endSentence(sentence: number, complete: boolean): void;
   /** Le texte de la réponse connu à cet instant : c'est lui que « Speaking » désigne. */
   setReply(reply: string): void;
   /** Plus aucun morceau ne viendra : la voix finit quand le dernier a joué. */
@@ -62,8 +76,8 @@ type Playback = {
   expected: number;
   /** Le décodage en cours : les unités se programment une par une, dans l'ordre. */
   chain: Promise<void>;
-  /** Les morceaux d'une phrase compressée, en attente de sa fin. */
-  sentence: SpokenChunk[];
+  /** Les morceaux des phrases compressées en attente de leur fin, par rang de phrase. */
+  sentences: Map<number, SpokenChunk[]>;
   started: boolean;
   ended: boolean;
   dead: boolean;
@@ -186,7 +200,7 @@ export function startSpokenStream(opts: {
     nextAt: 0,
     expected: 0,
     chain: Promise.resolve(),
-    sentence: [],
+    sentences: new Map(),
     started: false,
     ended: false,
     dead: false,
@@ -229,10 +243,10 @@ export function startSpokenStream(opts: {
       }
     });
   };
-  const endSentence = (): void => {
-    if (me.dead || me.sentence.length === 0) return;
-    const chunks = me.sentence;
-    me.sentence = [];
+  const endSentence = (sentence: number, complete: boolean): void => {
+    const chunks = me.sentences.get(sentence);
+    me.sentences.delete(sentence);
+    if (me.dead || !chunks || !complete) return;
     schedule(chunks[0]!.mimeType, joined(chunks));
   };
   return {
@@ -243,12 +257,13 @@ export function startSpokenStream(opts: {
         return;
       }
       me.expected++;
-      // Une phrase en attente qu'un morceau d'un autre type suit est finie :
-      // elle passe d'abord, l'ordre est celui des rangs.
-      const pending = me.sentence[0];
-      if (pending && (isPcm(chunk.mimeType) || pending.mimeType !== chunk.mimeType)) endSentence();
-      if (isPcm(chunk.mimeType)) schedule(chunk.mimeType, chunk.bytes, chunk.sampleRate);
-      else me.sentence.push(chunk);
+      if (isPcm(chunk.mimeType)) {
+        schedule(chunk.mimeType, chunk.bytes, chunk.sampleRate);
+        return;
+      }
+      const buffer = me.sentences.get(chunk.sentence) ?? [];
+      buffer.push(chunk);
+      me.sentences.set(chunk.sentence, buffer);
     },
     endSentence,
     setReply(reply) {
@@ -256,7 +271,8 @@ export function startSpokenStream(opts: {
       if (current === me) emit();
     },
     end() {
-      endSentence();
+      // Une phrase dont la fin n'est jamais venue n'est pas jouée.
+      me.sentences.clear();
       me.ended = true;
       void me.chain.then(() => finishIfDone(me));
     },

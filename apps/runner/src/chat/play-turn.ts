@@ -13,8 +13,20 @@
 //
 // Puis, si le tour a escaladé, son job part en fond. La porte ne décide que de
 // ce qu'elle rend à son appelant.
+//
+// LES FRAGMENTS SONT MASQUÉS ICI, UNE FOIS (revue de #968, passe 2). Avant
+// tout consommateur du texte qui s'écrit — le tour lisible d'une autre page
+// (`say`, `/api/chat/live`) ET la porte (`onTextDelta` : le flux tapé, la voix
+// du tour dit) —, le masqueur de flux (`createStreamRedactor`,
+// packages/shared) retire les secrets. Aucun client du runner, tableau de bord
+// ou module, ne reçoit un fragment brut, et la voix n'en dit aucun. Il garde en
+// réserve ce qui pourrait encore devenir un secret jusqu'à l'espace suivante
+// (un mot au plus) ; la réserve sort quand le texte est fixé
+// (`onReplyText`), ou à la fin du tour. La ligne rangée en base reste intacte :
+// le masquage est d'affichage, comme aux portes web.
 
 import type { JobId } from '@nodal-agents/orchestration';
+import { createStreamRedactor } from '@nodal-agents/shared';
 import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
 import { executeJob } from '../job/execute.ts';
@@ -32,26 +44,40 @@ export async function playChatTurn(
   /** Le nom de la porte, pour le journal d'un job lancé qui échoue. */
   door: string,
 ): Promise<ChatTurnResult> {
-  const { entityId, conversationId, onTextDelta } = input;
+  const { entityId, conversationId, onTextDelta, onReplyText } = input;
   const result = await runInLane(conversationId, () =>
     withLiveTurn(entityId, conversationId, (say) =>
-      withChatTurnStop(conversationId, (abortSignal) =>
-        runChatTurn({
+      withChatTurnStop(conversationId, async (abortSignal) => {
+        const redactor = createStreamRedactor();
+        // Le texte qui s'écrit est lisible d'une autre page (#457) : ce que
+        // la porte diffuse passe d'abord par le tour en cours. Masqué avant
+        // l'un et l'autre.
+        const out = (safe: string): void => {
+          if (safe === '' || !onTextDelta) return;
+          say(safe);
+          onTextDelta(safe);
+        };
+        const turn = await runChatTurn({
           ...input,
           deps,
           abortSignal,
-          // Le texte qui s'écrit est lisible d'une autre page (#457) : ce que
-          // la porte diffuse passe d'abord par le tour en cours.
           ...(onTextDelta
             ? {
-                onTextDelta: (delta: string) => {
-                  say(delta);
-                  onTextDelta(delta);
+                onTextDelta: (delta: string) => out(redactor.push(delta)),
+                // Le texte fixé : la réserve du masqueur sort AVANT que la
+                // porte l'apprenne, pour que ce qu'elle a reçu soit entier.
+                onReplyText: (reply: { text: string; streamed: boolean }) => {
+                  out(redactor.flush());
+                  onReplyText?.(reply);
                 },
               }
             : {}),
-        }),
-      ),
+        });
+        // Un tour fini sans texte fixé (Stop, coupure, runtime CLI) : la
+        // réserve sort ici, avant la fin du tour lisible.
+        out(redactor.flush());
+        return turn;
+      }),
     ),
   );
   // Le tour a escaladé : le travail part en fond. Le tour a déjà rendu la

@@ -584,7 +584,7 @@ describe('the voice turn route @cap:parler-a-un-agent/moteur', () => {
       'audio_end',
       'done',
     ]);
-    expect(evs.find((e) => e.event === 'audio_end')?.data).toEqual({ sentence: 0 });
+    expect(evs.find((e) => e.event === 'audio_end')?.data).toEqual({ sentence: 0, complete: true });
     // The bytes the client sent, in order, are what the transcriber received.
     expect(sent.transcription).toHaveLength(1);
     const audioPart = (
@@ -602,7 +602,7 @@ describe('the voice turn route @cap:parler-a-un-agent/moteur', () => {
       voice: 'Kore',
     });
     const audio = evs.find((e) => e.event === 'audio')!.data;
-    expect(audio).toMatchObject({ seq: 0, mimeType: 'audio/pcm', sampleRate: 24_000 });
+    expect(audio).toMatchObject({ seq: 0, sentence: 0, mimeType: 'audio/pcm', sampleRate: 24_000 });
     expect(heardAudio(evs)).toEqual(Buffer.from(VOICE_PCM));
     // The turn is the dashboard chat turn: run_task its only tool, the
     // transcript the person's words, and the prompt says the reply is heard.
@@ -1161,6 +1161,47 @@ describe('the voice turn route — the reply spoken as it is written (#943) @cap
     expect(job).toMatchObject({ id: jobId, task: TRANSCRIPT, replyRendering: 'spoken' });
   });
 
+  // Review of #968, pass 2 (P2-B). Mutation verified: `audio_end` dropped on
+  // the error path → red.
+  it('a vendor that fails MID-SENTENCE: that sentence ends cut (`audio_end` complete false) before `done`', async () => {
+    const app = createApp(makeDeps(), testEnv);
+    const conv = await conversation();
+    network({
+      front: { parts: ['First part is fine. Second part is cut.'] },
+      speech: (input) => {
+        // The second sentence: its first bytes, then the vendor drops.
+        const cut = input.startsWith('Second');
+        const body = new ReadableStream<Uint8Array>({
+          start(c) {
+            c.enqueue(Uint8Array.from([cut ? 9 : 7, 0]));
+            if (cut) setTimeout(() => c.error(new Error('vendor dropped the stream')), 10);
+            else c.close();
+          },
+        });
+        return new Response(body, {
+          status: 200,
+          headers: { 'content-type': 'audio/pcm;rate=24000;channels=1' },
+        });
+      },
+    });
+
+    const { body, events: evs } = await say(app, conv, FIXTURE, { format: 'audio/wav' });
+
+    expect(
+      evs
+        .filter((e) => e.event === 'audio' || e.event === 'audio_end' || e.event === 'done')
+        .map((e) =>
+          e.event === 'audio'
+            ? `audio ${String(e.data['sentence'])}`
+            : e.event === 'audio_end'
+              ? `end ${String(e.data['sentence'])} ${e.data['complete'] ? 'complete' : 'cut'}`
+              : 'done',
+        ),
+    ).toEqual(['audio 0', 'end 0 complete', 'audio 1', 'end 1 cut', 'done']);
+    expect(body['speechError']).toMatchObject({ detail: 'vendor dropped the stream' });
+    expect(body['reply']).toBe('First part is fine. Second part is cut.');
+  });
+
   it('a speech failure mid-stream keeps the text, states the failure, and says nothing after it', async () => {
     const app = createApp(makeDeps(), testEnv);
     const conv = await conversation();
@@ -1309,6 +1350,99 @@ describe('the voice turn route — the reply spoken as it is written (#943) @cap
     expect(marks['firstSentenceVendorByteMs']!).toBeLessThanOrEqual(marks['firstAudioMs']!);
     expect(marks['firstAudioMs']!).toBeLessThanOrEqual(marks['doneMs']!);
     for (const l of timing) expect(l).not.toContain('Nine');
+  });
+
+  // Review of #968, pass 2 (P2-A): the deltas are masked ONCE, in
+  // `playChatTurn`, upstream of every consumer — the live relay included.
+  // Mutation verified: the redaction moved back below `say()` (the live relay
+  // fed raw deltas) → both cases below are red; the voice still masked.
+  describe('a secret read from /api/chat/live during the turn', () => {
+    const KEY = 'sk-or-v1-abcdefghijklmnopqrstu';
+    const MASKED = `Your key is ${REDACTED_TEXT} (sk-). Keep it safe.`;
+
+    /** start.text, then every delta, until `end`: what a live reader saw. */
+    async function readLive(res: Response): Promise<string> {
+      expect(res.status).toBe(200);
+      let text = '';
+      for await (const e of events(res)) {
+        if (e.event === 'start') text += String(e.data['text']);
+        if (e.event === 'delta') text += String(e.data['text']);
+        if (e.event === 'end') break;
+      }
+      return text;
+    }
+
+    function heldKeyNetwork(held: Promise<void>) {
+      // The key arrives split across two deltas; the second waits for the gate.
+      return network({
+        front: {
+          parts: ['Your key is sk-or-v1-abcdefgh', 'ijklmnopqrstu. Keep it safe.'],
+          holdBefore: 1,
+          hold: held,
+        },
+      });
+    }
+
+    async function storedReply(conv: string): Promise<string> {
+      return (await rows(conv)).find((r) => r.role === 'assistant')?.content ?? '';
+    }
+
+    it('during a voice turn: masked for the live reader, for the voice, and stored intact', async () => {
+      const app = createApp(makeDeps(), testEnv);
+      const conv = await conversation();
+      const g = gate();
+      const sent = heldKeyNetwork(g.wait);
+
+      const { it: voice } = await openEnd(app, conv);
+      const evs: VoiceEvent[] = [];
+      await readUntil(voice, (e) => e.event === 'delta', evs);
+      const live = call(app, 'POST', '/api/chat/live', {
+        entityId: seed.entityId,
+        conversationId: conv,
+      });
+      const liveRes = await live;
+      g.open();
+      const [liveText] = await Promise.all([readLive(liveRes), drain(voice, evs)]);
+
+      expect(liveText).toBe(MASKED);
+      expect(liveText).not.toContain('abcdefgh');
+      expect(sent.speech.map((r) => r['input'])).toEqual([
+        `Your key is ${REDACTED_TEXT} (sk-).`,
+        'Keep it safe.',
+      ]);
+      expect(await storedReply(conv)).toBe(`Your key is ${KEY}. Keep it safe.`);
+    });
+
+    it('during a typed turn: masked for the live reader and the typed stream, stored intact', async () => {
+      const app = createApp(makeDeps(), testEnv);
+      const conv = await conversation();
+      const g = gate();
+      heldKeyNetwork(g.wait);
+
+      const typed = await call(app, 'POST', '/api/chat/stream', {
+        entityId: seed.entityId,
+        agentId,
+        conversationId: conv,
+        message: 'What is my key?',
+      });
+      const typedIt = events(typed);
+      const typedEvs: VoiceEvent[] = [];
+      await readUntil(typedIt, (e) => e.event === 'delta', typedEvs);
+      const liveRes = await call(app, 'POST', '/api/chat/live', {
+        entityId: seed.entityId,
+        conversationId: conv,
+      });
+      g.open();
+      const [liveText] = await Promise.all([readLive(liveRes), drain(typedIt, typedEvs)]);
+
+      expect(liveText).toBe(MASKED);
+      const typedDeltas = typedEvs
+        .filter((e) => e.event === 'delta')
+        .map((e) => String(e.data['text']))
+        .join('');
+      expect(typedDeltas).toBe(MASKED);
+      expect(await storedReply(conv)).toBe(`Your key is ${KEY}. Keep it safe.`);
+    });
   });
 
   // Review of #968, pass 1 (P2-1). Mutations verified: the runner's redaction

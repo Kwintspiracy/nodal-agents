@@ -24,14 +24,11 @@
 //      d'escalade (`llm/action-recheck.ts`) ne change jamais le texte : la
 //      voix commence avant elle, et elle tourne pendant que la voix parle.
 //
-// LES SECRETS SONT MASQUÉS ICI, avant le texte rendu ET avant la voix (revue
-// de #968, passe 1). Une clé citée par l'agent ne sort par aucune porte de ce
-// tour — ni le tableau de bord, ni un module (#947) —, et surtout elle n'est
-// jamais DITE : un son ne se reprend pas à la porte. Le masqueur de flux
-// (`createStreamRedactor`, packages/shared) garde en réserve ce qui pourrait
-// encore devenir un secret, jusqu'à l'espace suivante ; la phrase qui le
-// suit attend donc au plus un mot de plus. La ligne rangée en base reste
-// intacte, comme aux portes du chat écrit : le masquage est d'affichage.
+// LES SECRETS NE SONT JAMAIS DITS (revue de #968, passes 1 et 2). Les
+// fragments arrivent ici déjà masqués par `playChatTurn`, une fois pour tous
+// les consommateurs du tour ; le texte écrit d'un bloc et `done.reply` le sont
+// par `redactSecretsInText`. Un son ne se reprend pas à la porte. La ligne
+// rangée en base reste intacte : le masquage est d'affichage.
 //
 // Pourquoi ce découpage : mesuré sur la stack du propriétaire le 03/11, 10,1 s
 // et 12,1 s du relâchement au premier son, dont 2,9 à 3,7 s pour les deux
@@ -52,7 +49,7 @@ import {
   readWav,
   splitSentences,
 } from '@nodal-agents/speech';
-import { createStreamRedactor, redactSecretsInText } from '@nodal-agents/shared';
+import { redactSecretsInText } from '@nodal-agents/shared';
 import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
 import { resolveSpeech, resolveTranscription } from '../job/resolve-speech.ts';
@@ -204,12 +201,13 @@ export async function speakVoiceTurn(
           timing.mark('firstAudio');
           emit('audio', {
             seq: c.seq,
+            sentence: c.sentence,
             mimeType: c.mimeType,
             ...(c.sampleRate !== undefined ? { sampleRate: c.sampleRate } : {}),
             base64: Buffer.from(c.audio).toString('base64'),
           });
         },
-        onSentenceEnd: (sentence) => emit('audio_end', { sentence }),
+        onSentenceEnd: (sentence, complete) => emit('audio_end', { sentence, complete }),
       })
     : null;
   const silence = (): void => {
@@ -219,13 +217,6 @@ export async function speakVoiceTurn(
   opts.readerGone.addEventListener('abort', silence, { once: true });
 
   const chunker = createSentenceChunker();
-  const redactor = createStreamRedactor();
-  /** Le texte masqué part à l'écran ET à la voix, jamais l'un sans l'autre. */
-  const out = (safe: string): void => {
-    if (safe === '') return;
-    emit('delta', { text: safe });
-    say(chunker.push(safe));
-  };
   let settled = false;
   let saidAny = false;
   const say = (sentences: string[]): void => {
@@ -244,10 +235,8 @@ export async function speakVoiceTurn(
   const settle = (text: string, streamed: boolean): void => {
     if (settled) return;
     settled = true;
-    if (streamed) {
-      out(redactor.flush());
-      say(chunker.flush());
-    } else {
+    if (streamed) say(chunker.flush());
+    else {
       voice?.reset();
       say(splitSentences(redactSecretsInText(text)));
     }
@@ -265,9 +254,11 @@ export async function speakVoiceTurn(
         conversationId: u.conversationId,
         message: heard.transcript,
         spoken: { durationMs: heard.durationMs },
+        // Déjà masqué (`playChatTurn`) : le texte rendu ET la voix.
         onTextDelta: (delta) => {
           timing.mark('firstDelta');
-          if (!settled) out(redactor.push(delta));
+          emit('delta', { text: delta });
+          if (!settled) say(chunker.push(delta));
         },
         onReplyText: ({ text, streamed }) => settle(text, streamed),
       },

@@ -7,7 +7,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { createStreamRedactor } from '../redact-stream';
-import { REDACTED_TEXT } from '../redact-transcript';
+import { REDACTED_TEXT, redactSecretsInText } from '../redact-transcript';
 
 /** Tout ce que le masqueur a laissé sortir pour ces fragments. */
 function emitted(chunks: readonly string[]): string {
@@ -54,5 +54,25 @@ describe('createStreamRedactor', () => {
     const streamed = r.push('un mot sans espace final');
     expect(streamed + r.flush()).toBe('un mot sans espace final');
     expect(r.flush()).toBe('');
+  });
+
+  // Review of #968, pass 2: the runner masks a turn's deltas once
+  // (`playChatTurn`), and the typed web doors still mask what they relay
+  // (until #974). Masking masked text must change nothing: the placeholder
+  // matches no credential shape.
+  it('masking already-masked text is a no-op, whole and in fragments', () => {
+    const raw =
+      'Keys: sk-or-v1-abcdefghijklmnopqrstu, ghp_abcdefghijklmnop1234 and Bearer abcdefghijklmnopqrstuvwx.';
+    const once = redactSecretsInText(raw);
+    expect(once).not.toBe(raw);
+    expect(redactSecretsInText(once)).toBe(once);
+    // The runner's redactor, then the web door's, over the runner's fragments.
+    const runner = createStreamRedactor();
+    const runnerOut = [raw.slice(0, 20), raw.slice(20, 47), raw.slice(47)].map((c) =>
+      runner.push(c),
+    );
+    runnerOut.push(runner.flush());
+    expect(runnerOut.join('')).toBe(once);
+    expect(emitted(runnerOut.filter((c) => c !== ''))).toBe(once);
   });
 });
