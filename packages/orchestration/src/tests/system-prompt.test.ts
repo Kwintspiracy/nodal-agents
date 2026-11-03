@@ -1921,6 +1921,88 @@ ${sentence}`).length > 0,
     expect(chat).not.toContain('## Channel etiquette');
   });
 
+  // La forme de la réponse (#941) : un fait de la DEMANDE, à côté de la ligne
+  // du canal. Prouvé sur chaque surface qui le porte — le tour de chat, le job
+  // du tableau de bord sans outil d'envoi, le job d'un canal qui en a un —, et
+  // absent partout où la réponse se lit ou ne va pas à la personne.
+  const renderingLines = (prompt: string): string[] =>
+    prompt.split('\n').filter((l) => l.startsWith('- rendering:'));
+  const SPOKEN =
+    '- rendering: spoken — your reply is turned into speech and heard, not read. ' +
+    'Short sentences carry it; tables, lists, headings, links and other markup do not ' +
+    'survive being read aloud, and numbers, dates and units are heard as they are written, ' +
+    'so write them the way they are said.';
+
+  it('a spoken reply is stated once in Job context, on every surface that carries it (#941)', async () => {
+    const { entityId, root } = await seedTeam();
+    const rootAgent = makeAgent(root.id, entityId, root.personality, 'orchestrator');
+    const surfaces: JobContext[] = [
+      { origin: 'dashboard', surface: 'chat', replyRendering: 'spoken' },
+      { origin: 'dashboard', replyRendering: 'spoken', availableToolNames: [...ALWAYS_ON_TOOLS] },
+      {
+        origin: 'telegram',
+        telegramChatId: '199791464',
+        channelDelivery: TELEGRAM_FACTS,
+        availableToolNames: withSend,
+        replyRendering: 'spoken',
+      },
+      { origin: 'dashboard', surface: 'cli-runtime', replyRendering: 'spoken' },
+    ];
+    for (const ctx of surfaces) {
+      const prompt = await buildSystemPrompt(rootAgent, db, ctx);
+      const jobContext = prompt.split('## Job context')[1]?.split('\n## ')[0] ?? '';
+      expect({ ctx: ctx.origin, surface: ctx.surface, lines: renderingLines(jobContext) }).toEqual({
+        ctx: ctx.origin,
+        surface: ctx.surface,
+        lines: [SPOKEN],
+      });
+      expect(statedLimits(prompt)).toEqual([]);
+    }
+    // Beside the channel facts, never instead of them.
+    const telegram = await buildSystemPrompt(rootAgent, db, surfaces[2]!);
+    expect(deliveryLines(telegram)).toHaveLength(1);
+  });
+
+  it('a read reply, absent or text, adds no line: no existing prompt changes (#941)', async () => {
+    const { entityId, root } = await seedTeam();
+    const rootAgent = makeAgent(root.id, entityId, root.personality, 'orchestrator');
+    for (const ctx of [
+      { origin: 'dashboard', surface: 'chat' },
+      { origin: 'dashboard', surface: 'chat', replyRendering: 'text' },
+      { origin: 'telegram', channelDelivery: TELEGRAM_FACTS, availableToolNames: withSend },
+      {
+        origin: 'telegram',
+        channelDelivery: TELEGRAM_FACTS,
+        availableToolNames: withSend,
+        replyRendering: 'text',
+      },
+    ] satisfies JobContext[]) {
+      const prompt = await buildSystemPrompt(rootAgent, db, ctx);
+      expect(renderingLines(prompt)).toEqual([]);
+      expect(prompt).not.toContain('read aloud');
+    }
+    // The same context, with and without `text`, is the same prompt to the byte.
+    const without = await buildSystemPrompt(rootAgent, db, { origin: 'api' });
+    const withText = await buildSystemPrompt(rootAgent, db, {
+      origin: 'api',
+      replyRendering: 'text',
+    });
+    expect(withText).toBe(without);
+  });
+
+  it('a delegate answers its parent: a spoken root does not make it write for the voice (#941)', async () => {
+    const { entityId, worker } = await seedTeam();
+    const workerAgent = makeAgent(worker.id, entityId, worker.personality);
+    const prompt = await buildSystemPrompt(workerAgent, db, {
+      origin: 'internal',
+      isDelegated: true,
+      delegationDepth: 1,
+      replyRendering: 'spoken',
+      availableToolNames: ALWAYS_ON_TOOLS.filter((t) => t !== 'dashboard_publish'),
+    });
+    expect(renderingLines(prompt)).toEqual([]);
+  });
+
   it('indexes only the deferred tools the job holds', async () => {
     const { entityId, worker } = await seedTeam();
     const workerAgent = makeAgent(worker.id, entityId, worker.personality);

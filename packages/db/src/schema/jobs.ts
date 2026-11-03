@@ -13,7 +13,7 @@ import {
   check,
 } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
-import type { InboxEntry, JobResultKind } from '@nodal-agents/shared';
+import type { InboxEntry, JobResultKind, ReplyRendering } from '@nodal-agents/shared';
 import { entities } from './entities.ts';
 import { agents } from './agents.ts';
 import { agentSchedules } from './schedules.ts';
@@ -123,6 +123,13 @@ export const agentJobs = pgTable(
      * relais n'a rien ajouté. Remplace `original_task`, jamais écrite.
      */
     handoffNote: text('handoff_note'),
+    /**
+     * Comment la personne recevra la réponse de ce job (#941, migration 0157) :
+     * `text`, lue, comme tout job jusqu'ici ; `spoken`, entendue — le job est
+     * né d'un tour vocal, et sa réponse finale sera dite. Le prompt du job le
+     * dit à l'agent (`JobContext.replyRendering`) ; ses mots restent les siens.
+     */
+    replyRendering: text('reply_rendering').$type<ReplyRendering>().notNull().default('text'),
     chatId: text('chat_id'),
     /**
      * Le canal sur lequel `chat_id` a été RÉSOLU (#649, migration 0143), posé
@@ -541,6 +548,7 @@ export const agentJobs = pgTable(
       'agent_jobs_result_kind_check',
       sql`${table.resultKind} IS NULL OR ${table.resultKind} IN ('prose','relay')`,
     ),
+    check('agent_jobs_reply_rendering_check', sql`${table.replyRendering} IN ('text','spoken')`),
   ],
 );
 

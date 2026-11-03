@@ -49,7 +49,12 @@ import { recheckNarratedAction } from '../llm/action-recheck.ts';
 import type { RunnerDeps } from '../deps.ts';
 import { cutReplyNote, stoppedReplyNote } from './turn-stop.ts';
 import { LLMOutputLimitError, LLMTimeoutError, type LlmTimeoutReason } from '@nodal-agents/llm';
-import { handoffNote, openingMessages, type BrakeStop } from '@nodal-agents/shared';
+import {
+  handoffNote,
+  openingMessages,
+  type BrakeStop,
+  type ReplyRendering,
+} from '@nodal-agents/shared';
 import { watchCallProgress } from '../job/call-progress.ts';
 
 // F-12 (audit #2): the old HISTORY_LIMIT=20 bounded history by TURN COUNT, not
@@ -417,9 +422,20 @@ export async function runChatTurn(opts: {
    * d'escalade, ni relance sans outils, ni job lancé.
    */
   abortSignal?: AbortSignal;
+  /**
+   * La personne a DIT ce message (#941) : `message` est sa transcription, et
+   * `durationMs` la durée de ce qu'elle a dit. Le tour reste le même tour —
+   * mêmes outils (`run_task` seul), même historique, même remise — avec deux
+   * faits de plus : le message de la personne est rangé comme dit, avec sa
+   * durée, et la réponse sera ENTENDUE (`ReplyRendering` 'spoken'), pour ce
+   * tour comme pour le job qu'il lance. Absent : un message tapé, lu.
+   */
+  spoken?: { durationMs: number };
 }): Promise<ChatTurnResult> {
-  const { deps, entityId, agentId, conversationId, message, onTextDelta, abortSignal } = opts;
+  const { deps, entityId, agentId, conversationId, message, onTextDelta, abortSignal, spoken } =
+    opts;
   const db = deps.db;
+  const replyRendering: ReplyRendering = spoken ? 'spoken' : 'text';
 
   // 1. Load + verify the agent belongs to this entity.
   const [agentRow] = await db
@@ -463,9 +479,14 @@ export async function runChatTurn(opts: {
   // 1b. Persist the user turn IMMEDIATELY — before the (slower) LLM resolution +
   // system-prompt build — so it's visible the instant the user navigates back to
   // /chat, even while the reply is still generating. (Single writer = runner.)
-  await db
-    .insert(chatMessages)
-    .values({ entityId, agentId, conversationId, role: 'user', content: message });
+  await db.insert(chatMessages).values({
+    entityId,
+    agentId,
+    conversationId,
+    role: 'user',
+    content: message,
+    ...(spoken ? { spokenMs: spoken.durationMs } : {}),
+  });
   // First message names the conversation (cheap auto-title; LLM summary later).
   if (!conv.title) {
     await db
@@ -505,6 +526,7 @@ export async function runChatTurn(opts: {
       },
       conversationId,
       message,
+      replyRendering,
       ...(abortSignal ? { abortSignal } : {}),
     });
   }
@@ -555,6 +577,7 @@ export async function runChatTurn(opts: {
     surface: 'chat',
     task: message,
     deployment,
+    replyRendering,
     ...(conversation ? { conversation } : {}),
   });
 
@@ -897,6 +920,9 @@ export async function runChatTurn(opts: {
         channel: 'dashboard',
         task: message,
         handoffNote: note,
+        // La réponse du travail se reçoit comme celle du tour qui l'a lancé :
+        // dite pour un tour vocal, lue sinon (#941).
+        replyRendering,
         // Jobs page grouping (migration 0059): this channel already has a
         // real conversation entity (the dashboard sidebar thread) — stamp
         // that id directly rather than re-deriving it from a gap heuristic.

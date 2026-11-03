@@ -194,6 +194,8 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       task text NOT NULL,
       -- mirrors migration 0151 : la note de qui a remis la demande (handoff.ts).
       handoff_note text,
+      -- mirrors migration 0157 (#941) : la réponse se lit, ou s'entend.
+      reply_rendering text NOT NULL DEFAULT 'text' CHECK (reply_rendering IN ('text','spoken')),
       chat_id text,
       chat_channel text,
       conversation_id uuid,
@@ -319,7 +321,7 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       premier := left_behind -> 0;
       INSERT INTO agent_jobs (
         entity_id, agent_id, channel, chat_id, chat_channel, conversation_id, project_id,
-        status, task, handoff_note, messages, inbox, relaunched_from_job_id
+        status, task, handoff_note, reply_rendering, messages, inbox, relaunched_from_job_id
       ) VALUES (
         root.entity_id, root.agent_id, root.channel, root.chat_id, root.chat_channel, NEW.conversation_id,
         (SELECT c.current_project_id FROM conversations c WHERE c.id = NEW.conversation_id),
@@ -327,6 +329,8 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
         premier ->> 'task',
         -- mirrors migration 0151 : la note suit la tête ; la boucle ouvre ses messages.
         premier ->> 'note',
+        -- mirrors migration 0157 : la suite du travail se reçoit comme la racine.
+        root.reply_rendering,
         '[]'::jsonb,
         left_behind - 0,
         root.id
@@ -858,6 +862,8 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       job_id uuid REFERENCES agent_jobs(id) ON DELETE SET NULL,
       stopped boolean NOT NULL DEFAULT false,
       cut_reason text,
+      -- mirrors migration 0157 (#941) : un message dit, et sa durée.
+      spoken_ms integer CHECK (spoken_ms IS NULL OR (spoken_ms > 0 AND role = 'user')),
       created_at timestamptz DEFAULT now()
     );
 

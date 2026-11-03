@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { pcmToWav, sampleRateFromMimeType } from '../wav.ts';
+import { pcmToWav, readWav, sampleRateFromMimeType } from '../wav.ts';
 import { SpeechError } from '../errors.ts';
 
 /**
@@ -99,5 +99,52 @@ describe('sampleRateFromMimeType', () => {
     expect(() => sampleRateFromMimeType('audio/L16;codec=pcm16;bitrate=384000')).toThrow(
       /refusing to guess/,
     );
+  });
+});
+
+describe('readWav — the header of a recording, read as the recorder wrote it (#941)', () => {
+  it('reads back what pcmToWav wrote, duration included', () => {
+    // 0.5 s of 16-bit mono at 16 kHz.
+    const info = readWav(pcmToWav(new Uint8Array(16_000), { sampleRate: 16_000 }));
+    expect(info).toEqual({
+      sampleRate: 16_000,
+      channels: 1,
+      bitsPerSample: 16,
+      dataBytes: 16_000,
+      durationMs: 500,
+    });
+  });
+
+  it('walks past an 18-byte fmt chunk and a LIST chunk, as other recorders write', () => {
+    const canonical = pcmToWav(new Uint8Array(48_000), { sampleRate: 24_000 });
+    // fmt grown to 18 bytes (cbSize = 0), then a 5-byte LIST chunk with its pad byte.
+    const fmt = new Uint8Array(8 + 18);
+    fmt.set(canonical.subarray(12, 36));
+    new DataView(fmt.buffer).setUint32(4, 18, true);
+    const list = Uint8Array.from([0x4c, 0x49, 0x53, 0x54, 5, 0, 0, 0, 1, 2, 3, 4, 5, 0]);
+    const data = canonical.subarray(36);
+    const wav = new Uint8Array(12 + fmt.length + list.length + data.length);
+    wav.set(canonical.subarray(0, 12));
+    wav.set(fmt, 12);
+    wav.set(list, 12 + fmt.length);
+    wav.set(data, 12 + fmt.length + list.length);
+
+    expect(readWav(wav)).toMatchObject({ sampleRate: 24_000, dataBytes: 48_000, durationMs: 1000 });
+  });
+
+  it('a container with no samples says so: zero bytes, zero milliseconds', () => {
+    expect(readWav(pcmToWav(new Uint8Array(0), { sampleRate: 16_000 }))).toMatchObject({
+      dataBytes: 0,
+      durationMs: 0,
+    });
+  });
+
+  it('refuses what it cannot read rather than guessing a duration', () => {
+    expect(() => readWav(new Uint8Array([1, 2, 3]))).toThrow(/not a RIFF\/WAVE/);
+    const noData = pcmToWav(new Uint8Array(0), { sampleRate: 16_000 }).subarray(0, 36);
+    expect(() => readWav(noData)).toThrow(/no data chunk/);
+    const float = pcmToWav(new Uint8Array(8), { sampleRate: 16_000 });
+    new DataView(float.buffer).setUint16(20, 3, true); // IEEE float
+    expect(() => readWav(float)).toThrow(/not uncompressed PCM/);
   });
 });

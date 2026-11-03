@@ -108,6 +108,7 @@ describe('the job chat as a model reads it @cap:parler-par-canal-externe/moteur'
           id: '4242424242',
           channel: 'telegram',
         }),
+        replyRendering: 'text',
       }),
     );
     const handle = await conversationHandleFor(any(), {

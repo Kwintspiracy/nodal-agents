@@ -14,7 +14,16 @@
 // jusqu'à ce qu'il en ouvre une autre, `/new` ou le « + »), et lui donner un
 // endroit où porter un état durable — aujourd'hui le projet courant.
 
-import { pgTable, text, uuid, timestamp, index, check, boolean } from 'drizzle-orm/pg-core';
+import {
+  pgTable,
+  text,
+  uuid,
+  timestamp,
+  index,
+  check,
+  boolean,
+  integer,
+} from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 import { entities } from './entities.ts';
 import { agents } from './agents.ts';
@@ -133,11 +142,20 @@ export const chatMessages = pgTable(
     // (`LLMTimeoutError.reason`). NULL pour une réponse rendue entière. Même
     // règle que `stopped` : un fait, que l'écran dit.
     cutReason: text('cut_reason'),
+    // La personne a DIT ce message au lieu de le taper (#941, migration 0157) :
+    // `content` est la transcription, et ceci la durée de ce qu'elle a dit, en
+    // millisecondes — l'écran en tire « Spoken · 0:03 ». NULL : un message tapé.
+    spokenMs: integer('spoken_ms'),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
   },
   (table) => [
     index('idx_chat_messages_conversation').on(table.conversationId, table.createdAt),
     check('chat_messages_role_check', sql`${table.role} IN ('user','assistant')`),
+    // Un message dit est un message de la personne, et il a duré.
+    check(
+      'chat_messages_spoken_ms_check',
+      sql`${table.spokenMs} IS NULL OR (${table.spokenMs} > 0 AND ${table.role} = 'user')`,
+    ),
   ],
 );
 

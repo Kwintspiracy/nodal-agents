@@ -235,10 +235,17 @@ describe('googleTranscriptionAdapter.transcribe', () => {
     expect(calls).toHaveLength(0);
   });
 
-  it('treats an empty transcript as a failure rather than an empty message', async () => {
+  it('treats an empty transcript as nothing heard, never as an empty message', async () => {
     mockGemini(textAnswer('   '));
     await expect(
       googleTranscriptionAdapter.transcribe({ audio: wav, mimeType: 'audio/wav' }, conn()),
-    ).rejects.toThrow(/no transcript/);
+    ).rejects.toMatchObject({ code: 'speech_nothing_heard', message: /no transcript/ });
+  });
+
+  it('a blocked prompt with no transcript stays a vendor refusal, not nothing heard', async () => {
+    mockGemini({ candidates: [], promptFeedback: { blockReason: 'SAFETY' } });
+    await expect(
+      googleTranscriptionAdapter.transcribe({ audio: wav, mimeType: 'audio/wav' }, conn()),
+    ).rejects.toMatchObject({ code: 'speech_provider_error', message: /blocked: SAFETY/ });
   });
 });

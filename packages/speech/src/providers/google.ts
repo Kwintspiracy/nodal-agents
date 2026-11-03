@@ -289,8 +289,9 @@ export const googleTranscriptionAdapter: TranscriptionAdapter = {
       .trim();
     if (text.length === 0) {
       const reason = json.promptFeedback?.blockReason;
+      // A blocked prompt is the vendor refusing; no block is an audio with no words.
       throw new SpeechError(
-        'speech_provider_error',
+        reason ? 'speech_provider_error' : 'speech_nothing_heard',
         `google ${STT_MODEL}: answered 200 with no transcript` +
           (reason ? ` (blocked: ${reason})` : ''),
       );

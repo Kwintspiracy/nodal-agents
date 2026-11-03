@@ -9,12 +9,7 @@ import type { Context } from 'hono';
 import { z } from 'zod';
 import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
-import { runChatTurn } from '../chat/run-chat-turn.ts';
-import { runInLane } from '../chat/turn-lane.ts';
-import { withChatTurnStop } from '../chat/turn-stop.ts';
-import { withLiveTurn } from '../chat/live-turn.ts';
-import { executeJob } from '../job/execute.ts';
-import type { JobId } from '@nodal-agents/orchestration';
+import { playChatTurn } from '../chat/play-turn.ts';
 
 const ChatRequestSchema = z.object({
   entityId: z.string().guid(),
@@ -51,12 +46,13 @@ export async function chatRoute(
   // aussi (#456, revue Codex de #459, passe 2) — même registre, même tour.
   // Le tour est lisible d'une autre page pendant qu'il tourne (#457) : ce
   // chemin ne diffuse aucun texte, mais une page rouverte sait qu'il répond.
-  const result = await runInLane(conversationId, () =>
-    withLiveTurn(entityId, conversationId, () =>
-      withChatTurnStop(conversationId, (abortSignal) =>
-        runChatTurn({ deps, entityId, agentId, conversationId, message, abortSignal }),
-      ),
-    ),
+  // Si le tour escalade, son job part en fond (`playChatTurn`) : le chat rend
+  // l'accusé de l'agent tout de suite, l'écran suit le job.
+  const result = await playChatTurn(
+    deps,
+    runnerEnv,
+    { entityId, agentId, conversationId, message },
+    'chatRoute',
   );
   if (!result.ok) {
     const notFound =
@@ -65,16 +61,6 @@ export async function chatRoute(
       { error: result.error, ...(result.cutReason ? { cutReason: result.cutReason } : {}) },
       notFound ? 404 : 400,
     );
-  }
-
-  // If the turn escalated to an action, run that job in the background (the chat
-  // returns the agent's acknowledgement immediately; the UI polls the job for
-  // its dispatch/progress).
-  if (result.spawnedJobId) {
-    const jobId = result.spawnedJobId as JobId;
-    void executeJob(jobId, deps, runnerEnv).catch((err: unknown) => {
-      console.error('[chatRoute] spawned job failed:', err);
-    });
   }
 
   return c.json({ reply: result.reply });

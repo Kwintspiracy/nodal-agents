@@ -20,6 +20,12 @@ import { chatRoute } from './routes/chat.ts';
 import { chatStreamRoute } from './routes/chat-stream.ts';
 import { chatStopRoute } from './routes/chat-stop.ts';
 import { chatLiveRoute } from './routes/chat-live.ts';
+import {
+  voiceTurnCancelRoute,
+  voiceTurnChunkRoute,
+  voiceTurnEndRoute,
+  voiceTurnStartRoute,
+} from './routes/voice-turn.ts';
 import { eventsRoute } from './routes/events.ts';
 import { transitionListener } from './events/publish.ts';
 import { listenToTransitions } from '@nodal-agents/db';
@@ -236,6 +242,13 @@ export function createApp(
   app.use('/api/chat/stream', requireRunnerAuth);
   app.use('/api/chat/stop', requireRunnerAuth);
   app.use('/api/chat/live', requireRunnerAuth);
+  // Le tour vocal (#941) : la même garde que /api/chat, sur la création du tour
+  // et sur chacun de ses chemins. SEAM #946 : le jeton d'un module s'ajoute À
+  // CETTE GARDE, comme une autre preuve qui pose `callerTrusted` /
+  // `callerEntityId` ; la route ne lit que ces deux faits, et ne demande
+  // jamais une session du tableau de bord.
+  app.use('/api/voice/turns', requireRunnerAuth);
+  app.use('/api/voice/turns/*', requireRunnerAuth);
   // #944 — le flux poussé des événements de job. Même garde que /api/chat* :
   // c'est par elle, et par elle seule, que le jeton d'appareil de #946 entrera.
   app.use('/api/events', requireRunnerAuth);
@@ -263,6 +276,11 @@ export function createApp(
   app.post('/api/chat/stop', (c) => chatStopRoute(c, deps));
   app.post('/api/chat/live', (c) => chatLiveRoute(c, deps));
   app.get('/api/events', (c) => eventsRoute(c, deps));
+
+  app.post('/api/voice/turns', (c) => voiceTurnStartRoute(c, deps));
+  app.post('/api/voice/turns/:turnId/chunks/:seq', (c) => voiceTurnChunkRoute(c));
+  app.post('/api/voice/turns/:turnId/end', (c) => voiceTurnEndRoute(c, deps, runnerEnv));
+  app.delete('/api/voice/turns/:turnId', (c) => voiceTurnCancelRoute(c));
 
   app.post('/api/approve', (c) => approveRoute(c, deps, runnerEnv));
 

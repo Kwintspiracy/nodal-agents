@@ -61,6 +61,7 @@ import {
   openingText,
   type BrakeStop,
   type CliShellSetting,
+  type ReplyRendering,
 } from '@nodal-agents/shared';
 import { loadConversationContext } from '../job/conversation-id.ts';
 // LA liste des outils d'édition — la même que l'onglet Code et le bloc Runtime.
@@ -181,6 +182,8 @@ export interface CliRuntimeJobRow {
    * qui voit ce qui tourne. Absent ou `null` : une tête d'un fil au repos.
    */
   answersWhileJobId?: string | null;
+  /** `agent_jobs.reply_rendering` (#941) : la réponse se lit ou s'entend. Absent : lue. */
+  replyRendering?: ReplyRendering;
 }
 
 /**
@@ -231,6 +234,12 @@ export function buildCliRuntimeJobContext(args: {
    * elle travaille, et depuis combien de tours.
    */
   conversation?: ConversationContext;
+  /**
+   * Comment la personne reçoit la réponse (#941) : obligatoire pour la même
+   * raison que `deployment`. Un chemin qui l'oublierait ferait écrire pour la
+   * lecture une réponse qui sera dite.
+   */
+  replyRendering: ReplyRendering;
 }): Parameters<typeof buildSystemPrompt>[2] {
   return {
     origin: args.origin,
@@ -241,6 +250,7 @@ export function buildCliRuntimeJobContext(args: {
     ...(args.workspaceGit ? { workspaceGit: args.workspaceGit } : {}),
     ...(args.workspaces && args.workspaces.length > 0 ? { workspaces: args.workspaces } : {}),
     ...(args.conversation ? { conversation: args.conversation } : {}),
+    replyRendering: args.replyRendering,
   };
 }
 
@@ -758,6 +768,7 @@ export async function runCliRuntimeJob(args: {
         workspaceGit,
         workspaces: args.workspaces,
         ...(conversation ? { conversation } : {}),
+        replyRendering: job.replyRendering ?? 'text',
       }),
     );
   } catch (err) {

@@ -390,6 +390,25 @@ describe('what remains in an inbox when its job finishes is never lost (trigger,
     });
   });
 
+  it('the relaunched head is received as its root was: read, or heard after a voice turn (migration 0157)', async () => {
+    for (const replyRendering of ['spoken', 'text'] as const) {
+      const running = await head('processing');
+      await db.update(agentJobs).set({ replyRendering }).where(eq(agentJobs.id, running));
+      await forward(running, 'et dis-moi quand c’est fini');
+
+      await db.update(agentJobs).set({ status: 'completed' }).where(eq(agentJobs.id, running));
+
+      const [relaunched] = await db
+        .select({ replyRendering: agentJobs.replyRendering })
+        .from(agentJobs)
+        .where(eq(agentJobs.relaunchedFromJobId, running));
+      expect({ root: replyRendering, relaunched: relaunched?.replyRendering }).toEqual({
+        root: replyRendering,
+        relaunched: replyRendering,
+      });
+    }
+  });
+
   it("a drained entry gives the person's words, marked as passed on, then the relaying model's note under its frame — two messages", async () => {
     const running = await head('processing');
     await forward(

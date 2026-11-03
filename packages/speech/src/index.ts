@@ -22,7 +22,7 @@ export {
   speechProviders,
   transcriptionProviders,
 } from './registry.ts';
-export { pcmToWav, sampleRateFromMimeType } from './wav.ts';
+export { pcmToWav, readWav, sampleRateFromMimeType, type WavInfo } from './wav.ts';
 export { isAudioChunk, languageBoostFor } from './providers/minimax.ts';
 export { GEMINI_VOICES } from './providers/google.ts';
 export {
