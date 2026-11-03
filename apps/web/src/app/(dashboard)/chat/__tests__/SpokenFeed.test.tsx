@@ -4,7 +4,7 @@
 // (rangé par le runner, #941), et la réponse de l'agent porte « Speaking »
 // pendant que sa voix joue. Une demande tapée ne porte rien.
 
-import { describe, it, expect, afterEach, vi } from 'vitest';
+import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -42,6 +42,10 @@ function thread() {
     jobs: [],
   });
 }
+
+beforeEach(() => {
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+});
 
 afterEach(() => {
   stopSpeaking();
