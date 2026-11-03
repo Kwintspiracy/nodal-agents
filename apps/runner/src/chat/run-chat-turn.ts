@@ -11,7 +11,7 @@
 // after the escalation shipped, and a comment that states a rule gets read as
 // one (revue Codex de la dette de la PR #73, passe 3).
 
-import { eq, and, asc, desc, sql } from '@nodal-agents/db';
+import { eq, and, asc, desc, sql, cancelJobs } from '@nodal-agents/db';
 import {
   agents,
   chatMessages,
@@ -954,10 +954,8 @@ export async function runChatTurn(opts: {
     // tel quel dans Runs —, la réponse est marquée arrêtée, et l'appelant ne
     // reçoit aucun job à lancer.
     if (abortSignal?.aborted) {
-      await db
-        .update(agentJobs)
-        .set({ status: 'cancelled', updatedAt: new Date() })
-        .where(eq(agentJobs.id, job.id));
+      // PORTE (a) (#944) : annulé et annoncé, comme tout job qui finit.
+      await cancelJobs(db, { ids: [job.id] });
       if (ackRow?.id) {
         await db.update(chatMessages).set({ stopped: true }).where(eq(chatMessages.id, ackRow.id));
       }

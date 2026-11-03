@@ -41,12 +41,8 @@ const LISTE_BLANCHE: Record<string, string> = {
     'touchJob : porte EXPLICITEMENT la prise que le battement tient (heldBy) ; son intervalle est partagé entre reprises imbriquées, il ne lit pas le scope.',
   'delegation-parent':
     'handleDelegation : suspend le parent sous sa prise EXPLICITE (parentClaimGeneration, paramètre obligatoire) et `processing`.',
-  'orphan-child':
-    "handleDelegation : annule l'enfant qu'il vient de créer quand le parent n'est plus délégable — la ligne d'un AUTRE job, gardée non terminale.",
   'delegation-resume':
     "resumeDelegated : remet le parent en file — la ligne d'un AUTRE job (ou du run qui l'appelle, déjà rendu), gardée sur `awaiting_delegation`.",
-  'parent-cascade':
-    "maybeResumeParent : annule le parent d'un enfant annulé — la ligne d'un AUTRE job, gardée sur `awaiting_delegation`.",
   'project-record':
     'attach.ts : `project_id`, posé UNE fois (WHERE project_id IS NULL) — un fait sur ce que le job a produit, vrai quel que soit le run qui le tient.',
   'chain-root':

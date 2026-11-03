@@ -6,6 +6,8 @@
 export interface SseEvent {
   event: string;
   data: unknown;
+  /** La ligne `id:` de l'événement, quand il en porte une (#944). */
+  id?: string;
 }
 
 export function readSse(res: Response): { events: SseEvent[]; done: Promise<void> } {
@@ -22,12 +24,21 @@ export function readSse(res: Response): { events: SseEvent[]; done: Promise<void
         const block = buffer.slice(0, cut);
         buffer = buffer.slice(cut + 2);
         let event = 'message';
+        let id: string | undefined;
         const data: string[] = [];
         for (const line of block.split('\n')) {
           if (line.startsWith('event:')) event = line.slice(6).trim();
           else if (line.startsWith('data:')) data.push(line.slice(5).trim());
+          else if (line.startsWith('id:')) id = line.slice(3).trim();
         }
-        events.push({ event, data: data.length > 0 ? JSON.parse(data.join('\n')) : null });
+        // Un bloc fait seulement d'un commentaire (`: ping`) n'est pas un événement.
+        if (data.length > 0 || id !== undefined || event !== 'message') {
+          events.push({
+            event,
+            data: data.length > 0 ? JSON.parse(data.join('\n')) : null,
+            ...(id !== undefined ? { id } : {}),
+          });
+        }
         cut = buffer.indexOf('\n\n');
       }
     }
