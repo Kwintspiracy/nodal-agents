@@ -3,7 +3,7 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { eq } from '@nodal-agents/db';
+import { cancelJobs, eq } from '@nodal-agents/db';
 import { agentJobs } from '@nodal-agents/db';
 import {
   assertTransition,
@@ -368,10 +368,14 @@ describe('DB state helpers', () => {
   });
 
   it('cancelJob stamps completedAt + persists messages WITHOUT touching status', async () => {
-    // The status column is flipped to 'cancelled' by `cancelJobAction`
-    // (web), not by this helper — the helper only finalises the row.
+    // The status column is flipped to 'cancelled' by the cancel door
+    // (`cancelJobs`, the one `cancelJobTree` and `cancelJobAction` go
+    // through), not by this helper — the helper only finalises the row.
     // Verify: existing status preserved, completedAt set, messages saved.
-    await setJobStatus(db as Parameters<typeof setJobStatus>[0], seed.jobId, 'cancelled');
+    // The job is live when it is stopped (earlier cases of this file left it
+    // terminal): the door only cancels a live row.
+    await db.update(agentJobs).set({ status: 'processing' }).where(eq(agentJobs.id, seed.jobId));
+    await cancelJobs(db as Parameters<typeof cancelJobs>[0], { ids: [seed.jobId] });
 
     const transcript = [
       { role: 'user', content: 'long-running task' },

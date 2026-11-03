@@ -10,7 +10,7 @@
 // `lost` ; un processus sans écouteur ne casse rien.
 
 import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { spinUpTestDb, seedMinimal } from './helpers.ts';
 import type { TestDb } from './helpers.ts';
 import { agentJobs, approvalRequests } from '../schema/index.ts';
@@ -105,6 +105,23 @@ describe('les portes des transitions poussées (#944) @cap:suivre-execution/mote
     // Rejouée : plus rien ne vit, rien n'est annoncé.
     await cancelJobs(asDb(), { ids: [live] });
     expect(ended()).toEqual([live]);
+  });
+
+  it("la garde de l'appelant (la prise du run, #566) s'ajoute à celle de la porte", async () => {
+    const held = await job('processing');
+    const other = await job('processing');
+    // Une prise que l'appelant ne tient plus : rien n'est écrit, rien n'est annoncé.
+    expect(await cancelJobs(asDb(), { ids: [held], guard: sql`false` })).toEqual([]);
+    expect(ended()).toEqual([]);
+    expect(await cancelJobs(asDb(), { ids: [held, other], guard: eq(agentJobs.id, held) })).toEqual(
+      [held],
+    );
+    expect(ended()).toEqual([held]);
+    const [row] = await db
+      .select({ s: agentJobs.status })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, other));
+    expect(row?.s).toBe('processing');
   });
 
   it("expirePendingRequests et decidePendingRequest n'annoncent que ce qui a quitté `pending`", async () => {

@@ -177,6 +177,15 @@ const WRITER_ROOTS = [
 /** (a) — `.update(agentJobs).set({ … status: <terminal> … })`, avant son WHERE. */
 const JOB_TERMINAL_WRITE =
   /\.update\(agentJobs\)\s*\.set\(\{(?:(?!\.where\()[\s\S]){0,600}?\bstatus:\s*(?:'completed'|'failed'|'cancelled'|[a-zA-Z]+Status\b)/;
+/**
+ * (a), forme abrégée — `.set({ status, … })` : la valeur vient d'une variable,
+ * et rien ne dit au motif ci-dessus qu'elle n'est pas terminale (la cascade d'un
+ * délégué en ligne y est passée, revue de #956 passe 2). Hors d'une porte, elle
+ * est refusée. Le vrai garde est le TYPE : `setJobStatus` (state.ts, fichier de
+ * porte) n'accepte qu'un `NonTerminalJobStatus` (`set-job-status-type.test.ts`).
+ */
+const JOB_STATUS_SHORTHAND_WRITE =
+  /\.update\(agentJobs\)\s*\.set\(\{(?:(?!\.where\()[\s\S]){0,600}?[{,]\s*status\s*[,}]/;
 /** (b) — `.update(approvalRequests).set({ … status … })` : toute écriture du statut d'une demande la fait quitter `pending`. */
 const REQUEST_SETTLE_WRITE =
   /\.update\(approvalRequests\)\s*\.set\(\{(?:(?!\.where\()[\s\S]){0,600}?\bstatus:/;
@@ -227,9 +236,10 @@ const rel = (file: string): string =>
 
 describe('architecture — une porte par transition poussée (#944) @cap:suivre-execution/moteur', () => {
   it('un job ne passe à un statut terminal que par une porte', () => {
-    const outside = scanRoots(JOB_TERMINAL_WRITE, 'job-terminal-write-outside-door').filter(
-      (v) => !JOB_DOORS.includes(rel(v.file)),
-    );
+    const outside = [
+      ...scanRoots(JOB_TERMINAL_WRITE, 'job-terminal-write-outside-door'),
+      ...scanRoots(JOB_STATUS_SHORTHAND_WRITE, 'job-status-shorthand-outside-door'),
+    ].filter((v) => !JOB_DOORS.includes(rel(v.file)));
     if (outside.length > 0) {
       expect.fail(formatViolations('Statut terminal de job écrit hors d’une porte', outside));
     }

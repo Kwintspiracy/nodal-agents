@@ -6204,8 +6204,14 @@ async function runJobTracked(
                 // still be 'processing' since cancellation was scoped to the
                 // child); orphan-cleanup would catch it eventually but
                 // surfacing it now matches user intent.
-                // Under this run's claim (#566), like every write of the run.
-                if (!(await setJobStatus(db, jobId as string, 'cancelled'))) {
+                // Under this run's claim (#566), like every write of the run,
+                // and through the door of job ends (#944): announced to the
+                // stream, once, when it lands.
+                const annule = await cancelJobs(db, {
+                  ids: [jobId as string],
+                  guard: ownJobRow(jobId as string),
+                });
+                if (annule.length === 0) {
                   return await ecritureRefusee('cascade_cancel');
                 }
                 await cancelJob(db, jobId as string, runStats(), messages);

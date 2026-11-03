@@ -31,6 +31,18 @@ export type JobStatus =
   | 'awaiting_delegation'
   | 'cancelled';
 
+/** Les statuts d'où un job ne repart plus. */
+export type TerminalJobStatus = Extract<JobStatus, 'completed' | 'failed' | 'cancelled'>;
+
+/**
+ * Ce que `setJobStatus` peut écrire : tout SAUF un statut terminal (#944, revue
+ * de #956, passe 2). Un statut terminal ne s'écrit que par une PORTE, qui
+ * l'annonce au flux (`completeJob`, `failJob`, `cancelRootJob` ici,
+ * `cancelJobs` dans @nodal-agents/db) ; c'est le compilateur qui le refuse
+ * ici, pas seulement le test d'architecture.
+ */
+export type NonTerminalJobStatus = Exclude<JobStatus, TerminalJobStatus>;
+
 // ─── JobStateError ────────────────────────────────────────────────────────────
 
 export class JobStateError extends Error {
@@ -88,12 +100,15 @@ export function assertTransition(jobId: string, from: JobStatus, to: JobStatus):
 /**
  * Update a job's status in DB. Does NOT validate transition — caller must call
  * assertTransition() first. Used by execute.ts where we've already validated.
+ *
+ * Jamais un statut terminal : le type le refuse (`NonTerminalJobStatus`), et
+ * `extra` ne peut pas en glisser un par la bande (`status?: never`).
  */
 export async function setJobStatus(
   db: AnyDrizzleDb,
   jobId: string,
-  status: JobStatus,
-  extra: Record<string, unknown> = {},
+  status: NonTerminalJobStatus,
+  extra: Record<string, unknown> & { status?: never } = {},
 ): Promise<boolean> {
   // Écrite par le run qui tient ce job : seulement sous sa prise (#566).
   const rows = await db

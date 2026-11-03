@@ -195,6 +195,11 @@ export async function cancelJobs(
     /** Borne chaque écriture à cet espace, quand l'appelant le connaît. */
     entityId?: string;
     onlyFrom?: readonly string[];
+    /**
+     * La garde de l'appelant, en plus : la prise du run qui annule SA ligne
+     * (`ownJobRow`, #566). Le statut posé, lui, n'est jamais l'appelant qui le dit.
+     */
+    guard?: SQL;
     now?: Date;
   },
 ): Promise<string[]> {
@@ -207,6 +212,7 @@ export async function cancelJobs(
         inArray(agentJobs.id, [...input.ids]),
         ...(input.entityId !== undefined ? [eq(agentJobs.entityId, input.entityId)] : []),
         inArray(agentJobs.status, [...(input.onlyFrom ?? LIVE_JOB_STATUSES)]),
+        ...(input.guard !== undefined ? [input.guard] : []),
       ),
     )
     .returning({ id: agentJobs.id });
