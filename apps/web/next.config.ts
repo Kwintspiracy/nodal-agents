@@ -156,7 +156,11 @@ const nextConfig: NextConfig = {
           { key: 'X-Content-Type-Options', value: 'nosniff' },
           { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
           { key: 'Strict-Transport-Security', value: 'max-age=63072000; includeSubDomains' },
-          { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=()' },
+          // Le micro est permis au tableau de bord LUI-MÊME (`self`), pour le
+          // push-to-talk du chat (#942) ; jamais à un cadre d'une autre origine.
+          // `microphone=()` le refusait à tout le monde : Chrome bloquait
+          // `getUserMedia` avant même de demander à la personne.
+          { key: 'Permissions-Policy', value: 'camera=(), microphone=(self), geolocation=()' },
           { key: 'Content-Security-Policy', value: "frame-ancestors 'none'" },
         ],
       },

@@ -4,7 +4,7 @@
 // qu'il ne sait pas dessiner, il le montre brut et le dit.
 
 import Link from 'next/link';
-import { ArrowSquareOut, PaperPlaneTilt } from '@phosphor-icons/react/dist/ssr';
+import { ArrowSquareOut, Microphone, PaperPlaneTilt } from '@phosphor-icons/react/dist/ssr';
 import AgentAvatar from '@/components/ui/AgentAvatar';
 import StatusPill from '@/components/ui/StatusPill';
 import StopRunButton from '@/components/ui/StopRunButton';
@@ -47,7 +47,8 @@ import DelegationBlock from './DelegationBlock.tsx';
 import Handoff from './Handoff.tsx';
 import RunSummaryRow from './RunSummaryRow.tsx';
 import { DEFAULT_FEED_DENSITY, type FeedDensity } from '@/lib/feed-density.ts';
-import { formatCost, formatMs, formatTokens, originLabel } from './format.ts';
+import { clockDuration, formatCost, formatMs, formatTokens, originLabel } from './format.ts';
+import SpeakingPill from '@/app/(dashboard)/chat/SpeakingPill.tsx';
 
 type ToolStep = Extract<Step, { kind: 'tool' }>;
 
@@ -164,6 +165,17 @@ function FeedItemView({
                 <Markdown text={item.text} tone="user" />
               </ClampedText>
             </div>
+            {/* Une demande DITE (#942) : sa durée, rangée par le runner. Une
+                demande tapée n'en a pas, et rien ne s'affiche. */}
+            {typeof item.spokenMs === 'number' && item.spokenMs > 0 && (
+              <p
+                className="mt-1.5 flex items-center justify-end gap-1 text-mono-11 text-ink-4"
+                data-testid="feed-spoken"
+              >
+                <Microphone size={12} weight="regular" aria-hidden="true" />
+                {`Spoken · ${clockDuration(item.spokenMs)}`}
+              </p>
+            )}
           </div>
         </div>
       );
@@ -193,6 +205,12 @@ function FeedItemView({
             avatarUrl={item.agent.avatarUrl}
             model={item.model}
             at={item.at}
+            badge={
+              // « Speaking » pendant que la voix de CE tour joue (#942).
+              <SpeakingPill
+                text={item.blocks.flatMap((b) => (b.kind === 'prose' ? [b.text] : [])).join('\n\n')}
+              />
+            }
           />
           {item.blocks.map((b, i) => (
             <Block key={i} block={b} deliverables={deliverables} />
@@ -314,17 +332,21 @@ function Who({
   avatarUrl,
   model,
   at,
+  badge = null,
 }: {
   name: string;
   /** L'image de l'agent, quand il en a une. Sinon ses initiales (AgentAvatar). */
   avatarUrl?: string | null;
   model?: string | null;
   at?: Date | null;
+  /** Ce qui suit le nom : la pastille « Speaking » d'une réponse dite (#942). */
+  badge?: React.ReactNode;
 }) {
   return (
     <div className="mb-1.5 flex items-center gap-2.5">
       <AgentAvatar name={name} imageUrl={avatarUrl ?? undefined} size="sm" shape="square" />
       <span className="text-title-15 text-ink">{name}</span>
+      {badge}
       {model !== null && model !== undefined && model !== '' && (
         <span className="text-mono-11 text-feed-model">{model}</span>
       )}

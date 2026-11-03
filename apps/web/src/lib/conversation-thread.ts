@@ -86,6 +86,12 @@ export type ThreadMessage = {
    * `stopped` : le runner pose le fait (`chat_messages.cut_reason`), le fil le dit.
    */
   cutReason?: string | null;
+  /**
+   * La personne a DIT ce message (#941) : `content` est la transcription, et
+   * ceci la durée de ce qu'elle a dit (`chat_messages.spoken_ms`). Un fait du
+   * runner, que le fil dit (« Spoken · 0:03 »).
+   */
+  spokenMs?: number | null;
 };
 
 /** Ce que le fil dit sous une réponse que la personne a arrêtée (#456). */
@@ -795,7 +801,13 @@ export function buildConversationThread(input: {
 
   for (const message of messages) {
     if (message.role === 'user') {
-      items.push({ kind: 'request', text: message.content, origin, at: message.createdAt });
+      items.push({
+        kind: 'request',
+        text: message.content,
+        origin,
+        at: message.createdAt,
+        spokenMs: message.spokenMs ?? null,
+      });
       continue;
     }
 

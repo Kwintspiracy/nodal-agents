@@ -14,6 +14,16 @@ export function formatMs(ms: number): string {
   return `${m} min${s > 0 ? ` ${s.toString().padStart(2, '0')}` : ''}`;
 }
 
+/**
+ * Une durée de parole, comme un lecteur l'écrit : « 0:03 », « 1:12 ». Le
+ * minuteur du micro et la mention « Spoken » d'un message dit (#942) disent
+ * la même chose de la même façon.
+ */
+export function clockDuration(ms: number): string {
+  const s = Math.max(0, Math.round(ms / 1000));
+  return `${String(Math.floor(s / 60))}:${String(s % 60).padStart(2, '0')}`;
+}
+
 export function formatTokens(n: number): string {
   return n.toLocaleString('en-US');
 }
