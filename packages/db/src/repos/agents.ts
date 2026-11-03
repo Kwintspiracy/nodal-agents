@@ -4,7 +4,11 @@
 // discriminated result or throws on unexpected errors.
 
 import { eq, and, or, ilike, inArray, isNull } from 'drizzle-orm';
-import { INITIAL_AUTO_ROOT_GRANTS, findModelCatalogEntry } from '@nodal-agents/shared';
+import {
+  INITIAL_AUTO_ROOT_GRANTS,
+  findModelCatalogEntry,
+  firstSpokenReasoningEffort,
+} from '@nodal-agents/shared';
 import type { AnyDrizzleDb } from '../client.ts';
 import { agents, agentAssignments } from '../schema/agents.ts';
 import { entities } from '../schema/entities.ts';
@@ -81,11 +85,22 @@ export async function createAgentRepo(
     }
   }
 
+  // La première valeur de « Reasoning when spoken to » (#977) : `off` si le
+  // modèle de la clé l'offre, sinon Auto. Écrite ici, à la naissance de
+  // l'agent, puis rangée : un changement de modèle ne la recalcule pas.
+  const spokenReasoningEffort = await firstSpokenEffortFor(
+    db,
+    entityId,
+    input.llmKeyId ?? null,
+    input.model,
+  );
+
   let row: { id: string } | undefined;
   try {
     const [inserted] = await db
       .insert(agents)
       .values({
+        spokenReasoningEffort,
         entityId,
         slug: input.slug,
         name: input.name,
@@ -292,6 +307,79 @@ export async function orchestratorModelToolsError(
     return `"${entry.label}" can't use tools — pick a tool-capable model for a router/planner.`;
   }
   return null;
+}
+
+/**
+ * La première valeur de « Reasoning when spoken to » pour un agent sur cette
+ * clé et ce modèle (`firstSpokenReasoningEffort`, @nodal-agents/shared). Sans
+ * clé de l'espace, rien ne dit ce que le modèle offre : Auto.
+ */
+async function firstSpokenEffortFor(
+  db: AnyDrizzleDb,
+  entityId: string,
+  llmKeyId: string | null,
+  model: string | null,
+): Promise<'off' | null> {
+  if (!llmKeyId || !model) return null;
+  const [key] = await db
+    .select({ provider: entityLlmKeys.provider })
+    .from(entityLlmKeys)
+    .where(and(eq(entityLlmKeys.id, llmKeyId), eq(entityLlmKeys.entityId, entityId)));
+  return key ? firstSpokenReasoningEffort(key.provider, model) : null;
+}
+
+/**
+ * Au démarrage du runner (#977) : la PREMIÈRE écriture de « Reasoning when
+ * spoken to » sur les agents des espaces d'avant la migration 0159
+ * (`entities.spoken_reasoning_written_at` NULL). Chaque agent dont le modèle
+ * offre `off` reçoit `off` ; les autres gardent NULL (Auto). Puis l'espace est
+ * marqué fait, et ne l'est plus jamais : un second démarrage ne touche à rien,
+ * et une valeur posée à la main ensuite n'est jamais réécrite.
+ *
+ * Seul un agent encore à NULL est écrit : une valeur déjà rangée (posée à la
+ * main entre la migration et ce démarrage) est gardée telle quelle.
+ */
+export async function writeFirstSpokenReasoningAtBoot(
+  db: AnyDrizzleDb,
+): Promise<{ written: number; workspaces: number }> {
+  const pending = await db
+    .select({ id: entities.id })
+    .from(entities)
+    .where(isNull(entities.spokenReasoningWrittenAt));
+  let written = 0;
+  for (const space of pending) {
+    await db.transaction(async (raw) => {
+      const tx = raw as unknown as AnyDrizzleDb;
+      // Le marqueur d'abord, sous condition : deux démarrages simultanés ne
+      // font la première écriture qu'une fois.
+      const claimed = await tx
+        .update(entities)
+        .set({ spokenReasoningWrittenAt: new Date() })
+        .where(and(eq(entities.id, space.id), isNull(entities.spokenReasoningWrittenAt)))
+        .returning({ id: entities.id });
+      if (claimed.length === 0) return;
+      const rows = await tx
+        .select({ id: agents.id, model: agents.model, provider: entityLlmKeys.provider })
+        .from(agents)
+        .innerJoin(entityLlmKeys, eq(entityLlmKeys.id, agents.llmKeyId))
+        .where(
+          and(
+            eq(agents.entityId, space.id),
+            eq(entityLlmKeys.entityId, space.id),
+            isNull(agents.spokenReasoningEffort),
+          ),
+        );
+      for (const row of rows) {
+        if (!row.model || firstSpokenReasoningEffort(row.provider, row.model) !== 'off') continue;
+        await tx
+          .update(agents)
+          .set({ spokenReasoningEffort: 'off' })
+          .where(and(eq(agents.id, row.id), isNull(agents.spokenReasoningEffort)));
+        written += 1;
+      }
+    });
+  }
+  return { written, workspaces: pending.length };
 }
 
 export interface SetAgentModelInput {

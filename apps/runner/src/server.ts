@@ -28,7 +28,7 @@ import {
 } from './routes/voice-turn.ts';
 import { eventsRoute } from './routes/events.ts';
 import { transitionListener } from './events/publish.ts';
-import { listenToTransitions } from '@nodal-agents/db';
+import { listenToTransitions, writeFirstSpokenReasoningAtBoot } from '@nodal-agents/db';
 import { webhookRoute } from './routes/webhook.ts';
 import { codeTaskDoctorRoute } from './routes/code-task-doctor.ts';
 import { sandboxRoute } from './routes/sandbox.ts';
@@ -417,6 +417,20 @@ async function main(): Promise<void> {
   await writeAutonomyRowsAtBoot(deps.db).catch((e: unknown) => {
     console.error('[runner] writing the autonomy rows at boot failed:', e);
   });
+
+  // « Reasoning when spoken to » (#977) : la première valeur des agents d'avant
+  // la migration 0159, écrite une fois par espace (`off` là où le modèle
+  // l'offre, Auto ailleurs), puis rangée. Avant tout tour : un tour dit doit
+  // lire la valeur que l'écran montre. Un échec se dit, et le prochain
+  // démarrage refait l'écriture des espaces non marqués.
+  await writeFirstSpokenReasoningAtBoot(deps.db)
+    .then(({ written }) => {
+      if (written > 0)
+        console.warn(`[runner] spoken reasoning: first value written for ${written} agent(s)`);
+    })
+    .catch((e: unknown) => {
+      console.error('[runner] writing the first spoken reasoning value at boot failed:', e);
+    });
 
   // Start the WhatsApp manager BEFORE createApp: the pairing route needs the
   // manager's handle threaded in at route-registration time (its GET/POST

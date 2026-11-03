@@ -88,7 +88,8 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       sandbox_enabled boolean NOT NULL DEFAULT true,
       sandbox_folders jsonb NOT NULL DEFAULT '{"added":[],"removed":[]}',
       -- mirrors migration 0156
-      autonomy_rows_written_at timestamptz DEFAULT now()
+      autonomy_rows_written_at timestamptz DEFAULT now(),
+      spoken_reasoning_written_at timestamptz DEFAULT now()
     );
 
     CREATE TABLE IF NOT EXISTS entity_members (
