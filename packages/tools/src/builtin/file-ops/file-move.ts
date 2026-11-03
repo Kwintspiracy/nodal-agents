@@ -566,9 +566,11 @@ async function moveWithoutReplacing(
   source: string,
   destination: string,
 ): Promise<{ unlinkErr: unknown; seen: Seen } | undefined> {
-  // L'identité de ce que l'appel va poser, relevée en O(1) AVANT la pose : un
-  // lien est le même fichier que la source.
-  let placed: Placed = { id: await placedId(source), linkOf: source };
+  // L'identité de la source, relevée en O(1) AVANT que le déplacement ne
+  // commence : c'est aussi celle de ce que l'appel pose par un lien, qui est le
+  // même fichier.
+  const sourceId = await placedId(source);
+  let placed: Placed = { id: sourceId, linkOf: source };
   try {
     if ((await claimName(source, destination)) === 'renamed') return undefined;
   } catch (err) {
@@ -581,10 +583,13 @@ async function moveWithoutReplacing(
     await unlink(source);
     return undefined;
   } catch (err) {
-    const seen = await observePartialMove(source, destination, placed);
+    const seen = await observePartialMove(source, destination, sourceId, placed);
+    // Le retour en arrière retire la destination : seulement quand la source
+    // est TOUJOURS le fichier de départ. Si un autre fichier l'a remplacée, la
+    // destination porte le seul exemplaire de l'original (arbitrage du 03/11).
     if (
-      'sourceThere' in seen &&
-      seen.sourceThere &&
+      'source' in seen &&
+      seen.source === 'original' &&
       seen.atDestination === 'ours' &&
       (await unlinkOurs(destination)) === 'removed'
     ) {
@@ -596,9 +601,10 @@ async function moveWithoutReplacing(
 
 /**
  * Ce qu'un déplacement inachevé laisse sur le disque, vu UNE fois, sur tous
- * les chemins (`replace: true` compris) : la source est-elle encore là, et
- * qu'y a-t-il à destination — ce que l'appel y a posé (son identité), autre
- * chose, ou rien. Une lecture qui échoue est rapportée comme telle, jamais
+ * les chemins (`replace: true` compris) : la source est-elle toujours le
+ * fichier dont l'appel est parti (son identité, relevée avant le
+ * déplacement), un autre fichier, ou rien ; et qu'y a-t-il à destination —
+ * ce que l'appel y a posé (son identité), autre chose, ou rien. Une lecture qui échoue est rapportée comme telle, jamais
  * prise pour l'un de ces cas.
  *
  * Un lien de la source, sur un volume sans numéros de fichier, se reconnaît
@@ -610,40 +616,49 @@ async function moveWithoutReplacing(
  */
 type Seen =
   | { readError: { path: string; error: unknown } }
-  | { sourceThere: boolean; atDestination: 'ours' | 'foreign' | 'absent' };
+  | {
+      source: 'original' | 'replaced' | 'absent';
+      atDestination: 'ours' | 'foreign' | 'absent';
+    };
 
 async function observePartialMove(
   source: string,
   destination: string,
+  sourceId: BigIntStats,
   placed: Placed,
 ): Promise<Seen> {
-  const there = async (path: string): Promise<boolean> =>
-    lstat(path).then(
-      () => true,
-      (error: unknown) => {
-        if (errnoOf(error) === 'ENOENT') return false;
-        throw error;
-      },
-    );
-  let sourceThere: boolean;
+  const look = async (path: string): Promise<BigIntStats | null> =>
+    lstat(path, { bigint: true }).catch((error: unknown) => {
+      if (errnoOf(error) === 'ENOENT') return null;
+      throw error;
+    });
+  let srcNow: BigIntStats | null;
   try {
-    sourceThere = await there(source);
+    srcNow = await look(source);
   } catch (error) {
     return { readError: { path: source, error } };
   }
   try {
-    const now = await lstat(destination, { bigint: true }).catch((error: unknown) => {
-      if (errnoOf(error) === 'ENOENT') return null;
-      throw error;
-    });
-    if (now === null) return { sourceThere, atDestination: 'absent' };
-    const ours =
-      sameIdentity(now, placed.id) ||
-      (placed.linkOf !== undefined &&
-        sourceThere &&
-        !hasIds(now, placed.id) &&
-        (await sameBytes(destination, placed.linkOf)));
-    return { sourceThere, atDestination: ours ? 'ours' : 'foreign' };
+    const dstNow = await look(destination);
+    let sourceIs: 'original' | 'replaced' | 'absent' =
+      srcNow === null ? 'absent' : sameIdentity(srcNow, sourceId) ? 'original' : 'replaced';
+    let atDestination: 'ours' | 'foreign' | 'absent' =
+      dstNow === null ? 'absent' : sameIdentity(dstNow, placed.id) ? 'ours' : 'foreign';
+    // Un lien, sur un volume sans numéros de fichier, dont la date a changé :
+    // tant que le lien tient, la source et la destination sont le même fichier,
+    // et portent les mêmes octets. Il est alors intact des deux côtés.
+    if (
+      placed.linkOf !== undefined &&
+      srcNow !== null &&
+      dstNow !== null &&
+      !hasIds(dstNow, placed.id) &&
+      (sourceIs !== 'original' || atDestination !== 'ours') &&
+      (await sameBytes(destination, placed.linkOf))
+    ) {
+      sourceIs = 'original';
+      atDestination = 'ours';
+    }
+    return { source: sourceIs, atDestination };
   } catch (error) {
     return { readError: { path: destination, error } };
   }
@@ -711,7 +726,7 @@ function partialMove(
         'doing anything else.',
     );
   }
-  if (seen.sourceThere) {
+  if (seen.source === 'original') {
     if (seen.atDestination === 'ours') {
       return fail(
         `"${a}" was placed at "${destination}", but the original could not be removed ` +
@@ -726,6 +741,23 @@ function partialMove(
           : `nothing is at "${destination}" any more: another program removed what this call ` +
             'had placed there.') +
         ` The original is still at "${a}": keep it.`,
+    );
+  }
+  if (seen.source === 'replaced') {
+    if (seen.atDestination === 'ours') {
+      return fail(
+        `The original "${a}" was replaced by another file during this call (removing it ` +
+          `failed: ${why}). "${destination}" holds the original: keep it, and tell the person.`,
+      );
+    }
+    return fail(
+      `The original "${a}" was replaced by another file during this call (removing it ` +
+        `failed: ${why}), and "${destination}" does not hold the original either: ` +
+        (seen.atDestination === 'foreign'
+          ? 'it now holds a different file, written there by another program.'
+          : 'nothing is there.') +
+        ' This call can no longer tell where the original is: tell the person before doing ' +
+        'anything else.',
     );
   }
   if (seen.atDestination === 'ours') {
@@ -946,6 +978,7 @@ export const fileMoveTool: ToolDefinition<typeof FileMoveInputSchema, FileMoveOu
         // traverse pas. Le déplacement se fait alors en deux temps, copie puis
         // suppression.
         if (errnoOf(err) !== 'EXDEV') throw err;
+        const sourceId = await placedId(source);
         const id = await copyIntoPlace(ctx, source, destination, destroyed);
         try {
           await unlink(source);
@@ -954,7 +987,7 @@ export const fileMoveTool: ToolDefinition<typeof FileMoveInputSchema, FileMoveOu
         } catch (unlinkErr) {
           // La copie a eu lieu, la suppression non : ce qui est sur le disque
           // se regarde, et se dit tel quel (invariant #4), comme sans replace.
-          const seen = await observePartialMove(source, destination, { id });
+          const seen = await observePartialMove(source, destination, sourceId, { id });
           return partialMove(input, destination, unlinkErr, seen);
         }
       }

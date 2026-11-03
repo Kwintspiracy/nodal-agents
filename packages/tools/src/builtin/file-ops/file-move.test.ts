@@ -60,6 +60,12 @@ const panne = vi.hoisted(() => ({
   lstatEchoue: null as string | null,
   /** Pendant le `unlink(unlinkOf)` raté, un programme ajoute ces octets à la fin de ce chemin. */
   ajouteAvantRetour: null as { path: string; text: string } | null,
+  /**
+   * Pendant le `unlink(unlinkOf)` raté, un programme REMPLACE la source par un
+   * autre fichier (écrit à côté puis renommé dessus) : un autre fichier, au
+   * même nom.
+   */
+  remplaceSource: null as string | null,
   /** Les fichiers ouverts EN LECTURE (`open` sans « wx », `readFile`) : ce que le code lit. */
   lectures: [] as string[],
   /** Après la copie de ce chemin (`copyFile`), un programme ajoute ces octets à sa fin. */
@@ -159,6 +165,14 @@ vi.mock('node:fs/promises', async (importOriginal) => {
           await actual.rename(autre, e.path);
         }
       }
+      const remplacant = panne.remplaceSource;
+      if (remplacant !== null) {
+        panne.remplaceSource = null;
+        panne.levees.push('source remplacée');
+        const autre = `${path}.remplacant`;
+        await actual.writeFile(autre, remplacant);
+        await actual.rename(autre, path);
+      }
       const ajout = panne.ajouteAvantRetour;
       if (ajout !== null) {
         panne.ajouteAvantRetour = null;
@@ -245,6 +259,7 @@ afterEach(async () => {
   panne.lstatEchoue = null;
   panne.ajouteApresCopie = null;
   panne.ajouteAvantRetour = null;
+  panne.remplaceSource = null;
   panne.lectures = [];
   panne.renameVers = null;
   panne.levees = [];
@@ -1517,5 +1532,79 @@ describe('file_move — un lien sur un volume sans numéros de fichier se reconn
     expect(await readFile(join(DOCS, 'scan.pdf'))).toEqual(
       Buffer.concat([OCTETS, Buffer.from(' -- ajouté')]),
     );
+  });
+});
+
+describe('file_move — une source remplacée pendant l’appel n’est jamais prise pour l’original (arbitrage du 03/11) @cap:travailler-sur-des-fichiers/moteur', () => {
+  // « La source est là » veut dire « la source est TOUJOURS le fichier dont
+  // l'appel est parti ». Si un autre fichier l'a remplacée entre la pose et le
+  // retrait raté, la destination porte le seul exemplaire de l'original : pas
+  // de retour en arrière, et l'agent le sait.
+  for (const cas of [
+    { nom: 'sur le même volume (un lien)', exdev: false, replace: false, inoNul: false },
+    { nom: 'entre deux volumes (une copie)', exdev: true, replace: false, inoNul: false },
+    { nom: 'replace:true entre deux volumes', exdev: true, replace: true, inoNul: false },
+    {
+      nom: 'sur le même volume, sans numéros de fichier',
+      exdev: false,
+      replace: false,
+      inoNul: true,
+    },
+    {
+      nom: 'entre deux volumes, sans numéros de fichier',
+      exdev: true,
+      replace: false,
+      inoNul: true,
+    },
+  ]) {
+    it(`${cas.nom} : la destination garde l’original, et c’est dit`, async () => {
+      panne.inoNul = cas.inoNul;
+      await writeFile(join(DOCS, 'scan.pdf'), OCTETS);
+      const src = await realpath(join(DOCS, 'scan.pdf'));
+      const cible = join(await realpath(ARCHIVE), 'scan.pdf');
+      if (cas.exdev && cas.replace) panne.renameFrom = src;
+      else if (cas.exdev) panne.link = [{ from: src, code: 'EXDEV' }];
+      panne.unlinkOf = src;
+      panne.remplaceSource = 'un autre fichier, au même nom';
+
+      const out = await deplacer({
+        source: 'docs/scan.pdf',
+        destination: 'archive/',
+        replace: cas.replace,
+      });
+
+      expect(panne.levees).toContain('source remplacée');
+      expect(out).toEqual({
+        ok: false,
+        reason:
+          'The original "docs/scan.pdf" was replaced by another file during this call ' +
+          `(removing it failed: EBUSY: EBUSY: simulated). "${cible}" holds the original: keep ` +
+          'it, and tell the person.',
+      });
+      expect(await readFile(cible)).toEqual(OCTETS);
+      expect(await readFile(join(DOCS, 'scan.pdf'), 'utf8')).toBe('un autre fichier, au même nom');
+    });
+  }
+
+  it('la source remplacée ET la destination écrasée : l’original est perdu de vue, et c’est dit', async () => {
+    await writeFile(join(DOCS, 'scan.pdf'), OCTETS);
+    const src = await realpath(join(DOCS, 'scan.pdf'));
+    const cible = join(await realpath(ARCHIVE), 'scan.pdf');
+    panne.unlinkOf = src;
+    panne.remplaceSource = 'un autre fichier, au même nom';
+    panne.ecraseAvantRetour = { path: cible, content: 'écrit par un autre programme' };
+
+    const out = await deplacer({ source: 'docs/scan.pdf', destination: 'archive/' });
+
+    expect(out).toEqual({
+      ok: false,
+      reason:
+        'The original "docs/scan.pdf" was replaced by another file during this call (removing ' +
+        `it failed: EBUSY: EBUSY: simulated), and "${cible}" does not hold the original ` +
+        'either: it now holds a different file, written there by another program. This call ' +
+        'can no longer tell where the original is: tell the person before doing anything else.',
+    });
+    expect(await readFile(cible, 'utf8')).toBe('écrit par un autre programme');
+    expect(await readFile(join(DOCS, 'scan.pdf'), 'utf8')).toBe('un autre fichier, au même nom');
   });
 });
