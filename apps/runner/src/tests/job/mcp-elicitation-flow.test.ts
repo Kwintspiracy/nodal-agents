@@ -421,31 +421,53 @@ describe('une question de serveur MCP, de bout en bout @cap:approuver-une-action
 // Le temps d'attente d'une réponse comptait dans la durée travaillée du job
 // (`total_duration_ms`, celle que `max_run_hours` borne) : un run au budget
 // presque épuisé s'arrêtait juste après la réponse.
+//
+// La preuve ne dépend pas de la vitesse de la machine (#979). L'ancienne
+// version attendait 3 s pour de vrai et voulait une durée sous ces 3 s : le
+// travail du job lui-même, sur un runner Windows chargé, y ajoutait de quoi
+// rougir (3329, 3610 ms). Ici, l'horloge du runner (`Date.now`) saute d'une
+// demi-heure PENDANT que la question est ouverte : c'est la personne qui
+// réfléchit, sans qu'on l'attende. La durée travaillée ne peut alors pas
+// dépasser le temps réel qu'a pris le test (mesuré par `performance.now`, que
+// le saut ne touche pas) ; si l'attente comptait, elle le dépasserait d'une
+// demi-heure, quelle que soit la machine.
 describe('l’attente d’une réponse n’est pas du temps travaillé @cap:approuver-une-action/moteur', () => {
   it('le temps passé à attendre la personne ne compte pas dans la durée du job', async () => {
+    const PERSON_THINKS_MS = 30 * 60_000;
+    // La question ne doit pas expirer pendant le saut : son délai le dépasse.
+    const env = { ...testEnv, NODALAI_ELICITATION_TIMEOUT_MS: 4 * PERSON_THINKS_MS };
     await setRule('auto_approve');
     const jobId = await createJob('print the report');
-    const run = executeJob(
-      jobId as JobId,
-      makeDeps(makeMockLlmClient([{ toolCalls: [ORDER_CALL] }, FINISH])),
-      testEnv,
-    );
-    const questionId = await waitForQuestion(jobId);
-    const WAIT_MS = 3_000;
-    await new Promise((r) => setTimeout(r, WAIT_MS));
-    await resolveApprovalDecision(makeDeps(makeMockLlmClient([FINISH])), testEnv, {
-      answeredBy: { userId: '00000000-0000-4000-8000-00000000a11e' },
-      approvalRequestId: questionId,
-      decision: 'approve',
-      resolvedBy: 'api',
-      content: { color: 'grayscale', copies: 2, duplex: true },
-    });
-    const result = await run;
-    expect(result.status).toBe('completed');
-    const [row] = await db
-      .select({ totalDurationMs: agentJobs.totalDurationMs })
-      .from(agentJobs)
-      .where(eq(agentJobs.id, jobId));
-    expect(row!.totalDurationMs).toBeLessThan(WAIT_MS);
+    const realNow = Date.now.bind(Date);
+    let jumped = 0;
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => realNow() + jumped);
+    try {
+      const realStart = performance.now();
+      const run = executeJob(
+        jobId as JobId,
+        makeDeps(makeMockLlmClient([{ toolCalls: [ORDER_CALL] }, FINISH])),
+        env,
+      );
+      const questionId = await waitForQuestion(jobId);
+      jumped = PERSON_THINKS_MS;
+      await resolveApprovalDecision(makeDeps(makeMockLlmClient([FINISH])), env, {
+        answeredBy: { userId: '00000000-0000-4000-8000-00000000a11e' },
+        approvalRequestId: questionId,
+        decision: 'approve',
+        resolvedBy: 'api',
+        content: { color: 'grayscale', copies: 2, duplex: true },
+      });
+      const result = await run;
+      const realMs = performance.now() - realStart;
+      const [row] = await db
+        .select({ totalDurationMs: agentJobs.totalDurationMs })
+        .from(agentJobs)
+        .where(eq(agentJobs.id, jobId));
+      // `Date.now` compte en millisecondes entières : 1 ms d'arrondi par bout.
+      expect(row!.totalDurationMs).toBeLessThanOrEqual(Math.ceil(realMs) + 2);
+      expect(result.status).toBe('completed');
+    } finally {
+      clock.mockRestore();
+    }
   }, 60_000);
 });
