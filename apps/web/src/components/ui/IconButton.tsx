@@ -15,8 +15,12 @@ type Props = ButtonHTMLAttributes<HTMLButtonElement> & {
   /** Surface treatment (ignored when `ghost`):
    *   - `chrome`  (default) — paper square + border, the topbar/table look
    *   - `subtle`  — filled `hover-2` tint, no border (chat send)
-   *   - `ink`     — filled ink, canvas glyph, no border (chat new-conversation) */
-  fill?: 'chrome' | 'subtle' | 'ink';
+   *   - `ink`     — filled ink, canvas glyph, no border (chat new-conversation)
+   *   - `attention` — filled attention red with a ring, white glyph: a control
+   *     that is LIVE right now (the chat microphone while it listens, #942).
+   *     White and not `paper`: the red is the same in both themes, and the
+   *     dark theme's paper would sink into it, like `Disc` on its vivid fills. */
+  fill?: 'chrome' | 'subtle' | 'ink' | 'attention';
   /** Borderless, backgroundless variant — for an icon control embedded inside
    *  another surface (the show/hide toggle inside a password field, the
    *  sidebar's mobile hamburger/close, the user-menu sign-out icon) where the
@@ -39,6 +43,7 @@ const FILL: Record<NonNullable<Props['fill']>, string> = {
   chrome: 'border border-rule-2 bg-paper text-ink-2 hover:text-ink',
   subtle: 'bg-hover-2 text-ink-2 hover:bg-hover',
   ink: 'bg-ink text-canvas hover:brightness-[0.92]',
+  attention: 'bg-attention text-white ring-4 ring-attention/25',
 };
 
 /**

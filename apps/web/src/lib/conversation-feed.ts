@@ -239,7 +239,18 @@ export type TurnUsage = {
 };
 
 export type FeedItem =
-  | { kind: 'request'; text: string; origin: Origin; at: Date | null }
+  | {
+      kind: 'request';
+      text: string;
+      origin: Origin;
+      at: Date | null;
+      /**
+       * La personne a DIT cette demande (#941/#942) : sa durée en
+       * millisecondes, telle que le runner l'a rangée (`chat_messages.spoken_ms`).
+       * Absent ou `null` : une demande tapée.
+       */
+      spokenMs?: number | null;
+    }
   /**
    * Ce que le fil dit de LUI-MÊME, pas de la conversation : un rappel que le
    * runner a glissé à l'agent (`runner`), ou un aveu du fil sur ce qu'il ne

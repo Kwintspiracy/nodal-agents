@@ -25,6 +25,14 @@ import TextArea from '@/components/ui/TextArea';
 import ModelEffortChip, { type ComposerLlmKey } from './ModelEffortChip.tsx';
 import { usePendingTurn } from './PendingTurn.tsx';
 import { sendChatMessage, stopChatTurn } from './chat-stream.ts';
+import {
+  ListeningPanel,
+  MicButton,
+  TranscribingLine,
+  VoiceNoteLine,
+  useVoiceTurn,
+} from './VoiceComposer.tsx';
+import { stopSpeaking, useSpeaking } from './voice-playback.ts';
 
 /** Au-delà, la zone défile au lieu de grandir : le fil reste visible. */
 const COMPOSER_MAX_HEIGHT_PX = 200;
@@ -167,6 +175,61 @@ export default function ThreadComposer({
     answeringId ?? (pendingTurn.live !== null ? `live:${pendingTurn.live.seq}` : null);
   const stopping = stopKey !== null && stoppingFor === stopKey;
 
+  /**
+   * La conversation qui reçoit ce qu'on envoie, écrit ou dit : celle du fil,
+   * ou celle que `onBeforeSend` ouvre (P8). Deux gestes à la suite avant que la
+   * page ait relu son id attendent la MÊME ouverture. Lève, avec la phrase à
+   * dire, quand il n'y a nulle part où écrire.
+   */
+  async function resolveTarget(): Promise<string> {
+    let target = conversationId;
+    if (onBeforeSend) {
+      try {
+        opening.current ??= onBeforeSend();
+        target = await opening.current;
+      } catch (err) {
+        opening.current = null;
+        throw new Error(err instanceof Error ? err.message : 'Could not open the conversation');
+      }
+    }
+    if (target === '') throw new Error('No conversation to write to');
+    return target;
+  }
+
+  /**
+   * #248 — la conversation ouverte POUR ce geste n'a rien reçu : l'écran la
+   * jette (revue Reviewer C, passe 1). Et on l'oublie : un nouvel essai doit en
+   * ouvrir une autre, pas écrire dans une ligne qui vient peut-être de
+   * disparaître. L'oubli est tenu ICI, et pas dès qu'il y a un `onBeforeSend` :
+   * la page d'un projet garde sa conversation à l'échec, et la rouvrir en
+   * créerait une seconde.
+   */
+  function targetUnused(target: string): boolean {
+    if (!(onBeforeSend && onSendFailed)) return false;
+    opening.current = null;
+    onSendFailed(target);
+    return true;
+  }
+
+  /**
+   * #942 — le micro. Il passe par la même conversation que l'envoi écrit, et
+   * ce qu'il rend se lit comme un envoi : le fil relu (ou l'écran qui devient
+   * le fil), ou la conversation neuve jetée quand rien n'y a été écrit.
+   */
+  const voice = useVoiceTurn({
+    resolveTarget,
+    onReplied: (target) => {
+      if (onSent) onSent(target);
+      else router.refresh();
+    },
+    // Un tour refusé APRÈS la transcription a pu écrire la demande : le fil
+    // est relu, il montre ce que la base porte.
+    onUnused: (target) => {
+      if (!targetUnused(target)) router.refresh();
+    },
+  });
+  const speaking = useSpeaking();
+
   /** Vider la zone, et la remesurer VIDE — voir le commentaire dans `send`. */
   function clearBox(): void {
     setMessage('');
@@ -197,20 +260,11 @@ export default function ThreadComposer({
         pendingTurn.end(id);
         setMessage((typed) => (typed.trim() === '' ? text : `${text}\n\n${typed}`));
       };
-      let target = conversationId;
-      if (onBeforeSend) {
-        try {
-          opening.current ??= onBeforeSend();
-          target = await opening.current;
-        } catch (err) {
-          opening.current = null;
-          toast.error(err instanceof Error ? err.message : 'Could not open the conversation');
-          giveBack();
-          return;
-        }
-      }
-      if (target === '') {
-        toast.error('No conversation to write to');
+      let target: string;
+      try {
+        target = await resolveTarget();
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : 'Could not open the conversation');
         giveBack();
         return;
       }
@@ -231,16 +285,7 @@ export default function ThreadComposer({
         // Le même bloc d'échec qu'avant : le texte revient dans la zone, et
         // rien de partiel ne reste à l'écran (`onText('')` l'a déjà effacé).
         toast.error(r.message);
-        if (onBeforeSend && onSendFailed) {
-          // #248 — la conversation ouverte POUR cet envoi n'a rien reçu :
-          // l'écran la jette (revue Reviewer C, passe 1). Et on l'oublie : un
-          // nouvel essai doit en ouvrir une autre, pas écrire dans une ligne
-          // qui vient peut-être de disparaître. L'oubli est tenu ICI, et pas
-          // dès qu'il y a un `onBeforeSend` : la page d'un projet garde sa
-          // conversation à l'échec, et la rouvrir en créerait une seconde.
-          opening.current = null;
-          onSendFailed(target);
-        }
+        targetUnused(target);
         giveBack();
         return;
       }
@@ -288,6 +333,13 @@ export default function ThreadComposer({
   // partir pendant que le précédent attend (Quentin, 18/09).
   // Un tour suivi depuis une autre page (#457) s'arrête aussi d'ici.
   const showStop = stopKey !== null && !canSend;
+  // #942 — la réponse DITE qui joue : Stop la fait taire, à la même place et
+  // selon la même règle (la zone vide). Une réponse qui s'écrit garde la
+  // priorité : c'est elle que l'on arrête d'abord.
+  const showStopSpeaking = !showStop && speaking !== null && !canSend;
+  // Le micro tenu, ou le runner qui transcrit : la zone de texte cède la place,
+  // et rien d'écrit ne part par-dessus le tour dit.
+  const voiceBusy = voice.phase !== 'idle';
 
   // P2bis — un CADRE, pas un champ posé à côté d'un bouton : le design pose
   // la saisie sur sa propre surface, collée en bas de la zone de contenu,
@@ -309,11 +361,13 @@ export default function ThreadComposer({
         onChange={(e) => {
           setMessage(e.target.value);
           fitToContent(e.target);
+          // On écrit : la note du micro a été lue.
+          if (voice.note !== null) voice.clearNote();
         }}
         onKeyDown={(e) => {
           if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
-            send();
+            if (!voiceBusy) send();
           }
         }}
         placeholder={
@@ -323,7 +377,9 @@ export default function ThreadComposer({
               ? `Reply to ${agentName}…`
               : 'Reply…'
         }
-        containerClassName="min-w-0"
+        // Cachée, pas démontée, pendant le geste du micro : ce qui était tapé
+        // et la hauteur mesurée restent là quand elle revient.
+        containerClassName={voiceBusy ? 'hidden' : 'min-w-0'}
         // `block` : en ligne, la zone laisse 5 px de descente sous elle dans
         // son conteneur, et la rangée d'actions se calait sur CE bas-là.
         // `min-h-[40px]` = COMPOSER_MIN_HEIGHT_PX, le plancher de deux lignes
@@ -333,6 +389,13 @@ export default function ThreadComposer({
         // (revue Reviewer C) ; aucun token ne se tient entre ink-4 et ink-2.
         className="block max-h-[200px] min-h-[40px] w-full resize-none overflow-y-auto bg-transparent px-0 py-0 text-body-14 placeholder:text-ink-2/70"
       />
+      {/* #942 — à la place de la zone, ce que fait le micro ; sous elle, ce
+          que le dernier geste a donné. */}
+      {voice.phase === 'listening' && (
+        <ListeningPanel startedAt={voice.startedAt} levels={voice.levels} />
+      )}
+      {voice.phase === 'transcribing' && <TranscribingLine />}
+      {voice.phase === 'idle' && voice.note !== null && <VoiceNoteLine note={voice.note} />}
       {/* La rangée d'actions, telle que Quentin l'a dessinée (Figma
           `ThreadComposer` 355:2928) : la pastille « provider · modèle ·
           effort » à gauche, l'envoi à droite, sur UNE ligne — la pastille fait
@@ -353,6 +416,8 @@ export default function ThreadComposer({
             requireTools={requireTools}
           />
         )}
+        {/* #942 — le micro, entre la pastille et l'envoi (maquette validée le 03/11). */}
+        <MicButton voice={voice} />
         {/* L'envoi CHANGE DE COULEUR quand il y a quelque chose à envoyer :
             c'est le signal, pas un libellé de plus. Le bouton d'encre de la
             planche dès que le texte n'est pas vide — c'est le contraste le
@@ -371,12 +436,23 @@ export default function ThreadComposer({
             <span aria-hidden="true" className="block size-2.5 rounded-[2px] bg-canvas" />
             Stop
           </PrimaryButton>
+        ) : showStopSpeaking ? (
+          <PrimaryButton
+            variant="ink"
+            size="sm"
+            onClick={stopSpeaking}
+            aria-label="Stop speaking"
+            data-testid="composer-stop-speaking"
+          >
+            <span aria-hidden="true" className="block size-2.5 rounded-[2px] bg-canvas" />
+            Stop
+          </PrimaryButton>
         ) : (
           <PrimaryButton
-            variant={canSend ? 'ink' : 'neutral'}
+            variant={canSend && !voiceBusy ? 'ink' : 'neutral'}
             size="sm"
             onClick={send}
-            disabled={!canSend}
+            disabled={!canSend || voiceBusy}
             data-testid="composer-send"
           >
             Send
