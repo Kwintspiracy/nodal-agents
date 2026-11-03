@@ -21,7 +21,6 @@ afterAll(() => scope.close());
 describe('spawnCliTurn — Stop @cap:parler-a-un-agent/moteur', () => {
   it('tue un processus qui ne finirait jamais, dès le Stop', async () => {
     const stop = new AbortController();
-    const started = Date.now();
     const turn = spawnCliTurn({
       argv: [process.execPath, '-e', 'setInterval(() => {}, 1000)'],
       env: process.env,
@@ -37,15 +36,15 @@ describe('spawnCliTurn — Stop @cap:parler-a-un-agent/moteur', () => {
     setTimeout(() => stop.abort(), 200);
     const outcome = await turn;
 
-    // Rendu bien avant le délai de 10 min : le Stop, pas l'expiration.
-    expect(Date.now() - started).toBeLessThan(10_000);
+    // Rendu avant le délai de 10 min : le Stop, pas l'expiration. `timedOut`
+    // est le fait ; une borne de durée sur le tour entier mesurerait la charge
+    // de la machine (lancer puis tuer un processus), pas le Stop (#960).
     expect(outcome.timedOut).toBe(false);
   }, 20_000);
 
   it('un Stop déjà tiré avant le lancement tue le processus aussitôt', async () => {
     const stop = new AbortController();
     stop.abort();
-    const started = Date.now();
 
     const outcome = await spawnCliTurn({
       argv: [process.execPath, '-e', 'setInterval(() => {}, 1000)'],
@@ -59,7 +58,6 @@ describe('spawnCliTurn — Stop @cap:parler-a-un-agent/moteur', () => {
       finish: (o) => o,
     });
 
-    expect(Date.now() - started).toBeLessThan(10_000);
     expect(outcome.timedOut).toBe(false);
   }, 20_000);
 });
