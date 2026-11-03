@@ -116,7 +116,12 @@ describe('the workspace voice setting @cap:parler-a-un-agent/moteur', () => {
   it('refuses to write a value it could not read back', async () => {
     const entityId = await newWorkspace('voice-refuse');
     await expect(
-      writeVoiceSetting(db, entityId, { source: 'openrouter', model: '', voice: 'leo' }),
+      writeVoiceSetting(db, entityId, {
+        source: 'openrouter',
+        model: '',
+        voice: 'leo',
+        transcriptionModel: 'x-ai/grok-stt-1.0',
+      }),
     ).rejects.toThrow();
     expect(await readVoiceSetting(db, entityId)).toMatchObject({
       ok: true,
