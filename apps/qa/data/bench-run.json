@@ -1,7 +1,7 @@
 {
   "run": {
-    "startedAt": "2026-11-02T11:40:00.614Z",
-    "gitSha": "fa68eb7c",
+    "startedAt": "2026-11-03T11:27:15.088Z",
+    "gitSha": "d9e46401",
     "sections": [
       {
         "sectionId": "architecture",
@@ -9,7 +9,7 @@
           {
             "id": "packages_scanned",
             "label": "Packages scanned",
-            "value": 34,
+            "value": 35,
             "unit": "packages",
             "direction": "higher-is-better"
           },
@@ -78,7 +78,7 @@
             "detail": []
           }
         ],
-        "durationMs": 4847
+        "durationMs": 5062
       },
       {
         "sectionId": "gate",
@@ -136,7 +136,7 @@
             "direction": "exact"
           }
         ],
-        "durationMs": 44
+        "durationMs": 93
       },
       {
         "sectionId": "trust-boundary",
@@ -179,7 +179,7 @@
             "direction": "lower-is-better"
           }
         ],
-        "durationMs": 0
+        "durationMs": 1
       },
       {
         "sectionId": "catalog",
@@ -251,7 +251,7 @@
             ]
           }
         ],
-        "durationMs": 1
+        "durationMs": 0
       }
     ]
   },
@@ -265,8 +265,8 @@
           "label": "Packages scanned",
           "unit": "packages",
           "before": 32,
-          "after": 34,
-          "delta": 2,
+          "after": 35,
+          "delta": 3,
           "verdict": "improved"
         },
         {
