@@ -383,6 +383,34 @@ describe('the Voice section @cap:parler-a-un-agent/ecran', () => {
     );
   });
 
+  // Review of #972, pass 1: Save tries the voice first; one that does not speak
+  // is refused with the vendor's words, said at Save. Mutation verified: the
+  // detail dropped from `refusalText` → red.
+  it('a voice that did not speak when tried is refused at Save, with the vendor words', async () => {
+    answers.put = () =>
+      Response.json(
+        {
+          error: 'speech_provider_error',
+          source: 'openrouter',
+          detail:
+            'openrouter minimax/speech-2.8-turbo: HTTP 400 — MiniMax TTS only supports response_format="mp3" for streaming. Got "pcm".',
+        },
+        { status: 409 },
+      );
+    await render();
+    await choose('voice-model', 'x-ai/grok-voice-tts-1.0');
+    await choose('voice-voice', 'leo');
+    await act(async () => {
+      q<HTMLFormElement>('voice-section')!.requestSubmit();
+    });
+    await act(async () => {});
+    expect(q('voice-save-error')!.textContent).toBe(
+      'This voice did not speak, so it was not saved: openrouter minimax/speech-2.8-turbo: HTTP 400 — MiniMax TTS only supports response_format="mp3" for streaming. Got "pcm".',
+    );
+    // The form stays dirty: nothing was saved.
+    expect(container.textContent).toContain('Save');
+  });
+
   it('a stored voice that cannot be read is said, and a voice can be chosen', async () => {
     answers.state = () =>
       Response.json({

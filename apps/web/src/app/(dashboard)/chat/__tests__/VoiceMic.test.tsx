@@ -501,7 +501,7 @@ describe('the chat microphone says every route outcome (#942) @cap:parler-a-un-a
     await hold();
     await releaseAt();
     expect(noteText()).toBe('Could not transcribe what you said. Nothing was sent.');
-    expect(container.querySelector('[data-testid="voice-note"]')?.getAttribute('title')).toBe(
+    expect(container.querySelector('[data-testid="voice-note-detail"]')?.textContent).toBe(
       'provider 500',
     );
   });
@@ -846,6 +846,10 @@ describe('the spoken reply arrives as it is written (#943) @cap:parler-a-un-agen
     expect(audio.scheduled).toEqual([]);
     expect(noteText()).toBe(
       'The reply is written above, but it could not be spoken (speech_failed).',
+    );
+    // #972, pass 1: the vendor's words are READ, under the sentence, never a bare code.
+    expect(container.querySelector('[data-testid="voice-note-detail"]')?.textContent).toBe(
+      'vendor dropped',
     );
   });
 

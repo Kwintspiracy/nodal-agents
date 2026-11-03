@@ -54,6 +54,13 @@ export function refusalText(r: { error: string; source?: string; detail?: string
       return 'The runner did not answer.';
     case 'runner_contract':
       return 'The runner answered in a form this page does not read.';
+    // The voice was tried before it was saved, and did not speak (#972, pass 1):
+    // the vendor's words say why.
+    case 'speech_no_credit':
+      return `The ${sourceLabel(r.source)} key has no credit left. The voice was not saved.`;
+    case 'speech_provider_error':
+    case 'speech_bad_request':
+      return `This voice did not speak, so it was not saved: ${r.detail ?? r.error}`;
     default:
       return `The voice was refused (${r.error}${r.detail ? `: ${r.detail}` : ''}).`;
   }

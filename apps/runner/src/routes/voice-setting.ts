@@ -4,6 +4,7 @@
 //        → 200 { setting, settingProblem?, sources }   (`VoiceStateSchema`)
 //   PUT  /api/voice/setting   { entityId, setting: { source, model, voice } }
 //        → 200 { setting }  |  400 invalid_request  |  409 { error, source?, detail? }
+//          (409 aussi quand la voix, essayée, n'a pas parlé : les mots du fournisseur)
 //   POST /api/voice/sample    { entityId, text, setting? }
 //        → 409 { error, … } avant tout flux, sinon un flux SSE :
 //          event: audio  data: { seq, mimeType, sampleRate?, base64 }   comme le tour dit
@@ -22,6 +23,16 @@
 // sert pas, une voix que ce modèle n'offre pas, une source sans clé sont
 // refusés avec leur code. Le tour suivant parle avec la nouvelle voix, sans
 // redémarrer : chaque porte relit le réglage.
+//
+// ET SEULEMENT S'IL A PARLÉ (revue de #972, passe 1). Être listé ne suffit
+// pas : OpenRouter liste `minimax/speech-2.8-turbo` avec ses voix, et répond
+// 400 à sa synthèse (« MiniMax TTS only supports response_format="mp3" »,
+// mesuré le 03/11) ; l'API des modèles ne dit aucun format. Avant d'écrire,
+// la route fait donc dire une syllabe à la voix candidate, par le chemin même
+// du tour (`openReplyVoice`) : une voix qui ne parle pas ici est refusée au
+// moment du choix, avec les mots du fournisseur, pour tout client, au lieu de
+// faire échouer chaque tour ensuite. Coût : une synthèse courte par
+// enregistrement (une ligne `[voice-probe] timing` la mesure).
 //
 // ESSAYER (« Play a sample ») : la phrase de l'appelant, dite par
 // `openReplyVoice`, le chemin même du tour vocal. Avec `setting`, c'est la voix
@@ -89,6 +100,37 @@ async function refusal(
   };
 }
 
+/**
+ * Ce que la voix candidate dit pour prouver qu'elle parle ici. Jamais joué,
+ * jamais rangé ni montré : ce n'est une phrase pour personne (invariant #2).
+ */
+export const VOICE_PROBE_TEXT = 'OK.';
+
+/** La voix candidate parle-t-elle par le chemin du tour ? `null` : oui. */
+async function probeRefusal(
+  deps: Pick<RunnerDeps, 'db'>,
+  entityId: string,
+  setting: VoiceSetting,
+): Promise<{ error: string; source?: string; detail?: string } | null> {
+  const timing = createVoiceTiming(Date.now(), Date.now, 'voice-probe');
+  const opened = await openReplyVoice(deps.db, entityId, () => {}, timing, setting);
+  let failure = opened.unavailable;
+  if (opened.voice) {
+    timing.mark('firstSentence');
+    opened.voice.say(VOICE_PROBE_TEXT);
+    opened.voice.end();
+    failure = await opened.voice.done;
+  }
+  timing.mark('done');
+  console.warn(timing.line());
+  if (!failure) return null;
+  return {
+    error: failure.code,
+    source: setting.source,
+    ...(failure.detail ? { detail: failure.detail } : {}),
+  };
+}
+
 export async function voiceSettingWriteRoute(c: Context, deps: Pick<RunnerDeps, 'db'>) {
   const parsed = VoiceSettingWriteSchema.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) {
@@ -96,7 +138,8 @@ export async function voiceSettingWriteRoute(c: Context, deps: Pick<RunnerDeps, 
   }
   const { entityId, setting } = parsed.data;
   if (!ownEntity(c, entityId)) return c.json({ error: 'entity_not_found' }, 404);
-  const refused = await refusal(deps, entityId, setting);
+  const refused =
+    (await refusal(deps, entityId, setting)) ?? (await probeRefusal(deps, entityId, setting));
   if (refused) return c.json(refused, 409);
   await writeVoiceSetting(deps.db, entityId, setting);
   return c.json({ setting });

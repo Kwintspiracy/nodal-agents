@@ -257,6 +257,11 @@ function network(opts: {
               name: 'SpaceXAI: Grok Voice TTS 1.0',
               supported_voices: ['eve', 'ara', 'rex', 'sal', 'leo'],
             },
+            {
+              id: 'minimax/speech-2.8-turbo',
+              name: 'MiniMax: Speech 2.8 Turbo',
+              supported_voices: ['English_CalmWoman'],
+            },
           ],
         });
       }
@@ -1602,9 +1607,16 @@ describe('the voice turn speaks with the workspace voice (#969) @cap:parler-a-un
       setting: { source: 'openrouter', model: 'x-ai/grok-voice-tts-1.0', voice: 'leo' },
     });
     expect(grok.status).toBe(200);
+    // A voice that spoke is stored.
+    expect(await readVoiceSetting(db as never, seed.entityId)).toEqual({
+      ok: true,
+      setting: { source: 'openrouter', model: 'x-ai/grok-voice-tts-1.0', voice: 'leo' },
+    });
     const first = await say(app, conv, FIXTURE, { format: 'audio/wav' });
     expect(first.body['speechError']).toBeNull();
+    // The save first made the voice say its probe (#972, pass 1), then the turn spoke.
     expect(sent.speech).toEqual([
+      { model: 'x-ai/grok-voice-tts-1.0', input: 'OK.', voice: 'leo', response_format: 'pcm' },
       {
         model: 'x-ai/grok-voice-tts-1.0',
         input: 'Nine in the evening.',
@@ -1621,20 +1633,19 @@ describe('the voice turn speaks with the workspace voice (#969) @cap:parler-a-un
     expect(gemini.status).toBe(200);
     const second = await say(app, conv, FIXTURE, { format: 'audio/wav' });
     expect(second.body['speechError']).toBeNull();
-    expect(sent.speech).toHaveLength(1);
-    expect(sent.google).toEqual([
-      {
-        url: 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash-tts:streamGenerateContent?alt=sse',
-        key: 'AIza-test',
-        body: {
-          contents: [{ parts: [{ text: 'Nine in the evening.' }] }],
-          generationConfig: {
-            responseModalities: ['AUDIO'],
-            speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Puck' } } },
-          },
+    expect(sent.speech).toHaveLength(2);
+    const geminiRequest = (text: string) => ({
+      url: 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash-tts:streamGenerateContent?alt=sse',
+      key: 'AIza-test',
+      body: {
+        contents: [{ parts: [{ text }] }],
+        generationConfig: {
+          responseModalities: ['AUDIO'],
+          speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Puck' } } },
         },
       },
-    ]);
+    });
+    expect(sent.google).toEqual([geminiRequest('OK.'), geminiRequest('Nine in the evening.')]);
     // Google's events, in order, as little-endian PCM at the rate they name.
     const audio = second.events.filter((e) => e.event === 'audio');
     expect(audio.map((e) => [e.data['seq'], e.data['mimeType'], e.data['sampleRate']])).toEqual([
@@ -1682,6 +1693,49 @@ describe('the voice turn speaks with the workspace voice (#969) @cap:parler-a-un
       ['audio_end', 1, true],
     ]);
     expect([...heardAudio(evs)]).toEqual([...MP3, ...MP3]);
+  });
+
+  // Review of #972, pass 1 (P2). Listed is not enough: OpenRouter lists MiniMax
+  // with its voices and answers 400 to its synthesis (measured 2026-11-03).
+  // Mutation verified: the probe skipped (`probeRefusal` not called) → red,
+  // the refused voice is stored.
+  it('a listed voice that does not speak through the turn path is refused at Save with the vendor words; the row is unchanged', async () => {
+    const app = createApp(makeDeps(), testEnv);
+    const MINIMAX_400 = 'MiniMax TTS only supports response_format="mp3" for streaming. Got "pcm".';
+    const sent = network({
+      speech: () =>
+        new Response(JSON.stringify({ error: { message: MINIMAX_400, code: 400 } }), {
+          status: 400,
+          headers: { 'content-type': 'application/json' },
+        }),
+    });
+    const res = await call(app, 'PUT', '/api/voice/setting', {
+      entityId: seed.entityId,
+      setting: {
+        source: 'openrouter',
+        model: 'minimax/speech-2.8-turbo',
+        voice: 'English_CalmWoman',
+      },
+    });
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({
+      error: 'speech_provider_error',
+      source: 'openrouter',
+      detail: `openrouter minimax/speech-2.8-turbo: HTTP 400 — ${MINIMAX_400}`,
+    });
+    // It was tried once, by the turn's path, with the probe.
+    expect(sent.speech).toEqual([
+      {
+        model: 'minimax/speech-2.8-turbo',
+        input: 'OK.',
+        voice: 'English_CalmWoman',
+        response_format: 'pcm',
+      },
+    ]);
+    expect(await readVoiceSetting(db as never, seed.entityId)).toEqual({
+      ok: true,
+      setting: FIRST_VOICE,
+    });
   });
 
   it('a voice the model does not offer is refused with a stated error, and the voice in force does not change', async () => {
@@ -1753,7 +1807,7 @@ describe('the voice turn speaks with the workspace voice (#969) @cap:parler-a-un
     };
     expect(state.setting).toEqual(FIRST_VOICE);
     expect(state.sources.map((s) => [s.source, s.state, s.code ?? s.models?.length])).toEqual([
-      ['openrouter', 'available', 2],
+      ['openrouter', 'available', 3],
       ['google', 'unavailable', 'voice_key_missing'],
     ]);
   });
