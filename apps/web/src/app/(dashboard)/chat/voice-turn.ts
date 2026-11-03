@@ -13,22 +13,42 @@
 // pourraient arriver à l'envers. Chaque morceau attend donc le précédent ; ce
 // qui s'accumule pendant ce temps part au tour suivant de la file.
 //
+// LA FIN SE LIT EN FLUX (#943). La route répond par des événements, dans
+// l'ordre (l'en-tête de apps/runner/src/routes/voice-turn.ts) : la
+// transcription dès qu'elle existe, les fragments de la réponse, la voix en
+// morceaux numérotés, puis `done`. Ce fichier les passe à l'écran à mesure
+// qu'ils arrivent ; c'est `done` qui fait foi pour le texte, comme pour le
+// chat écrit (`chat-stream.ts`).
+//
 // Chaque issue est un FAIT rendu à l'écran, jamais tu (invariant #4) : la
-// transcription ratée, le rien-entendu, la voix en échec, le refus.
+// transcription ratée, le rien-entendu, la voix en échec, le refus, le flux
+// coupé.
 
 import { chatFailureText } from '@/lib/chat-failure.ts';
+import { readSseMessages } from '@/lib/sse.ts';
+import type { SpokenChunk } from './voice-playback.ts';
 
 const BASE = '/api/voice/turns';
 
-/** Ce que le runner a rendu d'un tour joué (`VoiceTurnResult`, outcome `replied`). */
+/** Ce que le flux a dit d'un tour joué : la transcription, puis `done`. */
 export type VoiceReply = {
   transcript: string;
   reply: string;
   durationMs: number;
   spawnedJobId: string | null;
-  audio: { mimeType: string; base64: string } | null;
+  stopped: boolean;
   speechError: { code: string; detail?: string } | null;
 };
+
+/** Ce que la fin du tour passe à l'écran PENDANT qu'elle arrive. */
+export interface VoiceStreamHandlers {
+  /** Le message de la personne, dès que la transcription existe. */
+  onTranscript?: (transcript: string, durationMs: number) => void;
+  /** Le texte de la réponse connu À CET INSTANT — entier, pas le fragment. */
+  onText?: (text: string) => void;
+  /** Un morceau de voix, dans l'ordre de son rang. */
+  onAudio?: (chunk: SpokenChunk) => void;
+}
 
 /** Une étape refusée : où, avec quel statut, et le code tel que la route l'a dit. */
 export type VoiceFailure = {
@@ -42,13 +62,17 @@ export type VoiceTurnOutcome =
   | { kind: 'replied'; reply: VoiceReply }
   | { kind: 'nothing_heard' }
   | { kind: 'cancelled' }
+  /** La personne a arrêté la réponse : le flux a été abandonné (`abort`). */
+  | { kind: 'aborted' }
   | { kind: 'failed'; failure: VoiceFailure };
 
 export interface VoiceTurnSession {
   /** Un morceau de PCM, dans l'ordre de la prise. */
   push(pcm: Uint8Array): void;
-  /** Le bouton relâché : les morceaux finissent de partir, puis `end`. */
-  finish(): Promise<VoiceTurnOutcome>;
+  /** Le bouton relâché : les morceaux finissent de partir, puis `end`, lu en flux. */
+  finish(handlers?: VoiceStreamHandlers): Promise<VoiceTurnOutcome>;
+  /** Stop : la lecture du flux de fin est abandonnée (le runner arrête le tour par son Stop). */
+  abort(): void;
   /** Glissé hors du bouton : rien n'est envoyé, le tour est annulé au runner (DELETE). */
   cancel(): Promise<VoiceTurnOutcome>;
 }
@@ -127,6 +151,7 @@ export function openVoiceTurn(opts: {
 
   let seq = 0;
   let queue: Promise<void> = Promise.resolve();
+  const reading = new AbortController();
 
   const deleteTurn = async (): Promise<void> => {
     const turnId = await started;
@@ -161,7 +186,7 @@ export function openVoiceTurn(opts: {
       });
     },
 
-    async finish() {
+    async finish(handlers) {
       await queue;
       const turnId = await started;
       if (failure !== null || turnId === null) {
@@ -172,32 +197,26 @@ export function openVoiceTurn(opts: {
       }
       let res: Response;
       try {
-        res = await fetch(`${BASE}/${encodeURIComponent(turnId)}/end`, { method: 'POST' });
+        res = await fetch(`${BASE}/${encodeURIComponent(turnId)}/end`, {
+          method: 'POST',
+          signal: reading.signal,
+        });
       } catch {
+        if (reading.signal.aborted) return { kind: 'aborted' };
         return { kind: 'failed', failure: unreachable('end') };
       }
       if (!res.ok) return { kind: 'failed', failure: await readFailure(res, 'end') };
-      const body = (await res.json().catch(() => null)) as
-        | ({ outcome?: unknown } & Partial<VoiceReply>)
-        | null;
-      if (body?.outcome === 'nothing_heard') return { kind: 'nothing_heard' };
-      if (body?.outcome !== 'replied') {
+      if (res.body === null) {
         return {
           kind: 'failed',
           failure: { step: 'end', status: res.status, error: 'invalid_response' },
         };
       }
-      return {
-        kind: 'replied',
-        reply: {
-          transcript: typeof body.transcript === 'string' ? body.transcript : '',
-          reply: typeof body.reply === 'string' ? body.reply : '',
-          durationMs: typeof body.durationMs === 'number' ? body.durationMs : 0,
-          spawnedJobId: typeof body.spawnedJobId === 'string' ? body.spawnedJobId : null,
-          audio: body.audio ?? null,
-          speechError: body.speechError ?? null,
-        },
-      };
+      return readEnd(res.body, res.status, handlers ?? {}, reading.signal);
+    },
+
+    abort() {
+      reading.abort();
     },
 
     async cancel() {
@@ -206,6 +225,92 @@ export function openVoiceTurn(opts: {
       return { kind: 'cancelled' };
     },
   };
+}
+
+const str = (v: unknown): string | null => (typeof v === 'string' ? v : null);
+
+/** Le flux de fin, lu jusqu'à son dernier événement. */
+async function readEnd(
+  body: ReadableStream<Uint8Array>,
+  status: number,
+  handlers: VoiceStreamHandlers,
+  signal: AbortSignal,
+): Promise<VoiceTurnOutcome> {
+  let transcript: string | null = null;
+  let durationMs = 0;
+  let accumulated = '';
+  const broken = (error: string, detail?: string): VoiceTurnOutcome => ({
+    kind: 'failed',
+    failure: { step: 'end', status, error, ...(detail ? { detail } : {}) },
+  });
+  try {
+    for await (const msg of readSseMessages(body)) {
+      const data = JSON.parse(msg.data) as Record<string, unknown>;
+      switch (msg.event) {
+        case 'nothing_heard':
+          return { kind: 'nothing_heard' };
+        case 'transcript':
+          transcript = str(data['transcript']) ?? '';
+          durationMs = typeof data['durationMs'] === 'number' ? data['durationMs'] : 0;
+          handlers.onTranscript?.(transcript, durationMs);
+          break;
+        case 'delta': {
+          const text = str(data['text']);
+          if (text === null) break;
+          accumulated += text;
+          handlers.onText?.(accumulated);
+          break;
+        }
+        case 'audio': {
+          const base64 = str(data['base64']);
+          const mimeType = str(data['mimeType']);
+          if (base64 === null || mimeType === null || typeof data['seq'] !== 'number') {
+            return broken('invalid_response');
+          }
+          handlers.onAudio?.({
+            seq: data['seq'],
+            mimeType,
+            ...(typeof data['sampleRate'] === 'number' ? { sampleRate: data['sampleRate'] } : {}),
+            bytes: Uint8Array.from(atob(base64), (c) => c.charCodeAt(0)),
+          });
+          break;
+        }
+        case 'done': {
+          // La réponse entière remplace ce qui a été accumulé, comme au chat écrit.
+          const reply = str(data['reply']) ?? '';
+          handlers.onText?.(reply);
+          const speechError = data['speechError'] as { code?: unknown; detail?: unknown } | null;
+          return {
+            kind: 'replied',
+            reply: {
+              transcript: transcript ?? '',
+              reply,
+              durationMs,
+              spawnedJobId: str(data['spawnedJobId']),
+              stopped: data['stopped'] === true,
+              speechError:
+                speechError && typeof speechError.code === 'string'
+                  ? {
+                      code: speechError.code,
+                      ...(typeof speechError.detail === 'string'
+                        ? { detail: speechError.detail }
+                        : {}),
+                    }
+                  : null,
+            },
+          };
+        }
+        case 'error':
+          return broken(str(data['error']) ?? 'chat_failed', str(data['detail']) ?? undefined);
+      }
+    }
+  } catch {
+    if (signal.aborted) return { kind: 'aborted' };
+    return broken('stream_interrupted');
+  }
+  if (signal.aborted) return { kind: 'aborted' };
+  // Le flux s'est terminé sans `done` : le tour n'a pas rendu de réponse.
+  return broken('stream_interrupted');
 }
 
 /** Le texte de l'écran pour une étape refusée — la phrase de chaque code connu. */
@@ -225,6 +330,9 @@ export function voiceFailureText(f: VoiceFailure): string {
       return 'The voice turn expired before it was sent. Hold the button again.';
     case 'runner_unreachable':
       return 'The runner did not answer. Nothing was sent.';
+    case 'stream_interrupted':
+      // La phrase du chat écrit pour le même fait (`chat-stream.ts`).
+      return 'The reply was interrupted';
     case 'conversation_open_failed':
       return `Could not open the conversation${f.detail ? `: ${f.detail}` : ''}. Nothing was sent.`;
     case 'unauthorized':

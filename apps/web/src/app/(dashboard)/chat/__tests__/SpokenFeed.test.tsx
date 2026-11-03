@@ -10,7 +10,8 @@ import { createRoot } from 'react-dom/client';
 import { renderToStaticMarkup } from 'react-dom/server';
 import ConversationFeedView from '@/app/(dashboard)/spaces/ConversationFeedView.tsx';
 import { buildConversationThread } from '@/lib/conversation-thread.ts';
-import { playSpoken, stopSpeaking } from '../voice-playback.ts';
+import { startSpokenStream, stopSpeaking } from '../voice-playback.ts';
+import { installFakeAudio } from './fake-audio.ts';
 
 const conversation = {
   id: 'c-1',
@@ -72,16 +73,7 @@ describe('a spoken turn in the thread (#942) @cap:parler-a-un-agent/ecran', () =
   });
 
   it('"Speaking" sits on the reply whose voice is playing, and leaves when it stops', async () => {
-    vi.stubGlobal(
-      'Audio',
-      class {
-        addEventListener(): void {}
-        play(): Promise<void> {
-          return Promise.resolve();
-        }
-        pause(): void {}
-      },
-    );
+    installFakeAudio(vi.stubGlobal);
     const container = document.createElement('div');
     document.body.appendChild(container);
     const root = createRoot(container);
@@ -91,7 +83,9 @@ describe('a spoken turn in the thread (#942) @cap:parler-a-un-agent/ecran', () =
     expect(container.textContent).not.toContain('Speaking');
 
     await act(async () => {
-      await playSpoken({ mimeType: 'audio/wav', base64: 'UklGRg==', reply: 'Canberra.' });
+      const voice = startSpokenStream({ reply: 'Canberra.', onError: () => {} });
+      voice.push({ seq: 0, mimeType: 'audio/pcm', sampleRate: 24_000, bytes: new Uint8Array(4) });
+      await new Promise((r) => setTimeout(r, 0));
     });
     // Sur le tour de « Canberra. », pas sur l'autre réponse.
     const pills = [...container.querySelectorAll('span')].filter(

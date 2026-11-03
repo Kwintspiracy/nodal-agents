@@ -39,6 +39,11 @@
 // dit qu'un tour tourne (`followLiveTurn`). Elle montre alors ce qui a déjà été
 // écrit, puis la suite, et relit le fil quand le tour est fini. Avant, la
 // question restait seule jusqu'à ce que la réponse entière tombe d'un coup.
+//
+// Depuis #943, un tour DIT passe par la même copie : la demande est la
+// transcription (avec « Spoken · 0:03 », comme le fil la montrera), et la
+// réponse s'écrit ici comme celle d'un envoi tapé, avec « Speaking » pendant
+// que sa voix joue.
 
 import {
   createContext,
@@ -54,7 +59,9 @@ import AgentAvatar from '@/components/ui/AgentAvatar';
 import Markdown from '@/components/Markdown.tsx';
 import ClampedText from '@/app/(dashboard)/spaces/ClampedText.tsx';
 import { originLabel } from '@/app/(dashboard)/spaces/format.ts';
+import SpokenMark from '@/app/(dashboard)/spaces/SpokenMark.tsx';
 import { followLiveTurn } from './chat-stream.ts';
+import SpeakingPill from './SpeakingPill.tsx';
 
 type Pending = {
   id: number;
@@ -69,6 +76,8 @@ type Pending = {
   /** La réponse telle qu'on la connaît À CET INSTANT (#152). Vide tant que
    *  rien n'est arrivé — et la copie entière part si le flux échoue. */
   reply: string;
+  /** Une demande DITE (#943) : la durée de ce que la personne a dit. */
+  spokenMs?: number;
 };
 
 type Store = {
@@ -89,7 +98,7 @@ type Store = {
    * PR #502 : deux tours sans `startedAt` partageaient la clé de Stop).
    */
   live: { reply: string; startedAt: number | null; seq: number } | null;
-  begin: (text: string) => number;
+  begin: (text: string, opts?: { spokenMs?: number }) => number;
   /** La réponse ENTIÈRE connue à cet instant, pour cet envoi. Pas un
    *  fragment : l'appelant accumule, ce porteur ne fait qu'afficher. */
   stream: (id: number, reply: string) => void;
@@ -238,7 +247,7 @@ export function PendingTurnProvider({
     // Dérivé, pas remis à zéro par un effet : dès que le fil ne l'attend plus
     // (relu avec sa réponse) ou qu'un envoi d'ici part, plus rien à suivre.
     live: follow ? followed : null,
-    begin: (text) => {
+    begin: (text, opts) => {
       const id = ++nextId.current;
       const baseline =
         countOf(requests, text) +
@@ -249,7 +258,14 @@ export function PendingTurnProvider({
       // On range en passant ce que le fil a déjà rendu ET dont le tour est joué.
       setAll((prev) => [
         ...prev.filter((p) => !p.settled || countOf(requests, p.text) <= p.baseline),
-        { id, text, baseline, settled: false, reply: '' },
+        {
+          id,
+          text,
+          baseline,
+          settled: false,
+          reply: '',
+          ...(opts?.spokenMs !== undefined ? { spokenMs: opts.spokenMs } : {}),
+        },
       ]);
       return id;
     },
@@ -308,6 +324,8 @@ function Thinking({
       <div className="mb-1.5 flex items-center gap-2.5">
         <AgentAvatar name={agentName} imageUrl={agentAvatarUrl} size="sm" shape="square" />
         <span className="text-title-15 text-ink">{agentName}</span>
+        {/* La voix d'une réponse dite joue pendant qu'elle s'écrit (#943). */}
+        {reply !== '' && <SpeakingPill text={reply} />}
       </div>
       {reply === '' ? (
         <div className="flex items-center gap-2 text-mono-11 text-feed-reasoning">
@@ -377,6 +395,9 @@ export default function PendingTurn({
                   <Markdown text={p.text} tone="user" />
                 </ClampedText>
               </div>
+              {p.spokenMs !== undefined && p.spokenMs > 0 && (
+                <SpokenMark ms={p.spokenMs} testId="pending-spoken" />
+              )}
             </div>
           </div>
           {!thinkingAfterFeed && i === 0 && (

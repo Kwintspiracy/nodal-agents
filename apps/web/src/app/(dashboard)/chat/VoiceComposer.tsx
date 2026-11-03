@@ -14,6 +14,13 @@
 // Au clavier, la barre d'espace tenue sur le bouton fait la même chose, et
 // Échap pendant qu'elle est tenue annule.
 //
+// LA RÉPONSE ARRIVE EN FLUX (#943). Dès que le runner a transcrit, le geste
+// est fini : la saisie revient, le fil montre la demande DITE et la réponse qui
+// s'écrit (`onHeard`, `onReplyText`, rendus par `PendingTurn` comme une réponse
+// tapée), et la voix joue phrase par phrase pendant ce temps. Stop fait taire
+// la voix, abandonne le flux, et demande au runner d'arrêter le tour — le même
+// Stop que le chat écrit (`/api/chat/stop`).
+//
 // Chaque issue se DIT dans le composeur (invariant #4), jamais par une boîte
 // native (invariant #10).
 
@@ -28,7 +35,8 @@ import {
   voiceFailureText,
   type VoiceTurnSession,
 } from './voice-turn.ts';
-import { playSpoken, stopSpeaking } from './voice-playback.ts';
+import { startSpokenStream, stopSpeaking, type SpokenStream } from './voice-playback.ts';
+import { stopChatTurn } from './chat-stream.ts';
 
 /** Au-delà de cette distance du point d'appui, relâcher annule. */
 export const SLIDE_CANCEL_PX = 60;
@@ -56,6 +64,8 @@ type Active = {
   settling: boolean;
   /** L'écran est parti pendant le geste : plus rien ne s'affiche, et rien de neuf ne part. */
   abandoned: boolean;
+  /** Stop, ou un nouveau geste : la voix de cette réponse ne joue plus. */
+  silenced: boolean;
 };
 
 export interface VoiceTurnControls {
@@ -67,6 +77,10 @@ export interface VoiceTurnControls {
   note: VoiceNote | null;
   /** Le navigateur a refusé le micro : le bouton le montre jusqu'au prochain accès réussi. */
   blocked: boolean;
+  /** La réponse d'un tour dit arrive encore (texte ou voix) : Stop peut l'arrêter. */
+  replying: boolean;
+  /** Stop : la voix se tait, le flux est abandonné, le runner arrête le tour. */
+  stopReply: () => void;
   press: () => void;
   release: () => void;
   cancel: () => void;
@@ -80,13 +94,20 @@ export function useVoiceTurn(opts: {
   onReplied: (conversationId: string) => void;
   /** Le tour n'a rien écrit, ou a échoué : la conversation est rendue à l'écran tel quel. */
   onUnused: (conversationId: string) => void;
+  /** Le runner a transcrit (#943) : la demande DITE paraît dans le fil. */
+  onHeard?: (transcript: string, durationMs: number) => void;
+  /** Le texte de la réponse connu à cet instant, entier (#943). */
+  onReplyText?: (text: string) => void;
 }): VoiceTurnControls {
   const [phase, setPhase] = useState<VoicePhase>('idle');
   const [startedAt, setStartedAt] = useState<number | null>(null);
   const [levels, setLevels] = useState<readonly number[]>([]);
   const [note, setNote] = useState<VoiceNote | null>(null);
   const [blocked, setBlocked] = useState(false);
+  const [replying, setReplying] = useState(false);
   const active = useRef<Active | null>(null);
+  /** Le tour dont la réponse arrive encore, une fois le geste fini (#943). */
+  const replyingTurn = useRef<Active | null>(null);
   const busy = useRef(false);
   // Les rappels du parent changent à chaque rendu ; le geste en cours lit les derniers.
   const callbacks = useRef(opts);
@@ -118,14 +139,55 @@ export function useVoiceTurn(opts: {
     }
     busy.current = true;
     setPhase('transcribing');
-    const outcome = await session.finish();
+    // Un porteur, pas une variable : les rappels du flux l'ouvrent.
+    const voice: { current: SpokenStream | null } = { current: null };
+    let text = '';
+    const outcome = await session.finish({
+      onTranscript: (transcript, durationMs) => {
+        // Le runner a entendu : le geste est fini. Le micro peut repartir, la
+        // saisie revient, et le fil montre la demande et la réponse.
+        busy.current = false;
+        if (active.current === me) active.current = null;
+        if (me.abandoned) return;
+        replyingTurn.current = me;
+        setReplying(true);
+        setPhase('idle');
+        callbacks.current.onHeard?.(transcript, durationMs);
+      },
+      onText: (t) => {
+        text = t;
+        voice.current?.setReply(t);
+        if (!me.abandoned) callbacks.current.onReplyText?.(t);
+      },
+      onAudio: (chunk) => {
+        // Rien ne joue sur un écran quitté, ni après Stop ou un nouveau geste.
+        if (me.abandoned || me.silenced) return;
+        voice.current ??= startSpokenStream({
+          reply: text,
+          onError: (message) => {
+            if (me.abandoned) return;
+            setNote({
+              kind: 'error',
+              text: 'The reply is written above, but it could not be played.',
+              detail: message,
+            });
+          },
+        });
+        voice.current.push(chunk);
+      },
+    });
+    voice.current?.end();
     busy.current = false;
-    active.current = null;
+    if (active.current === me) active.current = null;
+    if (replyingTurn.current === me) {
+      replyingTurn.current = null;
+      setReplying(false);
+    }
     if (me.abandoned) {
       // L'écran est parti après le relâchement : le tour envoyé est rangé par
       // le runner, et la conversation le montrera rouverte. Rien ne joue, rien
       // ne ramène sur elle ; seule une conversation neuve restée vide est rendue.
-      if (outcome.kind !== 'replied') await unused(me);
+      if (outcome.kind !== 'replied' && outcome.kind !== 'aborted') await unused(me);
       return;
     }
     setPhase('idle');
@@ -145,25 +207,33 @@ export function useVoiceTurn(opts: {
       return;
     }
     if (outcome.kind === 'cancelled') return;
+    // Joué jusqu'au bout, ou arrêté par Stop : le fil relu montre ce que la
+    // base porte.
     const target = me.target ? await me.target.catch(() => '') : '';
     if (target !== '') callbacks.current.onReplied(target);
-    const { reply } = outcome;
-    if (reply.audio) {
-      const played = await playSpoken({ ...reply.audio, reply: reply.reply });
-      if (!played.ok) {
-        setNote({
-          kind: 'error',
-          text: 'The reply is written above, but it could not be played.',
-          detail: played.message,
-        });
-      }
-    } else if (reply.speechError) {
+    if (outcome.kind === 'aborted') return;
+    const { speechError } = outcome.reply;
+    if (speechError) {
       setNote({
         kind: 'error',
-        text: speechErrorText(reply.speechError.code),
-        ...(reply.speechError.detail ? { detail: reply.speechError.detail } : {}),
+        text: speechErrorText(speechError.code),
+        ...(speechError.detail ? { detail: speechError.detail } : {}),
       });
     }
+  }
+
+  /** Stop pendant la réponse d'un tour dit : silence, flux abandonné, tour arrêté au runner. */
+  function stopReply(): void {
+    const me = replyingTurn.current;
+    stopSpeaking();
+    if (me === null) return;
+    me.silenced = true;
+    void (async () => {
+      const target = me.target ? await me.target.catch(() => '') : '';
+      // Le Stop du runner d'abord : c'est lui qui range la réponse arrêtée.
+      if (target !== '') await stopChatTurn(target);
+      me.session?.abort();
+    })();
   }
 
   async function press(): Promise<void> {
@@ -176,9 +246,12 @@ export function useVoiceTurn(opts: {
       ending: null,
       settling: false,
       abandoned: false,
+      silenced: false,
     };
     active.current = me;
-    // Parler à l'agent coupe sa voix : on ne parle pas par-dessus.
+    // Parler à l'agent coupe sa voix : on ne parle pas par-dessus — ni sur
+    // celle qui joue, ni sur celle d'une réponse qui arrive encore.
+    if (replyingTurn.current) replyingTurn.current.silenced = true;
     stopSpeaking();
     setNote(null);
     setLevels([]);
@@ -252,6 +325,14 @@ export function useVoiceTurn(opts: {
   //     la personne a choisi d'envoyer.
   useEffect(
     () => () => {
+      // La réponse d'un tour dit qui arrive encore : rien ne joue plus pour
+      // un écran quitté (#943).
+      const replyingMe = replyingTurn.current;
+      if (replyingMe !== null) {
+        replyingMe.abandoned = true;
+        replyingMe.silenced = true;
+        stopSpeaking();
+      }
       const me = active.current;
       if (me === null) return;
       me.abandoned = true;
@@ -269,6 +350,8 @@ export function useVoiceTurn(opts: {
     levels,
     note,
     blocked,
+    replying,
+    stopReply,
     press: () => void press(),
     release: () => end('send'),
     cancel: () => end('cancel'),

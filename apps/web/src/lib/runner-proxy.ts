@@ -7,7 +7,9 @@
 //   - la session du tableau de bord, et rien d'autre, dit QUI appelle ;
 //   - le secret interne (WORKER_SECRET) prouve au runner que la porte web a
 //     déjà résolu l'entité de cette session (server.ts, `callerTrusted`) ;
-//   - la réponse du runner revient TELLE QUELLE : statut, type et corps.
+//   - la réponse du runner revient TELLE QUELLE : statut, type et corps. Un
+//     corps en flux (la fin d'un tour dit, #943) passe en flux, sans tampon ;
+//     et le navigateur parti, la requête au runner est abandonnée avec lui.
 //
 // Ce qu'elle ne fait pas : décider. Un code d'erreur du runner n'est ni
 // traduit ni avalé ; c'est l'écran qui le dit, comme le dirait un module.
@@ -61,7 +63,11 @@ export async function proxyToRunner(
   let body: BodyInit | null = null;
   // `duplex` n'est pas encore dans le type `RequestInit` de TypeScript : il est
   // exigé par undici dès que le corps est un flux.
-  const init: RequestInit & { duplex?: 'half' } = { method: opts.method, headers };
+  const init: RequestInit & { duplex?: 'half' } = {
+    method: opts.method,
+    headers,
+    signal: req.signal,
+  };
   if (opts.body) {
     headers['Content-Type'] = 'application/json';
     body = JSON.stringify(await opts.body(session));
@@ -79,8 +85,13 @@ export async function proxyToRunner(
     console.error(`[${opts.door}] runner unreachable:`, err);
     return refuse('runner_unreachable', 502);
   }
-  return new Response(upstream.body, {
-    status: upstream.status,
-    headers: { 'Content-Type': upstream.headers.get('content-type') ?? 'application/json' },
-  });
+  const relayed: Record<string, string> = {
+    'Content-Type': upstream.headers.get('content-type') ?? 'application/json',
+  };
+  // Ce qui garde un flux en flux : sans cache, sans tampon intermédiaire.
+  for (const h of ['cache-control', 'x-accel-buffering']) {
+    const v = upstream.headers.get(h);
+    if (v !== null) relayed[h] = v;
+  }
+  return new Response(upstream.body, { status: upstream.status, headers: relayed });
 }

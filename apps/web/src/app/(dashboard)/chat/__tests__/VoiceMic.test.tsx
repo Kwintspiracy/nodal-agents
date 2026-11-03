@@ -8,13 +8,19 @@
 // texte et le nom des boutons à l'écran), jamais sur un nombre d'appels
 // (invariant #5). Les phrases sont écrites EN DUR : un test qui lirait la
 // constante du composant resterait vert quand on la change.
+//
+// #943 : la fin du tour est un FLUX d'événements (transcript, delta, audio,
+// done), écrit ici comme la route l'écrit ; la voix joue sur un AudioContext
+// factice (`fake-audio.ts`) qui note ce qui aurait été entendu.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import ThreadComposer from '../ThreadComposer.tsx';
 import { stopSpeaking } from '../voice-playback.ts';
+import PendingTurn, { PendingTurnProvider } from '../PendingTurn.tsx';
 import { MicrophoneError } from '@/lib/mic-capture.ts';
+import { installFakeAudio, pcmBase64, sseBody } from './fake-audio.ts';
 
 const refresh = vi.hoisted(() => vi.fn());
 vi.mock('@/lib/actions.ts', () => ({
@@ -68,6 +74,46 @@ let endReply: () => Promise<Response>;
 let startReply: () => Response;
 let chunkReply: () => Response;
 
+/** La fin d'un tour telle que la route l'écrit : un flux d'événements. */
+function sse(events: Array<[string, unknown]>): Response {
+  return new Response(sseBody(events), {
+    status: 200,
+    headers: { 'Content-Type': 'text/event-stream; charset=utf-8' },
+  });
+}
+
+/** Une fin de tour que le test écrit événement par événement, flux ouvert. */
+function heldStream(): {
+  response: Response;
+  write: (event: string, data: unknown) => void;
+  close: () => void;
+} {
+  let controller!: ReadableStreamDefaultController<Uint8Array>;
+  const body = new ReadableStream<Uint8Array>({
+    start(c) {
+      controller = c;
+    },
+  });
+  // Comme un vrai `fetch` : la requête abandonnée coupe son corps.
+  onEndAbort = () => controller.error(new DOMException('aborted', 'AbortError'));
+  return {
+    response: new Response(body, {
+      status: 200,
+      headers: { 'Content-Type': 'text/event-stream; charset=utf-8' },
+    }),
+    write: (event, data) => controller.enqueue(new TextEncoder().encode(sseBody([[event, data]]))),
+    close: () => controller.close(),
+  };
+}
+
+const DONE = {
+  spawnedJobId: null,
+  streamed: true,
+  stopped: false,
+  cutReason: null,
+  speechError: null,
+};
+
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -82,8 +128,12 @@ async function readBody(init: RequestInit | undefined): Promise<number[] | unkno
   return [...new Uint8Array(await new Response(b).arrayBuffer())];
 }
 
-/** Les lecteurs audio créés par la page, avec ce qu'on leur a demandé. */
-let audios: { src: string; played: boolean; paused: boolean; ended: () => void }[];
+/** Ce que la voix aurait fait entendre (le faux AudioContext). */
+let audio: ReturnType<typeof installFakeAudio>;
+/** Le signal de la requête `end` : Stop l'abandonne. */
+let endSignal: AbortSignal | null;
+/** Ce que l'abandon de `end` fait au corps de sa réponse. */
+let onEndAbort: (() => void) | null = null;
 
 let container: HTMLDivElement;
 let root: Root;
@@ -91,7 +141,8 @@ let root: Root;
 beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   sent = [];
-  audios = [];
+  endSignal = null;
+  onEndAbort = null;
   mic.handlers = null;
   mic.tail = null;
   mic.stopped = false;
@@ -100,7 +151,7 @@ beforeEach(() => {
   refresh.mockClear();
   startReply = () => json({ turnId: 'turn-1' }, 201);
   chunkReply = () => json({ received: 1 });
-  endReply = async () => json({ outcome: 'nothing_heard', durationMs: 0 });
+  endReply = async () => sse([['nothing_heard', { durationMs: 0 }]]);
   vi.stubGlobal(
     'fetch',
     vi.fn(async (url: string, init?: RequestInit) => {
@@ -109,36 +160,15 @@ beforeEach(() => {
       if (method === 'DELETE') return json({ cancelled: true });
       if (url === '/api/voice/turns') return startReply();
       if (url.includes('/chunks/')) return chunkReply();
-      if (url.endsWith('/end')) return endReply();
+      if (url.endsWith('/end')) {
+        endSignal = init?.signal ?? null;
+        endSignal?.addEventListener('abort', () => onEndAbort?.());
+        return endReply();
+      }
       return json({ error: 'unexpected' }, 500);
     }),
   );
-  vi.stubGlobal(
-    'Audio',
-    class {
-      src: string;
-      played = false;
-      paused = false;
-      private listeners = new Map<string, () => void>();
-      constructor(src: string) {
-        this.src = src;
-        audios.push(this as unknown as (typeof audios)[number]);
-      }
-      get ended(): () => void {
-        return () => this.listeners.get('ended')?.();
-      }
-      addEventListener(type: string, fn: () => void): void {
-        this.listeners.set(type, fn);
-      }
-      play(): Promise<void> {
-        this.played = true;
-        return Promise.resolve();
-      }
-      pause(): void {
-        this.paused = true;
-      }
-    },
-  );
+  audio = installFakeAudio(vi.stubGlobal);
 });
 
 afterEach(async () => {
@@ -210,7 +240,8 @@ function requests(): string[] {
   return sent.map((s) => `${s.method} ${s.url}`);
 }
 
-const WAV_BASE64 = 'UklGRiQAAABXQVZF';
+/** La voix d'une phrase : trois échantillons PCM à 24 kHz. */
+const VOICE = { seq: 0, mimeType: 'audio/pcm', sampleRate: 24_000, base64: pcmBase64([1, 2, 3]) };
 
 describe('the chat microphone, state by state (#942) @cap:parler-a-un-agent/ecran', () => {
   it('idle: a round mic button named "Hold to talk", with the same hover tooltip', async () => {
@@ -312,7 +343,7 @@ describe('the chat microphone, state by state (#942) @cap:parler-a-un-agent/ecra
     ).toBe(true);
 
     await act(async () => {
-      answer(json({ outcome: 'nothing_heard', durationMs: 0 }));
+      answer(sse([['nothing_heard', { durationMs: 0 }]]));
     });
     await settle();
     expect(container.querySelector('[data-testid="voice-transcribing"]')).toBeNull();
@@ -321,26 +352,19 @@ describe('the chat microphone, state by state (#942) @cap:parler-a-un-agent/ecra
 
   it('reply: the reply audio plays, Send becomes "Stop" ("Stop speaking"), and Stop stops it', async () => {
     endReply = async () =>
-      json({
-        outcome: 'replied',
-        transcript: 'What is the capital of Australia?',
-        durationMs: 3000,
-        reply: 'Canberra.',
-        spawnedJobId: null,
-        stopped: false,
-        cutReason: null,
-        audio: { mimeType: 'audio/wav', base64: WAV_BASE64 },
-        speechError: null,
-      });
+      sse([
+        ['transcript', { transcript: 'What is the capital of Australia?', durationMs: 3000 }],
+        ['delta', { text: 'Canberra.' }],
+        ['audio', VOICE],
+        ['done', { reply: 'Canberra.', ...DONE }],
+      ]);
     await render(<ThreadComposer conversationId="conv-1" />);
     await hold();
     await releaseAt();
 
     // Le fil est relu : il porte la transcription et la réponse.
     expect(refresh).toHaveBeenCalled();
-    expect(audios).toHaveLength(1);
-    expect(audios[0]?.src).toBe(`data:audio/wav;base64,${WAV_BASE64}`);
-    expect(audios[0]?.played).toBe(true);
+    expect(audio.scheduled.map((s) => s.samples.length)).toEqual([3]);
     const stop = container.querySelector<HTMLButtonElement>(
       '[data-testid="composer-stop-speaking"]',
     );
@@ -351,30 +375,27 @@ describe('the chat microphone, state by state (#942) @cap:parler-a-un-agent/ecra
     await act(async () => {
       stop?.click();
     });
-    expect(audios[0]?.paused).toBe(true);
+    expect(audio.scheduled[0]?.stopped).toBe(true);
     expect(container.querySelector('[data-testid="composer-stop-speaking"]')).toBeNull();
     expect(container.querySelector('[data-testid="composer-send"]')?.textContent).toBe('Send');
+    // Le tour était fini : ce Stop ne demande rien au runner.
+    expect(requests()).not.toContain('POST /api/chat/stop');
   });
 
   it('reply: when the audio ends by itself, Send comes back', async () => {
     endReply = async () =>
-      json({
-        outcome: 'replied',
-        transcript: 'Hi',
-        durationMs: 800,
-        reply: 'Hello.',
-        spawnedJobId: null,
-        stopped: false,
-        cutReason: null,
-        audio: { mimeType: 'audio/wav', base64: WAV_BASE64 },
-        speechError: null,
-      });
+      sse([
+        ['transcript', { transcript: 'Hi', durationMs: 800 }],
+        ['delta', { text: 'Hello.' }],
+        ['audio', VOICE],
+        ['done', { reply: 'Hello.', ...DONE }],
+      ]);
     await render(<ThreadComposer conversationId="conv-1" />);
     await hold();
     await releaseAt();
     expect(container.querySelector('[data-testid="composer-stop-speaking"]')).not.toBeNull();
     await act(async () => {
-      audios[0]?.ended();
+      audio.scheduled[0]?.finish();
     });
     expect(container.querySelector('[data-testid="composer-send"]')?.textContent).toBe('Send');
   });
@@ -432,7 +453,7 @@ describe('the chat microphone, state by state (#942) @cap:parler-a-un-agent/ecra
   });
 
   it('nothing heard: the route says `nothing_heard`, the composer says it', async () => {
-    endReply = async () => json({ outcome: 'nothing_heard', durationMs: 0 });
+    endReply = async () => sse([['nothing_heard', { durationMs: 0 }]]);
     await render(<ThreadComposer conversationId="conv-1" />);
     await hold();
     await releaseAt();
@@ -481,22 +502,19 @@ describe('the chat microphone says every route outcome (#942) @cap:parler-a-un-a
 
   it('speechError: the reply is kept (the thread is re-read) and the voice failure is said', async () => {
     endReply = async () =>
-      json({
-        outcome: 'replied',
-        transcript: 'Hi',
-        durationMs: 900,
-        reply: 'Hello.',
-        spawnedJobId: null,
-        stopped: false,
-        cutReason: null,
-        audio: null,
-        speechError: { code: 'speech_failed', detail: 'tts 500' },
-      });
+      sse([
+        ['transcript', { transcript: 'Hi', durationMs: 900 }],
+        ['delta', { text: 'Hello.' }],
+        [
+          'done',
+          { reply: 'Hello.', ...DONE, speechError: { code: 'speech_failed', detail: 'tts 500' } },
+        ],
+      ]);
     await render(<ThreadComposer conversationId="conv-1" />);
     await hold();
     await releaseAt();
     expect(refresh).toHaveBeenCalled();
-    expect(audios).toEqual([]);
+    expect(audio.scheduled).toEqual([]);
     expect(noteText()).toBe(
       'The reply is written above, but it could not be spoken (speech_failed).',
     );
@@ -535,7 +553,11 @@ describe('the chat microphone says every route outcome (#942) @cap:parler-a-un-a
   });
 
   it('a chat failure after the transcription is said in the chat words, and the thread re-read', async () => {
-    endReply = async () => json({ error: 'agent_inactive' }, 400);
+    endReply = async () =>
+      sse([
+        ['transcript', { transcript: 'Hi', durationMs: 900 }],
+        ['error', { error: 'agent_inactive' }],
+      ]);
     await render(<ThreadComposer conversationId="conv-1" />);
     await hold();
     await releaseAt();
@@ -571,17 +593,10 @@ describe('the microphone on a screen whose conversation does not exist yet (P8, 
 
   it('a replied turn makes the screen become the new conversation', async () => {
     endReply = async () =>
-      json({
-        outcome: 'replied',
-        transcript: 'Hi',
-        durationMs: 900,
-        reply: '',
-        spawnedJobId: null,
-        stopped: false,
-        cutReason: null,
-        audio: null,
-        speechError: null,
-      });
+      sse([
+        ['transcript', { transcript: 'Hi', durationMs: 900 }],
+        ['done', { reply: '', ...DONE }],
+      ]);
     const onSent = vi.fn();
     const onSendFailed = vi.fn();
     await render(
@@ -660,23 +675,143 @@ describe('leaving the screen in the middle of a gesture (review of #964, pass 1)
     });
     await act(async () => {
       answer(
-        json({
-          outcome: 'replied',
-          transcript: 'Hi',
-          durationMs: 900,
-          reply: 'Hello.',
-          spawnedJobId: null,
-          stopped: false,
-          cutReason: null,
-          audio: { mimeType: 'audio/wav', base64: WAV_BASE64 },
-          speechError: null,
-        }),
+        sse([
+          ['transcript', { transcript: 'Hi', durationMs: 900 }],
+          ['delta', { text: 'Hello.' }],
+          ['audio', VOICE],
+          ['done', { reply: 'Hello.', ...DONE }],
+        ]),
       );
     });
     await settle();
     expect(requests()).toEqual(['POST /api/voice/turns', 'POST /api/voice/turns/turn-1/end']);
     // L'écran est parti : il ne revient pas sur la conversation, et rien ne parle.
     expect(onSent.mock.calls).toEqual([]);
-    expect(audios).toEqual([]);
+    expect(audio.scheduled).toEqual([]);
+  });
+});
+
+describe('the spoken reply arrives as it is written (#943) @cap:parler-a-un-agent/ecran', () => {
+  async function renderThread(): Promise<void> {
+    await render(
+      <PendingTurnProvider requests={[]} awaitingReply={false}>
+        <PendingTurn agentName="Alfred" />
+        <ThreadComposer conversationId="conv-1" />
+      </PendingTurnProvider>,
+    );
+  }
+
+  it('the transcript appears with "Spoken · 0:03", the reply streams into it, and the voice plays before the end', async () => {
+    const held = heldStream();
+    endReply = async () => held.response;
+    await renderThread();
+    await hold();
+    await releaseAt();
+    expect(container.querySelector('[data-testid="voice-transcribing"]')).not.toBeNull();
+
+    await act(async () => {
+      held.write('transcript', {
+        transcript: 'What is the capital of Australia?',
+        durationMs: 3000,
+      });
+    });
+    await settle();
+    // Le geste est fini : la saisie revient, et la demande dite est dans le fil.
+    expect(container.querySelector('[data-testid="voice-transcribing"]')).toBeNull();
+    expect(container.querySelector('[data-testid="pending-text"]')?.textContent).toBe(
+      'What is the capital of Australia?',
+    );
+    expect(container.querySelector('[data-testid="pending-spoken"]')?.textContent).toBe(
+      'Spoken · 0:03',
+    );
+    // Rien n'est encore écrit : l'agent réfléchit, et Stop peut l'arrêter.
+    expect(
+      container.querySelector('[data-testid="composer-stop"]')?.getAttribute('aria-label'),
+    ).toBe('Stop the answer');
+
+    await act(async () => {
+      held.write('delta', { text: 'Canberra. ' });
+      held.write('audio', VOICE);
+    });
+    await settle();
+    expect(container.querySelector('[data-testid="pending-reply"]')?.textContent).toBe('Canberra.');
+    // La voix joue avant la fin du flux, et « Speaking » est sur la réponse qui s'écrit.
+    expect(audio.scheduled).toHaveLength(1);
+    expect(container.querySelector('[data-testid="pending-thinking"]')?.textContent).toContain(
+      'Speaking',
+    );
+    expect(refresh).not.toHaveBeenCalled();
+
+    await act(async () => {
+      held.write('delta', { text: 'Not Sydney.' });
+      held.write('audio', { ...VOICE, seq: 1, base64: pcmBase64([4, 5]) });
+      held.write('done', { reply: 'Canberra. Not Sydney.', ...DONE });
+      held.close();
+    });
+    await settle();
+    // Bout à bout, dans l'ordre.
+    expect(audio.scheduled.map((s) => s.samples.length)).toEqual([3, 2]);
+    expect(audio.scheduled[1]!.at).toBeCloseTo(audio.scheduled[0]!.at + 3 / 24_000, 9);
+    expect(refresh).toHaveBeenCalled();
+  });
+
+  it('Stop mid-stream: the voice falls silent, the runner is asked to stop the turn, and the stream is abandoned', async () => {
+    const held = heldStream();
+    endReply = async () => held.response;
+    await renderThread();
+    await hold();
+    await releaseAt();
+    await act(async () => {
+      held.write('transcript', { transcript: 'Tell me a story', durationMs: 1200 });
+      held.write('delta', { text: 'Once upon a time. ' });
+      held.write('audio', VOICE);
+    });
+    await settle();
+    const stop = container.querySelector<HTMLButtonElement>(
+      '[data-testid="composer-stop-speaking"]',
+    );
+    expect(stop?.getAttribute('aria-label')).toBe('Stop speaking');
+
+    await act(async () => {
+      stop?.click();
+    });
+    await settle();
+    expect(audio.scheduled[0]?.stopped).toBe(true);
+    expect(sent.filter((r) => r.url === '/api/chat/stop')).toEqual([
+      { method: 'POST', url: '/api/chat/stop', body: { conversationId: 'conv-1' } },
+    ]);
+    expect(endSignal?.aborted).toBe(true);
+    // Ce qui arriverait encore ne joue pas.
+    await act(async () => {
+      try {
+        held.write('audio', { ...VOICE, seq: 1 });
+      } catch {
+        // le flux est déjà abandonné
+      }
+    });
+    await settle();
+    expect(audio.scheduled).toHaveLength(1);
+    expect(container.querySelector('[data-testid="composer-send"]')?.textContent).toBe('Send');
+    expect(refresh).toHaveBeenCalled();
+  });
+
+  it('a new gesture during the reply silences it: nothing of the old reply plays over the new one', async () => {
+    const held = heldStream();
+    endReply = async () => held.response;
+    await renderThread();
+    await hold();
+    await releaseAt();
+    await act(async () => {
+      held.write('transcript', { transcript: 'Tell me a story', durationMs: 1200 });
+    });
+    await settle();
+    mic.stopped = false;
+    await hold();
+    await act(async () => {
+      held.write('delta', { text: 'Once upon a time. ' });
+      held.write('audio', VOICE);
+    });
+    await settle();
+    expect(audio.scheduled).toEqual([]);
   });
 });

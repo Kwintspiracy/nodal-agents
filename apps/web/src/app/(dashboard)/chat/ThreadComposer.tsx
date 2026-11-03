@@ -212,19 +212,37 @@ export default function ThreadComposer({
   }
 
   /**
+   * #943 — la copie en attente du tour DIT : posée quand le runner a transcrit,
+   * nourrie par la réponse qui s'écrit, comme celle d'un envoi tapé.
+   */
+  const voicePending = useRef<number | null>(null);
+
+  /**
    * #942 — le micro. Il passe par la même conversation que l'envoi écrit, et
    * ce qu'il rend se lit comme un envoi : le fil relu (ou l'écran qui devient
    * le fil), ou la conversation neuve jetée quand rien n'y a été écrit.
+   * #943 — et il se MONTRE comme un envoi : la demande dite paraît dès la
+   * transcription, la réponse s'écrit dans la même copie que le chat tapé.
    */
   const voice = useVoiceTurn({
     resolveTarget,
+    onHeard: (transcript, durationMs) => {
+      voicePending.current = pendingTurn.begin(transcript, { spokenMs: durationMs });
+    },
+    onReplyText: (text) => {
+      if (voicePending.current !== null) pendingTurn.stream(voicePending.current, text);
+    },
     onReplied: (target) => {
+      if (voicePending.current !== null) pendingTurn.settle(voicePending.current);
+      voicePending.current = null;
       if (onSent) onSent(target);
       else router.refresh();
     },
     // Un tour refusé APRÈS la transcription a pu écrire la demande : le fil
     // est relu, il montre ce que la base porte.
     onUnused: (target) => {
+      if (voicePending.current !== null) pendingTurn.end(voicePending.current);
+      voicePending.current = null;
       if (!targetUnused(target)) router.refresh();
     },
   });
@@ -314,6 +332,12 @@ export default function ThreadComposer({
    * réponse — rien à faire ici de plus que demander l'arrêt.
    */
   function stop(): void {
+    // #943 — la réponse d'un tour DIT : son Stop fait aussi taire la voix et
+    // abandonne son flux.
+    if (answering.current === null && voice.replying) {
+      voice.stopReply();
+      return;
+    }
     // L'envoi de cette page, ou le tour qu'elle suit depuis qu'on y est revenu (#457).
     const target = answering.current ?? (pendingTurn.live !== null ? conversationId : null);
     if (target === null || stopKey === null || stopping) return;
@@ -332,7 +356,9 @@ export default function ThreadComposer({
   // est vide. Dès qu'on tape, c'est Envoyer qui revient : un message peut
   // partir pendant que le précédent attend (Quentin, 18/09).
   // Un tour suivi depuis une autre page (#457) s'arrête aussi d'ici.
-  const showStop = stopKey !== null && !canSend;
+  // #943 — la réponse d'un tour dit qui s'écrit encore, avant que sa voix
+  // joue, s'arrête de la même façon.
+  const showStop = (stopKey !== null || (voice.replying && speaking === null)) && !canSend;
   // #942 — la réponse DITE qui joue : Stop la fait taire, à la même place et
   // selon la même règle (la zone vide). Une réponse qui s'écrit garde la
   // priorité : c'est elle que l'on arrête d'abord.
@@ -440,7 +466,8 @@ export default function ThreadComposer({
           <PrimaryButton
             variant="ink"
             size="sm"
-            onClick={stopSpeaking}
+            // #943 — pendant que la réponse arrive encore, Stop l'arrête aussi.
+            onClick={voice.replying ? voice.stopReply : stopSpeaking}
             aria-label="Stop speaking"
             data-testid="composer-stop-speaking"
           >

@@ -127,31 +127,71 @@ describe('the web door of the voice turn is a pass-through (#942) @cap:parler-a-
     expect(await res.json()).toEqual({ received: 4 });
   });
 
-  it('end: the runner result comes back as it is, audio included', async () => {
-    const result = {
-      outcome: 'replied',
-      transcript: 'Hi',
-      reply: 'Hello.',
-      durationMs: 900,
-      spawnedJobId: null,
-      stopped: false,
-      cutReason: null,
-      audio: { mimeType: 'audio/wav', base64: 'UklGRg==' },
-      speechError: null,
-    };
+  it('end: the runner stream comes back as it is, event by event, as it is written (#943)', async () => {
+    // A stream the test writes while the browser reads: the first event must
+    // reach the browser before the runner has written the last one.
+    let write!: (s: string) => void;
+    let close!: () => void;
+    const body = new ReadableStream<Uint8Array>({
+      start(c) {
+        write = (s) => c.enqueue(new TextEncoder().encode(s));
+        close = () => c.close();
+      },
+    });
     runnerAnswer = () =>
-      new Response(JSON.stringify(result), {
+      new Response(body, {
         status: 200,
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'text/event-stream; charset=utf-8',
+          'Cache-Control': 'no-cache, no-transform',
+          'X-Accel-Buffering': 'no',
+        },
       });
+    const browser = new AbortController();
     const res = await end(
-      new Request('http://web.test/api/voice/turns/t-9/end', { method: 'POST' }),
+      new Request('http://web.test/api/voice/turns/t-9/end', {
+        method: 'POST',
+        signal: browser.signal,
+      }),
       params({ turnId: 't-9' }),
     );
     expect(received.map((r) => `${r.method} ${r.url}`)).toEqual([
       'POST http://runner.test/api/voice/turns/t-9/end',
     ]);
-    expect(await res.json()).toEqual(result);
+    expect(res.headers.get('content-type')).toBe('text/event-stream; charset=utf-8');
+    expect(res.headers.get('cache-control')).toBe('no-cache, no-transform');
+    expect(res.headers.get('x-accel-buffering')).toBe('no');
+    const reader = res.body!.getReader();
+    const transcript = 'event: transcript\ndata: {"transcript":"Hi","durationMs":900}\n\n';
+    write(transcript);
+    expect(new TextDecoder().decode((await reader.read()).value)).toBe(transcript);
+    const done = 'event: done\ndata: {"reply":"Hello."}\n\n';
+    write(done);
+    close();
+    expect(new TextDecoder().decode((await reader.read()).value)).toBe(done);
+    expect((await reader.read()).done).toBe(true);
+  });
+
+  it('the browser gone, the request to the runner is abandoned with it (#943)', async () => {
+    const signals: AbortSignal[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        signals.push(init!.signal!);
+        return new Response('', { status: 200 });
+      }),
+    );
+    const browser = new AbortController();
+    await end(
+      new Request('http://web.test/api/voice/turns/t-9/end', {
+        method: 'POST',
+        signal: browser.signal,
+      }),
+      params({ turnId: 't-9' }),
+    );
+    expect(signals[0]!.aborted).toBe(false);
+    browser.abort();
+    expect(signals[0]!.aborted).toBe(true);
   });
 
   it('a runner refusal is relayed with its status and code, not translated', async () => {
