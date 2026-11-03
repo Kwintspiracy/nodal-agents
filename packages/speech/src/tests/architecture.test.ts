@@ -86,3 +86,43 @@ describe('one speech path @cap:travailler-sur-des-fichiers/moteur', () => {
     expect(found).toEqual([]);
   });
 });
+
+// ── Channel-neutral (#948, owner's rule of 2026-11-03) ───────────────────────
+//
+// Everything in the voice plan is usable from an external module (a desktop
+// companion, a speaker, a small device), not only from the dashboard. The
+// runner calls these adapters for any channel's audio: a dashboard upload, a
+// device stream, a messaging voice note. So the package speaks in bytes,
+// async iterables of bytes and media types, and never in a browser's or a web
+// framework's terms. Comments may NAME the browser (the measured notes on
+// MediaRecorder containers); code may not depend on it.
+
+const BROWSER_OR_WEB = [
+  {
+    what: 'a browser type or global',
+    re: /\b(Blob|File|FileReader|FormData|MediaRecorder|MediaStream|AudioContext|HTMLAudioElement|navigator|window|document)\b/,
+  },
+  { what: 'a web framework import', re: /from\s+['"](next|react|react-dom)(\/[^'"]*)?['"]/ },
+];
+
+/** The code of a source file, comments removed, so a measured note can name the browser. */
+const codeOnly = (text: string): string =>
+  text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:'"`])\/\/.*$/gm, '$1');
+
+describe('channel-neutral speech package (#948)', () => {
+  it('no source of packages/speech depends on a browser or a web framework', () => {
+    const files = sourceFilesUnder(srcDir)
+      .map((file) => ({ file, rel: relative(repoRoot, file).replaceAll('\\', '/') }))
+      .filter(({ rel }) => /\.[cm]?[tj]sx?$/.test(rel) && !isTest(rel));
+    expect(files.map((f) => f.rel)).toContain('packages/speech/src/speech-adapter.ts');
+    const found: string[] = [];
+    for (const { file, rel } of files) {
+      const code = codeOnly(readFileSync(file, 'utf8'));
+      for (const { what, re } of BROWSER_OR_WEB) {
+        const hit = re.exec(code);
+        if (hit) found.push(`${rel}: ${what} (${hit[0]})`);
+      }
+    }
+    expect(found).toEqual([]);
+  });
+});
