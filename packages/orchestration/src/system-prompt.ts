@@ -25,7 +25,7 @@ import {
 } from '@nodal-agents/db';
 import type { JobTriggerContext } from '@nodal-agents/db';
 import { selectMemoriesForInjection } from '@nodal-agents/memory';
-import type { AgentMemory } from '@nodal-agents/shared';
+import type { AgentMemory, ReplyRendering } from '@nodal-agents/shared';
 import {
   SYSTEM_PROMPT_CACHE_BOUNDARY,
   attributeMcpTool,
@@ -139,6 +139,18 @@ export interface JobContext {
     reply: 'channel' | 'result' | 'parent';
     target: 'chat' | 'owner';
   };
+  /**
+   * Comment la personne recevra la réponse (#941) : lue (`text`, absent) ou
+   * entendue (`spoken`). Un fait de la DEMANDE, posé par le runner depuis le
+   * tour vocal ou depuis `agent_jobs.reply_rendering` du job qu'il a lancé —
+   * jamais du canal, que le même fil sert tapé et dit.
+   *
+   * À côté de `channelDelivery`, et non dedans : `channelDelivery` n'existe
+   * que pour un job qui tient un outil d'envoi, alors que toute réponse a une
+   * forme. Le placer dedans l'aurait retiré de chaque job du tableau de bord
+   * sans bot, soit justement celui qu'un tour vocal lance.
+   */
+  replyRendering?: ReplyRendering;
   /**
    * The user asked to be notified when this job succeeds (per-schedule opt-in).
    * Instruction to the LLM — it writes the confirmation in its own voice; the
@@ -583,6 +595,26 @@ function channelDeliveryLine(
   );
 }
 
+/**
+ * La ligne de la forme de la réponse (#941), ou `null` pour une réponse lue —
+ * ce que tout prompt disait déjà sans le dire, et qui ne change donc rien aux
+ * canaux existants.
+ *
+ * Un FAIT sur la forme, pas une phrase à dire : l'agent écrit toujours sa
+ * réponse (invariant #2) ; il apprend seulement qu'elle sera entendue, et ce
+ * qu'une voix ne rend pas. Un délégué répond à son parent, jamais à la
+ * personne : il n'en lit rien.
+ */
+function replyRenderingLine(ctx: JobContext): string | null {
+  if (ctx.replyRendering !== 'spoken' || ctx.isDelegated) return null;
+  return (
+    '- rendering: spoken — your reply is turned into speech and heard, not read. ' +
+    'Short sentences carry it; tables, lists, headings, links and other markup do not ' +
+    'survive being read aloud, and numbers, dates and units are heard as they are written, ' +
+    'so write them the way they are said.'
+  );
+}
+
 function buildJobContextBlock(ctx: JobContext, availableTools: readonly string[]): string {
   const lines = [`- origin: ${ctx.origin}`];
   if (ctx.telegramChatId) lines.push(`- telegram_chat_id: ${ctx.telegramChatId}`);
@@ -590,6 +622,8 @@ function buildJobContextBlock(ctx: JobContext, availableTools: readonly string[]
     ? channelDeliveryLine(ctx.channelDelivery, availableTools)
     : null;
   if (delivery) lines.push(delivery);
+  const rendering = replyRenderingLine(ctx);
+  if (rendering) lines.push(rendering);
   if (ctx.surface === 'chat') {
     // In-app chat turn: the user reads your reply directly. You have EXACTLY ONE
     // tool here — `run_task` — and none of your built-in tools, connectors, or

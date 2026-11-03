@@ -9,6 +9,11 @@ export type SpeechErrorCode =
   | 'speech_provider_not_found'
   /** The provider answered, but not with audio/text — quota, bad key, refusal. */
   | 'speech_provider_error'
+  /** The provider transcribed the audio and found no words in it: silence,
+   *  room noise, a button pressed and released. A fact about the audio rather
+   *  than a refusal, so a voice turn can say "nothing heard" instead of an
+   *  error, and still never store an empty message (#941). */
+  | 'speech_nothing_heard'
   /** The request could not be built: empty text, a mime type the provider does
    *  not accept, an unknown voice id. Caught before any network call. */
   | 'speech_bad_request';

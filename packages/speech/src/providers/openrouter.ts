@@ -228,7 +228,9 @@ export const openrouterTranscriptionAdapter: TranscriptionAdapter = {
     const raw = json.choices?.[0]?.message?.content;
     const text = typeof raw === 'string' ? raw.trim() : '';
     if (text.length === 0) {
-      throw new SpeechError('speech_provider_error', 'openrouter: answered 200 with no transcript');
+      // Words or no words is a fact about the audio, not a vendor failure: the
+      // caller says "nothing heard", and still never records an empty turn.
+      throw new SpeechError('speech_nothing_heard', 'openrouter: answered 200 with no transcript');
     }
     return { text, latencyMs };
   },

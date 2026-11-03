@@ -32,12 +32,7 @@ import type { Context } from 'hono';
 import { z } from 'zod';
 import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
-import { runChatTurn } from '../chat/run-chat-turn.ts';
-import { runInLane } from '../chat/turn-lane.ts';
-import { withChatTurnStop } from '../chat/turn-stop.ts';
-import { withLiveTurn } from '../chat/live-turn.ts';
-import { executeJob } from '../job/execute.ts';
-import type { JobId } from '@nodal-agents/orchestration';
+import { playChatTurn } from '../chat/play-turn.ts';
 import { sseEvent, SSE_HEADERS } from './sse.ts';
 
 const ChatStreamRequestSchema = z.object({
@@ -88,27 +83,21 @@ export async function chatStreamRoute(
 
       void (async () => {
         try {
-          const result = await runInLane(conversationId, () =>
-            // Le texte qui s'écrit est lisible d'une autre page (#457) : une
-            // page rouverte en plein tour s'y rebranche par `/api/chat/live`.
-            withLiveTurn(entityId, conversationId, (say) =>
-              // Le tour en cours dépose son Stop (#456) : `/api/chat/stop` le
-              // déclenche pour CETTE conversation, et pour ce tour-là seulement.
-              withChatTurnStop(conversationId, (abortSignal) =>
-                runChatTurn({
-                  deps,
-                  entityId,
-                  agentId,
-                  conversationId,
-                  message,
-                  onTextDelta: (delta) => {
-                    say(delta);
-                    send('delta', { text: delta });
-                  },
-                  abortSignal,
-                }),
-              ),
-            ),
+          // La même file, le même tour lisible d'une autre page (#457, une
+          // page rouverte s'y rebranche par `/api/chat/live`), le même Stop
+          // (#456) que `/api/chat` : `playChatTurn`. Le job escaladé part en
+          // fond, exactement comme là-bas ; l'écran suit le job, pas ce flux.
+          const result = await playChatTurn(
+            deps,
+            runnerEnv,
+            {
+              entityId,
+              agentId,
+              conversationId,
+              message,
+              onTextDelta: (delta) => send('delta', { text: delta }),
+            },
+            'chatStreamRoute',
           );
           if (!result.ok) {
             send('error', { error: result.error, cutReason: result.cutReason ?? null });
@@ -121,15 +110,6 @@ export async function chatStreamRoute(
             stopped: result.stopped === true,
             cutReason: result.cutReason ?? null,
           });
-
-          // Le tour a escaladé : le travail part en fond, exactement comme sur
-          // /api/chat. L'écran suit le job, pas ce flux-ci.
-          if (result.spawnedJobId) {
-            const jobId = result.spawnedJobId as JobId;
-            void executeJob(jobId, deps, runnerEnv).catch((err: unknown) => {
-              console.error('[chatStreamRoute] spawned job failed:', err);
-            });
-          }
         } catch (err) {
           console.error('[chatStreamRoute] turn failed:', err);
           send('error', { error: 'chat_failed' });

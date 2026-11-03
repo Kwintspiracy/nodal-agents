@@ -19,6 +19,12 @@ import { chatRoute } from './routes/chat.ts';
 import { chatStreamRoute } from './routes/chat-stream.ts';
 import { chatStopRoute } from './routes/chat-stop.ts';
 import { chatLiveRoute } from './routes/chat-live.ts';
+import {
+  voiceTurnCancelRoute,
+  voiceTurnChunkRoute,
+  voiceTurnEndRoute,
+  voiceTurnStartRoute,
+} from './routes/voice-turn.ts';
 import { webhookRoute } from './routes/webhook.ts';
 import { codeTaskDoctorRoute } from './routes/code-task-doctor.ts';
 import { sandboxRoute } from './routes/sandbox.ts';
@@ -228,6 +234,13 @@ export function createApp(
   app.use('/api/chat/stream', requireRunnerAuth);
   app.use('/api/chat/stop', requireRunnerAuth);
   app.use('/api/chat/live', requireRunnerAuth);
+  // Le tour vocal (#941) : la même garde que /api/chat, sur la création du tour
+  // et sur chacun de ses chemins. SEAM #946 : le jeton d'un module s'ajoute À
+  // CETTE GARDE, comme une autre preuve qui pose `callerTrusted` /
+  // `callerEntityId` ; la route ne lit que ces deux faits, et ne demande
+  // jamais une session du tableau de bord.
+  app.use('/api/voice/turns', requireRunnerAuth);
+  app.use('/api/voice/turns/*', requireRunnerAuth);
   app.use('/api/approve', requireRunnerAuth);
   app.use('/api/cron', requireRunnerAuth);
   // P11 — le diff d'un fichier écrit par un tour. Même garde que /api/approve :
@@ -251,6 +264,11 @@ export function createApp(
   app.post('/api/chat/stream', (c) => chatStreamRoute(c, deps, runnerEnv));
   app.post('/api/chat/stop', (c) => chatStopRoute(c, deps));
   app.post('/api/chat/live', (c) => chatLiveRoute(c, deps));
+
+  app.post('/api/voice/turns', (c) => voiceTurnStartRoute(c, deps));
+  app.post('/api/voice/turns/:turnId/chunks/:seq', (c) => voiceTurnChunkRoute(c));
+  app.post('/api/voice/turns/:turnId/end', (c) => voiceTurnEndRoute(c, deps, runnerEnv));
+  app.delete('/api/voice/turns/:turnId', (c) => voiceTurnCancelRoute(c));
 
   app.post('/api/approve', (c) => approveRoute(c, deps, runnerEnv));
 

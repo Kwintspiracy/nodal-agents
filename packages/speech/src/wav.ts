@@ -61,6 +61,80 @@ export function pcmToWav(
   return out;
 }
 
+/** What a WAV container says about its samples. */
+export interface WavInfo {
+  sampleRate: number;
+  channels: number;
+  bitsPerSample: number;
+  /** Length of the `data` chunk, in bytes: zero is a recording with no samples. */
+  dataBytes: number;
+  /** How long the samples play, rounded to the millisecond. */
+  durationMs: number;
+}
+
+/**
+ * Read a WAV container's header: its format and how long it plays (#941).
+ *
+ * Walks the chunks rather than reading fixed offsets: the 44-byte layout
+ * `pcmToWav` writes is only the shortest one. Windows' recorder writes an
+ * 18-byte `fmt ` chunk, other tools add `LIST` or `fact` chunks before `data`,
+ * and a reader that assumed offset 40 would take metadata for samples. A
+ * container that is not RIFF/WAVE PCM, or names no `data` chunk, is refused:
+ * a duration guessed from the file size would be stored as a fact.
+ */
+export function readWav(bytes: Uint8Array): WavInfo {
+  const ascii = (offset: number): string =>
+    String.fromCharCode(...bytes.subarray(offset, offset + 4));
+  if (bytes.length < 12 || ascii(0) !== 'RIFF' || ascii(8) !== 'WAVE') {
+    throw new SpeechError('speech_bad_request', 'readWav: not a RIFF/WAVE container');
+  }
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let fmt: { format: number; channels: number; sampleRate: number; bitsPerSample: number } | null =
+    null;
+  let offset = 12;
+  while (offset + 8 <= bytes.length) {
+    const id = ascii(offset);
+    const size = view.getUint32(offset + 4, true);
+    const body = offset + 8;
+    if (id === 'fmt ') {
+      if (size < 16 || body + 16 > bytes.length) {
+        throw new SpeechError('speech_bad_request', 'readWav: truncated fmt chunk');
+      }
+      fmt = {
+        format: view.getUint16(body, true),
+        channels: view.getUint16(body + 2, true),
+        sampleRate: view.getUint32(body + 4, true),
+        bitsPerSample: view.getUint16(body + 14, true),
+      };
+    } else if (id === 'data') {
+      if (!fmt) throw new SpeechError('speech_bad_request', 'readWav: data chunk before fmt');
+      if (fmt.format !== 1) {
+        throw new SpeechError(
+          'speech_bad_request',
+          `readWav: format ${fmt.format} is not uncompressed PCM`,
+        );
+      }
+      const bytesPerSecond = fmt.sampleRate * fmt.channels * (fmt.bitsPerSample / 8);
+      if (bytesPerSecond <= 0) {
+        throw new SpeechError('speech_bad_request', 'readWav: the fmt chunk names no sample rate');
+      }
+      // A recorder that streamed its file may leave a size it did not know
+      // yet: the samples are then what the file holds.
+      const dataBytes = Math.min(size, bytes.length - body);
+      return {
+        sampleRate: fmt.sampleRate,
+        channels: fmt.channels,
+        bitsPerSample: fmt.bitsPerSample,
+        dataBytes,
+        durationMs: Math.round((dataBytes / bytesPerSecond) * 1000),
+      };
+    }
+    // Chunks are word-aligned: an odd size is followed by a pad byte.
+    offset = body + size + (size % 2);
+  }
+  throw new SpeechError('speech_bad_request', 'readWav: no data chunk');
+}
+
 /**
  * Read the sample rate out of a `audio/L16;codec=pcm;rate=24000` media type.
  *

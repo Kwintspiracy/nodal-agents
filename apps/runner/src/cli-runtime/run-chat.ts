@@ -30,7 +30,7 @@ import { openProcessScope } from '@nodal-agents/sandbox';
 import { DEFAULT_LIMITS } from '@nodal-agents/orchestration';
 import { buildCliAuditRow } from './audit.ts';
 import { shellPostureForTurn, watchBrakeDuringTurn } from './shell-turn.ts';
-import { claudeShellTools, type BrakeStop } from '@nodal-agents/shared';
+import { claudeShellTools, type BrakeStop, type ReplyRendering } from '@nodal-agents/shared';
 import { EDIT_TOOLS, scannedEditPath } from '../job/code-projects.ts';
 import { buildSystemPrompt } from '@nodal-agents/orchestration';
 import { probeWorkspaceGit } from '../lib/workspace-git.ts';
@@ -56,6 +56,8 @@ export async function runCliRuntimeChatTurn(args: {
   message: string;
   /** The person's Stop (#456): kills the CLI turn; the reply is what was said so far, marked `stopped`. */
   abortSignal?: AbortSignal;
+  /** How the person receives the reply (#941): heard after a voice turn. Absent: a typed turn, read. */
+  replyRendering?: ReplyRendering;
 }): Promise<
   | { ok: true; reply: string; stopped?: boolean; cutReason?: BrakeStop }
   | { ok: false; error: string }
@@ -236,6 +238,7 @@ export async function runCliRuntimeChatTurn(args: {
         task: message,
         workspaceGit,
         workspaces: wsRows,
+        replyRendering: args.replyRendering ?? 'text',
         ...(conversation ? { conversation } : {}),
       }),
     );

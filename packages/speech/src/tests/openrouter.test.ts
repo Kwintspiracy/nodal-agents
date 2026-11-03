@@ -142,9 +142,9 @@ describe('openrouter — what it returns and what it refuses', () => {
     // An empty string would be recorded as "the user said nothing" and sent to
     // the agent as a blank turn — worse than an error, because it looks normal.
     mockReply('   ');
-    await expect(adapter.transcribe({ audio, mimeType: 'audio/wav' }, conn())).rejects.toThrow(
-      /no transcript/,
-    );
+    await expect(
+      adapter.transcribe({ audio, mimeType: 'audio/wav' }, conn()),
+    ).rejects.toMatchObject({ code: 'speech_nothing_heard', message: /no transcript/ });
   });
 
   it('raises on empty audio without calling the vendor', async () => {

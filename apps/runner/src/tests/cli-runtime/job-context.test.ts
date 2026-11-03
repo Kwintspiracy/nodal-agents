@@ -21,7 +21,12 @@ const DEPLOY: DeploymentContext = { os: 'Linux', networkMode: 'loopback', authMo
 
 describe('buildCliRuntimeJobContext', () => {
   it('transmet la sonde git — LE champ oublié', () => {
-    const ctx = buildCliRuntimeJobContext({ origin: 'api', deployment: DEPLOY, workspaceGit: GIT });
+    const ctx = buildCliRuntimeJobContext({
+      origin: 'api',
+      deployment: DEPLOY,
+      workspaceGit: GIT,
+      replyRendering: 'text',
+    });
     expect(ctx?.workspaceGit, "sans ce champ, aucun bloc git n'est rendu").toEqual(GIT);
   });
 
@@ -32,6 +37,7 @@ describe('buildCliRuntimeJobContext', () => {
       origin: 'api',
       deployment: DEPLOY,
       workspaceGit: null,
+      replyRendering: 'text',
     });
     expect(ctx && 'workspaceGit' in ctx).toBe(false);
   });
@@ -40,9 +46,10 @@ describe('buildCliRuntimeJobContext', () => {
     // C'est ce drapeau qui retire les blocs décrivant un outillage que cette
     // session n'a pas. L'oublier redonnerait à l'agent 22 Ko d'ordres
     // inexécutables.
-    expect(buildCliRuntimeJobContext({ origin: 'api', deployment: DEPLOY })?.surface).toBe(
-      'cli-runtime',
-    );
+    expect(
+      buildCliRuntimeJobContext({ origin: 'api', deployment: DEPLOY, replyRendering: 'text' })
+        ?.surface,
+    ).toBe('cli-runtime');
   });
 
   it('porte la tâche et le chat quand ils existent, et rien sinon', () => {
@@ -54,6 +61,7 @@ describe('buildCliRuntimeJobContext', () => {
       origin: 'telegram',
       task: 'analyse le repo',
       telegramChat: { telegramChatId: 'conv_abcdefghij' },
+      replyRendering: 'text',
     });
     expect(complet?.task).toBe('analyse le repo');
     expect(complet?.telegramChatId).toBe('conv_abcdefghij');
@@ -63,8 +71,22 @@ describe('buildCliRuntimeJobContext', () => {
       deployment: DEPLOY,
       task: null,
       telegramChat: {},
+      replyRendering: 'text',
     });
     expect(nu && 'task' in nu).toBe(false);
     expect(nu && 'telegramChatId' in nu).toBe(false);
+  });
+
+  it('porte la forme de la réponse, lue ou entendue, sur les deux chemins (#941)', () => {
+    // Le chemin job lit `agent_jobs.reply_rendering`, le chemin chat le tour
+    // vocal : ce contexte est leur seul point de passage.
+    for (const replyRendering of ['text', 'spoken'] as const) {
+      const ctx = buildCliRuntimeJobContext({
+        origin: 'dashboard',
+        deployment: DEPLOY,
+        replyRendering,
+      });
+      expect(ctx?.replyRendering).toBe(replyRendering);
+    }
   });
 });

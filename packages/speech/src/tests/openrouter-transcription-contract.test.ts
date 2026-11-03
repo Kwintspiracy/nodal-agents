@@ -127,12 +127,12 @@ describe('openrouter transcription — what each answer becomes', () => {
     });
   });
 
-  it('a 200 with an empty transcript is an error, never an empty turn', async () => {
+  it('a 200 with an empty transcript is nothing heard, never an empty turn', async () => {
     const { connection } = recording(fixture('openrouter-transcription-empty.json'));
     await expect(
       adapter.transcribe({ audio, mimeType: 'audio/wav' }, connection),
     ).rejects.toMatchObject({
-      code: 'speech_provider_error',
+      code: 'speech_nothing_heard',
       message: 'openrouter: answered 200 with no transcript',
     });
   });

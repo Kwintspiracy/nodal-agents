@@ -1,4 +1,5 @@
-// resolve-speech.ts — the speech a job's tools get (#487, #940).
+// resolve-speech.ts — the speech a job's tools get (#487, #940), and the
+// transcription the voice turn listens with (#941).
 //
 // `generate_speech` turns text into audio through OpenRouter. The key lives
 // encrypted in `entity_llm_keys`; packages/tools never decrypts, and
@@ -16,12 +17,29 @@
 import { and, desc, eq, entityLlmKeys, type AnyDrizzleDb } from '@nodal-agents/db';
 import { providerFetch } from '@nodal-agents/llm';
 import { decrypt } from '@nodal-agents/secrets';
-import { bindSpeech, getSpeechAdapter, type BoundSpeech } from '@nodal-agents/speech';
+import {
+  bindSpeech,
+  bindTranscription,
+  getSpeechAdapter,
+  getTranscriptionAdapter,
+  type BoundSpeech,
+  type BoundTranscription,
+  type SpeechConnection,
+} from '@nodal-agents/speech';
 
-export async function resolveSpeech(
+/**
+ * The workspace's OpenRouter connection, read ONCE for both directions: the
+ * voice that speaks (`resolveSpeech`) and the ear that listens
+ * (`resolveTranscription`, the voice turn of #941) ride the same key, so a
+ * second lookup could only ever disagree with the first.
+ *
+ * `undefined`: no active key. `{ undecryptable }`: a key exists and cannot be
+ * read, which each caller reports as such, never as "no key".
+ */
+async function workspaceOpenRouter(
   db: AnyDrizzleDb,
   entityId: string | null,
-): Promise<BoundSpeech | undefined> {
+): Promise<{ connection: SpeechConnection } | { undecryptable: string } | undefined> {
   if (entityId === null) return undefined;
   const [row] = await db
     .select({ apiKey: entityLlmKeys.apiKey, baseUrl: entityLlmKeys.baseUrl })
@@ -36,19 +54,38 @@ export async function resolveSpeech(
     .orderBy(desc(entityLlmKeys.createdAt))
     .limit(1);
   if (!row?.apiKey) return undefined;
-
-  const adapter = getSpeechAdapter('openrouter');
-  let apiKey: string;
   try {
-    apiKey = decrypt(row.apiKey);
+    return {
+      connection: {
+        apiKey: decrypt(row.apiKey),
+        fetch: providerFetch,
+        ...(row.baseUrl ? { baseURL: row.baseUrl } : {}),
+      },
+    };
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
     console.warn(`[resolveSpeech] openrouter key undecryptable: ${detail}`);
-    const undecryptable = async (): Promise<never> => {
-      throw new Error(
-        `the workspace OpenRouter key could not be decrypted (${detail.slice(0, 120)})`,
-      );
-    };
+    return { undecryptable: detail };
+  }
+}
+
+function undecryptableCall(detail: string): () => Promise<never> {
+  return async () => {
+    throw new Error(
+      `the workspace OpenRouter key could not be decrypted (${detail.slice(0, 120)})`,
+    );
+  };
+}
+
+export async function resolveSpeech(
+  db: AnyDrizzleDb,
+  entityId: string | null,
+): Promise<BoundSpeech | undefined> {
+  const resolved = await workspaceOpenRouter(db, entityId);
+  if (!resolved) return undefined;
+  const adapter = getSpeechAdapter('openrouter');
+  if ('undecryptable' in resolved) {
+    const undecryptable = undecryptableCall(resolved.undecryptable);
     return {
       provider: adapter.provider,
       capabilities: adapter.capabilities,
@@ -56,9 +93,28 @@ export async function resolveSpeech(
       synthesize: undecryptable,
     };
   }
-  return bindSpeech(adapter, {
-    apiKey,
-    fetch: providerFetch,
-    ...(row.baseUrl ? { baseURL: row.baseUrl } : {}),
-  });
+  return bindSpeech(adapter, resolved.connection);
+}
+
+/**
+ * The transcription the voice turn listens with (#941): the OpenRouter
+ * TranscriptionAdapter of packages/speech, bound to the same workspace key and
+ * transport as `resolveSpeech`. `undefined`: the workspace has no active
+ * OpenRouter key, which the voice turn states before anyone speaks.
+ */
+export async function resolveTranscription(
+  db: AnyDrizzleDb,
+  entityId: string | null,
+): Promise<BoundTranscription | undefined> {
+  const resolved = await workspaceOpenRouter(db, entityId);
+  if (!resolved) return undefined;
+  const adapter = getTranscriptionAdapter('openrouter');
+  if ('undecryptable' in resolved) {
+    return {
+      provider: adapter.provider,
+      capabilities: adapter.capabilities,
+      transcribe: undecryptableCall(resolved.undecryptable),
+    };
+  }
+  return bindTranscription(adapter, resolved.connection);
 }

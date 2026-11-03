@@ -69,6 +69,7 @@ export * from './sandbox-settings';
 export * from './fragment-diff';
 export * from './failure-codes';
 export * from './job-result-kind';
+export * from './reply-rendering';
 export * from './runner-record';
 export * from './conversation-inbox';
 export * from './handoff';

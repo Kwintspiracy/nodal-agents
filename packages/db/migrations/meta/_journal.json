@@ -1079,6 +1079,13 @@
       "when": 1786349900000,
       "tag": "0155_deliverable_removed",
       "breakpoints": true
+    },
+    {
+      "idx": 157,
+      "version": "7",
+      "when": 1786436300000,
+      "tag": "0157_spoken_turn",
+      "breakpoints": true
     }
   ]
 }
