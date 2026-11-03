@@ -1738,6 +1738,39 @@ describe('the voice turn speaks with the workspace voice (#969) @cap:parler-a-un
     });
   });
 
+  // Review of #972, pass 2 (P2): a vendor can echo the key it refused, and its
+  // words are shown. Mutation verified: SpeechError built without masking →
+  // red, the key reaches both the Save refusal and the turn's speechError.
+  it('a vendor echoing the key it refused: masked in the Save refusal and in the turn', async () => {
+    const app = createApp(makeDeps(), testEnv);
+    const conv = await conversation();
+    const KEY = `sk-or-v1-${'a1b2c3d4e5'.repeat(4)}`;
+    network({
+      front: { text: 'Nine in the evening.' },
+      speech: () =>
+        new Response(
+          JSON.stringify({ error: { message: `Incorrect API key provided: ${KEY}`, code: 401 } }),
+          { status: 401, headers: { 'content-type': 'application/json' } },
+        ),
+    });
+    const saved = await call(app, 'PUT', '/api/voice/setting', {
+      entityId: seed.entityId,
+      setting: { source: 'openrouter', model: 'x-ai/grok-voice-tts-1.0', voice: 'leo' },
+    });
+    const refusal = JSON.stringify(await saved.json());
+    expect(saved.status).toBe(409);
+    expect(refusal).not.toContain(KEY);
+    expect(refusal).toContain('Incorrect API key provided: [secret masqué] (sk-)');
+
+    const turn = await say(app, conv, FIXTURE, { format: 'audio/wav' });
+    expect(turn.body['speechError']).toEqual({
+      code: 'speech_provider_error',
+      detail:
+        'openrouter google/gemini-3.8-flash-tts: HTTP 401 — Incorrect API key provided: [secret masqué] (sk-)',
+    });
+    expect(JSON.stringify(turn.events)).not.toContain(KEY);
+  });
+
   it('a voice the model does not offer is refused with a stated error, and the voice in force does not change', async () => {
     const app = createApp(makeDeps(), testEnv);
     network({});

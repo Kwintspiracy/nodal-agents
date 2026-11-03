@@ -1,3 +1,5 @@
+import { redactSecretsInText } from '@nodal-agents/shared';
+
 /**
  * Every failure in this package is one of these codes. Deliberately narrow: a
  * caller has to be able to tell "the vendor said no" (retry, or tell the user
@@ -24,13 +26,22 @@ export type SpeechErrorCode =
    *  not accept, an unknown voice id. Caught before any network call. */
   | 'speech_bad_request';
 
+/**
+ * Every failure of this package carries vendor words (an error body, a
+ * refusal message), and those words reach people: the turn's spoken failure,
+ * the refusal at Save, the sample, `generate_speech`, the logs. A vendor can
+ * echo the credential it refused ("Incorrect API key provided: sk-or-v1-…",
+ * "API key not valid: AIza…"). So the message is masked HERE, where the words
+ * enter Nodal, once for every adapter and every consumer: an adapter cannot
+ * forget it, because no SpeechError exists unmasked (review of #972, pass 2).
+ */
 export class SpeechError extends Error {
   readonly code: SpeechErrorCode;
   /** The vendor's HTTP status, when there was one. */
   readonly status?: number;
 
   constructor(code: SpeechErrorCode, message: string, status?: number) {
-    super(message);
+    super(redactSecretsInText(message));
     this.name = 'SpeechError';
     this.code = code;
     if (status !== undefined) this.status = status;
