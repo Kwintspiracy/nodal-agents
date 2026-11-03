@@ -46,6 +46,7 @@ import {
 
 const CIPHERTEXT = 'enc:v1:FAKE-CIPHERTEXT-NEVER-PRINTED';
 const LAST4 = 'Zq9x';
+const OWNER_VOICE = '{"source":"openrouter","model":"x-ai/grok-voice-tts-1.0","voice":"leo"}';
 
 type Pg = Awaited<ReturnType<typeof spinUpTestDb>>['pg'];
 let pg: Pg;
@@ -184,6 +185,11 @@ async function seedTeam(t: AnyDrizzleDb, p: Pg, wsRoot: string) {
     { entityId, key: d.INSTALL_NOTES_KEY, value: 'Projects live in D:/work.' },
     { entityId, key: 'some_other_setting', value: 'private' },
   ]);
+  // #969: the owner's voice (the row every workspace is born with, chosen since).
+  await t
+    .update(d.entitySettings)
+    .set({ value: OWNER_VOICE })
+    .where(d.and(d.eq(d.entitySettings.entityId, entityId), d.eq(d.entitySettings.key, 'voice')));
   await t.insert(d.agentMemory).values({ entityId, agentId: worker!.id, fact: 'owner likes tea' });
 
   // Ce qui parle au monde, ou vit dans les dossiers du propriétaire.
@@ -321,6 +327,7 @@ describe('sync — le plan, sans rien écrire', () => {
         'entity_llm_keys: openrouter key "Main"',
         'entity_llm_keys: anthropic key "Backup"',
         `entity_settings: ${d.INSTALL_NOTES_KEY}`,
+        'entity_settings: voice',
       ].sort(),
     );
     expect(plan.changes.every((c) => c.kind === 'create')).toBe(true);
@@ -506,9 +513,13 @@ describe("sync --apply — l'espace", () => {
       .select()
       .from(d.entitySettings)
       .where(d.eq(d.entitySettings.entityId, spaceId));
-    expect(settings.map((s) => [s.key, s.value])).toEqual([
-      [d.INSTALL_NOTES_KEY, 'Projects live in D:/work.'],
-    ]);
+    // #969: the space keeps a voice row, the owner's, like every workspace.
+    expect(settings.map((s) => [s.key, s.value]).sort()).toEqual(
+      [
+        [d.INSTALL_NOTES_KEY, 'Projects live in D:/work.'],
+        ['voice', OWNER_VOICE],
+      ].sort(),
+    );
 
     // Rien de ce qui parle au monde, rien des dossiers ni de la mémoire du propriétaire.
     for (const [table, n] of [

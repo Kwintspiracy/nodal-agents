@@ -314,10 +314,16 @@ export interface SyncOptions {
   workspacesRoot: string;
 }
 
-/** Les clés de `entity_settings` qui sont du prompt (le bloc Runtime), donc copiées. */
+/**
+ * Les clés de `entity_settings` copiées : celles qui sont du prompt (le bloc
+ * Runtime), et la voix (#969). La voix est une ligne que TOUT espace porte
+ * (migration 0158) : la copie la garde, avec la valeur du propriétaire, au
+ * lieu de la retirer de l'espace comme une clé inconnue.
+ */
 async function promptSettingKeys(): Promise<string[]> {
   const { INSTALL_NOTES_KEY } = await import('@nodal-agents/db');
-  return [INSTALL_NOTES_KEY];
+  const { VOICE_SETTING_KEY } = await import('@nodal-agents/shared');
+  return [INSTALL_NOTES_KEY, VOICE_SETTING_KEY];
 }
 
 async function resolveSource(db: AnyDrizzleDb, explicit: string | undefined): Promise<string> {

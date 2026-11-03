@@ -40,9 +40,15 @@ export async function proxyToRunner(
   req: Request,
   url: string,
   opts: {
-    method: 'POST' | 'DELETE';
+    method: 'GET' | 'POST' | 'PUT' | 'DELETE';
     /** Le corps JSON à envoyer, construit depuis la session. Absent : le corps reçu, en flux. */
     body?: (session: ProxySession) => Promise<unknown>;
+    /**
+     * Les paramètres de requête, construits depuis la session : c'est par eux
+     * qu'une lecture (GET) nomme son entité, prise sur la session et jamais
+     * sur le client (#969).
+     */
+    query?: (session: ProxySession) => Record<string, string>;
     /** Le nom de la porte, pour le journal. */
     door: string;
   },
@@ -71,16 +77,22 @@ export async function proxyToRunner(
   if (opts.body) {
     headers['Content-Type'] = 'application/json';
     body = JSON.stringify(await opts.body(session));
-  } else if (req.body) {
+  } else if (opts.method !== 'GET' && req.body) {
     headers['Content-Type'] = req.headers.get('content-type') ?? 'application/octet-stream';
     body = req.body;
     init.duplex = 'half';
   }
   if (body !== null) init.body = body;
 
+  let target = url;
+  if (opts.query) {
+    const params = new URLSearchParams(opts.query(session));
+    target = `${url}${url.includes('?') ? '&' : '?'}${params.toString()}`;
+  }
+
   let upstream: Response;
   try {
-    upstream = await fetch(url, init);
+    upstream = await fetch(target, init);
   } catch (err) {
     console.error(`[${opts.door}] runner unreachable:`, err);
     return refuse('runner_unreachable', 502);

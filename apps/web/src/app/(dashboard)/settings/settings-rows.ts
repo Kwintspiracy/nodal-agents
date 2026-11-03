@@ -54,6 +54,7 @@ export type SettingId =
   | 'root-agent'
   | 'mcp-server'
   | 'timezone'
+  | 'voice'
   | 'autostart'
   | 'install-notes'
   | 'workspaces'
@@ -330,6 +331,15 @@ export function buildSettingRows(src: SettingsSource): SettingRow[] {
         : src.timezone.isExplicit
           ? src.timezone.timezone
           : `${src.timezone.timezone}, detected`,
+  });
+
+  rows.push({
+    id: 'voice',
+    group: 'workspace',
+    name: 'Voice',
+    lede: 'The voice Nodal speaks with: in every voice turn, and for the audio files your agents make.',
+    // La section lit la voix elle-même, par la route du runner (#969).
+    value: 'Source, model and voice',
   });
 
   rows.push({

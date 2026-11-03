@@ -62,8 +62,10 @@ describe('registry — fail loud, never a default provider', () => {
     // file declaring it would make the caller wait in a code path built not to.
     expect(getSpeechAdapter('minimax').capabilities.streamOutput).toBe('audio/mpeg');
     expect(getSpeechAdapter('minimax').synthesizeStream).toBeTypeOf('function');
-    expect(getSpeechAdapter('google').capabilities.streamOutput).toBeUndefined();
-    expect(getSpeechAdapter('google').synthesizeStream).toBeUndefined();
+    // Google streams since #969 (streamGenerateContent, first event at 0.78 to
+    // 1.13 s, measured 2026-11-03).
+    expect(getSpeechAdapter('google').capabilities.streamOutput).toBe('audio/pcm');
+    expect(getSpeechAdapter('google').synthesizeStream).toBeTypeOf('function');
     expect(getSpeechAdapter('openrouter').capabilities.streamOutput).toBe('audio/pcm');
     expect(getSpeechAdapter('openrouter').synthesizeStream).toBeTypeOf('function');
   });

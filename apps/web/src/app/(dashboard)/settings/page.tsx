@@ -42,6 +42,7 @@ import McpServerSection from './McpServerSection.tsx';
 import AutostartSection from './AutostartSection.tsx';
 import InstallNotesForm from './InstallNotesForm.tsx';
 import TimezoneForm from './TimezoneForm.tsx';
+import VoiceSection from './VoiceSection.tsx';
 import SettingsSections from './SettingsSections.tsx';
 import SandboxSection from './SandboxSection.tsx';
 import { getSandboxAction } from '@/lib/sandbox-actions.ts';
@@ -159,6 +160,8 @@ export default async function SettingsPage({ searchParams }: PageProps) {
     timezone: tzResult.ok ? (
       <TimezoneForm initial={tzResult.data.timezone} isExplicit={tzResult.data.isExplicit} />
     ) : null,
+    // #969 : la section lit et écrit la voix par la route du runner, elle-même.
+    voice: <VoiceSection />,
     autostart: autostartResult.ok ? <AutostartSection initial={autostartResult.data} /> : null,
     'install-notes': installNotesResult.ok ? (
       <InstallNotesForm initial={installNotesResult.data} />

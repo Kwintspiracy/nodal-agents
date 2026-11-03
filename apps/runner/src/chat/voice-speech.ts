@@ -83,6 +83,8 @@ export type VendorEvent = 'firstByte' | 'complete';
 
 export function createReplySpeech(opts: {
   speech: BoundSpeech;
+  /** The model and the voice: the workspace's voice setting (#969), never a default. */
+  model: string;
   voiceId: string;
   onChunk: (chunk: SpokenChunk) => void;
   /**
@@ -94,7 +96,7 @@ export function createReplySpeech(opts: {
   onVendor?: (event: VendorEvent, sentence: number) => void;
   inFlight?: number;
 }): ReplySpeech {
-  const { speech, voiceId, onChunk } = opts;
+  const { speech, model, voiceId, onChunk } = opts;
   const inFlight = opts.inFlight ?? SPEECH_IN_FLIGHT;
   const stream = speech.capabilities.streamOutput && speech.synthesizeStream ? speech : null;
   const jobs: Job[] = [];
@@ -131,7 +133,7 @@ export function createReplySpeech(opts: {
       if (stream) {
         const mimeType = stream.capabilities.streamOutput!;
         let first = true;
-        for await (const piece of stream.synthesizeStream!({ text: job.text, voiceId })) {
+        for await (const piece of stream.synthesizeStream!({ text: job.text, model, voiceId })) {
           if (job.abandoned || cancelled) return;
           if (first) opts.onVendor?.('firstByte', job.index);
           first = false;
@@ -145,7 +147,7 @@ export function createReplySpeech(opts: {
         }
         opts.onVendor?.('complete', job.index);
       } else {
-        const out = await speech.synthesize({ text: job.text, voiceId });
+        const out = await speech.synthesize({ text: job.text, model, voiceId });
         opts.onVendor?.('firstByte', job.index);
         opts.onVendor?.('complete', job.index);
         job.chunks.push({

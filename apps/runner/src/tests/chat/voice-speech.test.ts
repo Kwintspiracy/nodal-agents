@@ -75,7 +75,12 @@ describe('createReplySpeech @cap:parler-a-un-agent/moteur', () => {
   it('a voice that cannot stream: one file per sentence, in order, two at a time', async () => {
     const v = heldVoice(false);
     const out = collector();
-    const voice = createReplySpeech({ speech: v.speech, voiceId: 'Kore', onChunk: out.onChunk });
+    const voice = createReplySpeech({
+      speech: v.speech,
+      model: 'google/gemini-3.8-flash-tts',
+      voiceId: 'Kore',
+      onChunk: out.onChunk,
+    });
     voice.say('A.');
     voice.say('Bb.');
     voice.say('Ccc.');
@@ -98,7 +103,12 @@ describe('createReplySpeech @cap:parler-a-un-agent/moteur', () => {
   it('a voice that streams: its bytes pass as they arrive, in the declared format, sentence after sentence', async () => {
     const v = heldVoice(true);
     const out = collector();
-    const voice = createReplySpeech({ speech: v.speech, voiceId: 'Kore', onChunk: out.onChunk });
+    const voice = createReplySpeech({
+      speech: v.speech,
+      model: 'google/gemini-3.8-flash-tts',
+      voiceId: 'Kore',
+      onChunk: out.onChunk,
+    });
     voice.say('One.');
     voice.say('Two.');
     await v.release('Two.');
@@ -119,7 +129,12 @@ describe('createReplySpeech @cap:parler-a-un-agent/moteur', () => {
   it('a failure stops the voice there, says why, and nothing after it is heard', async () => {
     const v = heldVoice(false);
     const out = collector();
-    const voice = createReplySpeech({ speech: v.speech, voiceId: 'Kore', onChunk: out.onChunk });
+    const voice = createReplySpeech({
+      speech: v.speech,
+      model: 'google/gemini-3.8-flash-tts',
+      voiceId: 'Kore',
+      onChunk: out.onChunk,
+    });
     voice.say('A.');
     voice.say('Bb.');
     voice.say('Ccc.');
@@ -133,7 +148,12 @@ describe('createReplySpeech @cap:parler-a-un-agent/moteur', () => {
   it('reset drops what is not yet heard; the sentences said after it are heard', async () => {
     const v = heldVoice(false);
     const out = collector();
-    const voice = createReplySpeech({ speech: v.speech, voiceId: 'Kore', onChunk: out.onChunk });
+    const voice = createReplySpeech({
+      speech: v.speech,
+      model: 'google/gemini-3.8-flash-tts',
+      voiceId: 'Kore',
+      onChunk: out.onChunk,
+    });
     voice.say('Stale.');
     voice.reset();
     voice.say('Fresh one.');
@@ -147,7 +167,12 @@ describe('createReplySpeech @cap:parler-a-un-agent/moteur', () => {
   it('cancel: silence at once, and no further sentence is asked', async () => {
     const v = heldVoice(false);
     const out = collector();
-    const voice = createReplySpeech({ speech: v.speech, voiceId: 'Kore', onChunk: out.onChunk });
+    const voice = createReplySpeech({
+      speech: v.speech,
+      model: 'google/gemini-3.8-flash-tts',
+      voiceId: 'Kore',
+      onChunk: out.onChunk,
+    });
     voice.say('A.');
     voice.say('Bb.');
     voice.say('Ccc.');

@@ -7,7 +7,6 @@
 import { describe, it, expect } from 'vitest';
 import {
   GEMINI_TTS_SAMPLE_RATE,
-  OPENROUTER_SPEECH_MODELS,
   openrouterSpeechAdapter as adapter,
   speechBody,
 } from '../providers/openrouter.ts';
@@ -73,11 +72,18 @@ describe('openrouterSpeechAdapter @cap:travailler-sur-des-fichiers/moteur', () =
     expect([...out.audio.subarray(44)]).toEqual([...pcm]);
   });
 
-  it('uses the first catalogue model when the request names none', async () => {
+  // #969: the adapter picks no model; the workspace's voice setting names it.
+  // Mutation verified: the old default (`req.model ?? the first Gemini model`)
+  // restored → red, a request leaves.
+  it('a request naming no model is refused before any call, never given one', async () => {
     const sent: Sent[] = [];
-    await adapter.synthesize({ text: 'x', voiceId: 'Kore' }, stub(new Uint8Array([1, 0]), sent));
-    expect(sent[0]!.body['model']).toBe('google/gemini-3.8-flash-tts');
-    expect(OPENROUTER_SPEECH_MODELS[0].id).toBe('google/gemini-3.8-flash-tts');
+    await expect(
+      adapter.synthesize({ text: 'x', voiceId: 'Kore' }, stub(new Uint8Array([1, 0]), sent)),
+    ).rejects.toMatchObject({ code: 'speech_bad_request' });
+    expect(() =>
+      adapter.synthesizeStream!({ text: 'x', voiceId: 'Kore' }, stub(new Uint8Array([1, 0]), sent)),
+    ).toThrow('openrouter needs the model');
+    expect(sent).toEqual([]);
   });
 
   it('reads the sample rate from the answer when it names one', async () => {
@@ -129,7 +135,9 @@ describe('openrouterSpeechAdapter @cap:travailler-sur-des-fichiers/moteur', () =
     });
   });
 
-  it('an HTTP error carries the status and the vendor’s words', async () => {
+  // #969: a key without credit is its own code. Mutation verified:
+  // `vendorRefusalCode` answering `speech_provider_error` for 402 → red.
+  it('an HTTP error carries the status and the vendor’s words; 402 is said as no credit', async () => {
     const answer = new TextEncoder().encode(
       JSON.stringify({ error: { message: 'Insufficient credits', code: 402 } }),
     );
@@ -139,7 +147,7 @@ describe('openrouterSpeechAdapter @cap:travailler-sur-des-fichiers/moteur', () =
         stub(answer, [], 'application/json', 402),
       ),
     ).rejects.toMatchObject({
-      code: 'speech_provider_error',
+      code: 'speech_no_credit',
       status: 402,
       message: 'openrouter google/gemini-3.8-flash-tts: HTTP 402 — Insufficient credits',
     });
@@ -200,10 +208,102 @@ describe('openrouterSpeechAdapter @cap:travailler-sur-des-fichiers/moteur', () =
   it('honours the base URL stored with the key', async () => {
     const sent: Sent[] = [];
     await adapter.synthesize(
-      { text: 'x', voiceId: 'Kore' },
+      { model: 'google/gemini-3.8-flash-tts', text: 'x', voiceId: 'Kore' },
       { ...stub(new Uint8Array([1, 0]), sent), baseURL: 'https://proxy.example/api/v1' },
     );
     expect(sent[0]!.url).toBe('https://proxy.example/api/v1/audio/speech');
+  });
+
+  // #969: MiniMax answers mp3 only (measured 2026-11-03). Mutation verified:
+  // the pcm check removed from `openSpeech` → red (the mp3 bytes come back
+  // wrapped in a WAV, and streamed as samples).
+  it('an answer in another container than pcm is said, never wrapped nor played as samples', async () => {
+    const mp3 = new Uint8Array([0xff, 0xfb, 0x90, 0x64]);
+    await expect(
+      adapter.synthesize(
+        { model: 'minimax/speech-2.8-turbo', text: 'x', voiceId: 'English_CalmWoman' },
+        stub(mp3, [], 'audio/mpeg'),
+      ),
+    ).rejects.toThrow(
+      'minimax/speech-2.8-turbo answered audio/mpeg, where Nodal reads pcm from this route',
+    );
+    await expect(
+      (async () => {
+        for await (const _ of adapter.synthesizeStream!(
+          { model: 'minimax/speech-2.8-turbo', text: 'x', voiceId: 'English_CalmWoman' },
+          stub(mp3, [], 'audio/mpeg'),
+        )) {
+          // drained
+        }
+      })(),
+    ).rejects.toThrow('answered audio/mpeg');
+  });
+
+  // #969: the choices come from OpenRouter. A trimmed copy of the real answer
+  // of `GET /models?output_modalities=speech` (2026-11-03).
+  it('lists the speech models OpenRouter serves, each with the voices it lists', async () => {
+    const answer = {
+      data: [
+        {
+          id: 'x-ai/grok-voice-tts-1.0',
+          name: 'SpaceXAI: Grok Voice TTS 1.0',
+          supported_voices: ['eve', 'ara', 'rex', 'sal', 'leo'],
+        },
+        { id: 'fish-audio/s1', name: 'Fish Audio: S1', supported_voices: null },
+        {
+          id: 'google/gemini-3.8-flash-tts',
+          name: 'Google: Gemini 3.8 Flash TTS',
+          supported_voices: ['Zephyr', 'Kore'],
+        },
+      ],
+    };
+    const seen: Array<{ url: string; auth: string | null }> = [];
+    const connection: SpeechConnection = {
+      apiKey: 'sk-or-test',
+      fetch: async (input, init) => {
+        seen.push({ url: String(input), auth: new Headers(init?.headers).get('authorization') });
+        return new Response(JSON.stringify(answer), {
+          headers: { 'content-type': 'application/json' },
+        });
+      },
+    };
+    const models = await adapter.listModels!(connection);
+    expect(seen).toEqual([
+      {
+        url: 'https://openrouter.ai/api/v1/models?output_modalities=speech',
+        auth: 'Bearer sk-or-test',
+      },
+    ]);
+    expect(models.map((m) => [m.id, m.label, m.voices.map((v) => v.id)])).toEqual([
+      [
+        'x-ai/grok-voice-tts-1.0',
+        'SpaceXAI: Grok Voice TTS 1.0',
+        ['eve', 'ara', 'rex', 'sal', 'leo'],
+      ],
+      ['fish-audio/s1', 'Fish Audio: S1', []],
+      ['google/gemini-3.8-flash-tts', 'Google: Gemini 3.8 Flash TTS', ['Zephyr', 'Kore']],
+    ]);
+  });
+
+  it('a models list refused or unreadable is said, never read as empty', async () => {
+    const refused: SpeechConnection = {
+      apiKey: 'sk-or-test',
+      fetch: async () =>
+        new Response(JSON.stringify({ error: { message: 'Insufficient credits' } }), {
+          status: 402,
+        }),
+    };
+    await expect(adapter.listModels!(refused)).rejects.toMatchObject({
+      code: 'speech_no_credit',
+      message: 'openrouter models: HTTP 402 — Insufficient credits',
+    });
+    const shapeless: SpeechConnection = {
+      apiKey: 'sk-or-test',
+      fetch: async () => new Response('{"models":[]}'),
+    };
+    await expect(adapter.listModels!(shapeless)).rejects.toThrow(
+      'openrouter models: the answer has no data',
+    );
   });
 
   it('declares its stream: raw PCM (#943)', () => {
@@ -247,9 +347,10 @@ describe('openrouterSpeechAdapter.synthesizeStream (#943) @cap:parler-a-un-agent
   // across two network chunks" is red.
   it('yields the first bytes before the answer ends, with the same request as the one-shot path', async () => {
     const held = heldStream();
-    const it = adapter.synthesizeStream!({ text: 'Bonjour.', voiceId: 'Kore' }, held.connection)[
-      Symbol.asyncIterator
-    ]();
+    const it = adapter.synthesizeStream!(
+      { model: 'google/gemini-3.8-flash-tts', text: 'Bonjour.', voiceId: 'Kore' },
+      held.connection,
+    )[Symbol.asyncIterator]();
     const first = it.next();
     held.write([1, 0, 2, 0]);
     expect(await first).toEqual({
@@ -266,7 +367,7 @@ describe('openrouterSpeechAdapter.synthesizeStream (#943) @cap:parler-a-un-agent
     });
     expect(await it.next()).toEqual({ done: true, value: undefined });
     expect(held.sent[0]!.body).toEqual(
-      speechBody({ text: 'Bonjour.', voiceId: 'Kore' }, OPENROUTER_SPEECH_MODELS[0].id),
+      speechBody({ text: 'Bonjour.', voiceId: 'Kore' }, 'google/gemini-3.8-flash-tts'),
     );
   });
 
@@ -275,7 +376,7 @@ describe('openrouterSpeechAdapter.synthesizeStream (#943) @cap:parler-a-un-agent
     const out: number[][] = [];
     const reading = (async () => {
       for await (const c of adapter.synthesizeStream!(
-        { text: 'x', voiceId: 'Kore' },
+        { model: 'google/gemini-3.8-flash-tts', text: 'x', voiceId: 'Kore' },
         held.connection,
       )) {
         out.push([...c.audio]);
@@ -303,7 +404,7 @@ describe('openrouterSpeechAdapter.synthesizeStream (#943) @cap:parler-a-un-agent
       const rates: Array<number | undefined> = [];
       const reading = (async () => {
         for await (const c of adapter.synthesizeStream!(
-          { text: 'x', voiceId: 'Kore' },
+          { model: 'google/gemini-3.8-flash-tts', text: 'x', voiceId: 'Kore' },
           held.connection,
         )) {
           rates.push(c.sampleRate);
@@ -320,7 +421,7 @@ describe('openrouterSpeechAdapter.synthesizeStream (#943) @cap:parler-a-un-agent
     const cut = heldStream();
     const reading = (async () => {
       for await (const _ of adapter.synthesizeStream!(
-        { text: 'x', voiceId: 'Kore' },
+        { model: 'google/gemini-3.8-flash-tts', text: 'x', voiceId: 'Kore' },
         cut.connection,
       )) {
         // drained
@@ -337,7 +438,7 @@ describe('openrouterSpeechAdapter.synthesizeStream (#943) @cap:parler-a-un-agent
     await expect(
       (async () => {
         for await (const _ of adapter.synthesizeStream!(
-          { text: 'x', voiceId: 'Kore' },
+          { model: 'google/gemini-3.8-flash-tts', text: 'x', voiceId: 'Kore' },
           empty.connection,
         )) {
           // drained
@@ -349,7 +450,7 @@ describe('openrouterSpeechAdapter.synthesizeStream (#943) @cap:parler-a-un-agent
     await expect(
       (async () => {
         for await (const _ of adapter.synthesizeStream!(
-          { text: 'x', voiceId: 'Kore' },
+          { model: 'google/gemini-3.8-flash-tts', text: 'x', voiceId: 'Kore' },
           other.connection,
         )) {
           // drained

@@ -7,8 +7,14 @@
 export type SpeechErrorCode =
   /** No adapter registered for the requested provider. Config/programming error. */
   | 'speech_provider_not_found'
-  /** The provider answered, but not with audio/text — quota, bad key, refusal. */
+  /** The provider answered, but not with audio/text — bad key, refusal. */
   | 'speech_provider_error'
+  /** The provider refused because the key has no credit left (HTTP 402).
+   *  Its own code because it is the one refusal the person fixes themselves,
+   *  at the vendor, and a screen or a module says so without parsing prose
+   *  (#969: the workspace's Google key answered 402 "Your prepayment credits
+   *  are depleted" on 2026-11-03). */
+  | 'speech_no_credit'
   /** The provider transcribed the audio and found no words in it: silence,
    *  room noise, a button pressed and released. A fact about the audio rather
    *  than a refusal, so a voice turn can say "nothing heard" instead of an
@@ -29,4 +35,12 @@ export class SpeechError extends Error {
     this.code = code;
     if (status !== undefined) this.status = status;
   }
+}
+
+/**
+ * The code of a vendor's non-OK HTTP answer. One mapping for every adapter, so
+ * "no credit" reads the same whichever vendor said it.
+ */
+export function vendorRefusalCode(status: number): SpeechErrorCode {
+  return status === 402 ? 'speech_no_credit' : 'speech_provider_error';
 }

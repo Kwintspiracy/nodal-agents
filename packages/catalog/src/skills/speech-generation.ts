@@ -25,13 +25,12 @@ This tool group gives you \`generate_speech\`: it turns text into a **WAV audio 
 - \`text\`: the exact words to speak, at most 5,000 characters. **Everything in it is read aloud**: no stage directions, no "(pause)", no "[cheerful]".
 - \`style\`: the tone, in a few words ("warm and friendly", "calm and slow", "whispering"). It is not read aloud.
 - \`path\`: where to write the file, ending in \`.wav\` (e.g. \`audio/intro.wav\`). Missing folders are created.
-- \`model\`: \`google/gemini-3.8-flash-tts\` (default, the expressive tier) or \`google/gemini-3.8-flash-lite-tts\` (faster and cheaper, plain reading).
-- \`voice\`: the voice name as Google names it; \`Kore\` is the default.
+- \`model\` and \`voice\`: leave them out. The file is then spoken with the workspace's voice, the one the owner chose in Settings, Voice. Give them only when the owner asks for a particular model or voice, named as the workspace's voice source names them.
 
 ### Discipline
 
 1. **Longer than 5,000 characters: split** at paragraph boundaries into several files (\`part-1.wav\`, \`part-2.wav\`…) and say so in your answer.
 2. **Give the path back** in your answer: the owner finds the file there.
-3. **A failure is said, not retried blindly.** No OpenRouter key, an unknown voice, a provider error: report the reason the tool returned.
+3. **A failure is said, not retried blindly.** No key for the voice's source, an unknown voice, a provider error: report the reason the tool returned.
 `,
 };

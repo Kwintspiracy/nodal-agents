@@ -16,9 +16,19 @@ import type {
   OperationRiskLevel,
   ToolCard,
   ToolCardPayload,
+  VoiceFailureCode,
+  VoiceSource,
 } from '@nodal-agents/shared';
 import type { ChannelKind } from '@nodal-agents/delivery';
 import type { JobPlacement } from './job-placement';
+
+/** What the runner hands a run's tools to speak with (#969). */
+export type ToolSpeech =
+  | {
+      ok: true;
+      voice: { source: VoiceSource; model: string; voice: string; speech: BoundSpeech };
+    }
+  | { ok: false; code: VoiceFailureCode; source?: VoiceSource; detail?: string };
 
 // RiskLevel is OperationRiskLevel — single source of truth from @nodal-agents/shared
 export type RiskLevel = OperationRiskLevel;
@@ -251,13 +261,15 @@ export interface ToolContext {
     query: string,
   ) => Promise<{ results: Array<{ title: string; url: string; snippet: string }> }>;
   /**
-   * Turns text into audio for the `generate_speech` builtin (#487): the
-   * OpenRouter SpeechAdapter of packages/speech, bound to the workspace's
-   * OpenRouter key (#940). Injected by the runner, like `searchBackend`: the
-   * key is decrypted there, never in packages/tools. Absent ⇒ the workspace
-   * has no active OpenRouter key, and `generate_speech` says so.
+   * The workspace's voice for the `generate_speech` builtin (#487, #969): the
+   * voice setting (source, model, voice) and the SpeechAdapter of its source,
+   * bound to the workspace's key for that source. Resolved by the runner
+   * (`resolveVoice`), like `searchBackend`: the key is decrypted there, never
+   * in packages/tools. `ok: false` carries why the workspace cannot speak (no
+   * key for the source, a setting that cannot be read), and `generate_speech`
+   * says it. Absent: the runner gave this run no voice.
    */
-  speech?: BoundSpeech;
+  speech?: ToolSpeech;
   /**
    * Resolve the REAL tool-name whitelist of an arbitrary agent in this
    * workspace (not necessarily the caller). Injected by the runner

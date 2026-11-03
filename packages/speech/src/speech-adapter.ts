@@ -230,6 +230,26 @@ export interface SpeechAdapter {
     req: SynthesizeRequest,
     connection: SpeechConnection,
   ): AsyncIterable<SpeechStreamChunk>;
+  /**
+   * The models the vendor serves for speech right now, each with its voices,
+   * asked of the vendor itself (#969). Optional: a vendor with a single line
+   * declares `capabilities.models` instead. Every call reaches the network:
+   * how long a list may be kept is the caller's decision, not this package's.
+   */
+  listModels?(connection: SpeechConnection): Promise<readonly SpeechModelOffer[]>;
+}
+
+/**
+ * A model the vendor says it serves NOW, with the voices it says that model
+ * offers (#969). Read from the vendor at runtime (`listModels`), never typed
+ * into the code: a list in the code describes the vendor as it was the day
+ * someone wrote it. `voices` empty: the vendor names no voice for this model,
+ * so none can be chosen.
+ */
+export interface SpeechModelOffer {
+  id: string;
+  label: string;
+  voices: readonly Voice[];
 }
 
 /** Audio → text. */

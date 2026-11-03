@@ -45,7 +45,10 @@ import {
   and,
   eq,
   asc,
+  readVoiceSetting,
+  writeVoiceSetting,
 } from '@nodal-agents/db';
+import { clearVoiceCatalog } from '../../job/resolve-voice.ts';
 import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
 import { createEmbeddingClient } from '@nodal-agents/llm';
 import { LocalTrustProvider } from '@nodal-agents/auth';
@@ -221,6 +224,8 @@ function network(opts: {
   };
   recheck?: { hold?: Promise<void>; instruction?: string };
   speech?: (input: string, n: number) => Response | Promise<Response>;
+  /** #969 — Google direct: its answer to `streamGenerateContent`, one per sentence. */
+  google?: (input: string) => Response | Promise<Response>;
   /** The tool calls the worker makes, one per request, before it answers 'Done.'. */
   worker?: Array<{ name: string; args: Record<string, unknown> }>;
 }) {
@@ -230,12 +235,51 @@ function network(opts: {
     front: [] as ChatBody[],
     worker: [] as ChatBody[],
     speech: [] as Array<Record<string, unknown>>,
+    google: [] as Array<{ url: string; key: string | null; body: Record<string, unknown> }>,
     log: [] as string[],
   };
   vi.stubGlobal(
     'fetch',
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input.toString();
+      // #969 — the speech models each source lists (a trimmed copy of the
+      // real answers of 2026-11-03).
+      if (url.includes('/models?output_modalities=speech')) {
+        return Response.json({
+          data: [
+            {
+              id: 'google/gemini-3.8-flash-tts',
+              name: 'Google: Gemini 3.8 Flash TTS',
+              supported_voices: ['Kore', 'Puck'],
+            },
+            {
+              id: 'x-ai/grok-voice-tts-1.0',
+              name: 'SpaceXAI: Grok Voice TTS 1.0',
+              supported_voices: ['eve', 'ara', 'rex', 'sal', 'leo'],
+            },
+          ],
+        });
+      }
+      if (url.includes('generativelanguage.googleapis.com/v1beta/models?')) {
+        return Response.json({
+          models: [
+            { name: 'models/gemini-3.8-flash', displayName: 'Gemini 3.8 Flash' },
+            { name: 'models/gemini-3.8-flash-tts', displayName: 'Gemini 3.8 Flash TTS' },
+          ],
+        });
+      }
+      if (url.includes('generativelanguage.googleapis.com')) {
+        const body = JSON.parse(init?.body as string) as {
+          contents: Array<{ parts: Array<{ text: string }> }>;
+        };
+        sent.google.push({
+          url,
+          key: new Headers(init?.headers).get('x-goog-api-key'),
+          body: body as unknown as Record<string, unknown>,
+        });
+        if (!opts.google) throw new Error(`unexpected fetch ${url}`);
+        return opts.google(body.contents[0]!.parts[0]!.text);
+      }
       if (url.endsWith('/audio/speech')) {
         const req = JSON.parse(init?.body as string) as Record<string, unknown>;
         sent.speech.push(req);
@@ -1183,7 +1227,8 @@ describe('the voice turn route — the reply spoken as it is written (#943) @cap
     expect(body).toMatchObject({
       reply: 'First part is fine. Second part fails. Third never plays.',
       speechError: {
-        code: 'speech_provider_error',
+        // #969: a 402 is said as the key without credit it is.
+        code: 'speech_no_credit',
         detail: 'openrouter google/gemini-3.8-flash-tts: HTTP 402 — Insufficient credits',
       },
     });
@@ -1290,11 +1335,12 @@ describe('the voice turn route — the reply spoken as it is written (#943) @cap
     ]);
     const timing = lines.filter((l) => l.startsWith('[voice-turn] timing '));
     expect(timing).toHaveLength(2);
+    // #969: the line names the voice that spoke — identifiers only.
     expect(timing[0]).toMatch(
-      /^\[voice-turn\] timing \{"transcriptMs":\d+,"firstDeltaMs":\d+,"firstSentenceMs":\d+,"firstSentenceVendorByteMs":\d+,"firstSentenceVendorDoneMs":\d+,"firstAudioMs":\d+,"doneMs":\d+\}$/,
+      /^\[voice-turn\] timing \{"source":"openrouter","model":"google\/gemini-3\.8-flash-tts","voice":"Kore","transcriptMs":\d+,"firstDeltaMs":\d+,"firstSentenceMs":\d+,"firstSentenceVendorByteMs":\d+,"firstSentenceVendorDoneMs":\d+,"firstAudioMs":\d+,"doneMs":\d+\}$/,
     );
     expect(timing[1]).toMatch(
-      /^\[voice-turn\] timing \{"transcriptMs":null,"firstDeltaMs":null,"firstSentenceMs":null,"firstSentenceVendorByteMs":null,"firstSentenceVendorDoneMs":null,"firstAudioMs":null,"doneMs":\d+\}$/,
+      /^\[voice-turn\] timing \{"source":null,"model":null,"voice":null,"transcriptMs":null,"firstDeltaMs":null,"firstSentenceMs":null,"firstSentenceVendorByteMs":null,"firstSentenceVendorDoneMs":null,"firstAudioMs":null,"doneMs":\d+\}$/,
     );
     const marks = JSON.parse(timing[0]!.slice('[voice-turn] timing '.length)) as Record<
       string,
@@ -1345,5 +1391,246 @@ describe('the voice turn route — the reply spoken as it is written (#943) @cap
       content: `Your key is ${key}. Keep it safe.`,
       spokenMs: null,
     });
+  });
+});
+
+// ── #969 — the voice Nodal speaks with is the workspace's setting ────────────
+
+/** Google's `streamGenerateContent?alt=sse`: one event per PCM chunk, as measured on 2026-11-03. */
+function googleSse(chunks: number[][]): Response {
+  const events = chunks.map(
+    (bytes) =>
+      `data: ${JSON.stringify({
+        candidates: [
+          {
+            content: {
+              parts: [
+                {
+                  inlineData: {
+                    mimeType: 'audio/l16; rate=24000; channels=1',
+                    data: Buffer.from(bytes).toString('base64'),
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      })}\r\n\r\n`,
+  );
+  return new Response(events.join(''), {
+    status: 200,
+    headers: { 'content-type': 'text/event-stream' },
+  });
+}
+
+const FIRST_VOICE = {
+  source: 'openrouter',
+  model: 'google/gemini-3.8-flash-tts',
+  voice: 'Kore',
+} as const;
+
+describe('the voice turn speaks with the workspace voice (#969) @cap:parler-a-un-agent/moteur', () => {
+  afterEach(async () => {
+    clearVoiceCatalog();
+    await writeVoiceSetting(db as never, seed.entityId, FIRST_VOICE);
+    await db
+      .delete(entityLlmKeys)
+      .where(and(eq(entityLlmKeys.entityId, seed.entityId), eq(entityLlmKeys.provider, 'google')));
+  });
+
+  async function googleKey(): Promise<void> {
+    await db.insert(entityLlmKeys).values({
+      entityId: seed.entityId,
+      provider: 'google',
+      apiKey: encrypt('AIza-test'),
+      isActive: true,
+    });
+  }
+
+  // Mutations verified: the turn speaking with the first value instead of the
+  // resolved one → red; the setting read once per process (kept in memory)
+  // → red at the second turn.
+  it('speaks with the stored source, model and voice, and a change made by the route applies to the next turn, no restart', async () => {
+    const app = createApp(makeDeps(), testEnv);
+    const conv = await conversation();
+    await googleKey();
+    const sent = network({
+      front: { text: 'Nine in the evening.' },
+      google: () =>
+        googleSse([
+          [1, 2, 3, 4],
+          [5, 6],
+        ]),
+    });
+
+    const grok = await call(app, 'PUT', '/api/voice/setting', {
+      entityId: seed.entityId,
+      setting: { source: 'openrouter', model: 'x-ai/grok-voice-tts-1.0', voice: 'leo' },
+    });
+    expect(grok.status).toBe(200);
+    const first = await say(app, conv, FIXTURE, { format: 'audio/wav' });
+    expect(first.body['speechError']).toBeNull();
+    expect(sent.speech).toEqual([
+      {
+        model: 'x-ai/grok-voice-tts-1.0',
+        input: 'Nine in the evening.',
+        voice: 'leo',
+        response_format: 'pcm',
+      },
+    ]);
+    expect(sent.google).toEqual([]);
+
+    const gemini = await call(app, 'PUT', '/api/voice/setting', {
+      entityId: seed.entityId,
+      setting: { source: 'google', model: 'gemini-3.8-flash-tts', voice: 'Puck' },
+    });
+    expect(gemini.status).toBe(200);
+    const second = await say(app, conv, FIXTURE, { format: 'audio/wav' });
+    expect(second.body['speechError']).toBeNull();
+    expect(sent.speech).toHaveLength(1);
+    expect(sent.google).toEqual([
+      {
+        url: 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash-tts:streamGenerateContent?alt=sse',
+        key: 'AIza-test',
+        body: {
+          contents: [{ parts: [{ text: 'Nine in the evening.' }] }],
+          generationConfig: {
+            responseModalities: ['AUDIO'],
+            speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Puck' } } },
+          },
+        },
+      },
+    ]);
+    // Google's events, in order, as little-endian PCM at the rate they name.
+    const audio = second.events.filter((e) => e.event === 'audio');
+    expect(audio.map((e) => [e.data['seq'], e.data['mimeType'], e.data['sampleRate']])).toEqual([
+      [0, 'audio/pcm', 24_000],
+      [1, 'audio/pcm', 24_000],
+    ]);
+    expect([...heardAudio(second.events)]).toEqual([1, 2, 3, 4, 5, 6]);
+  });
+
+  it('a voice the model does not offer is refused with a stated error, and the voice in force does not change', async () => {
+    const app = createApp(makeDeps(), testEnv);
+    network({});
+    const refused = await call(app, 'PUT', '/api/voice/setting', {
+      entityId: seed.entityId,
+      setting: { source: 'openrouter', model: 'x-ai/grok-voice-tts-1.0', voice: 'Kore' },
+    });
+    expect(refused.status).toBe(409);
+    expect(await refused.json()).toEqual({
+      error: 'voice_not_offered',
+      source: 'openrouter',
+      detail: 'x-ai/grok-voice-tts-1.0 offers eve, ara, rex, sal, leo',
+    });
+    const unknown = await call(app, 'PUT', '/api/voice/setting', {
+      entityId: seed.entityId,
+      setting: { source: 'openrouter', model: 'nobody/tts', voice: 'leo' },
+    });
+    expect(unknown.status).toBe(409);
+    expect(((await unknown.json()) as { error: string }).error).toBe('voice_model_not_offered');
+    expect(await readVoiceSetting(db as never, seed.entityId)).toEqual({
+      ok: true,
+      setting: FIRST_VOICE,
+    });
+  });
+
+  it('a missing Google key and an out-of-credit answer (402) are said as such; the reply stays written', async () => {
+    const app = createApp(makeDeps(), testEnv);
+    const conv = await conversation();
+    await writeVoiceSetting(db as never, seed.entityId, {
+      source: 'google',
+      model: 'gemini-3.8-flash-tts',
+      voice: 'Kore',
+    });
+    network({
+      front: { text: 'Nine in the evening.' },
+      google: () =>
+        new Response(
+          JSON.stringify([
+            { error: { code: 402, message: 'Your prepayment credits are depleted.' } },
+          ]),
+          { status: 402 },
+        ),
+    });
+
+    const noKey = await say(app, conv, FIXTURE, { format: 'audio/wav' });
+    expect(noKey.body['reply']).toBe('Nine in the evening.');
+    expect(noKey.body['speechError']).toEqual({ code: 'voice_key_missing', detail: 'google' });
+    expect(noKey.events.some((e) => e.event === 'audio')).toBe(false);
+
+    await googleKey();
+    const noCredit = await say(app, conv, FIXTURE, { format: 'audio/wav' });
+    expect(noCredit.body['reply']).toBe('Nine in the evening.');
+    expect(noCredit.body['speechError']).toEqual({
+      code: 'speech_no_credit',
+      detail: 'google gemini-3.8-flash-tts: HTTP 402 — Your prepayment credits are depleted.',
+    });
+  });
+
+  it('reads the setting and what each source offers; a source without key says so', async () => {
+    const app = createApp(makeDeps(), testEnv);
+    network({});
+    const res = await call(app, 'GET', `/api/voice/setting?entityId=${seed.entityId}`);
+    expect(res.status).toBe(200);
+    const state = (await res.json()) as {
+      setting: unknown;
+      sources: Array<{ source: string; state: string; code?: string; models?: unknown[] }>;
+    };
+    expect(state.setting).toEqual(FIRST_VOICE);
+    expect(state.sources.map((s) => [s.source, s.state, s.code ?? s.models?.length])).toEqual([
+      ['openrouter', 'available', 2],
+      ['google', 'unavailable', 'voice_key_missing'],
+    ]);
+  });
+
+  // Mutation verified: the sample ignoring the voice on screen (no `setting`
+  // passed to `openReplyVoice`) → red.
+  it('Play a sample speaks the caller sentence through the turn path: the stored voice, or the one on screen', async () => {
+    const app = createApp(makeDeps(), testEnv);
+    const sent = network({});
+    const stored = await call(app, 'POST', '/api/voice/sample', {
+      entityId: seed.entityId,
+      text: 'This is how I sound.',
+    });
+    expect(stored.headers.get('content-type')).toContain('text/event-stream');
+    const evs: VoiceEvent[] = [];
+    await drain(events(stored), evs);
+    // The turn's own events, `audio_end` included (#968): the sample is the turn's path.
+    expect(evs.map((e) => e.event)).toEqual(['audio', 'audio_end', 'done']);
+    expect(evs[0]!.data).toMatchObject({ seq: 0, mimeType: 'audio/pcm', sampleRate: 24_000 });
+    expect(evs[1]!.data).toEqual({ sentence: 0 });
+    expect(evs[2]!.data).toEqual({
+      speechError: null,
+      source: 'openrouter',
+      model: 'google/gemini-3.8-flash-tts',
+      voice: 'Kore',
+    });
+    expect(sent.speech.map((s) => [s['model'], s['voice'], s['input']])).toEqual([
+      ['google/gemini-3.8-flash-tts', 'Kore', 'This is how I sound.'],
+    ]);
+
+    const candidate = await call(app, 'POST', '/api/voice/sample', {
+      entityId: seed.entityId,
+      text: 'This is how I sound.',
+      setting: { source: 'openrouter', model: 'x-ai/grok-voice-tts-1.0', voice: 'eve' },
+    });
+    const cand: VoiceEvent[] = [];
+    await drain(events(candidate), cand);
+    expect(cand.at(-1)!.data).toMatchObject({ model: 'x-ai/grok-voice-tts-1.0', voice: 'eve' });
+    expect(sent.speech.at(-1)).toMatchObject({ model: 'x-ai/grok-voice-tts-1.0', voice: 'eve' });
+    // Trying a voice never stores it.
+    expect(await readVoiceSetting(db as never, seed.entityId)).toEqual({
+      ok: true,
+      setting: FIRST_VOICE,
+    });
+
+    const refused = await call(app, 'POST', '/api/voice/sample', {
+      entityId: seed.entityId,
+      text: 'x',
+      setting: { source: 'openrouter', model: 'x-ai/grok-voice-tts-1.0', voice: 'Kore' },
+    });
+    expect(refused.status).toBe(409);
+    expect(((await refused.json()) as { error: string }).error).toBe('voice_not_offered');
   });
 });

@@ -357,8 +357,20 @@ export function voiceFailureText(f: VoiceFailure): string {
 
 /** Le texte de l'écran quand la réponse est écrite mais n'a pas pu être dite. */
 export function speechErrorText(code: string): string {
-  if (code === 'speech_not_configured') {
-    return 'The reply is written above, but it could not be spoken: voice needs an OpenRouter key.';
+  const lead = 'The reply is written above, but it could not be spoken';
+  // #969 : la voix est celle de l'espace (Réglages, Voice) ; ses échecs se
+  // disent avec le geste qui les répare.
+  switch (code) {
+    case 'voice_key_missing':
+      return `${lead}: the voice has no key for its source. Add one in LLM Providers, or choose another voice in Settings.`;
+    case 'voice_key_undecryptable':
+      return `${lead}: the key of the voice could not be read. Enter it again in LLM Providers.`;
+    case 'speech_no_credit':
+      return `${lead}: the key of the voice has no credit left.`;
+    case 'voice_setting_missing':
+    case 'voice_setting_unreadable':
+      return `${lead}: no voice is set. Choose one in Settings.`;
+    default:
+      return `${lead} (${code}).`;
   }
-  return `The reply is written above, but it could not be spoken (${code}).`;
 }

@@ -899,6 +899,26 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       PRIMARY KEY (entity_id, key)
     );
 
+    -- mirrors migration 0158 (#969) : tout espace naît avec sa voix.
+    CREATE OR REPLACE FUNCTION first_voice_setting() RETURNS text
+    LANGUAGE sql IMMUTABLE AS $$
+      SELECT '{"source":"openrouter","model":"google/gemini-3.8-flash-tts","voice":"Kore"}'::text
+    $$;
+    CREATE OR REPLACE FUNCTION entities_seed_voice_setting() RETURNS trigger
+    LANGUAGE plpgsql AS $$
+    BEGIN
+      INSERT INTO entity_settings (entity_id, key, value)
+      VALUES (NEW.id, 'voice', first_voice_setting())
+      ON CONFLICT (entity_id, key) DO NOTHING;
+      RETURN NEW;
+    END;
+    $$;
+    DROP TRIGGER IF EXISTS entities_seed_voice_setting ON entities;
+    CREATE TRIGGER entities_seed_voice_setting
+      AFTER INSERT ON entities
+      FOR EACH ROW
+      EXECUTE FUNCTION entities_seed_voice_setting();
+
     -- ── telegram_allowed_chats (migration 0057 — H-1 inbound authorization) ──
 
     CREATE TABLE IF NOT EXISTS telegram_allowed_chats (
