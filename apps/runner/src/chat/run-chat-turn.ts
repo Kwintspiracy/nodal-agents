@@ -416,6 +416,19 @@ export async function runChatTurn(opts: {
    */
   onTextDelta?: (delta: string) => void;
   /**
+   * Le texte de la réponse est FIXÉ (#943) : rappelé une fois, juste avant la
+   * relecture d'escalade, qui ne change jamais ce texte (elle ne peut qu'y
+   * ajouter un `run_task`), et avant le titre de la conversation. `streamed`
+   * dit si ce texte est celui que `onTextDelta` a dit. Un appelant qui DIT la
+   * réponse la finit ici, pendant que la relecture tourne : le premier son
+   * n'attend pas un appel de modèle qui ne change pas ce qui est dit.
+   *
+   * Pas rappelé quand le tour s'arrête avant (Stop, coupure) ou échoue : c'est
+   * le résultat du tour qui le dit, comme toujours. Absent — le chat écrit —,
+   * rien ne change.
+   */
+  onReplyText?: (reply: { text: string; streamed: boolean }) => void;
+  /**
    * Le Stop de la personne (#456), posé par `withChatTurnStop`. Déclenché,
    * il coupe l'appel en cours : ce qui a été écrit est gardé, suivi de
    * `chat_messages.stopped`, et rien d'autre ne se joue — ni recheck
@@ -432,8 +445,17 @@ export async function runChatTurn(opts: {
    */
   spoken?: { durationMs: number };
 }): Promise<ChatTurnResult> {
-  const { deps, entityId, agentId, conversationId, message, onTextDelta, abortSignal, spoken } =
-    opts;
+  const {
+    deps,
+    entityId,
+    agentId,
+    conversationId,
+    message,
+    onTextDelta,
+    onReplyText,
+    abortSignal,
+    spoken,
+  } = opts;
   const db = deps.db;
   const replyRendering: ReplyRendering = spoken ? 'spoken' : 'text';
 
@@ -891,6 +913,9 @@ export async function runChatTurn(opts: {
     const arret = await repondreSansOutils();
     if (arret) return arret;
   }
+  // Le texte de la réponse ne bougera plus (#943) : la relecture ci-dessous
+  // ne peut qu'ajouter un `run_task`.
+  if (text) onReplyText?.({ text, streamed });
   const arretRelecture = await relireUneFois();
   if (arretRelecture) return arretRelecture;
 

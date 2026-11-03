@@ -1,25 +1,36 @@
-// chat/run-voice-turn.ts — un tour DIT : écouter, puis le tour de chat, puis parler (#941).
+// chat/run-voice-turn.ts — un tour DIT : écouter, puis le tour de chat, puis parler (#941, #943).
 //
 // Le tour vocal n'est pas un second modèle de conversation. C'est le tour du
 // tableau de bord (`runChatTurn`, par `playChatTurn`) avec une oreille avant
-// et une voix après :
+// et une voix pendant :
 //
-//   1. l'audio reçu par morceaux (`voice-utterances.ts`) est transcrit par
-//      packages/speech, sur la clé OpenRouter de l'espace (`resolveTranscription`) ;
-//   2. la transcription est le message de la personne, rangé comme DIT, avec
-//      sa durée. Le tour garde son unique outil, `run_task` : une question
-//      simple reçoit une réponse directe, une demande de travail lance un job
-//      avec l'accusé de l'agent, et le travail tourne en fond. Le tour vocal ne
-//      fait jamais le travail lui-même, il ne parle aux jobs que par `run_task`
-//      — c'est ce qui permettra à un modèle vocal temps réel de prendre sa
-//      place sans toucher au reste ;
-//   3. la réponse est dite (`resolveSpeech`, WAV entier pour l'instant ; le
-//      flux viendra avec #943). Le job lancé hérite de la forme `spoken` : sa
-//      réponse finale est écrite pour être dite, et passera par le flux de #944.
+//   1. `hearVoiceTurn` : l'audio reçu par morceaux (`voice-utterances.ts`) est
+//      transcrit par packages/speech, sur la clé OpenRouter de l'espace
+//      (`resolveTranscription`). Tout ce qui se refuse se refuse ICI, avant
+//      que la route ouvre son flux : un audio illisible, l'espace sans clé, la
+//      transcription en échec, et le « rien entendu ». Aucun n'écrit de ligne
+//      (invariant #4) : un message vide serait un tour que personne n'a dit ;
+//   2. `speakVoiceTurn` : la transcription est le message de la personne,
+//      rangé comme DIT, avec sa durée. Le tour garde son unique outil,
+//      `run_task` : une question simple reçoit une réponse directe, une
+//      demande de travail lance un job avec l'accusé de l'agent. Le tour vocal
+//      ne fait jamais le travail lui-même, il ne parle aux jobs que par
+//      `run_task` — c'est ce qui permettra à un modèle vocal temps réel de
+//      prendre sa place sans toucher au reste ;
+//   3. la réponse est DITE PENDANT qu'elle s'écrit (#943). Le tour passe par le
+//      chemin en flux de `/api/chat/stream` ; ses fragments sont coupés en
+//      phrases (`createSentenceChunker`, packages/speech), et chaque phrase
+//      part en voix dès qu'elle est complète (`voice-speech.ts`). La relecture
+//      d'escalade (`llm/action-recheck.ts`) ne change jamais le texte : la
+//      voix commence avant elle, et elle tourne pendant que la voix parle.
 //
-// Ce qui n'est pas un message : un audio sans mots (« rien entendu ») et une
-// transcription en échec. Les deux se disent par un code, et aucun n'écrit de
-// ligne (invariant #4) : un message vide serait un tour que personne n'a dit.
+// Pourquoi ce découpage : mesuré sur la stack du propriétaire le 03/11, 10,1 s
+// et 12,1 s du relâchement au premier son, dont 2,9 à 3,7 s pour les deux
+// appels de modèle l'un après l'autre et 4,5 à 7 s pour une voix qui rendait la
+// réponse ENTIÈRE avant le premier son.
+//
+// Le job lancé hérite de la forme `spoken` : sa réponse finale est écrite pour
+// être dite (#967 la dira).
 //
 // L'origine est une DONNÉE : la conversation du tour, et l'entité qui la
 // possède. Rien ici ne demande si l'appelant est le tableau de bord.
@@ -27,34 +38,23 @@
 import {
   SpeechError,
   DEFAULT_GEMINI_VOICE,
+  createSentenceChunker,
   pcmToWav,
   readWav,
-  type AudioMimeType,
+  splitSentences,
 } from '@nodal-agents/speech';
 import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
 import { resolveSpeech, resolveTranscription } from '../job/resolve-speech.ts';
 import { playChatTurn } from './play-turn.ts';
 import type { VoiceUtterance } from './voice-utterances.ts';
+import { createReplySpeech, type ReplySpeech, type SpeechFailure } from './voice-speech.ts';
 
-/** Ce que le tour rend. Les codes sont des faits ; l'écran ou le module les dit. */
-export type VoiceTurnResult =
-  | {
-      outcome: 'replied';
-      transcript: string;
-      durationMs: number;
-      /** Les mots de l'agent. Vide : il a lancé un travail sans rien dire. */
-      reply: string;
-      spawnedJobId: string | null;
-      stopped: boolean;
-      cutReason: string | null;
-      /** La réponse dite, fichier entier (WAV). `null` : aucune réponse à dire, ou `speechError`. */
-      audio: { mimeType: AudioMimeType; base64: string } | null;
-      /** La voix a échoué APRÈS un tour réussi : le texte reste, l'échec se dit. */
-      speechError: { code: string; detail?: string } | null;
-    }
+/** Ce que l'oreille a rendu. Les codes sont des faits ; l'écran ou le module les dit. */
+export type VoiceTurnHearing =
+  | { outcome: 'heard'; transcript: string; durationMs: number }
   | { outcome: 'nothing_heard'; durationMs: number }
-  | { outcome: 'failed'; status: 400 | 404 | 409 | 502; error: string; detail?: string };
+  | { outcome: 'failed'; status: 400 | 409 | 502; error: string; detail?: string };
 
 /** L'audio du tour en WAV, avec sa durée. Un audio illisible est refusé, jamais deviné. */
 function utteranceAudio(
@@ -85,11 +85,10 @@ function utteranceAudio(
   }
 }
 
-export async function runVoiceTurn(
+export async function hearVoiceTurn(
   deps: RunnerDeps,
-  runnerEnv: RunnerEnv,
   u: VoiceUtterance,
-): Promise<VoiceTurnResult> {
+): Promise<VoiceTurnHearing> {
   const audio = utteranceAudio(u);
   if (!audio.ok) {
     return { outcome: 'failed', status: 400, error: 'audio_malformed', detail: audio.detail };
@@ -100,9 +99,9 @@ export async function runVoiceTurn(
   const transcription = await resolveTranscription(deps.db, u.entityId);
   if (!transcription) return { outcome: 'failed', status: 409, error: 'speech_not_configured' };
 
-  let transcript: string;
   try {
-    transcript = (await transcription.transcribe({ audio: audio.wav, mimeType: 'audio/wav' })).text;
+    const { text } = await transcription.transcribe({ audio: audio.wav, mimeType: 'audio/wav' });
+    return { outcome: 'heard', transcript: text, durationMs: audio.durationMs };
   } catch (err) {
     if (err instanceof SpeechError && err.code === 'speech_nothing_heard') {
       return { outcome: 'nothing_heard', durationMs: audio.durationMs };
@@ -114,61 +113,174 @@ export async function runVoiceTurn(
       detail: err instanceof Error ? err.message : String(err),
     };
   }
+}
 
-  const turn = await playChatTurn(
-    deps,
-    runnerEnv,
-    {
-      entityId: u.entityId,
-      agentId: u.agentId,
-      conversationId: u.conversationId,
-      message: transcript,
-      spoken: { durationMs: audio.durationMs },
+/**
+ * Les temps d'un tour dit, en millisecondes depuis la requête de fin (#943).
+ * Une ligne par tour, des nombres seulement — jamais les mots de la personne.
+ * C'est la mesure du produit, pour tout client : `null` dit que l'étape n'a
+ * pas eu lieu (rien entendu, réponse sans voix).
+ */
+export const VOICE_TIMING_MARKS = [
+  'transcript',
+  'firstDelta',
+  'firstSentence',
+  'firstAudio',
+  'done',
+] as const;
+export type VoiceTimingMark = (typeof VOICE_TIMING_MARKS)[number];
+
+export interface VoiceTiming {
+  /** Pose la marque si elle ne l'est pas encore : c'est la PREMIÈRE fois qui compte. */
+  mark(name: VoiceTimingMark): void;
+  /** La ligne du journal. */
+  line(): string;
+}
+
+export function createVoiceTiming(startedAt: number, now: () => number = Date.now): VoiceTiming {
+  const marks = new Map<VoiceTimingMark, number>();
+  return {
+    mark(name) {
+      if (!marks.has(name)) marks.set(name, now() - startedAt);
     },
-    'voiceTurnRoute',
-  );
-  if (!turn.ok) {
-    const notFound = turn.error === 'agent_not_found' || turn.error === 'conversation_not_found';
-    return {
-      outcome: 'failed',
-      status: notFound ? 404 : 400,
-      error: turn.error,
-      ...(turn.cutReason ? { detail: turn.cutReason } : {}),
-    };
-  }
+    line() {
+      const fields = VOICE_TIMING_MARKS.map((m) => `"${m}Ms":${String(marks.get(m) ?? null)}`);
+      return `[voice-turn] timing {${fields.join(',')}}`;
+    },
+  };
+}
 
-  const reply = turn.reply.trim();
-  let spoken: { mimeType: AudioMimeType; base64: string } | null = null;
-  let speechError: { code: string; detail?: string } | null = null;
-  // Une réponse arrêtée par la personne ne se dit pas : elle a demandé le silence.
-  if (reply !== '' && turn.stopped !== true) {
-    const speech = await resolveSpeech(deps.db, u.entityId);
-    if (!speech) {
-      speechError = { code: 'speech_not_configured' };
-    } else {
-      try {
+/** Un événement du flux de la route (voir l'en-tête de routes/voice-turn.ts). */
+export type VoiceTurnEmit = (event: string, data: unknown) => void;
+
+/**
+ * Le tour joué et dit. Les événements sortent par `emit` dans l'ordre du
+ * protocole : `transcript`, des `delta` et des `audio` mêlés, puis `done` —
+ * ou `error` si le tour échoue après la transcription. `readerGone` : le
+ * lecteur est parti ; la voix se tait (personne ne l'entendrait), le tour va
+ * au bout et écrit sa ligne, comme `/api/chat/stream`.
+ */
+export async function speakVoiceTurn(
+  deps: RunnerDeps,
+  runnerEnv: RunnerEnv,
+  u: VoiceUtterance,
+  heard: { transcript: string; durationMs: number },
+  emit: VoiceTurnEmit,
+  opts: { timing: VoiceTiming; readerGone: AbortSignal },
+): Promise<void> {
+  const { timing } = opts;
+  emit('transcript', { transcript: heard.transcript, durationMs: heard.durationMs });
+  timing.mark('transcript');
+
+  const speech = await resolveSpeech(deps.db, u.entityId);
+  let voice: ReplySpeech | null = speech
+    ? createReplySpeech({
+        speech,
         // La voix que `generate_speech` offre par défaut : un réglage de voix
         // par agent n'existe pas encore, et ce tour n'en invente pas un.
-        const out = await speech.synthesize({ text: reply, voiceId: DEFAULT_GEMINI_VOICE });
-        spoken = { mimeType: out.mimeType, base64: Buffer.from(out.audio).toString('base64') };
-      } catch (err) {
-        speechError = {
-          code: err instanceof SpeechError ? err.code : 'speech_failed',
-          detail: err instanceof Error ? err.message : String(err),
-        };
-      }
+        voiceId: DEFAULT_GEMINI_VOICE,
+        onChunk: (c) => {
+          timing.mark('firstAudio');
+          emit('audio', {
+            seq: c.seq,
+            mimeType: c.mimeType,
+            ...(c.sampleRate !== undefined ? { sampleRate: c.sampleRate } : {}),
+            base64: Buffer.from(c.audio).toString('base64'),
+          });
+        },
+      })
+    : null;
+  const silence = (): void => {
+    voice?.cancel();
+  };
+  if (opts.readerGone.aborted) silence();
+  opts.readerGone.addEventListener('abort', silence, { once: true });
+
+  const chunker = createSentenceChunker();
+  let settled = false;
+  let saidAny = false;
+  const say = (sentences: string[]): void => {
+    for (const s of sentences) {
+      timing.mark('firstSentence');
+      saidAny = true;
+      voice?.say(s);
     }
+  };
+  /**
+   * Le texte de la réponse est connu. Si c'est celui que le flux a dit, la
+   * dernière phrase sort du découpeur ; sinon (la relance sans outils l'a
+   * écrit d'un bloc), ce que le flux avait mis en voix et qui n'est pas encore
+   * sorti est abandonné, et c'est la réponse qui est dite.
+   */
+  const settle = (text: string, streamed: boolean): void => {
+    if (settled) return;
+    settled = true;
+    if (streamed) say(chunker.flush());
+    else {
+      voice?.reset();
+      say(splitSentences(text));
+    }
+    voice?.end();
+  };
+
+  let result: Awaited<ReturnType<typeof playChatTurn>>;
+  try {
+    result = await playChatTurn(
+      deps,
+      runnerEnv,
+      {
+        entityId: u.entityId,
+        agentId: u.agentId,
+        conversationId: u.conversationId,
+        message: heard.transcript,
+        spoken: { durationMs: heard.durationMs },
+        onTextDelta: (delta) => {
+          timing.mark('firstDelta');
+          emit('delta', { text: delta });
+          if (!settled) say(chunker.push(delta));
+        },
+        onReplyText: ({ text, streamed }) => settle(text, streamed),
+      },
+      'voiceTurnRoute',
+    );
+  } catch (err) {
+    voice?.cancel();
+    opts.readerGone.removeEventListener('abort', silence);
+    throw err;
   }
 
-  return {
-    outcome: 'replied',
-    transcript,
-    durationMs: audio.durationMs,
-    reply: turn.reply,
-    spawnedJobId: turn.spawnedJobId ?? null,
-    stopped: turn.stopped === true,
-    cutReason: turn.cutReason ?? null,
-    audio: spoken,
+  if (!result.ok) {
+    voice?.cancel();
+    opts.readerGone.removeEventListener('abort', silence);
+    emit('error', {
+      error: result.error,
+      ...(result.cutReason ? { detail: result.cutReason } : {}),
+    });
+    return;
+  }
+  // Une réponse arrêtée par la personne ne se dit plus : elle a demandé le silence.
+  if (result.stopped === true) {
+    voice?.cancel();
+    voice = null;
+  } else {
+    // Un tour qui n'a pas fixé son texte avant la relecture (un agent en
+    // runtime CLI, une réponse coupée par une horloge) le fixe ici.
+    settle(result.reply.trim(), result.streamed === true);
+  }
+
+  let speechError: SpeechFailure | null = null;
+  if (voice) speechError = await voice.done;
+  else if (!speech && saidAny && result.stopped !== true) {
+    speechError = { code: 'speech_not_configured' };
+  }
+  opts.readerGone.removeEventListener('abort', silence);
+
+  emit('done', {
+    reply: result.reply,
+    spawnedJobId: result.spawnedJobId ?? null,
+    streamed: result.streamed === true,
+    stopped: result.stopped === true,
+    cutReason: result.cutReason ?? null,
     speechError,
-  };
+  });
 }

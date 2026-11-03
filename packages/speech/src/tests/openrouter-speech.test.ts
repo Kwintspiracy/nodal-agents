@@ -206,8 +206,133 @@ describe('openrouterSpeechAdapter @cap:travailler-sur-des-fichiers/moteur', () =
     expect(sent[0]!.url).toBe('https://proxy.example/api/v1/audio/speech');
   });
 
-  it('does not stream: a finished file is not a stream (#943 is the streaming step)', () => {
-    expect(adapter.capabilities.streamOutput).toBeUndefined();
-    expect(adapter.synthesizeStream).toBeUndefined();
+  it('declares its stream: raw PCM at the Gemini rate (#943)', () => {
+    expect(adapter.capabilities.streamOutput).toBe('audio/pcm');
+    expect(adapter.capabilities.streamSampleRate).toBe(GEMINI_TTS_SAMPLE_RATE);
+    expect(adapter.synthesizeStream).toBeTypeOf('function');
+  });
+});
+
+/** A connection whose answer body the test writes, chunk by chunk, while the caller reads. */
+function heldStream(contentType = 'audio/pcm') {
+  let controller!: ReadableStreamDefaultController<Uint8Array>;
+  const body = new ReadableStream<Uint8Array>({
+    start(c) {
+      controller = c;
+    },
+  });
+  const sent: Sent[] = [];
+  const connection: SpeechConnection = {
+    apiKey: 'sk-or-test',
+    fetch: async (input, init) => {
+      sent.push({
+        url: String(input),
+        body: JSON.parse(String(init?.body)) as Record<string, unknown>,
+        auth: new Headers(init?.headers).get('authorization'),
+      });
+      return new Response(body, { status: 200, headers: { 'content-type': contentType } });
+    },
+  };
+  return {
+    connection,
+    sent,
+    write: (b: number[]) => controller.enqueue(Uint8Array.from(b)),
+    end: () => controller.close(),
+  };
+}
+
+describe('openrouterSpeechAdapter.synthesizeStream (#943) @cap:parler-a-un-agent/moteur', () => {
+  // Mutation verified: `synthesizeStream` reading `res.arrayBuffer()` and
+  // yielding it whole → "yields the first bytes before the answer ends" is red
+  // (the first read waits for `end()`); the carry removed → "a sample split
+  // across two network chunks" is red.
+  it('yields the first bytes before the answer ends, with the same request as the one-shot path', async () => {
+    const held = heldStream();
+    const it = adapter.synthesizeStream!({ text: 'Bonjour.', voiceId: 'Kore' }, held.connection)[
+      Symbol.asyncIterator
+    ]();
+    const first = it.next();
+    held.write([1, 0, 2, 0]);
+    expect(await first).toEqual({ done: false, value: Uint8Array.from([1, 0, 2, 0]) });
+    // The answer is still open: the second read waits for it.
+    const second = it.next();
+    held.write([3, 0]);
+    held.end();
+    expect(await second).toEqual({ done: false, value: Uint8Array.from([3, 0]) });
+    expect(await it.next()).toEqual({ done: true, value: undefined });
+    expect(held.sent[0]!.body).toEqual(
+      speechBody({ text: 'Bonjour.', voiceId: 'Kore' }, OPENROUTER_SPEECH_MODELS[0].id),
+    );
+  });
+
+  it('a sample split across two network chunks is carried, never yielded in halves', async () => {
+    const held = heldStream();
+    const out: number[][] = [];
+    const reading = (async () => {
+      for await (const c of adapter.synthesizeStream!(
+        { text: 'x', voiceId: 'Kore' },
+        held.connection,
+      )) {
+        out.push([...c]);
+      }
+    })();
+    held.write([1, 0, 2]);
+    held.write([0, 3, 0]);
+    held.end();
+    await reading;
+    expect(out).toEqual([
+      [1, 0],
+      [2, 0, 3, 0],
+    ]);
+  });
+
+  it('a stream cut mid-sample, an empty answer and another sample rate are said, never played', async () => {
+    const cut = heldStream();
+    const reading = (async () => {
+      for await (const _ of adapter.synthesizeStream!(
+        { text: 'x', voiceId: 'Kore' },
+        cut.connection,
+      )) {
+        // drained
+      }
+    })();
+    cut.write([1, 0, 2]);
+    cut.end();
+    await expect(reading).rejects.toThrow(
+      '3 bytes of 16-bit audio: an odd count, the stream was cut',
+    );
+
+    const empty = heldStream();
+    empty.end();
+    await expect(
+      (async () => {
+        for await (const _ of adapter.synthesizeStream!(
+          { text: 'x', voiceId: 'Kore' },
+          empty.connection,
+        )) {
+          // drained
+        }
+      })(),
+    ).rejects.toThrow('answered 200 with no audio');
+
+    const other = heldStream('audio/pcm;rate=16000');
+    await expect(
+      (async () => {
+        for await (const _ of adapter.synthesizeStream!(
+          { text: 'x', voiceId: 'Kore' },
+          other.connection,
+        )) {
+          // drained
+        }
+      })(),
+    ).rejects.toThrow('16000 Hz, where the stream declares 24000 Hz');
+  });
+
+  it('refuses empty text before any request leaves', () => {
+    const held = heldStream();
+    expect(() =>
+      adapter.synthesizeStream!({ text: ' ', voiceId: 'Kore' }, held.connection),
+    ).toThrow('synthesize: text is empty');
+    expect(held.sent).toEqual([]);
   });
 });

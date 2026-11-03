@@ -38,6 +38,9 @@ export type SpeechProvider = (typeof SPEECH_PROVIDERS)[number];
  *  provider has ever heard of and discover it at runtime. */
 export type AudioMimeType =
   | 'audio/wav'
+  /** Raw signed 16-bit little-endian mono samples, no header: the rate travels
+   *  beside the bytes (`SpeechCapabilities.streamSampleRate`), never inside. */
+  | 'audio/pcm'
   | 'audio/mpeg'
   | 'audio/ogg'
   | 'audio/webm'
@@ -136,6 +139,12 @@ export interface SpeechCapabilities {
    * conversation.
    */
   streamOutput?: AudioMimeType;
+  /**
+   * The sample rate of the stream, present when `streamOutput` is
+   * `audio/pcm`: raw samples do not say how fast they play, and a caller that
+   * guessed would play the voice at the wrong pitch.
+   */
+  streamSampleRate?: number;
   /**
    * The vendor's synthesis models worth choosing between, most useful first.
    *

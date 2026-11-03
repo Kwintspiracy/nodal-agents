@@ -188,14 +188,38 @@ function textOf(content: unknown): string {
 const systemOf = (body: ChatBody) =>
   textOf(body.messages.find((m) => m.role === 'system')?.content);
 
+/** A promise the test resolves: what a held answer waits for. */
+function gate(): { wait: Promise<void>; open: () => void } {
+  let open!: () => void;
+  const wait = new Promise<void>((resolve) => {
+    open = resolve;
+  });
+  return { wait, open };
+}
+
 /**
  * Le réseau. La transcription répond `transcription` ; le FRONT (l'appel qui
  * propose `run_task`) répond par `front` ; la voix rend `VOICE_PCM`. Chaque
  * requête est gardée telle que le fournisseur la reçoit.
+ *
+ * #943 : `front.parts` fait écrire la réponse en plusieurs fragments, et
+ * `front.holdBefore` retient le fragment de ce rang jusqu'à `front.hold` — un
+ * modèle qui n'a pas fini d'écrire. `recheck.hold` retient la relecture
+ * d'escalade ; `recheck.instruction` lui fait lancer un `run_task`. `speech`
+ * remplace la réponse de la voix, phrase par phrase. `log` dit, dans l'ordre,
+ * quand le front a fini et quand la relecture a commencé.
  */
 function network(opts: {
   transcription?: { status: number; body: unknown };
-  front?: { text?: string; instruction?: string };
+  front?: {
+    text?: string;
+    instruction?: string;
+    parts?: string[];
+    holdBefore?: number;
+    hold?: Promise<void>;
+  };
+  recheck?: { hold?: Promise<void>; instruction?: string };
+  speech?: (input: string, n: number) => Response | Promise<Response>;
   /** The tool calls the worker makes, one per request, before it answers 'Done.'. */
   worker?: Array<{ name: string; args: Record<string, unknown> }>;
 }) {
@@ -205,13 +229,16 @@ function network(opts: {
     front: [] as ChatBody[],
     worker: [] as ChatBody[],
     speech: [] as Array<Record<string, unknown>>,
+    log: [] as string[],
   };
   vi.stubGlobal(
     'fetch',
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input.toString();
       if (url.endsWith('/audio/speech')) {
-        sent.speech.push(JSON.parse(init?.body as string) as Record<string, unknown>);
+        const req = JSON.parse(init?.body as string) as Record<string, unknown>;
+        sent.speech.push(req);
+        if (opts.speech) return opts.speech(String(req['input']), sent.speech.length - 1);
         return new Response(VOICE_PCM, {
           status: 200,
           headers: { 'content-type': 'audio/pcm' },
@@ -237,13 +264,22 @@ function network(opts: {
       const last = textOf(body.messages[body.messages.length - 1]?.content);
       const isFront = (body.tools ?? []).some((t) => t.function.name === 'run_task');
       let text = 'ok';
+      let parts: string[] | null = null;
       let toolCall: { name: string; args: Record<string, unknown> } | null = null;
       if (system.startsWith(TITLE_SYSTEM_PROMPT.slice(0, 40))) text = 'Tokyo time';
-      else if (last.endsWith(ACTION_RECHECK)) text = 'ok';
-      else if (isFront) {
+      else if (last.endsWith(ACTION_RECHECK)) {
+        sent.log.push('recheck:start');
+        if (opts.recheck?.hold) await opts.recheck.hold;
+        text = 'ok';
+        if (opts.recheck?.instruction !== undefined) {
+          text = '';
+          toolCall = { name: 'run_task', args: { instruction: opts.recheck.instruction } };
+        }
+      } else if (isFront) {
         sent.front.push(body);
         const front = opts.front ?? {};
-        text = front.text ?? '';
+        text = front.text ?? front.parts?.join('') ?? '';
+        if (front.parts) parts = front.parts;
         if (front.instruction !== undefined) {
           toolCall = { name: 'run_task', args: { instruction: front.instruction } };
         }
@@ -267,19 +303,44 @@ function network(opts: {
           ]
         : undefined;
       if (body.stream === true) {
-        const delta: Record<string, unknown> = { role: 'assistant' };
-        if (text) delta['content'] = text;
-        if (calls) delta['tool_calls'] = calls.map((c, index) => ({ index, ...c }));
+        const deltas: Array<Record<string, unknown>> = (parts ?? [text]).map((content, i) => ({
+          ...(i === 0 ? { role: 'assistant' } : {}),
+          ...(content ? { content } : {}),
+        }));
+        if (calls) deltas.push({ tool_calls: calls.map((c, index) => ({ index, ...c })) });
         const chunks = [
-          { id: 'c', choices: [{ index: 0, delta }] },
+          ...deltas.map((delta) => ({ id: 'c', choices: [{ index: 0, delta }] })),
           { id: 'c', choices: [{ index: 0, delta: {}, finish_reason: finish }], usage },
         ];
-        const sse =
-          chunks.map((c) => `data: ${JSON.stringify(c)}\n\n`).join('') + 'data: [DONE]\n\n';
+        const front = isFront ? opts.front : undefined;
+        const enc = new TextEncoder();
+        const sse = new ReadableStream<Uint8Array>({
+          start(controller) {
+            // Stop (#456) coupe l'appel : le fournisseur cesse d'écrire.
+            init?.signal?.addEventListener('abort', () => {
+              try {
+                controller.error(new DOMException('aborted', 'AbortError'));
+              } catch {
+                // already closed
+              }
+            });
+            void (async () => {
+              for (const [i, c] of chunks.entries()) {
+                if (front?.hold && i === front.holdBefore) await front.hold;
+                if (init?.signal?.aborted) return;
+                controller.enqueue(enc.encode(`data: ${JSON.stringify(c)}\n\n`));
+              }
+              controller.enqueue(enc.encode('data: [DONE]\n\n'));
+              if (isFront) sent.log.push('front:end');
+              controller.close();
+            })();
+          },
+        });
         return new Response(sse, { status: 200, headers: { 'content-type': 'text/event-stream' } });
       }
       const message: Record<string, unknown> = { role: 'assistant', content: text };
       if (calls) message['tool_calls'] = calls;
+      if (isFront) sent.log.push('front:end');
       return new Response(
         JSON.stringify({ id: 'c', choices: [{ message, finish_reason: finish }], usage }),
         { status: 200, headers: { 'content-type': 'application/json' } },
@@ -325,14 +386,83 @@ function call(
   );
 }
 
-/** The `say` gesture as a client makes it: start, the audio in chunks, end. */
-async function say(
+type VoiceEvent = { event: string; data: Record<string, unknown> };
+
+/** The events of the end's stream, as they arrive. */
+async function* events(res: Response): AsyncGenerator<VoiceEvent> {
+  const reader = res.body!.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let sep = buffer.indexOf('\n\n');
+    while (sep !== -1) {
+      const block = buffer.slice(0, sep);
+      buffer = buffer.slice(sep + 2);
+      let event = '';
+      let data = '';
+      for (const line of block.split('\n')) {
+        if (line.startsWith('event: ')) event = line.slice(7);
+        else if (line.startsWith('data: ')) data = line.slice(6);
+      }
+      yield { event, data: JSON.parse(data) as Record<string, unknown> };
+      sep = buffer.indexOf('\n\n');
+    }
+  }
+}
+
+/** Read events until `stop` says so, within 4 s; the iterator stays open for the rest. */
+async function readUntil(
+  it: AsyncGenerator<VoiceEvent>,
+  stop: (e: VoiceEvent) => boolean,
+  into: VoiceEvent[],
+): Promise<void> {
+  for (;;) {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const next = await Promise.race([
+      it.next(),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () =>
+            reject(new Error(`no event matched; got ${JSON.stringify(into.map((e) => e.event))}`)),
+          4000,
+        );
+      }),
+    ]).finally(() => clearTimeout(timer));
+    if (next.done) throw new Error('the stream ended before the awaited event');
+    into.push(next.value);
+    if (stop(next.value)) return;
+  }
+}
+
+/** Every remaining event of the stream. */
+async function drain(it: AsyncGenerator<VoiceEvent>, into: VoiceEvent[]): Promise<void> {
+  for (;;) {
+    const next = await it.next();
+    if (next.done) return;
+    into.push(next.value);
+  }
+}
+
+/** The PCM of every `audio` event, in the order they came, joined. */
+function heardAudio(evs: VoiceEvent[]): Buffer {
+  return Buffer.concat(
+    evs
+      .filter((e) => e.event === 'audio')
+      .map((e) => Buffer.from(String(e.data['base64']), 'base64')),
+  );
+}
+
+/** start and the audio in chunks, as a client sends them; returns the turn id. */
+async function speak(
   app: ReturnType<typeof createApp>,
   conversationId: string,
   audio: Uint8Array,
   format: { format: 'audio/wav' } | { format: 'audio/pcm'; sampleRate: number },
   chunks = 3,
-): Promise<{ status: number; body: Record<string, unknown> }> {
+): Promise<string> {
   const start = await call(app, 'POST', '/api/voice/turns', {
     entityId: seed.entityId,
     conversationId,
@@ -350,8 +480,39 @@ async function say(
     );
     expect(res.status).toBe(200);
   }
+  return turnId;
+}
+
+/**
+ * The `say` gesture as a client makes it: start, the audio in chunks, end.
+ * A refusal is its JSON; a stream is read to its end and summed up as the
+ * turn it told: `transcript`, then `done`, with every event kept.
+ */
+async function say(
+  app: ReturnType<typeof createApp>,
+  conversationId: string,
+  audio: Uint8Array,
+  format: { format: 'audio/wav' } | { format: 'audio/pcm'; sampleRate: number },
+  chunks = 3,
+): Promise<{ status: number; body: Record<string, unknown>; events: VoiceEvent[] }> {
+  const turnId = await speak(app, conversationId, audio, format, chunks);
   const end = await call(app, 'POST', `/api/voice/turns/${turnId}/end`);
-  return { status: end.status, body: (await end.json()) as Record<string, unknown> };
+  if (!(end.headers.get('content-type') ?? '').includes('text/event-stream')) {
+    return { status: end.status, body: (await end.json()) as Record<string, unknown>, events: [] };
+  }
+  const evs: VoiceEvent[] = [];
+  await drain(events(end), evs);
+  const nothing = evs.find((e) => e.event === 'nothing_heard');
+  if (nothing) {
+    return { status: end.status, body: { outcome: 'nothing_heard', ...nothing.data }, events: evs };
+  }
+  const transcript = evs.find((e) => e.event === 'transcript')?.data ?? {};
+  const done = evs.find((e) => e.event === 'done')?.data ?? {};
+  return {
+    status: end.status,
+    body: { outcome: 'replied', ...transcript, ...done },
+    events: evs,
+  };
 }
 
 async function rows(conversationId: string) {
@@ -398,7 +559,7 @@ describe('the voice turn route @cap:parler-a-un-agent/moteur', () => {
     const conv = await conversation();
     const sent = network({ front: { text: 'It is nine in the evening in Tokyo.' } });
 
-    const { status, body } = await say(app, conv, FIXTURE, { format: 'audio/wav' });
+    const { status, body, events: evs } = await say(app, conv, FIXTURE, { format: 'audio/wav' });
 
     expect(status).toBe(200);
     expect(body).toMatchObject({
@@ -407,8 +568,12 @@ describe('the voice turn route @cap:parler-a-un-agent/moteur', () => {
       durationMs: FIXTURE_MS,
       reply: 'It is nine in the evening in Tokyo.',
       spawnedJobId: null,
+      streamed: true,
+      stopped: false,
       speechError: null,
     });
+    // The protocol, in order: the transcript, the reply's text, its voice, done.
+    expect(evs.map((e) => e.event)).toEqual(['transcript', 'delta', 'audio', 'done']);
     // The bytes the client sent, in order, are what the transcriber received.
     expect(sent.transcription).toHaveLength(1);
     const audioPart = (
@@ -418,17 +583,16 @@ describe('the voice turn route @cap:parler-a-un-agent/moteur', () => {
       type: 'input_audio',
       input_audio: { data: Buffer.from(FIXTURE).toString('base64'), format: 'wav' },
     });
-    // The voice read the agent's words, and the client got the WAV of what it said.
+    // The voice read the agent's words, and the client got the PCM it said,
+    // streamed, with the rate it plays at.
     expect(sent.speech).toHaveLength(1);
     expect(sent.speech[0]).toMatchObject({
       input: 'It is nine in the evening in Tokyo.',
       voice: 'Kore',
     });
-    const audio = body['audio'] as { mimeType: string; base64: string };
-    expect(audio.mimeType).toBe('audio/wav');
-    expect(Buffer.from(audio.base64, 'base64')).toEqual(
-      Buffer.from(pcmToWav(VOICE_PCM, { sampleRate: 24_000 })),
-    );
+    const audio = evs.find((e) => e.event === 'audio')!.data;
+    expect(audio).toMatchObject({ seq: 0, mimeType: 'audio/pcm', sampleRate: 24_000 });
+    expect(heardAudio(evs)).toEqual(Buffer.from(VOICE_PCM));
     // The turn is the dashboard chat turn: run_task its only tool, the
     // transcript the person's words, and the prompt says the reply is heard.
     expect(sent.front).toHaveLength(1);
@@ -835,5 +999,268 @@ describe('the voice turn route — the audio read is capped (review of #958, pas
     const over = await sendStream(app, `/api/voice/turns/${turnId}/chunks/1`, extra.stream);
     expect(over.status).toBe(413);
     expect(await call(app, 'DELETE', `/api/voice/turns/${turnId}`).then((r) => r.status)).toBe(404);
+  });
+});
+
+// #943 — the reply spoken sentence by sentence, over the end's event stream.
+//
+// Mutations verified (each turns at least one case below red):
+//   - speech waits for the whole text (`say` in run-voice-turn.ts only called
+//     from `settle`, never from `onTextDelta`) → "before the model has
+//     finished writing";
+//   - chunks emitted out of order (voice-speech.ts emitting each job's chunks
+//     as soon as they arrive instead of the head's) → "in the order of the
+//     sentences";
+//   - the recheck runs before the speech (`onReplyText` called after
+//     `relireUneFois` in run-chat-turn.ts) → "does not hold back the first
+//     speech event";
+//   - the voice not cancelled on `stopped` → "Stop mid-stream".
+describe('the voice turn route — the reply spoken as it is written (#943) @cap:parler-a-un-agent/moteur', () => {
+  async function openEnd(
+    app: ReturnType<typeof createApp>,
+    conv: string,
+  ): Promise<{ it: AsyncGenerator<VoiceEvent>; res: Response }> {
+    const turnId = await speak(app, conv, FIXTURE, { format: 'audio/wav' });
+    const res = await call(app, 'POST', `/api/voice/turns/${turnId}/end`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toContain('text/event-stream');
+    return { it: events(res), res };
+  }
+
+  it('the first speech event is written before the model has finished writing', async () => {
+    const app = createApp(makeDeps(), testEnv);
+    const conv = await conversation();
+    const held = gate();
+    const sent = network({
+      front: {
+        parts: ['Sure. The', ' rest of the answer follows here.'],
+        holdBefore: 1,
+        hold: held.wait,
+      },
+    });
+
+    const { it } = await openEnd(app, conv);
+    const evs: VoiceEvent[] = [];
+    await readUntil(it, (e) => e.event === 'audio', evs);
+    // The model is still writing: its stream is held open, and the first
+    // sentence is already heard.
+    expect(sent.log).not.toContain('front:end');
+    expect(sent.speech.map((s) => s['input'])).toEqual(['Sure.']);
+    expect(evs.map((e) => e.event)).toEqual(['transcript', 'delta', 'audio']);
+    expect(evs[0]!.data).toEqual({ transcript: TRANSCRIPT, durationMs: FIXTURE_MS });
+
+    held.open();
+    await drain(it, evs);
+    expect(sent.speech.map((s) => s['input'])).toEqual([
+      'Sure.',
+      'The rest of the answer follows here.',
+    ]);
+    const audio = evs.filter((e) => e.event === 'audio').map((e) => e.data['seq']);
+    expect(audio).toEqual(audio.map((_, i) => i));
+    expect(evs.at(-1)).toEqual({
+      event: 'done',
+      data: {
+        reply: 'Sure. The rest of the answer follows here.',
+        spawnedJobId: null,
+        streamed: true,
+        stopped: false,
+        cutReason: null,
+        speechError: null,
+      },
+    });
+    expect(heardAudio(evs)).toEqual(
+      Buffer.concat([Buffer.from(VOICE_PCM), Buffer.from(VOICE_PCM)]),
+    );
+  });
+
+  it('chunks come out in the order of the sentences, even when a later one is ready first, two at a time', async () => {
+    const app = createApp(makeDeps(), testEnv);
+    const conv = await conversation();
+    let inFlight = 0;
+    let most = 0;
+    network({
+      front: { parts: ['One is first. Two is second. Three is third.'] },
+      speech: async (input) => {
+        inFlight++;
+        most = Math.max(most, inFlight);
+        const n = input.startsWith('One') ? 1 : input.startsWith('Two') ? 2 : 3;
+        // The first sentence is the SLOWEST to synthesize.
+        await new Promise((r) => setTimeout(r, n === 1 ? 120 : 5));
+        inFlight--;
+        return new Response(Uint8Array.from([n, 0, n, 0]), {
+          status: 200,
+          headers: { 'content-type': 'audio/pcm' },
+        });
+      },
+    });
+
+    const { body, events: evs } = await say(app, conv, FIXTURE, { format: 'audio/wav' });
+
+    expect(body['reply']).toBe('One is first. Two is second. Three is third.');
+    expect([...heardAudio(evs)]).toEqual([1, 0, 1, 0, 2, 0, 2, 0, 3, 0, 3, 0]);
+    expect(evs.filter((e) => e.event === 'audio').map((e) => e.data['seq'])).toEqual([0, 1, 2]);
+    expect(most).toBe(2);
+  });
+
+  it('the recheck runs after the text, while the speech plays: it does not hold back the first speech event', async () => {
+    const app = createApp(makeDeps(), testEnv);
+    const conv = await conversation();
+    const recheck = gate();
+    const sent = network({ front: { parts: ['Sure thing.'] }, recheck: { hold: recheck.wait } });
+
+    const { it } = await openEnd(app, conv);
+    const evs: VoiceEvent[] = [];
+    await readUntil(it, (e) => e.event === 'audio', evs);
+    // The text is complete, and the recheck — held until `recheck.open()` —
+    // has not answered: the voice did not wait for it. It does run, after.
+    expect(sent.log[0]).toBe('front:end');
+    for (let i = 0; i < 100 && !sent.log.includes('recheck:start'); i++) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    expect(sent.log).toEqual(['front:end', 'recheck:start']);
+    expect(evs.some((e) => e.event === 'done')).toBe(false);
+
+    recheck.open();
+    await drain(it, evs);
+    expect(evs.at(-1)?.data).toMatchObject({ reply: 'Sure thing.', spawnedJobId: null });
+    expect(await rows(conv)).toEqual([
+      { role: 'user', content: TRANSCRIPT, spokenMs: FIXTURE_MS },
+      { role: 'assistant', content: 'Sure thing.', spokenMs: null },
+    ]);
+  });
+
+  it('the final event carries the job the recheck launched', async () => {
+    const app = createApp(makeDeps(), testEnv);
+    const conv = await conversation();
+    const sent = network({
+      front: { parts: ['I will check the weather.'] },
+      recheck: { instruction: '' },
+    });
+
+    const { body } = await say(app, conv, FIXTURE, { format: 'audio/wav' });
+
+    const jobId = body['spawnedJobId'];
+    expect(typeof jobId).toBe('string');
+    expect(sent.speech.map((s) => s['input'])).toEqual(['I will check the weather.']);
+    await settled(jobId as string);
+    const [job] = await jobsOf(conv);
+    expect(job).toMatchObject({ id: jobId, task: TRANSCRIPT, replyRendering: 'spoken' });
+  });
+
+  it('a speech failure mid-stream keeps the text, states the failure, and says nothing after it', async () => {
+    const app = createApp(makeDeps(), testEnv);
+    const conv = await conversation();
+    network({
+      front: { parts: ['First part is fine. Second part fails. Third never plays.'] },
+      speech: (input) =>
+        input.startsWith('Second')
+          ? new Response(JSON.stringify({ error: { message: 'Insufficient credits' } }), {
+              status: 402,
+              headers: { 'content-type': 'application/json' },
+            })
+          : new Response(Uint8Array.from([7, 0]), {
+              status: 200,
+              headers: { 'content-type': 'audio/pcm' },
+            }),
+    });
+
+    const { body, events: evs } = await say(app, conv, FIXTURE, { format: 'audio/wav' });
+
+    expect(body).toMatchObject({
+      reply: 'First part is fine. Second part fails. Third never plays.',
+      speechError: {
+        code: 'speech_provider_error',
+        detail: 'openrouter google/gemini-3.8-flash-tts: HTTP 402 — Insufficient credits',
+      },
+    });
+    // Only the first sentence was heard: nothing after the failed one.
+    expect([...heardAudio(evs)]).toEqual([7, 0]);
+    expect((await rows(conv))[1]).toEqual({
+      role: 'assistant',
+      content: 'First part is fine. Second part fails. Third never plays.',
+      spokenMs: null,
+    });
+  });
+
+  it('Stop mid-stream ends the turn, stores what the typed Stop stores, and the voice falls silent', async () => {
+    const app = createApp(makeDeps(), testEnv);
+    const conv = await conversation();
+    const held = gate();
+    network({
+      front: {
+        parts: ['First sentence here. Then', ' more words that never come.'],
+        holdBefore: 1,
+        hold: held.wait,
+      },
+    });
+
+    const { it } = await openEnd(app, conv);
+    const evs: VoiceEvent[] = [];
+    await readUntil(it, (e) => e.event === 'audio', evs);
+    const stop = await call(app, 'POST', '/api/chat/stop', {
+      entityId: seed.entityId,
+      conversationId: conv,
+    });
+    expect(await stop.json()).toEqual({ stopped: true });
+    await drain(it, evs);
+    held.open();
+
+    expect(evs.at(-1)).toEqual({
+      event: 'done',
+      data: {
+        reply: 'First sentence here. Then',
+        spawnedJobId: null,
+        streamed: true,
+        stopped: true,
+        cutReason: null,
+        speechError: null,
+      },
+    });
+    expect(evs.filter((e) => e.event === 'audio')).toHaveLength(1);
+    const stored = await db
+      .select({
+        role: chatMessages.role,
+        content: chatMessages.content,
+        stopped: chatMessages.stopped,
+      })
+      .from(chatMessages)
+      .where(eq(chatMessages.conversationId, conv))
+      .orderBy(asc(chatMessages.createdAt));
+    expect(stored).toEqual([
+      { role: 'user', content: TRANSCRIPT, stopped: false },
+      { role: 'assistant', content: 'First sentence here. Then', stopped: true },
+    ]);
+  });
+
+  it('one timing line per turn, numbers only, never the words', async () => {
+    const lines: string[] = [];
+    const info = vi.spyOn(console, 'warn').mockImplementation((...args: unknown[]) => {
+      lines.push(args.map(String).join(' '));
+    });
+    try {
+      const app = createApp(makeDeps(), testEnv);
+      const conv = await conversation();
+      network({ front: { parts: ['Nine in the evening.'] } });
+      await say(app, conv, FIXTURE, { format: 'audio/wav' });
+      await say(app, conv, new Uint8Array(0), { format: 'audio/pcm', sampleRate: 16_000 });
+    } finally {
+      info.mockRestore();
+    }
+    const timing = lines.filter((l) => l.startsWith('[voice-turn] timing '));
+    expect(timing).toHaveLength(2);
+    expect(timing[0]).toMatch(
+      /^\[voice-turn\] timing \{"transcriptMs":\d+,"firstDeltaMs":\d+,"firstSentenceMs":\d+,"firstAudioMs":\d+,"doneMs":\d+\}$/,
+    );
+    expect(timing[1]).toMatch(
+      /^\[voice-turn\] timing \{"transcriptMs":null,"firstDeltaMs":null,"firstSentenceMs":null,"firstAudioMs":null,"doneMs":\d+\}$/,
+    );
+    const marks = JSON.parse(timing[0]!.slice('[voice-turn] timing '.length)) as Record<
+      string,
+      number
+    >;
+    expect(marks['transcriptMs']!).toBeLessThanOrEqual(marks['firstDeltaMs']!);
+    expect(marks['firstSentenceMs']!).toBeLessThanOrEqual(marks['firstAudioMs']!);
+    expect(marks['firstAudioMs']!).toBeLessThanOrEqual(marks['doneMs']!);
+    for (const l of timing) expect(l).not.toContain('Nine');
   });
 });

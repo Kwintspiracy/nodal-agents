@@ -118,7 +118,7 @@ describe('bindSpeech / bindTranscription', () => {
       chunks.push(...c);
     }
     expect(chunks).toEqual([0xaa, 0xbb]);
-    expect(bindSpeech(getSpeechAdapter('openrouter'), connection).synthesizeStream).toBeUndefined();
+    expect(bindSpeech(getSpeechAdapter('google'), connection).synthesizeStream).toBeUndefined();
   });
 
   it('a bound transcription transcribes with its connection', async () => {

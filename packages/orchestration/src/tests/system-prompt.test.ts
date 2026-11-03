@@ -1931,7 +1931,8 @@ ${sentence}`).length > 0,
     '- rendering: spoken — your reply is turned into speech and heard, not read. ' +
     'Short sentences carry it; tables, lists, headings, links and other markup do not ' +
     'survive being read aloud, and numbers, dates and units are heard as they are written, ' +
-    'so write them the way they are said.';
+    'so write them the way they are said. ' +
+    'Open with one short sentence: it is spoken while the rest is still being written.';
 
   it('a spoken reply is stated once in Job context, on every surface that carries it (#941)', async () => {
     const { entityId, root } = await seedTeam();
@@ -1988,6 +1989,23 @@ ${sentence}`).length > 0,
       replyRendering: 'text',
     });
     expect(withText).toBe(without);
+  });
+
+  // #943 — mutation verified: the short-first-sentence clause moved out of
+  // `replyRenderingLine` into the surface line every chat turn carries → red.
+  it('the spoken chat prompt differs from the typed one by its rendering line, and only by it (#943)', async () => {
+    const { entityId, root } = await seedTeam();
+    const rootAgent = makeAgent(root.id, entityId, root.personality, 'orchestrator');
+    const typed = await buildSystemPrompt(rootAgent, db, { origin: 'dashboard', surface: 'chat' });
+    const spoken = await buildSystemPrompt(rootAgent, db, {
+      origin: 'dashboard',
+      surface: 'chat',
+      replyRendering: 'spoken',
+    });
+    expect(spoken).toContain(`${SPOKEN}\n`);
+    // Remove the one line and the typed prompt is left, byte for byte.
+    expect(spoken.replace(`${SPOKEN}\n`, '')).toBe(typed);
+    expect(typed).not.toContain('Open with one short sentence');
   });
 
   it('a delegate answers its parent: a spoken root does not make it write for the voice (#941)', async () => {

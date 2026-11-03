@@ -64,8 +64,8 @@ describe('registry — fail loud, never a default provider', () => {
     expect(getSpeechAdapter('minimax').synthesizeStream).toBeTypeOf('function');
     expect(getSpeechAdapter('google').capabilities.streamOutput).toBeUndefined();
     expect(getSpeechAdapter('google').synthesizeStream).toBeUndefined();
-    expect(getSpeechAdapter('openrouter').capabilities.streamOutput).toBeUndefined();
-    expect(getSpeechAdapter('openrouter').synthesizeStream).toBeUndefined();
+    expect(getSpeechAdapter('openrouter').capabilities.streamOutput).toBe('audio/pcm');
+    expect(getSpeechAdapter('openrouter').synthesizeStream).toBeTypeOf('function');
   });
 
   it('every listed provider actually resolves', () => {
