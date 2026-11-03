@@ -61,8 +61,8 @@ export interface ExitReportingOptions {
 // answers that error with `stop()`, all before the `exit` event arrives
 // (measured on Windows: 16 of 36 runs of the `dies-mid-reply` fixture, a
 // worker killed with replies in flight). A flag set by `stop()` and read at
-// `exit` then took vitest's
-// cleanup for a stop it had asked for, and the line was dropped.
+// `exit` then took vitest's cleanup for a stop it had asked for, and the line
+// was dropped.
 //
 // So the child is lost at the FIRST of its signs, `error`, `disconnect` or
 // `exit`, and the listeners that record it are PREPENDED to the child's own:
