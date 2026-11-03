@@ -17,7 +17,7 @@ import { conversations } from '@nodal-agents/db';
 import { z } from 'zod';
 import { getDb, requireUserWithEntity } from '@/lib/server.ts';
 import { env } from '@/lib/env.ts';
-import { createStreamRedactor } from '@/lib/redact-stream.ts';
+import { createStreamRedactor } from '@nodal-agents/shared';
 import { readSseMessages, sseEvent } from '@/lib/sse.ts';
 
 export const dynamic = 'force-dynamic';

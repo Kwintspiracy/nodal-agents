@@ -46,11 +46,25 @@ class FakeAudioContext {
   createBuffer(_channels: number, n: number, sampleRate: number): FakeBuffer {
     return buffer(n, sampleRate);
   }
-  /** Un WAV PCM 16 bits mono : la fréquence à l'octet 24, les échantillons après 44. */
+  /**
+   * Deux formats, comme un navigateur en lit : un WAV PCM 16 bits mono (la
+   * fréquence à l'octet 24, les échantillons après 44), et un « MP3 » factice
+   * qui, comme une vraie trame, ne se décode qu'ENTIER : `ID3`, un octet de
+   * longueur L, puis L octets (un échantillon chacun, sur 8 kHz). Coupé, il
+   * est refusé. Tout le reste est refusé aussi.
+   */
   decodeAudioData(bytes: ArrayBuffer): Promise<FakeBuffer> {
     const view = new DataView(bytes);
+    const u8 = new Uint8Array(bytes);
+    if (u8[0] === 0x49 && u8[1] === 0x44 && u8[2] === 0x33) {
+      const len = u8[3] ?? 0;
+      if (bytes.byteLength !== 4 + len) return Promise.reject(new Error('truncated MP3 frame'));
+      const b = buffer(len, 8000);
+      for (let i = 0; i < len; i++) b.data[i] = u8[4 + i]! / 256;
+      return Promise.resolve(b);
+    }
     if (bytes.byteLength < 44 || view.getUint32(0, false) !== 0x52494646) {
-      return Promise.reject(new Error('not a WAV file'));
+      return Promise.reject(new Error('Unable to decode audio data'));
     }
     const rate = view.getUint32(24, true);
     const n = (bytes.byteLength - 44) / 2;

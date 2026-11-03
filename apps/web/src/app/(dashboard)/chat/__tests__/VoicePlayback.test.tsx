@@ -37,6 +37,10 @@ const pcm = (samples: number[]): Uint8Array => {
   return b;
 };
 
+/** The fake MP3 frame `fake-audio.ts` decodes: `ID3`, a length, the bytes. */
+const mp3 = (bytes: number[]): Uint8Array =>
+  Uint8Array.from([0x49, 0x44, 0x33, bytes.length, ...bytes]);
+
 function wav(samples: number[], rate: number): Uint8Array {
   const data = pcm(samples);
   const out = new Uint8Array(44 + data.length);
@@ -126,18 +130,45 @@ describe('the spoken reply plays its chunks in order, back to back (#943) @cap:p
     expect(audio.scheduled).toHaveLength(2);
   });
 
-  it('a missing rank or an unknown format is said, and the voice stops', async () => {
+  // Review of #968, pass 1 (P2-2). Mutations verified: the pcm/wav-only gate
+  // restored → red; a compressed chunk decoded on its own instead of per
+  // sentence → red (a cut frame does not decode).
+  it('a compressed voice (MP3) plays per sentence, its chunks joined, in order, back to back', async () => {
+    const errors: string[] = [];
+    const voice = startSpokenStream({ reply: 'Hi.', onError: (m) => errors.push(m) });
+    // Sentence 0: one MP3 frame cut across two network chunks.
+    voice.push({ seq: 0, mimeType: 'audio/mpeg', bytes: mp3([128, 64, 32, 16]).slice(0, 5) });
+    voice.push({ seq: 1, mimeType: 'audio/mpeg', bytes: mp3([128, 64, 32, 16]).slice(5) });
+    await flush();
+    // Nothing plays before the sentence is complete: half a frame is not sound.
+    expect(audio.scheduled).toEqual([]);
+    voice.endSentence();
+    // Sentence 1, a frame of its own; the stream ends.
+    voice.push({ seq: 2, mimeType: 'audio/mpeg', bytes: mp3([8, 4]) });
+    voice.end();
+    await flush();
+    await flush();
+    expect(errors).toEqual([]);
+    expect(audio.scheduled.map((s) => s.samples)).toEqual([
+      [0.5, 0.25, 0.125, 0.063],
+      [0.031, 0.016],
+    ]);
+    expect(audio.scheduled[1]!.at).toBeCloseTo(audio.scheduled[0]!.at + 4 / 8000, 9);
+  });
+
+  it('a missing rank, or a voice the browser cannot decode, is said, and the voice stops', async () => {
     const errors: string[] = [];
     const gap = startSpokenStream({ reply: 'Hi.', onError: (m) => errors.push(m) });
     gap.push({ seq: 1, mimeType: 'audio/pcm', sampleRate: 4, bytes: pcm([1]) });
     expect(gap.stopped).toBe(true);
-    const mp3 = startSpokenStream({ reply: 'Hi.', onError: (m) => errors.push(m) });
-    mp3.push({ seq: 0, mimeType: 'audio/mpeg', bytes: new Uint8Array([0xff, 0xfb]) });
+    const unknown = startSpokenStream({ reply: 'Hi.', onError: (m) => errors.push(m) });
+    unknown.push({ seq: 0, mimeType: 'audio/x-unknown', bytes: new Uint8Array([1, 2, 3]) });
+    unknown.end();
     await flush();
-    expect(mp3.stopped).toBe(true);
+    expect(unknown.stopped).toBe(true);
     expect(errors).toEqual([
       'voice chunk 1 arrived where 0 was expected',
-      'this voice format cannot be played here: audio/mpeg',
+      'this voice could not be decoded (audio/x-unknown): Unable to decode audio data',
     ]);
     expect(audio.scheduled).toEqual([]);
   });

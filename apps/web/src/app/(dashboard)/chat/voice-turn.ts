@@ -48,6 +48,8 @@ export interface VoiceStreamHandlers {
   onText?: (text: string) => void;
   /** Un morceau de voix, dans l'ordre de son rang. */
   onAudio?: (chunk: SpokenChunk) => void;
+  /** Tout l'audio d'une phrase est arrivé (`audio_end`). */
+  onAudioEnd?: () => void;
 }
 
 /** Une étape refusée : où, avec quel statut, et le code tel que la route l'a dit. */
@@ -275,6 +277,9 @@ async function readEnd(
           });
           break;
         }
+        case 'audio_end':
+          handlers.onAudioEnd?.();
+          break;
         case 'done': {
           // La réponse entière remplace ce qui a été accumulé, comme au chat écrit.
           const reply = str(data['reply']) ?? '';

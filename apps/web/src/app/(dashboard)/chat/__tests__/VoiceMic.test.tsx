@@ -795,6 +795,28 @@ describe('the spoken reply arrives as it is written (#943) @cap:parler-a-un-agen
     expect(refresh).toHaveBeenCalled();
   });
 
+  it('a compressed voice (MP3) plays when the route says its sentence is complete (`audio_end`)', async () => {
+    const held = heldStream();
+    endReply = async () => held.response;
+    await renderThread();
+    await hold();
+    await releaseAt();
+    const frame = Buffer.from([0x49, 0x44, 0x33, 2, 128, 64]).toString('base64');
+    await act(async () => {
+      held.write('transcript', { transcript: 'Hi', durationMs: 900 });
+      held.write('delta', { text: 'Hello. ' });
+      held.write('audio', { seq: 0, mimeType: 'audio/mpeg', base64: frame });
+    });
+    await settle();
+    expect(audio.scheduled).toEqual([]);
+    await act(async () => {
+      held.write('audio_end', { sentence: 0 });
+    });
+    await settle();
+    expect(audio.scheduled.map((s) => s.samples)).toEqual([[0.5, 0.25]]);
+    expect(noteText()).toBeNull();
+  });
+
   it('a new gesture during the reply silences it: nothing of the old reply plays over the new one', async () => {
     const held = heldStream();
     endReply = async () => held.response;

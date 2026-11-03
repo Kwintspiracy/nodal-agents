@@ -14,11 +14,10 @@
 
 import { and, eq } from '@nodal-agents/db';
 import { agents, conversations } from '@nodal-agents/db';
-import { redactSecretsInText } from '@nodal-agents/shared';
+import { createStreamRedactor, redactSecretsInText } from '@nodal-agents/shared';
 import { z } from 'zod';
 import { getDb, requireUserWithEntity } from '@/lib/server.ts';
 import { env } from '@/lib/env.ts';
-import { createStreamRedactor } from '@/lib/redact-stream.ts';
 import { readSseMessages, sseEvent } from '@/lib/sse.ts';
 
 // Un flux ne se met jamais en cache.

@@ -56,6 +56,7 @@ import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';
 import { TITLE_SYSTEM_PROMPT } from '../../chat/conversation-title.ts';
 import { ACTION_RECHECK } from '../../llm/action-recheck.ts';
+import { REDACTED_TEXT } from '@nodal-agents/shared';
 import { openUtterances, VOICE_LIMITS } from '../../chat/voice-utterances.ts';
 
 // Provider calls leave through packages/llm's own transport (#608): routed back
@@ -572,8 +573,18 @@ describe('the voice turn route @cap:parler-a-un-agent/moteur', () => {
       stopped: false,
       speechError: null,
     });
-    // The protocol, in order: the transcript, the reply's text, its voice, done.
-    expect(evs.map((e) => e.event)).toEqual(['transcript', 'delta', 'audio', 'done']);
+    // The protocol, in order: the transcript, the reply's text (the stream
+    // redactor holds the last word until the text is complete), its voice,
+    // the end of that sentence's audio, done.
+    expect(evs.map((e) => e.event)).toEqual([
+      'transcript',
+      'delta',
+      'delta',
+      'audio',
+      'audio_end',
+      'done',
+    ]);
+    expect(evs.find((e) => e.event === 'audio_end')?.data).toEqual({ sentence: 0 });
     // The bytes the client sent, in order, are what the transcriber received.
     expect(sent.transcription).toHaveLength(1);
     const audioPart = (
@@ -1033,7 +1044,9 @@ describe('the voice turn route — the reply spoken as it is written (#943) @cap
     const held = gate();
     const sent = network({
       front: {
-        parts: ['Sure. The', ' rest of the answer follows here.'],
+        // The word after the full stop must be complete (a space after it)
+        // for the boundary to show: the redactor holds a word until then.
+        parts: ['Sure. The ', 'rest of the answer follows here.'],
         holdBefore: 1,
         hold: held.wait,
       },
@@ -1047,6 +1060,7 @@ describe('the voice turn route — the reply spoken as it is written (#943) @cap
     expect(sent.log).not.toContain('front:end');
     expect(sent.speech.map((s) => s['input'])).toEqual(['Sure.']);
     expect(evs.map((e) => e.event)).toEqual(['transcript', 'delta', 'audio']);
+    expect(evs[1]!.data).toEqual({ text: 'Sure. The ' });
     expect(evs[0]!.data).toEqual({ transcript: TRANSCRIPT, durationMs: FIXTURE_MS });
 
     held.open();
@@ -1188,7 +1202,7 @@ describe('the voice turn route — the reply spoken as it is written (#943) @cap
     const held = gate();
     network({
       front: {
-        parts: ['First sentence here. Then', ' more words that never come.'],
+        parts: ['First sentence here. Then more ', 'words that never come.'],
         holdBefore: 1,
         hold: held.wait,
       },
@@ -1208,7 +1222,7 @@ describe('the voice turn route — the reply spoken as it is written (#943) @cap
     expect(evs.at(-1)).toEqual({
       event: 'done',
       data: {
-        reply: 'First sentence here. Then',
+        reply: 'First sentence here. Then more',
         spawnedJobId: null,
         streamed: true,
         stopped: true,
@@ -1228,7 +1242,7 @@ describe('the voice turn route — the reply spoken as it is written (#943) @cap
       .orderBy(asc(chatMessages.createdAt));
     expect(stored).toEqual([
       { role: 'user', content: TRANSCRIPT, stopped: false },
-      { role: 'assistant', content: 'First sentence here. Then', stopped: true },
+      { role: 'assistant', content: 'First sentence here. Then more', stopped: true },
     ]);
   });
 
@@ -1295,5 +1309,41 @@ describe('the voice turn route — the reply spoken as it is written (#943) @cap
     expect(marks['firstSentenceVendorByteMs']!).toBeLessThanOrEqual(marks['firstAudioMs']!);
     expect(marks['firstAudioMs']!).toBeLessThanOrEqual(marks['doneMs']!);
     for (const l of timing) expect(l).not.toContain('Nine');
+  });
+
+  // Review of #968, pass 1 (P2-1). Mutations verified: the runner's redaction
+  // removed → red on every assertion below but the stored row; the text
+  // masked AFTER the chunker (raw deltas to the voice, masked to the screen)
+  // → red on what the voice received.
+  it('a secret in the reply is masked on every way out — the text, done, and what the voice SAYS — and stored intact', async () => {
+    const app = createApp(makeDeps(), testEnv);
+    const conv = await conversation();
+    const key = 'sk-or-v1-abcdefghijklmnopqrstu';
+    // The key arrives split across two deltas: no fragment holds it whole.
+    const sent = network({
+      front: { parts: ['Your key is sk-or-v1-abcdefgh', 'ijklmnopqrstu. Keep it safe.'] },
+    });
+
+    const { body, events: evs } = await say(app, conv, FIXTURE, { format: 'audio/wav' });
+
+    const masked = `Your key is ${REDACTED_TEXT} (sk-). Keep it safe.`;
+    const deltas = evs
+      .filter((e) => e.event === 'delta')
+      .map((e) => String(e.data['text']))
+      .join('');
+    expect(deltas).toBe(masked);
+    expect(body['reply']).toBe(masked);
+    // What the speech vendor was asked to SAY.
+    expect(sent.speech.map((r) => r['input'])).toEqual([
+      `Your key is ${REDACTED_TEXT} (sk-).`,
+      'Keep it safe.',
+    ]);
+    for (const e of evs) expect(JSON.stringify(e.data)).not.toContain('abcdefgh');
+    // The stored row keeps what the agent wrote: masking is for display.
+    expect((await rows(conv))[1]).toEqual({
+      role: 'assistant',
+      content: `Your key is ${key}. Keep it safe.`,
+      spokenMs: null,
+    });
   });
 });

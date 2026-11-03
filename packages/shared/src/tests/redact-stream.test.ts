@@ -6,8 +6,8 @@
 // d'appels.
 
 import { describe, it, expect } from 'vitest';
-import { createStreamRedactor } from '../redact-stream.ts';
-import { REDACTED_TEXT } from '@nodal-agents/shared';
+import { createStreamRedactor } from '../redact-stream';
+import { REDACTED_TEXT } from '../redact-transcript';
 
 /** Tout ce que le masqueur a laissé sortir pour ces fragments. */
 function emitted(chunks: readonly string[]): string {

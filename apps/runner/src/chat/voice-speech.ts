@@ -85,6 +85,12 @@ export function createReplySpeech(opts: {
   speech: BoundSpeech;
   voiceId: string;
   onChunk: (chunk: SpokenChunk) => void;
+  /**
+   * Tout l'audio de la phrase `sentence` est sorti. Un lecteur qui ne sait
+   * décoder qu'une unité entière (un MP3 n'est pas découpable n'importe où,
+   * contrairement à des échantillons PCM) attend ce signal pour la jouer.
+   */
+  onSentenceEnd?: (sentence: number) => void;
   onVendor?: (event: VendorEvent, sentence: number) => void;
   inFlight?: number;
 }): ReplySpeech {
@@ -188,6 +194,7 @@ export function createReplySpeech(opts: {
         return failureOf(job.error);
       }
       if (job.finished) {
+        opts.onSentenceEnd?.(job.index);
         head++;
         continue;
       }

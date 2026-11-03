@@ -13,12 +13,19 @@
 //
 // LA VOIX ARRIVE EN MORCEAUX (#943), dans l'ordre de leur rang : la route du
 // tour les écrit phrase par phrase pendant que la réponse s'écrit. Ils sont
-// joués BOUT À BOUT sur un seul AudioContext : chaque morceau est décodé en
-// échantillons, puis programmé à l'instant exact où le précédent finit — sans
-// trou audible, et sans attendre le suivant. MediaSource n'est pas utilisé :
-// la voix arrive en `audio/pcm` (des échantillons, qui se programment tels
-// quels) ou en `audio/wav` (un fichier par phrase, que `decodeAudioData` lit).
-// Un autre format se dit, il ne se joue pas à l'aveugle (invariant #4).
+// joués BOUT À BOUT sur un seul AudioContext : chaque unité est décodée en
+// échantillons, puis programmée à l'instant exact où la précédente finit —
+// sans trou audible. MediaSource n'est pas utilisé. Deux unités, selon ce que
+// le format permet :
+//   - `audio/pcm` : des échantillons, découpables n'importe où entre deux
+//     échantillons ; chaque morceau se programme dès qu'il arrive ;
+//   - tout autre type (`audio/wav`, `audio/mpeg`, …) : un conteneur ou un
+//     format compressé, qu'un morceau de flux ne contient pas forcément en
+//     entier (une trame MP3 coupée ne se décode pas). Ses morceaux sont
+//     réunis par PHRASE, et la phrase se décode (`decodeAudioData`) quand la
+//     route dit que son audio est complet (`audio_end`, `endSentence`).
+// Ce que le navigateur ne sait pas décoder se dit, il ne se joue pas à
+// l'aveugle (invariant #4).
 
 import { useSyncExternalStore } from 'react';
 
@@ -35,6 +42,8 @@ export type SpokenChunk = {
 export interface SpokenStream {
   /** Le morceau suivant, dans l'ordre de `seq`. */
   push(chunk: SpokenChunk): void;
+  /** Tout l'audio de la phrase en cours est arrivé (`audio_end`) : elle se décode. */
+  endSentence(): void;
   /** Le texte de la réponse connu à cet instant : c'est lui que « Speaking » désigne. */
   setReply(reply: string): void;
   /** Plus aucun morceau ne viendra : la voix finit quand le dernier a joué. */
@@ -51,8 +60,10 @@ type Playback = {
   sources: Set<AudioBufferSourceNode>;
   nextAt: number;
   expected: number;
-  /** Le décodage en cours : les morceaux se programment un par un, dans l'ordre. */
+  /** Le décodage en cours : les unités se programment une par une, dans l'ordre. */
   chain: Promise<void>;
+  /** Les morceaux d'une phrase compressée, en attente de sa fin. */
+  sentence: SpokenChunk[];
   started: boolean;
   ended: boolean;
   dead: boolean;
@@ -97,17 +108,39 @@ function pcmBuffer(audio: AudioContext, bytes: Uint8Array, sampleRate: number): 
   return buffer;
 }
 
-async function decode(audio: AudioContext, chunk: SpokenChunk): Promise<AudioBuffer> {
-  const type = chunk.mimeType.split(';')[0]?.trim().toLowerCase();
-  if (type === 'audio/pcm') {
-    if (!chunk.sampleRate) throw new Error('a PCM chunk came without its sample rate');
-    return pcmBuffer(audio, chunk.bytes, chunk.sampleRate);
+function isPcm(mimeType: string): boolean {
+  return mimeType.split(';')[0]?.trim().toLowerCase() === 'audio/pcm';
+}
+
+/** Une unité à jouer : un morceau PCM, ou la concaténation d'une phrase compressée. */
+async function decode(
+  audio: AudioContext,
+  mimeType: string,
+  bytes: Uint8Array,
+  sampleRate?: number,
+): Promise<AudioBuffer> {
+  if (isPcm(mimeType)) {
+    if (!sampleRate) throw new Error('a PCM chunk came without its sample rate');
+    return pcmBuffer(audio, bytes, sampleRate);
   }
-  if (type === 'audio/wav') {
+  try {
     // `decodeAudioData` détache le tampon qu'on lui donne : une copie.
-    return audio.decodeAudioData(chunk.bytes.slice().buffer);
+    return await audio.decodeAudioData(bytes.slice().buffer);
+  } catch (err) {
+    throw new Error(
+      `this voice could not be decoded (${mimeType}): ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
-  throw new Error(`this voice format cannot be played here: ${chunk.mimeType}`);
+}
+
+function joined(chunks: readonly SpokenChunk[]): Uint8Array {
+  const out = new Uint8Array(chunks.reduce((n, c) => n + c.bytes.byteLength, 0));
+  let at = 0;
+  for (const c of chunks) {
+    out.set(c.bytes, at);
+    at += c.bytes.byteLength;
+  }
+  return out;
 }
 
 function finishIfDone(me: Playback): void {
@@ -153,6 +186,7 @@ export function startSpokenStream(opts: {
     nextAt: 0,
     expected: 0,
     chain: Promise.resolve(),
+    sentence: [],
     started: false,
     ended: false,
     dead: false,
@@ -164,6 +198,43 @@ export function startSpokenStream(opts: {
     else kill(me);
     opts.onError(message);
   };
+  /** Une unité de plus, décodée puis programmée APRÈS celles d'avant. */
+  const schedule = (mimeType: string, bytes: Uint8Array, sampleRate?: number): void => {
+    me.chain = me.chain.then(async () => {
+      if (me.dead) return;
+      let buffer: AudioBuffer;
+      let audio: AudioContext;
+      try {
+        audio = audioContext();
+        buffer = await decode(audio, mimeType, bytes, sampleRate);
+      } catch (err) {
+        fail(err instanceof Error ? err.message : String(err));
+        return;
+      }
+      if (me.dead) return;
+      const source = audio.createBufferSource();
+      source.buffer = buffer;
+      source.connect(audio.destination);
+      const at = Math.max(me.nextAt, audio.currentTime + LEAD_S);
+      me.nextAt = at + buffer.duration;
+      me.sources.add(source);
+      source.onended = () => {
+        me.sources.delete(source);
+        finishIfDone(me);
+      };
+      source.start(at);
+      if (!me.started) {
+        me.started = true;
+        emit();
+      }
+    });
+  };
+  const endSentence = (): void => {
+    if (me.dead || me.sentence.length === 0) return;
+    const chunks = me.sentence;
+    me.sentence = [];
+    schedule(chunks[0]!.mimeType, joined(chunks));
+  };
   return {
     push(chunk) {
       if (me.dead) return;
@@ -172,40 +243,20 @@ export function startSpokenStream(opts: {
         return;
       }
       me.expected++;
-      me.chain = me.chain.then(async () => {
-        if (me.dead) return;
-        let buffer: AudioBuffer;
-        let audio: AudioContext;
-        try {
-          audio = audioContext();
-          buffer = await decode(audio, chunk);
-        } catch (err) {
-          fail(err instanceof Error ? err.message : String(err));
-          return;
-        }
-        if (me.dead) return;
-        const source = audio.createBufferSource();
-        source.buffer = buffer;
-        source.connect(audio.destination);
-        const at = Math.max(me.nextAt, audio.currentTime + LEAD_S);
-        me.nextAt = at + buffer.duration;
-        me.sources.add(source);
-        source.onended = () => {
-          me.sources.delete(source);
-          finishIfDone(me);
-        };
-        source.start(at);
-        if (!me.started) {
-          me.started = true;
-          emit();
-        }
-      });
+      // Une phrase en attente qu'un morceau d'un autre type suit est finie :
+      // elle passe d'abord, l'ordre est celui des rangs.
+      const pending = me.sentence[0];
+      if (pending && (isPcm(chunk.mimeType) || pending.mimeType !== chunk.mimeType)) endSentence();
+      if (isPcm(chunk.mimeType)) schedule(chunk.mimeType, chunk.bytes, chunk.sampleRate);
+      else me.sentence.push(chunk);
     },
+    endSentence,
     setReply(reply) {
       me.reply = reply;
       if (current === me) emit();
     },
     end() {
+      endSentence();
       me.ended = true;
       void me.chain.then(() => finishIfDone(me));
     },

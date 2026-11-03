@@ -27,7 +27,11 @@
 //                                                      bout à bout dans l'ordre de `seq`.
 //                                                      `audio/pcm` : 16 bits signés
 //                                                      little-endian, mono, à `sampleRate` ;
-//                                                      `audio/wav` : un fichier par phrase
+//                                                      les autres types (`audio/wav`, `audio/mpeg`…)
+//                                                      ne se décodent que par phrase entière
+//   event: audio_end      data: { sentence }           tout l'audio de la phrase `sentence`
+//                                                      (son rang, depuis 0) est sorti : un
+//                                                      type compressé se décode à ce signal
 //   event: done           data: { reply, spawnedJobId, streamed, stopped, cutReason,
 //                                 speechError }      le DERNIER événement, après tout l'audio
 //   event: error          data: { error, detail? }     le tour a échoué après la
@@ -38,7 +42,9 @@
 // et fait foi, comme pour `/api/chat/stream` ; `streamed` dit si les `delta`
 // la disaient. `speechError` { code, detail? } : la voix a échoué, le texte
 // reste. `stopped` : la personne a dit Stop (`/api/chat/stop`, le même Stop que
-// le chat écrit) ; plus aucun audio ne suit.
+// le chat écrit) ; plus aucun audio ne suit. Les secrets que la réponse
+// citerait sont masqués dans `delta`, dans `done.reply` ET dans ce qui est
+// dit (chat/run-voice-turn.ts) ; la ligne rangée en base reste intacte.
 //
 // Un client de vingt lignes :
 //

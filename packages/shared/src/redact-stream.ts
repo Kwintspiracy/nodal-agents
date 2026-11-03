@@ -17,8 +17,14 @@
 // Le prix : le dernier mot en cours de frappe n'apparaît qu'une fois terminé.
 // C'est ce que fait n'importe quel chat qui découpe par mots, et c'est le seul
 // découpage où un secret ne peut pas se faufiler.
+//
+// Il vit ici, à côté de `redactSecretsInText`, depuis la revue de #968 : le
+// tour vocal du RUNNER s'en sert avant le texte rendu et avant la voix, pour
+// que tout client, tableau de bord ou module, reçoive le texte masqué et
+// qu'aucune voix ne dise un secret. Les portes web du chat écrit l'importent
+// d'ici, sans changement de comportement.
 
-import { redactSecretsInText } from '@nodal-agents/shared';
+import { redactSecretsInText } from './redact-transcript';
 
 /** Le mot qui précède une coupure candidate, en minuscules. */
 function wordBefore(buffer: string, cut: number): string {
