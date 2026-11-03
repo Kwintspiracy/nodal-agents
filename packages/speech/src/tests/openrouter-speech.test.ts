@@ -206,9 +206,8 @@ describe('openrouterSpeechAdapter @cap:travailler-sur-des-fichiers/moteur', () =
     expect(sent[0]!.url).toBe('https://proxy.example/api/v1/audio/speech');
   });
 
-  it('declares its stream: raw PCM at the Gemini rate (#943)', () => {
+  it('declares its stream: raw PCM (#943)', () => {
     expect(adapter.capabilities.streamOutput).toBe('audio/pcm');
-    expect(adapter.capabilities.streamSampleRate).toBe(GEMINI_TTS_SAMPLE_RATE);
     expect(adapter.synthesizeStream).toBeTypeOf('function');
   });
 });
@@ -253,12 +252,18 @@ describe('openrouterSpeechAdapter.synthesizeStream (#943) @cap:parler-a-un-agent
     ]();
     const first = it.next();
     held.write([1, 0, 2, 0]);
-    expect(await first).toEqual({ done: false, value: Uint8Array.from([1, 0, 2, 0]) });
+    expect(await first).toEqual({
+      done: false,
+      value: { audio: Uint8Array.from([1, 0, 2, 0]), sampleRate: GEMINI_TTS_SAMPLE_RATE },
+    });
     // The answer is still open: the second read waits for it.
     const second = it.next();
     held.write([3, 0]);
     held.end();
-    expect(await second).toEqual({ done: false, value: Uint8Array.from([3, 0]) });
+    expect(await second).toEqual({
+      done: false,
+      value: { audio: Uint8Array.from([3, 0]), sampleRate: GEMINI_TTS_SAMPLE_RATE },
+    });
     expect(await it.next()).toEqual({ done: true, value: undefined });
     expect(held.sent[0]!.body).toEqual(
       speechBody({ text: 'Bonjour.', voiceId: 'Kore' }, OPENROUTER_SPEECH_MODELS[0].id),
@@ -273,7 +278,7 @@ describe('openrouterSpeechAdapter.synthesizeStream (#943) @cap:parler-a-un-agent
         { text: 'x', voiceId: 'Kore' },
         held.connection,
       )) {
-        out.push([...c]);
+        out.push([...c.audio]);
       }
     })();
     held.write([1, 0, 2]);
@@ -286,7 +291,32 @@ describe('openrouterSpeechAdapter.synthesizeStream (#943) @cap:parler-a-un-agent
     ]);
   });
 
-  it('a stream cut mid-sample, an empty answer and another sample rate are said, never played', async () => {
+  // Mutation verified: the rate fixed at 24 kHz instead of read from the
+  // answer → "the rate is the answer’s" is red.
+  it('the rate is the answer’s, read from its content type, never assumed', async () => {
+    for (const [contentType, rate] of [
+      ['audio/pcm;rate=44100;channels=1', 44_100],
+      ['audio/pcm;rate=24000;channels=1', 24_000],
+      ['audio/pcm', GEMINI_TTS_SAMPLE_RATE],
+    ] as const) {
+      const held = heldStream(contentType);
+      const rates: Array<number | undefined> = [];
+      const reading = (async () => {
+        for await (const c of adapter.synthesizeStream!(
+          { text: 'x', voiceId: 'Kore' },
+          held.connection,
+        )) {
+          rates.push(c.sampleRate);
+        }
+      })();
+      held.write([1, 0]);
+      held.end();
+      await reading;
+      expect({ contentType, rates }).toEqual({ contentType, rates: [rate] });
+    }
+  });
+
+  it('a stream cut mid-sample, an empty answer and a layout that is not mono are said, never played', async () => {
     const cut = heldStream();
     const reading = (async () => {
       for await (const _ of adapter.synthesizeStream!(
@@ -315,7 +345,7 @@ describe('openrouterSpeechAdapter.synthesizeStream (#943) @cap:parler-a-un-agent
       })(),
     ).rejects.toThrow('answered 200 with no audio');
 
-    const other = heldStream('audio/pcm;rate=16000');
+    const other = heldStream('audio/pcm;rate=24000;channels=2');
     await expect(
       (async () => {
         for await (const _ of adapter.synthesizeStream!(
@@ -325,7 +355,7 @@ describe('openrouterSpeechAdapter.synthesizeStream (#943) @cap:parler-a-un-agent
           // drained
         }
       })(),
-    ).rejects.toThrow('16000 Hz, where the stream declares 24000 Hz');
+    ).rejects.toThrow('2 channels, where the stream is mono');
   });
 
   it('refuses empty text before any request leaves', () => {

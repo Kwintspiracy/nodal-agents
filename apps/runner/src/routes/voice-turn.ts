@@ -53,8 +53,10 @@
 //
 // Chaque tour écrit une ligne `[voice-turn] timing {…}` : les millisecondes
 // depuis la requête de fin jusqu'à la transcription, au premier fragment, à la
-// première phrase complète, au premier octet de voix envoyé et à `done`. Des
-// nombres seulement, jamais les mots de la personne.
+// première phrase complète, au premier octet que le fournisseur de voix rend
+// pour elle et à la fin de sa réponse (proches : il rend un fichier ; écartés :
+// il diffuse), au premier octet de voix envoyé et à `done`. Des nombres
+// seulement, jamais les mots de la personne.
 //
 // L'ORIGINE EST UNE DONNÉE (règle du #948) : le tour appartient à la
 // conversation qu'il nomme, et l'agent est celui de cette conversation. Aucune

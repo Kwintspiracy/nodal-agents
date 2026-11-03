@@ -33,6 +33,7 @@ import type {
   SpeechAdapter,
   SpeechConnection,
   SpeechModel,
+  SpeechStreamChunk,
   SynthesizeRequest,
   SynthesizeResult,
   TranscribeRequest,
@@ -296,6 +297,12 @@ function sampleRateOf(contentType: string): number {
   return match ? Number(match[1]) : GEMINI_TTS_SAMPLE_RATE;
 }
 
+/** `channels=2` → 2; none named → mono, as Gemini documents its output. */
+function channelsOf(contentType: string): number {
+  const match = /(?:^|;)\s*channels=(\d+)/i.exec(contentType);
+  return match ? Number(match[1]) : 1;
+}
+
 /** The request body `/audio/speech` gets. Exported for its test. */
 export function speechBody(req: SynthesizeRequest, model: string): Record<string, unknown> {
   const body: Record<string, unknown> = {
@@ -393,21 +400,29 @@ async function openSpeech(
  * boundaries: a byte left over is carried into the next chunk, so every
  * chunk yielded holds whole 16-bit samples. A byte still left at the end is a
  * cut stream, said as such.
+ *
+ * Whether the vendor sends its body progressively is the vendor's: measured
+ * by the orchestrator on 2026-11-03 through OpenRouter, three passes each,
+ * the Gemini 3.8 TTS models (today's default) do NOT — first byte at 2.0 to
+ * 3.3 s, the whole body within 10 ms after it — while Deepgram aura-2 (first
+ * byte 0.84 s, 87 to 110 chunks) and Mistral voxtral (0.83 to 1.23 s) do.
+ * The read is the same either way; the caller times it.
  */
 async function* streamPcm(
   req: SynthesizeRequest,
   connection: SpeechConnection,
-): AsyncGenerator<Uint8Array> {
+): AsyncGenerator<SpeechStreamChunk> {
   const { res, model, contentType } = await openSpeech(req, connection);
-  // The stream declares its rate in `capabilities.streamSampleRate` before
-  // any byte: an answer naming another one is refused, never played at the
-  // wrong speed.
-  const rate = sampleRateOf(contentType);
-  if (rate !== GEMINI_TTS_SAMPLE_RATE) {
+  // The rate is the ANSWER's, read from its content type, never assumed
+  // (one OpenRouter model answers pcm at 44 100 Hz). A layout the samples
+  // cannot be played as — more than one channel — is refused, never guessed.
+  const sampleRate = sampleRateOf(contentType);
+  const channels = channelsOf(contentType);
+  if (channels !== 1) {
     await res.body?.cancel().catch(() => {});
     throw new SpeechError(
       'speech_provider_error',
-      `${model} answered ${contentType}: ${rate} Hz, where the stream declares ${GEMINI_TTS_SAMPLE_RATE} Hz`,
+      `${model} answered ${contentType}: ${channels} channels, where the stream is mono`,
     );
   }
   if (!res.body) {
@@ -436,7 +451,7 @@ async function* streamPcm(
       if (whole < bytes.byteLength) carry = bytes.slice(whole);
       if (whole === 0) continue;
       total += whole;
-      yield bytes.slice(0, whole);
+      yield { audio: bytes.slice(0, whole), sampleRate };
     }
   } finally {
     // The caller stopped reading (the person said Stop, the reader left): the
@@ -463,12 +478,11 @@ export const openrouterSpeechAdapter: SpeechAdapter = {
     // The models served are Gemini TTS, whose voices are a fixed catalogue.
     dynamicVoices: false,
     // The stream is the raw PCM itself (#943): signed 16-bit little-endian,
-    // mono, at Gemini's documented rate. The body of `/audio/speech` is read
+    // mono, at the rate the answer names. The body of `/audio/speech` is read
     // as it arrives; whether the vendor sends it progressively is the
-    // vendor's to decide, and the caller measures it by timing the first
-    // chunk, as this interface promises.
+    // vendor's (see `streamPcm`), and the caller measures it by timing the
+    // first chunk, as this interface promises.
     streamOutput: 'audio/pcm',
-    streamSampleRate: GEMINI_TTS_SAMPLE_RATE,
     models: OPENROUTER_SPEECH_MODELS,
   },
 
@@ -502,7 +516,7 @@ export const openrouterSpeechAdapter: SpeechAdapter = {
   synthesizeStream(
     req: SynthesizeRequest,
     connection: SpeechConnection,
-  ): AsyncIterable<Uint8Array> {
+  ): AsyncIterable<SpeechStreamChunk> {
     validateSynthesis(req);
     return streamPcm(req, connection);
   },

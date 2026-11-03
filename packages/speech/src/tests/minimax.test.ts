@@ -42,9 +42,9 @@ afterEach(() => {
 
 const req = { text: 'Bonjour.', voiceId: 'French_CasualMan', language: 'fr-FR' };
 
-async function collect(iter: AsyncIterable<Uint8Array>): Promise<Uint8Array> {
+async function collect(iter: AsyncIterable<{ audio: Uint8Array }>): Promise<Uint8Array> {
   const parts: Uint8Array[] = [];
-  for await (const c of iter) parts.push(c);
+  for await (const c of iter) parts.push(c.audio);
   const total = parts.reduce((n, p) => n + p.length, 0);
   const out = new Uint8Array(total);
   let o = 0;

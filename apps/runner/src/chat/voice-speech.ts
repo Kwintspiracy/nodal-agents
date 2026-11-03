@@ -52,6 +52,8 @@ export interface ReplySpeech {
 }
 
 interface Job {
+  /** Le rang de la phrase dans la réponse. */
+  index: number;
   text: string;
   started: boolean;
   finished: boolean;
@@ -70,10 +72,20 @@ function failureOf(err: unknown): SpeechFailure {
   };
 }
 
+/**
+ * Ce que le fournisseur a fait d'une phrase, pour la mesure (#943) : son
+ * premier octet, puis la fin de sa réponse. Les deux instants séparés disent
+ * si la voix arrive en flux (le premier bien avant la fin) ou en fichier
+ * (les deux ensemble). Une voix qui ne sait que rendre un fichier entier les
+ * dit au même instant : elle ne laisse rien voir de plus.
+ */
+export type VendorEvent = 'firstByte' | 'complete';
+
 export function createReplySpeech(opts: {
   speech: BoundSpeech;
   voiceId: string;
   onChunk: (chunk: SpokenChunk) => void;
+  onVendor?: (event: VendorEvent, sentence: number) => void;
   inFlight?: number;
 }): ReplySpeech {
   const { speech, voiceId, onChunk } = opts;
@@ -84,6 +96,7 @@ export function createReplySpeech(opts: {
   let ended = false;
   let cancelled = false;
   let seq = 0;
+  let said = 0;
 
   // Un réveil qui ne se perd pas : un `notify` avant l'attente compte.
   let dirty = false;
@@ -111,14 +124,24 @@ export function createReplySpeech(opts: {
     try {
       if (stream) {
         const mimeType = stream.capabilities.streamOutput!;
-        const rate = stream.capabilities.streamSampleRate;
-        for await (const audio of stream.synthesizeStream!({ text: job.text, voiceId })) {
-          if (job.abandoned || cancelled) break;
-          job.chunks.push({ audio, mimeType, ...(rate !== undefined ? { sampleRate: rate } : {}) });
+        let first = true;
+        for await (const piece of stream.synthesizeStream!({ text: job.text, voiceId })) {
+          if (job.abandoned || cancelled) return;
+          if (first) opts.onVendor?.('firstByte', job.index);
+          first = false;
+          // La fréquence est celle de la RÉPONSE, portée avec ses octets.
+          job.chunks.push({
+            audio: piece.audio,
+            mimeType,
+            ...(piece.sampleRate !== undefined ? { sampleRate: piece.sampleRate } : {}),
+          });
           notify();
         }
+        opts.onVendor?.('complete', job.index);
       } else {
         const out = await speech.synthesize({ text: job.text, voiceId });
+        opts.onVendor?.('firstByte', job.index);
+        opts.onVendor?.('complete', job.index);
         job.chunks.push({
           audio: out.audio,
           mimeType: out.mimeType,
@@ -176,6 +199,7 @@ export function createReplySpeech(opts: {
     say(sentence) {
       if (cancelled || ended) return;
       jobs.push({
+        index: said++,
         text: sentence,
         started: false,
         finished: false,

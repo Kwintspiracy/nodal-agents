@@ -125,6 +125,11 @@ export const VOICE_TIMING_MARKS = [
   'transcript',
   'firstDelta',
   'firstSentence',
+  // Le fournisseur de voix, pour la PREMIÈRE phrase : son premier octet, puis
+  // la fin de sa réponse. Proches l'un de l'autre, il rend un fichier ; écartés,
+  // il diffuse. C'est ce que la ligne dit de lui, quel qu'il soit.
+  'firstSentenceVendorByte',
+  'firstSentenceVendorDone',
   'firstAudio',
   'done',
 ] as const;
@@ -179,6 +184,12 @@ export async function speakVoiceTurn(
         // La voix que `generate_speech` offre par défaut : un réglage de voix
         // par agent n'existe pas encore, et ce tour n'en invente pas un.
         voiceId: DEFAULT_GEMINI_VOICE,
+        onVendor: (event, sentence) => {
+          if (sentence !== 0) return;
+          timing.mark(
+            event === 'firstByte' ? 'firstSentenceVendorByte' : 'firstSentenceVendorDone',
+          );
+        },
         onChunk: (c) => {
           timing.mark('firstAudio');
           emit('audio', {

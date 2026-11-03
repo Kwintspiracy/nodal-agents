@@ -30,7 +30,6 @@ function heldVoice(streaming: boolean) {
           outputs: ['audio/wav'],
           dynamicVoices: false,
           streamOutput: 'audio/pcm',
-          streamSampleRate: 24_000,
         }
       : { outputs: ['audio/wav'], dynamicVoices: false },
     listVoices: () => Promise.resolve([]),
@@ -43,9 +42,9 @@ function heldVoice(streaming: boolean) {
       ? {
           async *synthesizeStream(req: SynthesizeRequest) {
             asked.push(req.text);
-            yield Uint8Array.from([1, 0]);
+            yield { audio: Uint8Array.from([1, 0]), sampleRate: 24_000 };
             await wait(req.text);
-            yield bytes(req.text);
+            yield { audio: bytes(req.text), sampleRate: 24_000 };
           },
         }
       : {}),

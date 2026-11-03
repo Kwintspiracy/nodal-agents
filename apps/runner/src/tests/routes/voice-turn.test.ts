@@ -1232,34 +1232,67 @@ describe('the voice turn route — the reply spoken as it is written (#943) @cap
     ]);
   });
 
-  it('one timing line per turn, numbers only, never the words', async () => {
+  // Mutations verified: the vendor's `complete` marked at its first byte →
+  // red (the gap is gone); the rate taken from anywhere but the answer → red.
+  it('one timing line per turn, numbers only, never the words: the vendor’s first byte apart from its whole body', async () => {
     const lines: string[] = [];
-    const info = vi.spyOn(console, 'warn').mockImplementation((...args: unknown[]) => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation((...args: unknown[]) => {
       lines.push(args.map(String).join(' '));
     });
+    let evs: VoiceEvent[] = [];
     try {
       const app = createApp(makeDeps(), testEnv);
       const conv = await conversation();
-      network({ front: { parts: ['Nine in the evening.'] } });
-      await say(app, conv, FIXTURE, { format: 'audio/wav' });
+      network({
+        front: { parts: ['Nine in the evening.'] },
+        // A vendor that streams: its first bytes, then the rest 80 ms later,
+        // at the rate IT names.
+        speech: () => {
+          const body = new ReadableStream<Uint8Array>({
+            start(c) {
+              c.enqueue(Uint8Array.from([1, 0]));
+              setTimeout(() => {
+                c.enqueue(Uint8Array.from([2, 0]));
+                c.close();
+              }, 80);
+            },
+          });
+          return new Response(body, {
+            status: 200,
+            headers: { 'content-type': 'audio/pcm;rate=44100;channels=1' },
+          });
+        },
+      });
+      ({ events: evs } = await say(app, conv, FIXTURE, { format: 'audio/wav' }));
       await say(app, conv, new Uint8Array(0), { format: 'audio/pcm', sampleRate: 16_000 });
     } finally {
-      info.mockRestore();
+      warn.mockRestore();
     }
+    expect(
+      evs.filter((e) => e.event === 'audio').map((e) => [e.data['seq'], e.data['sampleRate']]),
+    ).toEqual([
+      [0, 44_100],
+      [1, 44_100],
+    ]);
     const timing = lines.filter((l) => l.startsWith('[voice-turn] timing '));
     expect(timing).toHaveLength(2);
     expect(timing[0]).toMatch(
-      /^\[voice-turn\] timing \{"transcriptMs":\d+,"firstDeltaMs":\d+,"firstSentenceMs":\d+,"firstAudioMs":\d+,"doneMs":\d+\}$/,
+      /^\[voice-turn\] timing \{"transcriptMs":\d+,"firstDeltaMs":\d+,"firstSentenceMs":\d+,"firstSentenceVendorByteMs":\d+,"firstSentenceVendorDoneMs":\d+,"firstAudioMs":\d+,"doneMs":\d+\}$/,
     );
     expect(timing[1]).toMatch(
-      /^\[voice-turn\] timing \{"transcriptMs":null,"firstDeltaMs":null,"firstSentenceMs":null,"firstAudioMs":null,"doneMs":\d+\}$/,
+      /^\[voice-turn\] timing \{"transcriptMs":null,"firstDeltaMs":null,"firstSentenceMs":null,"firstSentenceVendorByteMs":null,"firstSentenceVendorDoneMs":null,"firstAudioMs":null,"doneMs":\d+\}$/,
     );
     const marks = JSON.parse(timing[0]!.slice('[voice-turn] timing '.length)) as Record<
       string,
       number
     >;
     expect(marks['transcriptMs']!).toBeLessThanOrEqual(marks['firstDeltaMs']!);
-    expect(marks['firstSentenceMs']!).toBeLessThanOrEqual(marks['firstAudioMs']!);
+    expect(marks['firstSentenceMs']!).toBeLessThanOrEqual(marks['firstSentenceVendorByteMs']!);
+    // The vendor streamed: its whole body came well after its first byte.
+    expect(
+      marks['firstSentenceVendorDoneMs']! - marks['firstSentenceVendorByteMs']!,
+    ).toBeGreaterThanOrEqual(60);
+    expect(marks['firstSentenceVendorByteMs']!).toBeLessThanOrEqual(marks['firstAudioMs']!);
     expect(marks['firstAudioMs']!).toBeLessThanOrEqual(marks['doneMs']!);
     for (const l of timing) expect(l).not.toContain('Nine');
   });

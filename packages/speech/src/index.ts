@@ -4,6 +4,7 @@ export type {
   SpeechCapabilities,
   SpeechConnection,
   SpeechProvider,
+  SpeechStreamChunk,
   SynthesizeRequest,
   SynthesizeResult,
   TranscribeRequest,
