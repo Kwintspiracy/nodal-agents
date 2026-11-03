@@ -64,6 +64,11 @@ function recorder(): { urls: string[]; connection: SpeechConnection } {
 }
 
 const VOICE = { google: 'Kore', minimax: 'French_CasualMan', openrouter: 'Kore' } as const;
+const MODEL = {
+  google: 'gemini-2.5-flash-preview-tts',
+  minimax: 'speech-2.8-turbo',
+  openrouter: 'google/gemini-3.8-flash-tts',
+} as const;
 
 describe('adapters use the connection’s fetch, never the global one', () => {
   for (const provider of ['google', 'minimax', 'openrouter'] as const) {
@@ -73,7 +78,8 @@ describe('adapters use the connection’s fetch, never the global one', () => {
       });
       const { urls, connection } = recorder();
       const out = await getSpeechAdapter(provider).synthesize(
-        { text: 'Bonjour.', voiceId: VOICE[provider] },
+        // The OpenRouter adapter picks no model (#969): the request names one.
+        { text: 'Bonjour.', voiceId: VOICE[provider], model: MODEL[provider] },
         connection,
       );
       expect(out.audio.length).toBeGreaterThan(0);
@@ -104,7 +110,11 @@ describe('bindSpeech / bindTranscription', () => {
       ...connection,
       baseURL: 'https://proxy.example/api/v1',
     });
-    const out = await speech.synthesize({ text: 'x', voiceId: 'Kore' });
+    const out = await speech.synthesize({
+      text: 'x',
+      voiceId: 'Kore',
+      model: 'google/gemini-3.8-flash-tts',
+    });
     expect(urls).toEqual(['https://proxy.example/api/v1/audio/speech']);
     expect(String.fromCharCode(...out.audio.subarray(0, 4))).toBe('RIFF');
     expect(speech.capabilities).toBe(getSpeechAdapter('openrouter').capabilities);
@@ -118,7 +128,12 @@ describe('bindSpeech / bindTranscription', () => {
       chunks.push(...c.audio);
     }
     expect(chunks).toEqual([0xaa, 0xbb]);
-    expect(bindSpeech(getSpeechAdapter('google'), connection).synthesizeStream).toBeUndefined();
+    const fileOnly = { ...getSpeechAdapter('google'), synthesizeStream: undefined };
+    expect(bindSpeech(fileOnly, connection).synthesizeStream).toBeUndefined();
+    // The models list travels with the bound value too (#969).
+    expect(bindSpeech(getSpeechAdapter('openrouter'), connection).listModels).toBeTypeOf(
+      'function',
+    );
   });
 
   it('a bound transcription transcribes with its connection', async () => {

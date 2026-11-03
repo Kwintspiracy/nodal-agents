@@ -452,16 +452,26 @@ export function VoiceNoteLine({ note }: { note: VoiceNote }) {
       dot = <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-err" />;
       break;
   }
+  // Le détail (les mots du fournisseur ou du runner) se LIT sous la phrase,
+  // jamais caché dans une infobulle : « could not be spoken (speech_provider_error) »
+  // seul ne dit pas quoi faire (revue de #972, passe 1).
+  const detail = note.kind === 'error' ? note.detail : undefined;
   return (
-    <p
-      role="status"
-      className="m-0 flex items-center gap-1.5 text-body-12 text-ink-2"
-      data-testid="voice-note"
-      {...(note.kind === 'error' && note.detail ? { title: note.detail } : {})}
-    >
-      {dot}
-      {text}
-    </p>
+    <div className="flex flex-col gap-0.5">
+      <p
+        role="status"
+        className="m-0 flex items-center gap-1.5 text-body-12 text-ink-2"
+        data-testid="voice-note"
+      >
+        {dot}
+        {text}
+      </p>
+      {detail && (
+        <p className="m-0 text-xs text-ink-4" data-testid="voice-note-detail">
+          {detail}
+        </p>
+      )}
+    </div>
   );
 }
 

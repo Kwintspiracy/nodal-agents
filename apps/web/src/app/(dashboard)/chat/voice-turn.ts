@@ -26,7 +26,7 @@
 
 import { chatFailureText } from '@/lib/chat-failure.ts';
 import { readSseMessages } from '@/lib/sse.ts';
-import type { SpokenChunk } from './voice-playback.ts';
+import { readSpokenEvent, type SpokenChunk } from './voice-playback.ts';
 
 const BASE = '/api/voice/turns';
 
@@ -263,30 +263,15 @@ async function readEnd(
           handlers.onText?.(accumulated);
           break;
         }
-        case 'audio': {
-          const base64 = str(data['base64']);
-          const mimeType = str(data['mimeType']);
-          if (
-            base64 === null ||
-            mimeType === null ||
-            typeof data['seq'] !== 'number' ||
-            typeof data['sentence'] !== 'number'
-          ) {
-            return broken('invalid_response');
-          }
-          handlers.onAudio?.({
-            seq: data['seq'],
-            sentence: data['sentence'],
-            mimeType,
-            ...(typeof data['sampleRate'] === 'number' ? { sampleRate: data['sampleRate'] } : {}),
-            bytes: Uint8Array.from(atob(base64), (c) => c.charCodeAt(0)),
-          });
+        case 'audio':
+        case 'audio_end': {
+          // Lu par le lecteur commun aux portes qui parlent (`readSpokenEvent`, #969).
+          const spoken = readSpokenEvent(msg.event, data);
+          if (!spoken || spoken.kind === 'invalid') return broken('invalid_response');
+          if (spoken.kind === 'audio') handlers.onAudio?.(spoken.chunk);
+          else handlers.onAudioEnd?.(spoken.sentence, spoken.complete);
           break;
         }
-        case 'audio_end':
-          if (typeof data['sentence'] !== 'number') return broken('invalid_response');
-          handlers.onAudioEnd?.(data['sentence'], data['complete'] === true);
-          break;
         case 'done': {
           // La réponse entière remplace ce qui a été accumulé, comme au chat écrit.
           const reply = str(data['reply']) ?? '';
@@ -364,8 +349,20 @@ export function voiceFailureText(f: VoiceFailure): string {
 
 /** Le texte de l'écran quand la réponse est écrite mais n'a pas pu être dite. */
 export function speechErrorText(code: string): string {
-  if (code === 'speech_not_configured') {
-    return 'The reply is written above, but it could not be spoken: voice needs an OpenRouter key.';
+  const lead = 'The reply is written above, but it could not be spoken';
+  // #969 : la voix est celle de l'espace (Réglages, Voice) ; ses échecs se
+  // disent avec le geste qui les répare.
+  switch (code) {
+    case 'voice_key_missing':
+      return `${lead}: the voice has no key for its source. Add one in LLM Providers, or choose another voice in Settings.`;
+    case 'voice_key_undecryptable':
+      return `${lead}: the key of the voice could not be read. Enter it again in LLM Providers.`;
+    case 'speech_no_credit':
+      return `${lead}: the key of the voice has no credit left.`;
+    case 'voice_setting_missing':
+    case 'voice_setting_unreadable':
+      return `${lead}: no voice is set. Choose one in Settings.`;
+    default:
+      return `${lead} (${code}).`;
   }
-  return `The reply is written above, but it could not be spoken (${code}).`;
 }

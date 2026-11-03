@@ -348,7 +348,9 @@ export const minimaxSpeechAdapter: SpeechAdapter = {
     validate(req);
     // MP3 frames carry their own rate: no `sampleRate` beside them.
     return (async function* () {
-      for await (const audio of streamChunks(req, connection)) yield { audio };
+      for await (const audio of streamChunks(req, connection)) {
+        yield { audio, mimeType: 'audio/mpeg' as const };
+      }
     })();
   },
 };

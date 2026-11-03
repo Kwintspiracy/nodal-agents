@@ -14,6 +14,7 @@ import type {
   SpeechAdapter,
   SpeechCapabilities,
   SpeechConnection,
+  SpeechModelOffer,
   SpeechProvider,
   SpeechStreamChunk,
   SynthesizeRequest,
@@ -31,6 +32,7 @@ export interface BoundSpeech {
   listVoices(): Promise<readonly Voice[]>;
   synthesize(req: SynthesizeRequest): Promise<SynthesizeResult>;
   synthesizeStream?(req: SynthesizeRequest): AsyncIterable<SpeechStreamChunk>;
+  listModels?(): Promise<readonly SpeechModelOffer[]>;
 }
 
 export interface BoundTranscription {
@@ -50,6 +52,7 @@ function assertKey(provider: SpeechProvider, connection: SpeechConnection): void
 export function bindSpeech(adapter: SpeechAdapter, connection: SpeechConnection): BoundSpeech {
   assertKey(adapter.provider, connection);
   const stream = adapter.synthesizeStream;
+  const models = adapter.listModels;
   return {
     provider: adapter.provider,
     capabilities: adapter.capabilities,
@@ -58,6 +61,7 @@ export function bindSpeech(adapter: SpeechAdapter, connection: SpeechConnection)
     ...(stream
       ? { synthesizeStream: (req: SynthesizeRequest) => stream.call(adapter, req, connection) }
       : {}),
+    ...(models ? { listModels: () => models.call(adapter, connection) } : {}),
   };
 }
 

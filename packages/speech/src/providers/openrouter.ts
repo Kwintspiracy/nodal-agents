@@ -25,14 +25,13 @@
 // instruction left the door open, and the full wording closes it. Any edit that
 // shortens that string must be re-measured against a French sample.
 
-import { SpeechError } from '../errors.ts';
+import { SpeechError, vendorRefusalCode } from '../errors.ts';
 import { pcmToWav } from '../wav.ts';
-import { GEMINI_VOICES } from './google.ts';
 import type {
   AudioMimeType,
   SpeechAdapter,
   SpeechConnection,
-  SpeechModel,
+  SpeechModelOffer,
   SpeechStreamChunk,
   SynthesizeRequest,
   SynthesizeResult,
@@ -220,7 +219,7 @@ export const openrouterTranscriptionAdapter: TranscriptionAdapter = {
       // "insufficient credits"). Passing the whole message through beats
       // summarising it into something unactionable.
       throw new SpeechError(
-        'speech_provider_error',
+        vendorRefusalCode(res.status),
         `openrouter: HTTP ${res.status} — ${json.error?.message ?? 'no message'}`,
         res.status,
       );
@@ -254,30 +253,81 @@ export const openrouterTranscriptionAdapter: TranscriptionAdapter = {
 // `provider.options["google-ai-studio"].speech_metadata.style` instead (docs:
 // guides/overview/multimodal/tts, "Google (Gemini TTS)").
 
+// WHICH MODEL AND WHICH VOICE is never decided here (#969). Until then this
+// file held a list of two Gemini models and a default voice (`Kore`), and the
+// whole platform spoke with the first of each. The models and their voices are
+// now read from OpenRouter itself (`listModels`, the models API and each
+// model's `supported_voices`), and the request always names both: the caller
+// reads them from the workspace's voice setting. Every model except Gemini
+// refuses a request with no voice ("An explicit voice is required for this
+// TTS provider.", measured 2026-11-03).
+
+/** One speech model as `GET /models?output_modalities=speech` lists it. */
+interface OpenRouterModel {
+  id?: string;
+  name?: string;
+  /** Absent or null: OpenRouter names no voice for this model. */
+  supported_voices?: string[] | null;
+}
+
 /**
- * The speech models worth choosing between, most useful first. Kept apart from
- * the chat model catalogue on purpose: these models speak, they do not chat or
- * call tools, so they are never offered as an agent's model.
+ * The speech models OpenRouter serves now, each with the voices it lists for
+ * it. The list is public; the key is sent anyway, so a proxy stored with the
+ * key (its `baseURL`) answers for the models it actually routes.
  */
-export const OPENROUTER_SPEECH_MODELS = [
-  {
-    id: 'google/gemini-3.8-flash-tts',
-    label: 'Gemini 3.8 Flash TTS',
-    note: 'The expressive tier: best for narration and a delivery style.',
-  },
-  {
-    id: 'google/gemini-3.8-flash-lite-tts',
-    label: 'Gemini 3.8 Flash Lite TTS',
-    note: 'The fast, cheaper tier: best for plain reading and volume.',
-  },
-] as const satisfies readonly SpeechModel[];
+async function listSpeechModels(
+  connection: SpeechConnection,
+): Promise<readonly SpeechModelOffer[]> {
+  let res: Response;
+  try {
+    res = await connection.fetch(`${connection.baseURL ?? BASE}/models?output_modalities=speech`, {
+      headers: { authorization: `Bearer ${connection.apiKey}` },
+    });
+  } catch (err) {
+    throw new SpeechError(
+      'speech_provider_error',
+      `openrouter models: request failed — ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+  if (!res.ok) throw await refusal(res, 'models');
+  let json: { data?: OpenRouterModel[] };
+  try {
+    json = (await res.json()) as { data?: OpenRouterModel[] };
+  } catch {
+    throw new SpeechError('speech_provider_error', 'openrouter models: the answer is not JSON');
+  }
+  if (!Array.isArray(json.data)) {
+    throw new SpeechError('speech_provider_error', 'openrouter models: the answer has no data');
+  }
+  return json.data
+    .filter((m): m is OpenRouterModel & { id: string } => typeof m.id === 'string')
+    .map((m) => ({
+      id: m.id,
+      label: m.name ?? m.id,
+      voices: (Array.isArray(m.supported_voices) ? m.supported_voices : []).map((v) => ({
+        id: v,
+        label: v,
+        languages: [],
+      })),
+    }));
+}
 
-export type OpenRouterSpeechModelId = (typeof OPENROUTER_SPEECH_MODELS)[number]['id'];
-
-/** The voice OpenRouter's own Gemini TTS example uses. A default for a CALLER
- *  that offers one (the `generate_speech` tool); the adapter itself never
- *  picks a voice. */
-export const DEFAULT_GEMINI_VOICE = 'Kore';
+/** The vendor's words on a non-OK answer (unknown voice, no credit). */
+async function refusal(res: Response, what: string): Promise<SpeechError> {
+  const detail = await res.text().catch(() => '');
+  let message = detail.slice(0, 300);
+  try {
+    const parsed = JSON.parse(detail) as { error?: { message?: string } };
+    if (parsed.error?.message) message = parsed.error.message;
+  } catch {
+    // Not JSON: the raw text is the vendor's words.
+  }
+  return new SpeechError(
+    vendorRefusalCode(res.status),
+    `openrouter ${what}: HTTP ${res.status}${message ? ` — ${message}` : ''}`,
+    res.status,
+  );
+}
 
 /**
  * Gemini TTS answers raw PCM: signed 16-bit little-endian, mono, 24 kHz, as
@@ -331,6 +381,12 @@ function validateSynthesis(req: SynthesizeRequest): void {
   if (req.voiceId.trim().length === 0) {
     throw new SpeechError('speech_bad_request', 'synthesize: voiceId is empty');
   }
+  if (!req.model || req.model.trim().length === 0) {
+    throw new SpeechError(
+      'speech_bad_request',
+      'synthesize: openrouter needs the model to speak with, and picks none itself',
+    );
+  }
 }
 
 /**
@@ -340,11 +396,17 @@ function validateSynthesis(req: SynthesizeRequest): void {
 async function openSpeech(
   req: SynthesizeRequest,
   connection: SpeechConnection,
-): Promise<{ res: Response; model: string; contentType: string; t0: number }> {
-  // The voice is NOT checked against GEMINI_VOICES here, unlike the direct
-  // Google adapter: OpenRouter may route a model whose voices are not that
-  // list, and its own refusal names the voice.
-  const model = req.model ?? OPENROUTER_SPEECH_MODELS[0].id;
+): Promise<{
+  res: Response;
+  model: string;
+  contentType: string;
+  container: AudioMimeType;
+  t0: number;
+}> {
+  // The voice is not checked here: the caller checked it against the model's
+  // `supported_voices` when the setting was chosen, and OpenRouter's own
+  // refusal names the voice when a list has moved since.
+  const model = req.model!;
 
   const t0 = Date.now();
   let res: Response;
@@ -364,22 +426,7 @@ async function openSpeech(
     );
   }
 
-  if (!res.ok) {
-    // The vendor's own words are the useful part (unknown voice, no credit).
-    const detail = await res.text().catch(() => '');
-    let message = detail.slice(0, 300);
-    try {
-      const parsed = JSON.parse(detail) as { error?: { message?: string } };
-      if (parsed.error?.message) message = parsed.error.message;
-    } catch {
-      // Not JSON: the raw text is the vendor's words.
-    }
-    throw new SpeechError(
-      'speech_provider_error',
-      `openrouter ${model}: HTTP ${res.status}${message ? ` — ${message}` : ''}`,
-      res.status,
-    );
-  }
+  if (!res.ok) throw await refusal(res, model);
 
   const contentType = res.headers.get('content-type') ?? '';
   // A 200 whose body is not audio (an error page) is said, never wrapped
@@ -392,7 +439,89 @@ async function openSpeech(
       res.status,
     );
   }
-  return { res, model, contentType, t0 };
+  // The container is the ANSWER's (#969): pcm is asked for, and most models
+  // answer it, but MiniMax answers mp3 only (measured 2026-11-03). Its bytes
+  // travel as what they are, with their media type, and the player decodes
+  // them; they are never wrapped into a WAV of mp3 bytes nor read as samples,
+  // which would play as noise. A container nothing here names is refused.
+  const container = containerOf(contentType);
+  if (container === null) {
+    await res.body?.cancel().catch(() => {});
+    throw new SpeechError(
+      'speech_provider_error',
+      `${model} answered ${contentType}, a container Nodal does not play`,
+      res.status,
+    );
+  }
+  return { res, model, contentType, container, t0 };
+}
+
+/**
+ * The container of an answer, from its content type. No type at all is the
+ * pcm that was asked for (the odd-length check still catches a cut stream);
+ * `audio/l16` is pcm under its RFC name.
+ */
+function containerOf(contentType: string): AudioMimeType | null {
+  const type = contentType.split(';')[0]!.trim().toLowerCase();
+  switch (type) {
+    case '':
+    case 'audio/pcm':
+    case 'audio/l16':
+      return 'audio/pcm';
+    case 'audio/mpeg':
+    case 'audio/mp3':
+      return 'audio/mpeg';
+    case 'audio/wav':
+    case 'audio/wave':
+    case 'audio/x-wav':
+      return 'audio/wav';
+    case 'audio/ogg':
+    case 'audio/opus':
+      return 'audio/ogg';
+    case 'audio/flac':
+      return 'audio/flac';
+    case 'audio/aac':
+    case 'audio/mp4':
+      return 'audio/mp4';
+    default:
+      return null;
+  }
+}
+
+/**
+ * A compressed answer as it arrives: its bytes, untouched, with their media
+ * type. A compressed frame cannot be cut anywhere, so the player joins a
+ * sentence's chunks and decodes them once the sentence is complete (#968).
+ */
+async function* streamCompressed(
+  res: Response,
+  model: string,
+  container: AudioMimeType,
+): AsyncGenerator<SpeechStreamChunk> {
+  if (!res.body) {
+    throw new SpeechError('speech_provider_error', `${model} answered 200 with no audio`);
+  }
+  const reader = res.body.getReader();
+  let total = 0;
+  let finished = false;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) {
+        finished = true;
+        break;
+      }
+      if (value.byteLength === 0) continue;
+      total += value.byteLength;
+      yield { audio: value, mimeType: container };
+    }
+  } finally {
+    if (finished) reader.releaseLock();
+    else await reader.cancel().catch(() => {});
+  }
+  if (total === 0) {
+    throw new SpeechError('speech_provider_error', `${model} answered 200 with no audio`);
+  }
 }
 
 /**
@@ -412,7 +541,11 @@ async function* streamPcm(
   req: SynthesizeRequest,
   connection: SpeechConnection,
 ): AsyncGenerator<SpeechStreamChunk> {
-  const { res, model, contentType } = await openSpeech(req, connection);
+  const { res, model, contentType, container } = await openSpeech(req, connection);
+  if (container !== 'audio/pcm') {
+    yield* streamCompressed(res, model, container);
+    return;
+  }
   // The rate is the ANSWER's, read from its content type, never assumed
   // (one OpenRouter model answers pcm at 44 100 Hz). A layout the samples
   // cannot be played as — more than one channel — is refused, never guessed.
@@ -451,7 +584,7 @@ async function* streamPcm(
       if (whole < bytes.byteLength) carry = bytes.slice(whole);
       if (whole === 0) continue;
       total += whole;
-      yield { audio: bytes.slice(0, whole), sampleRate };
+      yield { audio: bytes.slice(0, whole), mimeType: 'audio/pcm', sampleRate };
     }
   } finally {
     // The caller stopped reading (the person said Stop, the reader left): the
@@ -474,20 +607,30 @@ export const openrouterSpeechAdapter: SpeechAdapter = {
   provider: 'openrouter',
   capabilities: {
     // WAV, because the one-shot path wraps the raw PCM the API returns.
-    outputs: ['audio/wav'],
-    // The models served are Gemini TTS, whose voices are a fixed catalogue.
-    dynamicVoices: false,
+    // WAV for a pcm answer; any other container is returned as the model answered it (#969).
+    outputs: ['audio/wav', 'audio/mpeg', 'audio/ogg', 'audio/flac', 'audio/mp4'],
+    // The models and their voices are OpenRouter's, read at runtime (#969).
+    dynamicVoices: true,
     // The stream is the raw PCM itself (#943): signed 16-bit little-endian,
     // mono, at the rate the answer names. The body of `/audio/speech` is read
     // as it arrives; whether the vendor sends it progressively is the
     // vendor's (see `streamPcm`), and the caller measures it by timing the
     // first chunk, as this interface promises.
     streamOutput: 'audio/pcm',
-    models: OPENROUTER_SPEECH_MODELS,
   },
 
-  listVoices(_connection: SpeechConnection): Promise<readonly Voice[]> {
-    return Promise.resolve(GEMINI_VOICES);
+  /** Every voice OpenRouter lists, across its speech models. A voice belongs
+   *  to a model: `listModels` says which. */
+  async listVoices(connection: SpeechConnection): Promise<readonly Voice[]> {
+    const seen = new Map<string, Voice>();
+    for (const m of await listSpeechModels(connection)) {
+      for (const v of m.voices) if (!seen.has(v.id)) seen.set(v.id, v);
+    }
+    return [...seen.values()];
+  },
+
+  listModels(connection: SpeechConnection): Promise<readonly SpeechModelOffer[]> {
+    return listSpeechModels(connection);
   },
 
   async synthesize(
@@ -495,12 +638,14 @@ export const openrouterSpeechAdapter: SpeechAdapter = {
     connection: SpeechConnection,
   ): Promise<SynthesizeResult> {
     validateSynthesis(req);
-    const { res, model, contentType, t0 } = await openSpeech(req, connection);
+    const { res, model, contentType, container, t0 } = await openSpeech(req, connection);
     const pcm = new Uint8Array(await res.arrayBuffer());
     const latencyMs = Date.now() - t0;
     if (pcm.byteLength === 0) {
       throw new SpeechError('speech_provider_error', `${model} answered 200 with no audio`);
     }
+    // A compressed answer (#969) is already a file: it is returned as what it is.
+    if (container !== 'audio/pcm') return { audio: pcm, mimeType: container, latencyMs };
     // 16-bit samples come in pairs of bytes: an odd count is a cut stream, and
     // its WAV would be malformed (review of PR #489).
     if (pcm.byteLength % 2 !== 0) {

@@ -42,9 +42,13 @@ function heldVoice(streaming: boolean) {
       ? {
           async *synthesizeStream(req: SynthesizeRequest) {
             asked.push(req.text);
-            yield { audio: Uint8Array.from([1, 0]), sampleRate: 24_000 };
+            yield {
+              audio: Uint8Array.from([1, 0]),
+              mimeType: 'audio/pcm' as const,
+              sampleRate: 24_000,
+            };
             await wait(req.text);
-            yield { audio: bytes(req.text), sampleRate: 24_000 };
+            yield { audio: bytes(req.text), mimeType: 'audio/pcm' as const, sampleRate: 24_000 };
           },
         }
       : {}),
@@ -88,6 +92,7 @@ describe('createReplySpeech @cap:parler-a-un-agent/moteur', () => {
     const out = collector();
     const voice = createReplySpeech({
       speech: v.speech,
+      model: 'google/gemini-3.8-flash-tts',
       voiceId: 'Kore',
       onChunk: out.onChunk,
       onSentenceEnd: out.onSentenceEnd,
@@ -134,6 +139,7 @@ describe('createReplySpeech @cap:parler-a-un-agent/moteur', () => {
     const out = collector();
     const voice = createReplySpeech({
       speech: v.speech,
+      model: 'google/gemini-3.8-flash-tts',
       voiceId: 'Kore',
       onChunk: out.onChunk,
       onSentenceEnd: out.onSentenceEnd,
@@ -160,6 +166,7 @@ describe('createReplySpeech @cap:parler-a-un-agent/moteur', () => {
     const out = collector();
     const voice = createReplySpeech({
       speech: v.speech,
+      model: 'google/gemini-3.8-flash-tts',
       voiceId: 'Kore',
       onChunk: out.onChunk,
       onSentenceEnd: out.onSentenceEnd,
@@ -179,6 +186,7 @@ describe('createReplySpeech @cap:parler-a-un-agent/moteur', () => {
     const out = collector();
     const voice = createReplySpeech({
       speech: v.speech,
+      model: 'google/gemini-3.8-flash-tts',
       voiceId: 'Kore',
       onChunk: out.onChunk,
       onSentenceEnd: out.onSentenceEnd,
@@ -198,6 +206,7 @@ describe('createReplySpeech @cap:parler-a-un-agent/moteur', () => {
     const out = collector();
     const voice = createReplySpeech({
       speech: v.speech,
+      model: 'google/gemini-3.8-flash-tts',
       voiceId: 'Kore',
       onChunk: out.onChunk,
       onSentenceEnd: out.onSentenceEnd,
@@ -221,6 +230,7 @@ describe('createReplySpeech @cap:parler-a-un-agent/moteur', () => {
     const out = collector();
     const voice = createReplySpeech({
       speech: v.speech,
+      model: 'google/gemini-3.8-flash-tts',
       voiceId: 'Kore',
       onChunk: out.onChunk,
       onSentenceEnd: out.onSentenceEnd,
@@ -238,6 +248,7 @@ describe('createReplySpeech @cap:parler-a-un-agent/moteur', () => {
     const out = collector();
     const voice = createReplySpeech({
       speech: v.speech,
+      model: 'google/gemini-3.8-flash-tts',
       voiceId: 'Kore',
       onChunk: out.onChunk,
       onSentenceEnd: out.onSentenceEnd,
@@ -257,6 +268,7 @@ describe('createReplySpeech @cap:parler-a-un-agent/moteur', () => {
     const out = collector();
     const voice = createReplySpeech({
       speech: v.speech,
+      model: 'google/gemini-3.8-flash-tts',
       voiceId: 'Kore',
       onChunk: out.onChunk,
       onSentenceEnd: out.onSentenceEnd,

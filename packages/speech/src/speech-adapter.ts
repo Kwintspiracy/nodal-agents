@@ -191,16 +191,19 @@ export interface SpeechConnection {
 }
 
 /**
- * One piece of a streamed synthesis, in `capabilities.streamOutput`.
+ * One piece of a streamed synthesis.
  *
- * The sample rate travels WITH the bytes, not in the capabilities: it belongs
- * to the answer, not to the vendor. Measured by the orchestrator on
- * 2026-11-03 through OpenRouter: most speech models answer
- * `audio/pcm;rate=24000;channels=1`, one answers pcm at 44 100 Hz. A rate
- * declared once per adapter would play that one at the wrong pitch.
+ * The container and the sample rate travel WITH the bytes, not in the
+ * capabilities: they belong to the answer, not to the vendor. Measured by the
+ * orchestrator on 2026-11-03 through OpenRouter: most speech models answer
+ * `audio/pcm;rate=24000;channels=1`, one answers pcm at 44 100 Hz, and MiniMax
+ * answers mp3 only. A container or a rate declared once per adapter would play
+ * those as noise, or at the wrong pitch (#969).
  */
 export interface SpeechStreamChunk {
   audio: Uint8Array;
+  /** The container of THIS answer. `capabilities.streamOutput` is only the usual one. */
+  mimeType: AudioMimeType;
   /** Present for `audio/pcm`: raw samples do not say how fast they play. */
   sampleRate?: number;
 }
@@ -230,6 +233,26 @@ export interface SpeechAdapter {
     req: SynthesizeRequest,
     connection: SpeechConnection,
   ): AsyncIterable<SpeechStreamChunk>;
+  /**
+   * The models the vendor serves for speech right now, each with its voices,
+   * asked of the vendor itself (#969). Optional: a vendor with a single line
+   * declares `capabilities.models` instead. Every call reaches the network:
+   * how long a list may be kept is the caller's decision, not this package's.
+   */
+  listModels?(connection: SpeechConnection): Promise<readonly SpeechModelOffer[]>;
+}
+
+/**
+ * A model the vendor says it serves NOW, with the voices it says that model
+ * offers (#969). Read from the vendor at runtime (`listModels`), never typed
+ * into the code: a list in the code describes the vendor as it was the day
+ * someone wrote it. `voices` empty: the vendor names no voice for this model,
+ * so none can be chosen.
+ */
+export interface SpeechModelOffer {
+  id: string;
+  label: string;
+  voices: readonly Voice[];
 }
 
 /** Audio → text. */

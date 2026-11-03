@@ -38,21 +38,26 @@
 // Le job lancé hérite de la forme `spoken` : sa réponse finale est écrite pour
 // être dite (#967 la dira).
 //
+// LA VOIX est celle que l'espace a choisie (#969) : sa source, son modèle et sa
+// voix, relus à chaque tour par `resolveVoice` (job/resolve-voice.ts), la même
+// résolution que l'essai des réglages et `generate_speech`. La ligne de temps
+// du tour les nomme.
+//
 // L'origine est une DONNÉE : la conversation du tour, et l'entité qui la
 // possède. Rien ici ne demande si l'appelant est le tableau de bord.
 
 import {
   SpeechError,
-  DEFAULT_GEMINI_VOICE,
   createSentenceChunker,
   pcmToWav,
   readWav,
   splitSentences,
 } from '@nodal-agents/speech';
-import { redactSecretsInText } from '@nodal-agents/shared';
+import { redactSecretsInText, type VoiceSetting } from '@nodal-agents/shared';
 import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
-import { resolveSpeech, resolveTranscription } from '../job/resolve-speech.ts';
+import { resolveTranscription } from '../job/resolve-speech.ts';
+import { resolveVoice } from '../job/resolve-voice.ts';
 import { playChatTurn } from './play-turn.ts';
 import type { VoiceUtterance } from './voice-utterances.ts';
 import { createReplySpeech, type ReplySpeech, type SpeechFailure } from './voice-speech.ts';
@@ -142,24 +147,114 @@ export const VOICE_TIMING_MARKS = [
 ] as const;
 export type VoiceTimingMark = (typeof VOICE_TIMING_MARKS)[number];
 
+/**
+ * La voix d'un tour, dans sa ligne (#969) : la source, le modèle et la voix
+ * qui ont parlé — des identifiants, jamais les mots de la personne. C'est ce
+ * qui permet de comparer deux voix sur de vrais tours. `null` : la voix n'a
+ * pas pu être résolue (la ligne dit alors seulement la source, si elle est
+ * connue).
+ */
+export interface VoiceTimingVoice {
+  source: string | null;
+  model: string | null;
+  voice: string | null;
+}
+
 export interface VoiceTiming {
   /** Pose la marque si elle ne l'est pas encore : c'est la PREMIÈRE fois qui compte. */
   mark(name: VoiceTimingMark): void;
+  /** Nomme la voix du tour. */
+  voice(v: VoiceTimingVoice): void;
   /** La ligne du journal. */
   line(): string;
 }
 
-export function createVoiceTiming(startedAt: number, now: () => number = Date.now): VoiceTiming {
+export function createVoiceTiming(
+  startedAt: number,
+  now: () => number = Date.now,
+  /** Le nom de la ligne : `voice-turn` pour un tour, `voice-sample` pour l'essai des réglages. */
+  label = 'voice-turn',
+): VoiceTiming {
   const marks = new Map<VoiceTimingMark, number>();
+  let named: VoiceTimingVoice = { source: null, model: null, voice: null };
   return {
     mark(name) {
       if (!marks.has(name)) marks.set(name, now() - startedAt);
     },
+    voice(v) {
+      named = v;
+    },
     line() {
+      const ids = (['source', 'model', 'voice'] as const).map(
+        (k) => `"${k}":${JSON.stringify(named[k])}`,
+      );
       const fields = VOICE_TIMING_MARKS.map((m) => `"${m}Ms":${String(marks.get(m) ?? null)}`);
-      return `[voice-turn] timing {${fields.join(',')}}`;
+      return `[${label}] timing {${[...ids, ...fields].join(',')}}`;
     },
   };
+}
+
+/**
+ * LA voix d'une réponse dite, pour toute porte qui parle : le tour vocal et
+ * l'essai des réglages (« Play a sample ») passent par ici, donc par la même
+ * résolution (`resolveVoice`), le même découpage et la même file de phrases
+ * (`createReplySpeech`). L'essai entend donc exactement ce que le tour dira.
+ *
+ * `voice: null` : l'espace ne peut pas parler, et `unavailable` dit pourquoi
+ * (pas de clé pour la source, un réglage illisible) — la porte le rend tel
+ * quel, jamais remplacé par une autre voix.
+ */
+export async function openReplyVoice(
+  db: RunnerDeps['db'],
+  entityId: string,
+  emit: VoiceTurnEmit,
+  timing: VoiceTiming,
+  setting?: VoiceSetting,
+): Promise<{
+  voice: ReplySpeech | null;
+  unavailable: SpeechFailure | null;
+  /** La voix qui parle (ou la source qui n'a pas pu), en identifiants. */
+  named: VoiceTimingVoice;
+}> {
+  const resolved = await resolveVoice(db, entityId, setting);
+  if (!resolved.ok) {
+    const named = { source: resolved.source ?? null, model: null, voice: null };
+    timing.voice(named);
+    return {
+      voice: null,
+      named,
+      unavailable: {
+        code: resolved.code,
+        ...(resolved.source || resolved.detail
+          ? { detail: [resolved.source, resolved.detail].filter(Boolean).join(': ') }
+          : {}),
+      },
+    };
+  }
+  const { source, model, voice: voiceId, speech } = resolved.voice;
+  const named = { source, model, voice: voiceId };
+  timing.voice(named);
+  const voice = createReplySpeech({
+    speech,
+    model,
+    voiceId,
+    onVendor: (event, sentence) => {
+      if (sentence !== 0) return;
+      timing.mark(event === 'firstByte' ? 'firstSentenceVendorByte' : 'firstSentenceVendorDone');
+    },
+    onChunk: (c) => {
+      timing.mark('firstAudio');
+      emit('audio', {
+        seq: c.seq,
+        sentence: c.sentence,
+        mimeType: c.mimeType,
+        ...(c.sampleRate !== undefined ? { sampleRate: c.sampleRate } : {}),
+        base64: Buffer.from(c.audio).toString('base64'),
+      });
+    },
+    onSentenceEnd: (sentence, complete) => emit('audio_end', { sentence, complete }),
+  });
+  return { voice, unavailable: null, named };
 }
 
 /** Un événement du flux de la route (voir l'en-tête de routes/voice-turn.ts). */
@@ -184,32 +279,10 @@ export async function speakVoiceTurn(
   emit('transcript', { transcript: heard.transcript, durationMs: heard.durationMs });
   timing.mark('transcript');
 
-  const speech = await resolveSpeech(deps.db, u.entityId);
-  let voice: ReplySpeech | null = speech
-    ? createReplySpeech({
-        speech,
-        // La voix que `generate_speech` offre par défaut : un réglage de voix
-        // par agent n'existe pas encore, et ce tour n'en invente pas un.
-        voiceId: DEFAULT_GEMINI_VOICE,
-        onVendor: (event, sentence) => {
-          if (sentence !== 0) return;
-          timing.mark(
-            event === 'firstByte' ? 'firstSentenceVendorByte' : 'firstSentenceVendorDone',
-          );
-        },
-        onChunk: (c) => {
-          timing.mark('firstAudio');
-          emit('audio', {
-            seq: c.seq,
-            sentence: c.sentence,
-            mimeType: c.mimeType,
-            ...(c.sampleRate !== undefined ? { sampleRate: c.sampleRate } : {}),
-            base64: Buffer.from(c.audio).toString('base64'),
-          });
-        },
-        onSentenceEnd: (sentence, complete) => emit('audio_end', { sentence, complete }),
-      })
-    : null;
+  // La voix de l'espace (#969), relue à chaque tour : un réglage changé vaut
+  // dès le tour suivant.
+  const opened = await openReplyVoice(deps.db, u.entityId, emit, timing);
+  let voice: ReplySpeech | null = opened.voice;
   const silence = (): void => {
     voice?.cancel();
   };
@@ -291,8 +364,8 @@ export async function speakVoiceTurn(
 
   let speechError: SpeechFailure | null = null;
   if (voice) speechError = await voice.done;
-  else if (!speech && saidAny && result.stopped !== true) {
-    speechError = { code: 'speech_not_configured' };
+  else if (opened.unavailable && saidAny && result.stopped !== true) {
+    speechError = opened.unavailable;
   }
   opts.readerGone.removeEventListener('abort', silence);
 
