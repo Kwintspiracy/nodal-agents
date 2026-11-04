@@ -199,13 +199,13 @@ jobs:
         continue-on-error: true
         run: pnpm audit --audit-level=high || true
 
-  # ── La suite unitaire, en cinq tranches ─────────────────────────────────────
+  # ── La suite unitaire, en six tranches ──────────────────────────────────────
   # Durées à froid sous turbo à 3 (job 105953811231, 19/09) : web 760 s,
   # runner 764 s, tools 170 s, orchestration 131 s, db 103 s, memory 55 s,
   # cli 52 s, tout le reste sous 30 s chacun (≈ 200 s cumulés). `web` et
   # `runner` sont donc coupés en deux par fichier (`vitest run --shard=k/2`,
   # passé à vitest à travers turbo, qui l'inclut dans sa clé de cache), et
-  # les autres paquets tournent ensemble.
+  # les autres paquets tournent en deux tranches (plus bas).
   #
   # Le plafond de concurrence turbo (3) vit dans `turbo.json` depuis #292 :
   # `pnpm test`, `release:check` et ce job lancent exactement la même chose.
@@ -215,6 +215,22 @@ jobs:
   # rendus (« Tasks: 14 successful, 29 total » sur le run 37433850617). Avec,
   # chaque tâche dont les dépendances ont réussi rend son verdict, et le job
   # échoue quand même. Garde : scripts/tests/ci-tous-les-verdicts.test.mjs.
+  #
+  # LA TRANCHE `packages` EN DEUX (04/11/2026). Elle touchait la borne de 10
+  # minutes de son étape alors que TOUS ses tests passaient : #989 trois fois de
+  # suite (10 min 02 s à 10 min 03 s, run 41767366625), #990 (10 min 11 s), pour
+  # 7 minutes environ sur main un jour plus tôt. La borne est restée à 10 : c'est
+  # la tranche qui était trop grosse. Le temps cumulé des fichiers de test,
+  # lu dans l'artefact `vitest-reports-packages` de trois runs verts de main
+  # (41754980188, 41705918971, 41666360847), moyenne : tools 492 s, bench 344 s,
+  # db 324 s, orchestration 168 s, test-kit 71 s, memory 63 s, cli 40 s, adapters/mcp
+  # 33 s, auth 30 s, qa 23 s, mcp-server 20 s, docs 19 s, checkpoints 19 s, llm 16 s,
+  # shared 15 s, sandbox 9 s, delivery 7 s, le reste sous 3 s : 1 702 s en tout.
+  # `packages-1` = tools + bench (836 s), `packages-2` = tout le reste (866 s) :
+  # deux tranches égales à 4 % près. Une tranche est définie par EXCLUSION, pour
+  # qu'un paquet ajouté plus tard tombe dans la 2 plutôt que dans aucune ; la
+  # garde est scripts/tests/ci-shards.test.mjs. Quand l'une redevient trop grosse,
+  # on déplace un paquet de la 2 vers la 1 en relisant ces chiffres, pas à l'oreille.
   #
   # Mesuré sur la PR de #291 (run 35517309819, cache froid) : web 3 min 45 s
   # et 3 min 20 s, runner 3 min 37 s et 3 min 16 s, packages 4 min 45 s,
@@ -234,8 +250,15 @@ jobs:
             run: pnpm exec turbo run test --continue=dependencies-successful --filter=@nodal-agents/runner -- --shard=1/2
           - shard: runner-2
             run: pnpm exec turbo run test --continue=dependencies-successful --filter=@nodal-agents/runner -- --shard=2/2
-          - shard: packages
-            run: pnpm exec turbo run test --continue=dependencies-successful --filter=!@nodal-agents/web --filter=!@nodal-agents/runner
+          # Les tranches 1 et 2 se partagent les autres paquets (voir le
+          # commentaire du job). La 2 est définie par EXCLUSION : tout paquet
+          # qui n'est ni web, ni runner, ni dans la liste de la 1 y tombe, donc
+          # un paquet ajouté plus tard est testé sans que personne y pense.
+          # Garde : scripts/tests/ci-shards.test.mjs.
+          - shard: packages-1
+            run: pnpm exec turbo run test --continue=dependencies-successful --filter=@nodal-agents/tools --filter=@nodal-agents/bench
+          - shard: packages-2
+            run: pnpm exec turbo run test --continue=dependencies-successful --filter=!@nodal-agents/web --filter=!@nodal-agents/runner --filter=!@nodal-agents/tools --filter=!@nodal-agents/bench
     name: test (${{ matrix.shard }})
     steps:
       - uses: actions/checkout@v5
