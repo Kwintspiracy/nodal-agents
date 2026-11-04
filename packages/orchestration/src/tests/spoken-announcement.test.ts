@@ -22,12 +22,15 @@ import { buildSpokenAnnouncement } from '../spoken-announcement';
 import JOBS from './fixtures/spoken-announcement-jobs.json';
 
 const RULE =
-  'Tell them, in your own words and in the language of their request, that what they ' +
-  'asked for is done.\n' +
-  '- If the result is a short answer (a fact, a confirmation, a sentence or two), say it ' +
-  'in plain spoken words.\n' +
-  '- If it is a document, never read it out: no gist, no summary, no finding, no number, ' +
-  'no name from it.\n' +
+  'Tell them, in your own words, that what they asked for is done. Speak the language ' +
+  'of their request above, even when the result is written in another language.\n' +
+  // Judged on what was ASKED (replay 4: a news research classed as a "short
+  // answer" was summarised 5/5).
+  '- If they asked a question they want answered (a fact, whether something works), ' +
+  'say the answer simply, in plain spoken words.\n' +
+  '- If they asked for a piece of work (research, a document, a page, a file, a print, ' +
+  'a send), only confirm it is done: nothing from its content, no gist, no summary, no ' +
+  'finding, no number, no name.\n' +
   '- Never say where to read it, and never offer to send it anywhere: they know.\n' +
   '- If they need a fact so as not to be misled (something not finished or not confirmed ' +
   'yet), keep it, in a few words.\n' +

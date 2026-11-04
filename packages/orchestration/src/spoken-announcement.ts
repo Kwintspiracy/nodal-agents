@@ -30,11 +30,19 @@
 //     layout in Nodal, and I can send it to you on Telegram, Discord or
 //     Slack »). Le propriétaire : « Je sais où je peux les lire. » Les deux
 //     sont retirés, et les canaux avec eux : demander l'envoi reste une
-//     demande ordinaire. Aucune formule fixe : c'est l'agent qui parle.
+//     demande ordinaire. Aucune formule fixe : c'est l'agent qui parle ;
+//   - le critère « résultat court » contre « document » a laissé Haiku classer
+//     la recherche de f7aecffd en réponse courte, et la résumer (5/5). Le
+//     critère est donc ce qui a été DEMANDÉ, que la consigne cite : une
+//     question reçoit sa réponse, un travail (recherche, document, page,
+//     fichier, impression, envoi) sa seule confirmation ;
+//   - une demande en anglais au résultat en français (b41632f5) a été
+//     annoncée en français deux fois sur cinq : la langue est celle de la
+//     demande, même quand le résultat en a une autre.
 // La ligne de forme du tour vocal (`replyRenderingLine`) n'est PAS reprise :
 // son « la première phrase part pendant que la suite s'écrit » appelle une
-// suite, et une annonce n'en a pas. C'est le modèle qui juge si le résultat
-// est court ou un document ; le runner ne mesure aucune longueur.
+// suite, et une annonce n'en a pas. C'est le modèle qui juge question ou
+// travail ; le runner ne mesure aucune longueur.
 
 /**
  * La consigne de l'annonce : le système (la personnalité de l'agent, et le
@@ -61,12 +69,13 @@ export function buildSpokenAnnouncement(input: {
       `The person asked:\n${input.request.trim()}\n\n` +
       'The result of the work, written in the conversation where they can read it:\n' +
       `<<<\n${input.result.trim()}\n>>>\n\n` +
-      'Tell them, in your own words and in the language of their request, that what they ' +
-      'asked for is done.\n' +
-      '- If the result is a short answer (a fact, a confirmation, a sentence or two), say it ' +
-      'in plain spoken words.\n' +
-      '- If it is a document, never read it out: no gist, no summary, no finding, no number, ' +
-      'no name from it.\n' +
+      'Tell them, in your own words, that what they asked for is done. Speak the language ' +
+      'of their request above, even when the result is written in another language.\n' +
+      '- If they asked a question they want answered (a fact, whether something works), ' +
+      'say the answer simply, in plain spoken words.\n' +
+      '- If they asked for a piece of work (research, a document, a page, a file, a print, ' +
+      'a send), only confirm it is done: nothing from its content, no gist, no summary, no ' +
+      'finding, no number, no name.\n' +
       '- Never say where to read it, and never offer to send it anywhere: they know.\n' +
       '- If they need a fact so as not to be misled (something not finished or not confirmed ' +
       'yet), keep it, in a few words.\n' +
