@@ -56,10 +56,6 @@ const binding = (agentId: string, channel: string, enabled = true) =>
     enabled,
   });
 
-const RESULT =
-  '**Microsoft layoffs: latest news**\n\n1. Voluntary Exit Offer (26 Oct 2026). ' +
-  'Sources: NYT (https://www.nytimes.com/2026/10/26/technology/microsoft-buyouts-ai-spending.html)';
-
 describe('the spoken announcement of a finished voice job (#967) @cap:parler-a-un-agent/moteur', () => {
   it('names only the channels where a send arrives: enabled, with an approved conversation', async () => {
     const agentId = await newAgent();
