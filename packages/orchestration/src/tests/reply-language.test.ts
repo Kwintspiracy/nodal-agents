@@ -1,34 +1,32 @@
-// reply-language.test.ts — la langue du message auquel on répond gagne sur la
-// langue préférée enregistrée (#986).
+// reply-language.test.ts — l'agent répond dans la langue du message auquel il
+// répond, et il n'existe aucune langue préférée (#986).
 //
 // Mesuré le 04/11/2026 : dans une conversation EN ANGLAIS, le root a accusé
-// réception d'un `run_task` en français (« Je lance la recherche… »), puis rendu
-// le résultat du job en anglais. Le prompt portait deux règles sans arbitre :
-// « Mirror the user's language and tone » (personnalité par défaut de
-// l'onboarding) et le souvenir « Operator — preferred language: Francais »
-// (importance 5), écrit par l'entretien d'accueil.
+// réception d'un `run_task` en français (« Je lance la recherche… »). Rejeu du
+// tour dit, 5 tirages par variante : le déclencheur était le souvenir
+// « Operator — preferred language: Francais » qu'écrivait l'entretien d'accueil
+// (0 réponse française sur 10 sans lui), et une règle qui nommait cette
+// préférence, même pour la faire perdre, aggravait le défaut (6/10).
 //
-// La préséance se dit UNE fois, dans le socle (`language-mirror`, catalogue),
-// qui part sur toutes les surfaces. Ces tests regardent le prompt envoyé au
-// modèle — jamais sa réponse — sur plus que le scénario du ticket : tour de
-// chat, job lancé depuis le chat, job planifié, job délégué, canal, session CLI,
-// et un workspace qui n'a enregistré aucune langue.
+// Décision de Quentin : pas de langue préférée du tout. L'entretien ne la
+// demande plus, la migration 0162 archive ces souvenirs, et la règle du socle
+// (`language-mirror`) n'en nomme aucune. Ces tests regardent le prompt envoyé
+// au modèle — jamais sa réponse — sur toutes les surfaces, avec la ligne de
+// l'entretien présente dans la base telle que la migration la laisse :
+// archivée.
 
 import { describe, it, expect, beforeAll } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { agents, agentMemory, eq } from '@nodal-agents/db';
+import { openingMessages } from '@nodal-agents/shared';
 import { buildSystemPrompt } from '../system-prompt';
 
-/** La phrase de préséance, telle que le modèle la lit. */
-const PRECEDENCE =
-  'Reply in the language of the message you are answering, even over a preferred language the ' +
-  'person has stated: that preference applies when no message of theirs is there to mirror ' +
-  '(a scheduled run, an announcement, a notification).';
-/** Ce qui s'applique quand il n'y a rien à refléter. */
-const NOTHING_TO_MIRROR = 'with nothing to mirror, use the stated preference, or English';
+/** La règle, telle que le modèle la lit. */
+const RULE =
+  'Reply in the language of the message you are answering; a run with no message from the ' +
+  'person (a scheduled run) uses the language of its task text.';
 
-const PREFERRED = 'Operator — preferred language: Francais';
 const deployment = { os: 'Windows 11', networkMode: 'loopback' as const };
 const conversation = {
   id: 'conv-langue-1',
@@ -38,79 +36,89 @@ const conversation = {
   registeredProjects: [],
 };
 
-async function workspace(withPreferredLanguage: boolean): Promise<{
-  db: TestDb;
-  agent: Record<string, unknown>;
-}> {
-  const { db } = await spinUpTestDb();
-  const seed = await seedMinimal(db);
-  if (withPreferredLanguage) {
-    // La ligne exacte que l'entretien d'accueil écrit (OnboardingFlow.tsx).
-    await db.insert(agentMemory).values({
-      entityId: seed.entityId,
-      agentId: seed.agentId,
-      category: 'preference',
-      fact: PREFERRED,
-      importance: 5,
-    });
-  }
-  const [row] = await db.select().from(agents).where(eq(agents.id, seed.agentId)).limit(1);
-  return { db, agent: row as Record<string, unknown> };
-}
-
 /** Chaque façon dont un prompt part au modèle, avec son contexte réel. */
 const SURFACES: Array<[string, Record<string, unknown>]> = [
   ['un tour de chat', { origin: 'dashboard', surface: 'chat', conversation, deployment }],
   [
     'un tour de chat parlé',
-    {
-      origin: 'dashboard',
-      surface: 'chat',
-      conversation,
-      deployment,
-      replyRendering: 'spoken',
-    },
+    { origin: 'dashboard', surface: 'chat', conversation, deployment, replyRendering: 'spoken' },
   ],
   ['un job lancé depuis le chat', { origin: 'dashboard', conversation, deployment }],
   ['un job venu de Telegram', { origin: 'telegram', telegramChatId: '42', deployment }],
   [
     'un job venu du serveur MCP',
-    {
-      origin: 'mcp',
-      deployment,
-      triggerContext: { type: 'mcp', caller: 'client' },
-    },
+    { origin: 'mcp', deployment, triggerContext: { type: 'mcp', caller: 'client' } },
   ],
   ['un job délégué', { origin: 'api', isDelegated: true, delegationDepth: 1, deployment }],
   ['une session CLI de codage', { origin: 'api', surface: 'cli-runtime', deployment }],
-];
-
-describe('la langue du message gagne sur la langue préférée @cap:parler-a-un-agent/moteur', () => {
-  let db: TestDb;
-  let agent: Record<string, unknown>;
-  beforeAll(async () => {
-    ({ db, agent } = await workspace(true));
-  });
-
-  it.each(SURFACES)('%s porte la préséance ET la langue préférée', async (_label, ctx) => {
-    const prompt = await buildSystemPrompt(agent as never, db, ctx as never);
-    // Les deux règles arrivent au modèle — et l'une dit maintenant laquelle gagne.
-    expect(prompt).toContain(PREFERRED);
-    expect(prompt).toContain(PRECEDENCE);
-  });
-
-  it('un job planifié se sait planifié, et la règle l’envoie vers la langue préférée', async () => {
-    const prompt = await buildSystemPrompt(agent as never, db, {
+  [
+    'un job planifié',
+    {
       origin: 'cron',
       deployment,
       triggerContext: { type: 'cron', scheduleName: 'Revue du matin', prevRunAt: null },
+    },
+  ],
+];
+
+describe('la langue du message, et aucune langue préférée @cap:parler-a-un-agent/moteur', () => {
+  let db: TestDb;
+  let agent: Record<string, unknown>;
+  beforeAll(async () => {
+    ({ db } = await spinUpTestDb());
+    const seed = await seedMinimal(db);
+    // La ligne exacte que l'entretien écrivait (souvenir d'espace, sans agent),
+    // ARCHIVÉE comme la migration 0162 la laisse — et un vrai souvenir actif à
+    // côté, pour que le bloc mémoire soit bien rendu.
+    await db.insert(agentMemory).values([
+      {
+        entityId: seed.entityId,
+        agentId: null,
+        category: 'preference',
+        fact: 'Operator — preferred language: Francais',
+        importance: 5,
+        source: 'manual',
+        archived: true,
+      },
+      {
+        entityId: seed.entityId,
+        agentId: null,
+        category: 'context',
+        fact: 'Operator — what to call them: Quentin',
+        importance: 3,
+        source: 'manual',
+      },
+    ]);
+    const [row] = await db.select().from(agents).where(eq(agents.id, seed.agentId)).limit(1);
+    agent = row as Record<string, unknown>;
+  });
+
+  it.each(SURFACES)('%s porte la règle, et ne nomme aucune langue préférée', async (_l, ctx) => {
+    const prompt = await buildSystemPrompt(agent as never, db, ctx as never);
+    expect(prompt).toContain(RULE);
+    // Le bloc mémoire est bien là : l'absence ci-dessous n'est pas celle d'un
+    // prompt sans mémoire.
+    expect(prompt).toContain('Operator — what to call them: Quentin');
+    expect(prompt).not.toMatch(/preferred language/i);
+    expect(prompt).not.toMatch(/language preference|preferred .{0,20}language/i);
+  });
+
+  it('un job planifié se sait planifié, et reçoit le texte de tâche dont la règle parle', async () => {
+    const task = 'Every morning, summarise the three most important emails of the night.';
+    const prompt = await buildSystemPrompt(agent as never, db, {
+      origin: 'cron',
+      deployment,
+      task,
+      triggerContext: { type: 'cron', scheduleName: 'Revue du matin', prevRunAt: null },
     } as never);
-    // Le job ne devine pas qu'il est planifié : le bloc Runtime le dit…
     expect(prompt).toContain('- Scheduled run of "Revue du matin".');
-    // … et la règle range ce cas-là du côté de la préférence, pas du message.
-    expect(prompt).toContain('(a scheduled run, an announcement, a notification)');
-    expect(prompt).toContain(NOTHING_TO_MIRROR);
-    expect(prompt).toContain(PREFERRED);
+    expect(prompt).toContain(
+      'a run with no message from the person (a scheduled run) uses the language of its task text',
+    );
+    // Le texte de tâche est le message d'ouverture du job (execute.ts,
+    // `openingMessages(job.task, job.handoffNote)`) : c'est lui que le modèle
+    // reçoit, et lui que la règle désigne.
+    expect(openingMessages(task, null)).toEqual([{ role: 'user', content: task }]);
   });
 
   it('l’exemple du chat n’est plus une phrase française à recopier', async () => {
@@ -125,29 +133,4 @@ describe('la langue du message gagne sur la langue préférée @cap:parler-a-un-
     expect(prompt).not.toContain('Je lance');
     expect(prompt).toContain('(e.g. "I\'m starting X…") does NOT start anything');
   });
-});
-
-describe('un workspace sans langue préférée @cap:parler-a-un-agent/moteur', () => {
-  let db: TestDb;
-  let agent: Record<string, unknown>;
-  beforeAll(async () => {
-    ({ db, agent } = await workspace(false));
-  });
-
-  it.each(SURFACES)(
-    '%s : la règle tient, sans citer un souvenir qui n’existe pas',
-    async (_l, ctx) => {
-      const prompt = await buildSystemPrompt(agent as never, db, ctx as never);
-      expect(prompt).not.toContain('preferred language:');
-      expect(prompt).not.toContain('## Persistent memory');
-      // La préférence n'est nommée que comme condition (« a preferred language
-      // the person has stated »), jamais comme un fait (« your preferred
-      // language is », « the preferred language in memory »).
-      expect(prompt).toContain(PRECEDENCE);
-      expect(prompt).not.toMatch(/\bthe preferred language (in|from) (your )?memory\b/i);
-      expect(prompt).not.toMatch(/\byour preferred language is\b/i);
-      // Sans préférence ni message : l'anglais, dit explicitement.
-      expect(prompt).toContain(NOTHING_TO_MIRROR + ' if there is none yet');
-    },
-  );
 });
