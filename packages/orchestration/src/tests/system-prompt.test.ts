@@ -1932,8 +1932,8 @@ ${sentence}`).length > 0,
     'Short sentences carry it; tables, lists, headings, links and other markup do not ' +
     'survive being read aloud, and numbers, dates and units are heard as they are written, ' +
     'so write them the way they are said. ' +
-    'Whatever was asked, a question or a task you start, the reply answers just that, ' +
-    'in as few short sentences as it needs, then stops: no background, no extra advice, no ' +
+    'Whatever was asked, a question or a task you start, the reply is usually one sentence, ' +
+    'two at most, that answers just that, then stops: no background, no extra advice, no ' +
     'offer to do more, because the person asks again if they want more. ' +
     'A warning they need in order not to be misled stays. ' +
     'Open with one short sentence: it is spoken while the rest is still being written.';
@@ -2056,7 +2056,8 @@ ${sentence}`).length > 0,
   // not this test's subject (#967). Mutation verified: the sentence removed
   // from `replyRenderingLine` → red (first test); the sentence moved to the chat
   // surface line, or the `isDelegated` guard removed → red (second).
-  const BREVITY = 'the reply answers just that, in as few short sentences as it needs, then stops';
+  const BREVITY =
+    'the reply is usually one sentence, two at most, that answers just that, then stops';
   const BREVITY_NEVER = ['no background', 'no extra advice', 'no offer to do more'];
   const BREVITY_KEEPS_WARNING = 'A warning they need in order not to be misled stays.';
 

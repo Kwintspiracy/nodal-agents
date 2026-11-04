@@ -616,8 +616,8 @@ function replyRenderingLine(ctx: JobContext): string | null {
     // Le reste attend une deuxième question. Vaut pour toute demande, y compris
     // l'accusé d'une tâche lancée. Une consigne au modèle : le runner n'écrit
     // rien et ne coupe rien (invariant #2).
-    'Whatever was asked, a question or a task you start, the reply answers just that, ' +
-    'in as few short sentences as it needs, then stops: no background, no extra advice, no ' +
+    'Whatever was asked, a question or a task you start, the reply is usually one sentence, ' +
+    'two at most, that answers just that, then stops: no background, no extra advice, no ' +
     'offer to do more, because the person asks again if they want more. ' +
     'A warning they need in order not to be misled stays. ' +
     // #943 : la réponse est dite phrase par phrase, et la première part en
