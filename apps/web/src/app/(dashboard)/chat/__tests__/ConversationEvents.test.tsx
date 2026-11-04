@@ -379,6 +379,24 @@ describe('the spoken reply of a finished job plays in its conversation (#967) @c
     stopSpeaking();
     await flush();
     expect(audio.scheduled.map((s) => [s.samples, s.stopped])).toEqual([[[0.25, 0.25], true]]);
+
+    // The next voice (the person speaks again) plays and ends: the dropped
+    // announcement does not come back after it.
+    const next = startSpokenStream({ reply: 'Next.', onError: () => {} });
+    await act(async () => {
+      next.push({ seq: 0, sentence: 0, mimeType: 'audio/pcm', sampleRate: 4, bytes: ACK });
+      next.end();
+      await flush();
+    });
+    await act(async () => {
+      audio.scheduled[1]!.finish();
+      await flush();
+    });
+    await flush();
+    expect(audio.scheduled.map((s) => s.samples)).toEqual([
+      [0.25, 0.25],
+      [0.25, 0.25],
+    ]);
   });
 
   it('a voice the runner no longer has, or one that failed, is said; the reply stays written', async () => {
