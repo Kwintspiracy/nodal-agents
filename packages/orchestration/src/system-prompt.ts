@@ -632,7 +632,7 @@ function buildJobContextBlock(ctx: JobContext, availableTools: readonly string[]
     // In-app chat turn: the user reads your reply directly. You have EXACTLY ONE
     // tool here — `run_task` — and none of your built-in tools, connectors, or
     // skills. So: for plain conversation or recalling facts (your Persistent
-    // memory below is already loaded), just reply in plain text. To PERFORM an
+    // memory above is already loaded), just reply in plain text. To PERFORM an
     // action (use a connector/skill, delegate, send, fetch, or any multi-step
     // work), call `run_task` — it runs as a tracked job, which receives the
     // person's own words from the platform and your note beside them
@@ -641,7 +641,8 @@ function buildJobContextBlock(ctx: JobContext, availableTools: readonly string[]
     lines.push(
       '- surface: in-app dashboard chat — you are talking directly with the user; reply in ' +
         'plain text. For conversation or recalling facts, just reply (your durable facts are ' +
-        'loaded below). ' +
+        // #986 : la mémoire ouvre la moitié volatile, au-dessus de ce bloc.
+        'loaded above). ' +
         // #977 : ce partage entre répondre et escalader est le cadre que le
         // modèle, raisonnement coupé, disait à voix haute (« This is a general
         // knowledge question, so I can answer it directly »). Le choix est dit
@@ -1819,9 +1820,21 @@ export async function buildSystemPrompt(
         )
       : '';
 
+  // La mémoire OUVRE la moitié volatile (#986). Elle venait après le bloc
+  // Runtime, donc à ~1 700 caractères du message de la personne : des notes
+  // écrites dans une autre langue que ce message (où elle vit, ce qu'elle
+  // enseigne…) tiraient l'accusé de réception d'un `run_task` vers leur
+  // langue. Rejoué sur le tour dit du root, 20 tirages par variante : 10/20
+  // réponses dans la langue des notes avant, 4/20 avec la mémoire ici. Toute
+  // phrase ajoutée qui parle de langue faisait PIRE (15/20 avec une phrase
+  // dans l'en-tête de la mémoire) : c'est l'ordre des blocs qui change, pas
+  // un texte. Sans coût de cache : la moitié volatile n'est pas cachée, et la
+  // moitié stable ne bouge pas. Ce que la mémoire précède désormais — Runtime,
+  // Job context, Conversation, et ce qui suivait déjà — garde son contenu ;
+  // seule la phrase du chat qui situait la mémoire (« loaded above ») suit.
   const volatile =
-    runtimeBlock +
     memoryBlock +
+    runtimeBlock +
     jobContextBlock +
     conversationBlock +
     runningWorkBlock +
