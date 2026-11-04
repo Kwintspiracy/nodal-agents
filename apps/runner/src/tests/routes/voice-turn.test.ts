@@ -2325,6 +2325,25 @@ describe('a voice-launched job announces its end, out loud (#967) @cap:parler-a-
     stream.close();
   });
 
+  // The owner's test of 2026-11-04: he left the conversation page while the
+  // job ran. The dashboard shell listens to the WHOLE workspace: that is a
+  // listener, and the announcement is written and offered to it.
+  it('a workspace-wide listener (the dashboard shell, on any page) hears it: no conversation filter needed', async () => {
+    const app = createApp(makeDeps(), testEnv);
+    const conv = await conversation();
+    const shell = await listenEvents(app);
+    const sent = network({ announcement: { text: ANNOUNCEMENT } });
+    const job = await jobRow({ conversationId: conv, replyRendering: 'spoken' });
+    await finish(job, RESULT);
+    await waitUntil(() => ofJob(shell.events, job).length >= 2);
+    expect(ofJob(shell.events, job).map((e) => e.event)).toEqual(['job.finished', 'reply.audio']);
+    const voice = await readReply(app, ofJob(shell.events, job)[1]!.data['audioId'] as string);
+    expect(voice.events.at(-1)!.data).toEqual({ text: ANNOUNCEMENT, speechError: null });
+    expect(sent.announcement).toHaveLength(1);
+    expect((await rowOf(job)).spokenAnnouncement).toBe(ANNOUNCEMENT);
+    shell.close();
+  });
+
   it('nobody listening when the job finishes: nothing is written or synthesised, nothing is offered later', async () => {
     const app = createApp(makeDeps(), testEnv);
     const conv = await conversation();

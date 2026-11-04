@@ -6,6 +6,7 @@ import Sidebar from '@/components/Sidebar';
 import UserMenu from '@/components/UserMenu.tsx';
 import ThemedToaster from '@/components/ui/ThemedToaster';
 import SandboxBanner from '@/components/SandboxBanner.tsx';
+import SpokenAnnouncements from './SpokenAnnouncements.tsx';
 import { ApprovalsProvider, type PendingApproval } from '@/components/ApprovalsProvider';
 import { toPendingApproval } from '@/lib/pending-approval.ts';
 import { SkillUpdatesProvider, type SkillUpdateNotice } from '@/components/SkillUpdatesProvider';
@@ -175,6 +176,9 @@ export default async function DashboardLayout({ children }: { children: React.Re
             </main>
 
             <ThemedToaster />
+            {/* #967 : l'annonce dite d'un job lancé par la voix, entendue sur
+                toute page du tableau de bord, une fois par onglet. */}
+            <SpokenAnnouncements />
           </div>
         </SkillUpdatesProvider>
       </ChatFoldersProvider>
