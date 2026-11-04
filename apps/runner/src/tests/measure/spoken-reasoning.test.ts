@@ -275,10 +275,10 @@ describe('the #977 measurement tool', () => {
     expect((columns as unknown as { rows: unknown[] }).rows).toEqual([]);
   });
 
-  it('the default requests are 7 that need a task and 9 that do not, with the four English ones of #987', () => {
-    expect(SPOKEN_REASONING_REQUESTS).toHaveLength(16);
+  it('the default requests are 7 that need a task and 10 that do not, with the five English ones of #987', () => {
+    expect(SPOKEN_REASONING_REQUESTS).toHaveLength(17);
     expect(SPOKEN_REASONING_REQUESTS.filter((r) => r.needsTask)).toHaveLength(7);
-    expect(new Set(SPOKEN_REASONING_REQUESTS.map((r) => r.id)).size).toBe(16);
+    expect(new Set(SPOKEN_REASONING_REQUESTS.map((r) => r.id)).size).toBe(17);
     const english = SPOKEN_REASONING_REQUESTS.filter((r) => r.id.endsWith('-en')).map((r) => [
       r.text,
       r.needsTask,
@@ -287,6 +287,7 @@ describe('the #977 measurement tool', () => {
       ["What's the weather usually like in Tokyo in November?", false],
       ['How long does it take to boil an egg?', false],
       ["What's the difference between a virus and a bacterium?", false],
+      ['Tell me a three-paragraph story about a robot learning to cook.', false],
       ['Search the web for the latest news about Microsoft layoffs.', true],
     ]);
   });

@@ -56,13 +56,14 @@ export interface MeasureRequest {
 }
 
 /**
- * Les seize demandes par défaut : sept qui demandent un travail (une
+ * Les dix-sept demandes par défaut : sept qui demandent un travail (une
  * recherche, un fichier, une impression, une délégation de code, une
- * automatisation, une page à lire, une recherche sur le web), neuf qui n'en
+ * automatisation, une page à lire, une recherche sur le web), dix qui n'en
  * demandent aucun (l'heure ailleurs, un fait, un bonjour, un avis, un calcul
- * connu, une explication courte, et trois questions de la vie courante). Douze
- * en français, la langue du propriétaire ; quatre en anglais (#987), dont la
- * question du climat de Tokyo qui a ouvert le sujet de la longueur ;
+ * connu, une explication courte, et quatre demandes en anglais). Douze en français, la langue du
+ * propriétaire ; cinq en anglais (#987), dont la question du climat de Tokyo
+ * qui a ouvert le sujet de la longueur et une histoire de trois paragraphes
+ * qui en demande, elle, beaucoup ;
  * `--requests` en donne d'autres. Aucune ne sort de la base : le job qu'un tour
  * crée est annulé avec lui, jamais exécuté.
  */
@@ -112,6 +113,13 @@ export const SPOKEN_REASONING_REQUESTS: readonly MeasureRequest[] = [
   {
     id: 'virus-bacterium-en',
     text: "What's the difference between a virus and a bacterium?",
+    needsTask: false,
+  },
+  {
+    // Une demande de longueur (#987) : la règle de brièveté ne doit pas la
+    // plafonner. La réponse attendue garde ses trois paragraphes.
+    id: 'story-en',
+    text: 'Tell me a three-paragraph story about a robot learning to cook.',
     needsTask: false,
   },
   {

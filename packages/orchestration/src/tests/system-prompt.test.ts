@@ -1936,6 +1936,7 @@ ${sentence}`).length > 0,
     'two at most, that answers just that, then stops: no background, no extra advice, no ' +
     'offer to do more, because the person asks again if they want more. ' +
     'A warning they need in order not to be misled stays. ' +
+    'A reply the person asked to be long, a story, an email or a list, keeps the length asked. ' +
     'Open with one short sentence: it is spoken while the rest is still being written.';
 
   it('a spoken reply is stated once in Job context, on every surface that carries it (#941)', async () => {
@@ -2060,6 +2061,8 @@ ${sentence}`).length > 0,
     'the reply is usually one sentence, two at most, that answers just that, then stops';
   const BREVITY_NEVER = ['no background', 'no extra advice', 'no offer to do more'];
   const BREVITY_KEEPS_WARNING = 'A warning they need in order not to be misled stays.';
+  const BREVITY_KEEPS_LENGTH_ASKED =
+    'A reply the person asked to be long, a story, an email or a list, keeps the length asked.';
 
   it('a spoken chat turn carries the brevity rule, once, in the rendering line (#987)', async () => {
     const { entityId, root, worker } = await seedTeam();
@@ -2080,6 +2083,7 @@ ${sentence}`).length > 0,
         expect(line).toContain(BREVITY);
         for (const never of BREVITY_NEVER) expect(line).toContain(never);
         expect(line).toContain(BREVITY_KEEPS_WARNING);
+        expect(line).toContain(BREVITY_KEEPS_LENGTH_ASKED);
         // The kept parts of the line: no markup, numbers as said, a short first sentence.
         expect(line).toContain('other markup do not survive being read aloud');
         expect(line).toContain('write them the way they are said');
@@ -2111,6 +2115,7 @@ ${sentence}`).length > 0,
     for (const prompt of prompts) {
       expect(prompt).not.toContain(BREVITY);
       expect(prompt).not.toContain(BREVITY_KEEPS_WARNING);
+      expect(prompt).not.toContain(BREVITY_KEEPS_LENGTH_ASKED);
       for (const never of BREVITY_NEVER) expect(prompt).not.toContain(never);
     }
   });
