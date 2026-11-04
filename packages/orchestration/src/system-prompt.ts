@@ -657,7 +657,12 @@ function buildJobContextBlock(ctx: JobContext, availableTools: readonly string[]
         'it happens. The user’s own messages reach the job as they wrote them; what you write ' +
         'in it is your note beside them, read as yours. CRITICAL: writing in ' +
         'text that you will do ' +
-        'something (e.g. "Je lance X…") does NOT start anything — ONLY an actual `run_task` ' +
+        // #986 : l'exemple était en français (« Je lance X… »), dans un prompt
+        // anglais, sur la surface et l'acte mêmes où une conversation anglaise
+        // a reçu « Je lance la recherche… ». Un exemple est un modèle à copier :
+        // il est dit dans la langue du prompt, la langue de la réponse reste
+        // celle du message (« ## Language mirror »).
+        'something (e.g. "I\'m starting X…") does NOT start anything — ONLY an actual `run_task` ' +
         'tool call performs the action. If you intend to act, the `run_task` tool call is ' +
         // « It runs as a tracked job with your FULL toolset » vivait ici : la
         // description de l'outil le dit déjà, mot pour mot (#977, la place de

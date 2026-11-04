@@ -13,12 +13,16 @@
 // Le budget est un test, sur le modèle de chat-surface-cost.test.ts : faire
 // regrossir le socle devient une décision, pas une dérive.
 //
-// Le seuil, 5 000, et pourquoi il n'est pas plus bas : le socle budgété en
-// fait 4 973 (4 915, puis +58 net : la demi-phrase « a state a tool returned
+// Le seuil, 5 250, et pourquoi il n'est pas plus bas : le socle budgété en
+// fait 5 210 (4 915, puis +58 net : la demi-phrase « a state a tool returned
 // as waiting on a person is delivered, not blocked », revenue du banc `print`,
-// moins un raccourci de la phrase d'ouverture de Verify). Chacune des sections retirées, remise seule, le fait sortir du
+// moins un raccourci de la phrase d'ouverture de Verify ; puis +237 le
+// 04/11/2026, #986 : « Language mirror » dit que la langue du message gagne
+// sur la langue préférée enregistrée, et quand celle-ci s'applique. Décision
+// de Quentin, option A : la préséance se dit une fois, dans le socle, pour
+// tout agent. Le seuil 5 000 → 5 250 pour elle, et pour elle seule). Chacune des sections retirées, remise seule, le fait sortir du
 // budget, la plus petite (le bloc d'approbation, 343 car.) comprise. Descendre
-// le socle sous ~4 660 sans baisser le seuil rouvrirait ce trou : la marge est
+// le socle sous ~4 910 sans baisser le seuil rouvrirait ce trou : la marge est
 // voulue petite, une phrase, pas une section.
 //
 // Ce que le budget NE compte PAS : le bloc de rôle (`## Delegation discipline`
@@ -47,7 +51,7 @@ const budgeted = (block: string): string =>
 
 describe('le socle d’un job tient dans son budget', () => {
   for (const role of ['orchestrator', 'agent'] as const) {
-    it(`${role} : le socle hors bloc de rôle ≤ 5 000 caractères`, () => {
+    it(`${role} : le socle hors bloc de rôle ≤ 5 250 caractères`, () => {
       const block = socle(role);
       // Le filtre retire le bloc de rôle et seulement lui : sans ces
       // assertions, le test pourrait mesurer un bloc vidé.
@@ -56,7 +60,7 @@ describe('le socle d’un job tient dans son budget', () => {
       for (const kept of ['## Verify before done', '## Workspace hygiene', '## Memory discipline'])
         expect(budgeted(block)).toContain(kept);
       const n = budgeted(block).length;
-      expect(n, `socle budgété : ${n} car. (19 651 avant le régime)`).toBeLessThanOrEqual(5_000);
+      expect(n, `socle budgété : ${n} car. (19 651 avant le régime)`).toBeLessThanOrEqual(5_250);
     });
 
     it(`${role} : le socle entier, bloc de rôle compris, ≤ 6 000 caractères`, () => {
@@ -70,9 +74,16 @@ describe('chaque règle gardée garde une phrase repérable', () => {
   // Une ligne par règle : si une réécriture la perd, c'est ce cas qui rougit,
   // avec son nom. L'origine est dans le fichier qui porte la phrase.
   it.each([
-    ['parler la langue de l’utilisateur', "Reply in the language of the user's latest message"],
+    [
+      'parler la langue du message auquel on répond',
+      'Reply in the language of the message you are answering',
+    ],
+    [
+      'le message gagne sur la langue préférée (#986)',
+      'even over a preferred language the person has stated',
+    ],
     ['ne jamais traduire le code', 'Never translate code, identifiers'],
-    ['anglais au premier message ambigu', 'or English if there is none yet'],
+    ['anglais quand rien ne dit la langue', 'or English if there is none yet'],
     ['le ton en miroir', 'Mirror the tone too'],
     [
       'les termes techniques d’usage ne se traduisent pas',
