@@ -1,37 +1,30 @@
-// job-announcement.test.ts — le rejeu de l'annonce d'un job fini (#967), sur une
+// job-announcement.test.ts — le rejeu de l'annonce de jobs finis (#967), sur une
 // base de test et un FAUX modèle (le réseau est simulé à la frontière du
 // fournisseur ; la génération, la consigne et la clé passent par le vrai
 // chemin du runner).
 //
 // Ce qui se prouve : chaque annonce est relevée sur ce qu'elle fait (lire le
-// résultat, dire où le lire, proposer un canal, markdown, adresse web), la
-// requête au modèle est celle du runner, et le rejeu n'écrit RIEN en base.
+// résultat, nommer un canal, dire où le lire, markdown, adresse web), les
+// phrases identiques d'un essai à l'autre ET d'un job à l'autre sont
+// comptées (une annonce qui sonne comme une formule), la requête au modèle est
+// celle du runner, et le rejeu n'écrit RIEN en base.
 //
 // Mutations vérifiées (chacune rougit un cas) :
-//   - `observe: null` remplacé par un traceur → « writes nothing » (une ligne
-//     llm_calls apparaît) ;
-//   - `longestSharedPhrase` qui rend toujours null → « an announcement that
-//     reads the result ».
+//   - `observe: null` remplacé par un traceur → « writes nothing » ;
+//   - `longestSharedPhrase` qui rend toujours null → « records » et « phrase » ;
+//   - `sameness` qui ne compte que dans un job → « records » (le croisement).
 
 import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
 import { randomBytes } from 'node:crypto';
 import { _setMasterKeyForTests, encrypt } from '@nodal-agents/secrets';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import {
-  agentJobs,
-  agents,
-  channelBindings,
-  entityLlmKeys,
-  eq,
-  llmCalls,
-  telegramAllowedChats,
-  sql,
-} from '@nodal-agents/db';
+import { agentJobs, agents, entityLlmKeys, eq, llmCalls, sql } from '@nodal-agents/db';
 import {
   longestSharedPhrase,
-  measureJobAnnouncement,
+  measureJobAnnouncements,
   summarizeAnnouncements,
+  summarizeSameness,
 } from '../../measure/job-announcement.ts';
 
 vi.mock('../../../../../packages/llm/src/transport.ts', () => ({
@@ -39,7 +32,8 @@ vi.mock('../../../../../packages/llm/src/transport.ts', () => ({
 }));
 
 let db: TestDb;
-let jobId = '';
+let researchJob = '';
+let printJob = '';
 const RESULT =
   '**Microsoft layoffs: latest news (as of 4 Nov 2026)**\n\nThe main recent story is a voluntary ' +
   'buyout, not a layoff. About 60,000 employees are eligible. Source: https://www.nytimes.com/x';
@@ -70,35 +64,25 @@ beforeAll(async () => {
       model: 'anthropic/claude-haiku-5.5',
     })
     .returning();
-  await db.insert(channelBindings).values({
-    entityId: seed.entityId,
-    agentId: agent!.id,
-    channel: 'telegram',
-    credentials: JSON.stringify({ botToken: 'fake' }),
-    enabled: true,
-  });
-  await db.insert(telegramAllowedChats).values({
-    entityId: seed.entityId,
-    agentId: agent!.id,
-    chatId: 'owner',
-    role: 'owner',
-    status: 'active',
-  });
-  const [job] = await db
-    .insert(agentJobs)
-    .values({
-      entityId: seed.entityId,
-      agentId: agent!.id,
-      channel: 'dashboard',
-      task: 'Search the web for the latest news about Microsoft layoffs.',
-      status: 'completed',
-      result: RESULT,
-      replyRendering: 'spoken',
-      messages: [],
-      chainCount: 0,
-    })
-    .returning({ id: agentJobs.id });
-  jobId = job!.id;
+  const job = async (task: string, result: string) =>
+    (
+      await db
+        .insert(agentJobs)
+        .values({
+          entityId: seed.entityId,
+          agentId: agent!.id,
+          channel: 'dashboard',
+          task,
+          status: 'completed',
+          result,
+          replyRendering: 'spoken',
+          messages: [],
+          chainCount: 0,
+        })
+        .returning({ id: agentJobs.id })
+    )[0]!.id;
+  researchJob = await job('Search the web for the latest news about Microsoft layoffs.', RESULT);
+  printJob = await job('Print it on one page.', 'Printing; not confirmed out yet.');
 });
 
 afterEach(() => vi.unstubAllGlobals());
@@ -138,62 +122,75 @@ function fakeModel(answers: string[]): Array<{ model: string; system: string; us
 }
 
 describe('the announcement replay of #967 @cap:parler-a-un-agent/moteur', () => {
-  it('records what each announcement does, through the runner’s own generation, and writes nothing', async () => {
+  it('records what each announcement does, counts the sentences that repeat, and writes nothing', async () => {
     const before = await db.select({ n: sql<number>`count(*)` }).from(llmCalls);
     const seen = fakeModel([
-      'The research is ready. You can read it in Nodal, or I can send it to you on Telegram.',
+      // research, run 1 and 2
+      'All done. You can read it in Nodal, or I can send it on Telegram.',
       'The main recent story is a voluntary buyout, not a layoff. About 60,000 are eligible.',
+      // print, run 1 and 2
+      'All done. The page is printing, not out yet.',
       '**Done.** See https://www.nytimes.com/x',
     ]);
 
-    const measure = await measureJobAnnouncement(db as never, { jobId, runs: 3 });
-
-    expect(measure.job).toMatchObject({
-      id: jobId,
-      resultChars: RESULT.length,
-      channels: ['telegram'],
+    const measure = await measureJobAnnouncements(db as never, {
+      jobIds: [researchJob, printJob],
+      runs: 2,
     });
-    expect(seen).toHaveLength(3);
+
+    expect(measure.jobs.map((j) => j.id)).toEqual([researchJob, printJob]);
+    expect(seen).toHaveLength(4);
     expect(seen[0]!.model).toBe('anthropic/claude-haiku-5.5');
     expect(seen[0]!.system).toContain('You are Alfred.');
-    expect(seen[0]!.user).toContain('offer to send it to them on telegram');
     expect(seen[0]!.user).toContain(RESULT);
+    expect(seen[0]!.user).toContain('never offer to send it anywhere');
 
-    const [announces, reads, marked] = measure.records;
-    expect(announces).toMatchObject({
-      words: 19,
+    const [scripted, reads, printed, marked] = measure.records;
+    expect(scripted).toMatchObject({
+      jobId: researchJob,
+      run: 1,
+      words: 15,
       sentences: 2,
       sharedPhrase: null,
-      numbersFromResult: [],
-      saysWhere: true,
-      offersChannels: ['telegram'],
+      channelNames: ['telegram'],
+      whereToRead: ['read it', 'nodal'],
       markdown: false,
       url: false,
     });
     expect(reads).toMatchObject({
       sharedPhrase: 'the main recent story is a voluntary buyout not a layoff about 60 000',
       numbersFromResult: ['60000'],
-      saysWhere: false,
-      offersChannels: [],
+      channelNames: [],
+      whereToRead: [],
     });
-    // The URL read out is the result's own: it counts as reading it.
-    expect(marked).toMatchObject({
-      markdown: true,
-      url: true,
-      sharedPhrase: 'https www nytimes com x',
-    });
-    expect(summarizeAnnouncements(measure.records)).toContain(
-      'reads the result (a 5+ word phrase of it) 2/3',
-    );
+    expect(printed).toMatchObject({ jobId: printJob, channelNames: [], whereToRead: [] });
+    expect(marked).toMatchObject({ markdown: true, url: true });
 
-    // Nothing written: no traced call, no announcement stored on the row.
+    // "All done." is said by both jobs: a formula, across jobs.
+    expect(measure.sameness.acrossJobs).toEqual([
+      { sentence: 'All done.', jobs: [researchJob, printJob] },
+    ]);
+    expect(measure.sameness.withinJobs).toEqual([]);
+    expect(summarizeSameness(measure.sameness)).toContain('sentences repeated across jobs: 1');
+    expect(summarizeAnnouncements(measure.records.slice(0, 2))).toContain('names a channel 1/2');
+
+    // Nothing written: no traced call, no announcement stored on the rows.
     const after = await db.select({ n: sql<number>`count(*)` }).from(llmCalls);
     expect(Number(after[0]!.n)).toBe(Number(before[0]!.n));
-    const [row] = await db
-      .select({ spoken: agentJobs.spokenAnnouncement, result: agentJobs.result })
+    const rows = await db
+      .select({ spoken: agentJobs.spokenAnnouncement })
       .from(agentJobs)
-      .where(eq(agentJobs.id, jobId));
-    expect(row).toEqual({ spoken: null, result: RESULT });
+      .where(eq(agentJobs.id, researchJob));
+    expect(rows).toEqual([{ spoken: null }]);
+  });
+
+  it('the same sentence in two runs of one job is counted within that job', async () => {
+    fakeModel(['It is done.', 'It is done. Nice one.']);
+    const measure = await measureJobAnnouncements(db as never, { jobIds: [printJob], runs: 2 });
+    expect(measure.sameness.withinJobs).toEqual([
+      { jobId: printJob, sentence: 'It is done.', runs: 2 },
+    ]);
+    expect(measure.sameness.acrossJobs).toEqual([]);
   });
 
   it('a call the model refuses is recorded as a failure, with no key in it', async () => {
@@ -206,7 +203,7 @@ describe('the announcement replay of #967 @cap:parler-a-un-agent/moteur', () => 
         ),
       ),
     );
-    const measure = await measureJobAnnouncement(db as never, { jobId, runs: 1 });
+    const measure = await measureJobAnnouncements(db as never, { jobIds: [researchJob], runs: 1 });
     expect(measure.records[0]).toMatchObject({ text: null, code: 'announcement_failed' });
     expect(measure.records[0]!.detail ?? '').not.toContain('sk-or-v1-' + 'b'.repeat(64));
   });

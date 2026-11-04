@@ -2096,7 +2096,7 @@ describe('a voice-launched job announces its end, out loud (#967) @cap:parler-a-
     '**Microsoft layoffs: latest news (as of 4 Nov 2026)**\n\n' +
     '1. Voluntary Exit Offer to about 60,000 employees (26 Oct 2026). ' +
     'Sources: NYT (https://www.nytimes.com/2026/10/26/technology/microsoft-buyouts-ai-spending.html)';
-  const ANNOUNCEMENT = 'The research on Microsoft layoffs is ready. You can read it in Nodal.';
+  const ANNOUNCEMENT = 'Done, the Microsoft research is finished. It took a little over a minute.';
 
   it('a voice-launched job yields one announcement, after its job.finished: the result stays written, the announcement is said', async () => {
     const app = createApp(makeDeps(), testEnv);
@@ -2142,10 +2142,9 @@ describe('a voice-launched job announces its end, out loud (#967) @cap:parler-a-
     expect(asked.startsWith(`The person asked:\n${TRANSCRIPT}\n\n`)).toBe(true);
     expect(asked).toContain(`<<<\n${RESULT}\n>>>`);
     expect(asked).toContain(
-      'Do not tell them what it says: no gist, no summary, no finding, no number, no name from it.',
+      'Tell them, in your own words and in the language of their request, that what they asked for is done.',
     );
-    expect(asked).toContain('Never explain what you are saying or leaving out, or why.');
-    expect(asked).toContain('and nothing else: there is no channel you can send it on.');
+    expect(asked).toContain('Never say where to read it, and never offer to send it anywhere');
     // Its tokens are traced, on the job, under their own source.
     const traced = await db
       .select({ source: llmCalls.source })
@@ -2156,8 +2155,8 @@ describe('a voice-launched job announces its end, out loud (#967) @cap:parler-a-
     // What is SPOKEN: the acknowledgement, then the announcement, never the result.
     expect(sent.speech.map((s) => s['input'])).toEqual([
       'On it.',
-      'The research on Microsoft layoffs is ready.',
-      'You can read it in Nodal.',
+      'Done, the Microsoft research is finished.',
+      'It took a little over a minute.',
     ]);
     expect(voice.events.map((e) => e.event)).toEqual([
       'audio',
@@ -2188,7 +2187,9 @@ describe('a voice-launched job announces its end, out loud (#967) @cap:parler-a-
     stream.close();
   });
 
-  it('the announcement offers the channels where the person is reachable, read from the agent’s bindings', async () => {
+  // The owner, 2026-11-04: "Je sais où je peux les lire." The offer of a
+  // channel sounded scripted; it is gone, and the channels with it.
+  it('no channel is offered: even with a reachable Telegram, the announcement request names none', async () => {
     const app = createApp(makeDeps(), testEnv);
     const conv = await conversation();
     const stream = await listenEvents(app, conv);
@@ -2212,8 +2213,9 @@ describe('a voice-launched job announces its end, out loud (#967) @cap:parler-a-
       await finish(job, RESULT);
       await waitUntil(() => ofJob(stream.events, job).length >= 2);
       await readReply(app, ofJob(stream.events, job)[1]!.data['audioId'] as string);
-      expect(textOf(sent.announcement[0]!.messages.at(-1)!.content)).toContain(
-        'and offer to send it to them on telegram. Two short sentences at most.',
+      const rule = textOf(sent.announcement[0]!.messages.at(-1)!.content).split('>>>')[1]!;
+      expect(`${systemOf(sent.announcement[0]!)}\n${rule}`).not.toMatch(
+        /telegram|slack|discord|whatsapp|\bnodal\b/i,
       );
     } finally {
       await db.delete(telegramAllowedChats).where(eq(telegramAllowedChats.agentId, agentId));

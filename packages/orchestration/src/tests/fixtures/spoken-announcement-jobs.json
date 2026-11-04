@@ -16,5 +16,12 @@
     "kind": "short",
     "request": "Quelle est la capitale de l'Australie ?",
     "result": "La capitale de l'Australie est **Canberra**."
+  },
+  {
+    "job": "b41632f5",
+    "kind": "printed",
+    "note": "Written after job b41632f5 (a one-page magazine layout, printed), not copied from it: its file path and printer are left out.",
+    "request": "Could you summarize all your finding in, in a single page with a magazine format ready to print?",
+    "result": "The one-page magazine summary is printing. The printer accepted the job and it is still processing, so I can't confirm it has finished yet.\n\n- **File:** `outputs/magazine.html`\n- **Print status:** one A4 colour page, one copy. The last check showed \"processing\" with 0 impressions completed.\n- **Layout:** I checked the rendered image. It fits on one page, with the sources line and the page number at the bottom.\n\nThe page is in French, as the content was. It covers the arrival in France, the spread, the 2025 law, causes, impacts and control methods, with a box flagging what still needs checking."
   }
 ]

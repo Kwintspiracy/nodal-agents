@@ -4,9 +4,8 @@
 // personnalité, son modèle, sa chaîne de repli, et son effort « quand on lui
 // parle » (#977), puisque l'annonce est entendue. La consigne est
 // `buildSpokenAnnouncement` (packages/orchestration) : la demande et le
-// résultat, cités tels qu'en base, et les canaux où la personne est joignable
-// (`reachableChannels`). Ce qui revient est dit TEL QUEL : rien n'est coupé,
-// réécrit ni choisi ici (invariant #2).
+// résultat, cités tels qu'en base. Ce qui revient est dit TEL QUEL : rien
+// n'est coupé, réécrit ni choisi ici (invariant #2).
 //
 // Pourquoi une génération de plus plutôt qu'une seconde sortie demandée au job
 // lui-même : le résultat reste, à l'octet, ce qu'il est aujourd'hui sur toute
@@ -18,12 +17,12 @@
 
 import { agentJobs, agents, eq } from '@nodal-agents/db';
 import type { LlmCallObserver } from '@nodal-agents/llm';
-import { buildSpokenAnnouncement, reachableChannels } from '@nodal-agents/orchestration';
+import { buildSpokenAnnouncement } from '@nodal-agents/orchestration';
 import type { RunnerDeps } from '../deps.ts';
 import { resolveAgentLlmClient } from '../job/resolve-llm.ts';
 
 export type JobAnnouncement =
-  | { ok: true; text: string; channels: string[] }
+  | { ok: true; text: string }
   | { ok: false; code: string; detail?: string };
 
 /**
@@ -39,7 +38,6 @@ export async function writeJobAnnouncement(
     .select({
       task: agentJobs.task,
       result: agentJobs.result,
-      agentId: agents.id,
       entityId: agents.entityId,
       personality: agents.personality,
       model: agents.model,
@@ -68,10 +66,8 @@ export async function writeJobAnnouncement(
   );
   if (!resolved.ok) return { ok: false, code: 'announcement_unavailable', detail: resolved.reason };
 
-  const channels = await reachableChannels(db, row.agentId);
   const { system, prompt } = buildSpokenAnnouncement({
     personality: row.personality ?? '',
-    channels,
     request: row.task ?? '',
     result: row.result ?? '',
   });
@@ -90,5 +86,5 @@ export async function writeJobAnnouncement(
     };
   }
   if (text === '') return { ok: false, code: 'announcement_empty' };
-  return { ok: true, text, channels };
+  return { ok: true, text };
 }

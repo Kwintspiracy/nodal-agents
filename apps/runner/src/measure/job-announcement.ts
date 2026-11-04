@@ -1,25 +1,27 @@
-// measure/job-announcement.ts — rejouer l'annonce dite d'un job fini, et la relever (#967).
+// measure/job-announcement.ts — rejouer l'annonce dite de jobs finis, et la relever (#967).
 //
 // L'annonce est la génération que le runner fait quand un job lancé par la
 // voix finit (`writeJobAnnouncement`, chat/job-announcement.ts) : la MÊME
-// fonction, sur la ligne réelle d'un job (sa demande, son résultat, son agent,
-// ses canaux), autant de fois qu'on le demande. Chaque annonce est relevée sur
-// ce que le propriétaire a fixé (04/11) : ses mots, ses phrases, si elle LIT
-// le résultat au lieu de l'annoncer, si elle dit où le lire, si elle propose
-// un canal, et si elle porte une adresse web ou du markdown.
+// fonction, sur la ligne réelle de chaque job (sa demande, son résultat, son
+// agent), autant de fois qu'on le demande. Chaque annonce est relevée sur ce
+// que le propriétaire a fixé (04/11) : ses mots, ses phrases, si elle LIT le
+// résultat au lieu de l'annoncer, si elle nomme un canal ou dit où le lire
+// (« je sais où je peux les lire »), si elle porte une adresse web ou du
+// markdown — et si elle sonne comme une formule : les phrases identiques
+// d'un essai à l'autre, et d'un job à l'autre.
 //
 // CE QU'ELLE ÉCRIT DANS LA BASE : rien. `writeJobAnnouncement` ne fait que lire
-// (le job, l'agent, ses liaisons, sa clé) ; l'annonce n'est pas rangée, et
-// aucun traceur d'appel n'est branché (`observe: null`). Les appels au modèle
-// sont réels, et facturés sur la clé de l'agent.
+// (le job, l'agent, sa clé) ; l'annonce n'est pas rangée, et aucun traceur
+// d'appel n'est branché (`observe: null`). Les appels au modèle sont réels, et
+// facturés sur la clé de l'agent.
 
 import { splitSentences } from '@nodal-agents/speech';
-import { redactSecretsInText } from '@nodal-agents/shared';
+import { CHANNELS, redactSecretsInText } from '@nodal-agents/shared';
 import { agentJobs, eq, type AnyDrizzleDb } from '@nodal-agents/db';
-import { reachableChannels } from '@nodal-agents/orchestration';
 import { writeJobAnnouncement, type JobAnnouncement } from '../chat/job-announcement.ts';
 
 export interface AnnouncementRecord {
+  jobId: string;
   run: number;
   /** null : l'annonce n'a pas pu s'écrire (`code`, `detail`). */
   text: string | null;
@@ -35,14 +37,17 @@ export interface AnnouncementRecord {
   sharedPhrase: string | null;
   /** Les nombres du résultat (3 chiffres et plus) que l'annonce répète. */
   numbersFromResult: string[];
-  /** L'annonce dit où lire le résultat (« Nodal »). */
-  saysWhere: boolean;
-  /** Les canaux joignables que l'annonce nomme. */
-  offersChannels: string[];
+  /** Les canaux de messagerie que l'annonce nomme (la liste des canaux de Nodal). */
+  channelNames: string[];
+  /** Les tournures « où le lire » que l'annonce porte. */
+  whereToRead: string[];
 }
 
 const MARKDOWN = /(^|\n)\s*(#{1,6}\s|[-*+]\s|\d+[.)]\s)|\*\*|__|`/;
 const URL = /https?:\/\/|www\./i;
+/** « Où le lire », en anglais et en français : Nodal nommé, ou un « lire / read it ». */
+const WHERE_TO_READ =
+  /\bnodal\b|\bread (it|the|them|this|that|your)\b|\breadable\b|\blire\b|\blis-le\b|\bconsulter\b/gi;
 
 function normalisedWords(text: string): string[] {
   return text
@@ -78,99 +83,146 @@ function numbersOf(text: string): string[] {
 
 /** Le relevé d'une annonce. */
 export function recordAnnouncement(
+  jobId: string,
   run: number,
   out: JobAnnouncement,
   ms: number,
   result: string,
-  channels: readonly string[],
 ): AnnouncementRecord {
+  const empty = {
+    jobId,
+    run,
+    ms,
+    words: 0,
+    sentences: 0,
+    markdown: false,
+    url: false,
+    sharedPhrase: null,
+    numbersFromResult: [],
+    channelNames: [],
+    whereToRead: [],
+  };
   if (!out.ok) {
     return {
-      run,
+      ...empty,
       text: null,
       code: out.code,
       detail: out.detail ? redactSecretsInText(out.detail) : null,
-      ms,
-      words: 0,
-      sentences: 0,
-      markdown: false,
-      url: false,
-      sharedPhrase: null,
-      numbersFromResult: [],
-      saysWhere: false,
-      offersChannels: [],
     };
   }
   const text = out.text;
   const resultNumbers = new Set(numbersOf(result));
   return {
-    run,
+    ...empty,
     text,
     code: null,
     detail: null,
-    ms,
     words: text.split(/\s+/).filter((w) => w !== '').length,
     sentences: splitSentences(text).length,
     markdown: MARKDOWN.test(text),
     url: URL.test(text),
     sharedPhrase: longestSharedPhrase(text, result),
     numbersFromResult: numbersOf(text).filter((n) => resultNumbers.has(n)),
-    saysWhere: /\bnodal\b/i.test(text),
-    offersChannels: channels.filter((c) => new RegExp(`\\b${c}\\b`, 'i').test(text)),
+    channelNames: CHANNELS.filter((c) => new RegExp(`\\b${c}\\b`, 'i').test(text)),
+    whereToRead: [...new Set((text.match(WHERE_TO_READ) ?? []).map((m) => m.toLowerCase()))],
   };
 }
 
+/** Une phrase, comparée sans casse ni ponctuation. */
+function sentenceKey(sentence: string): string {
+  return normalisedWords(sentence).join(' ');
+}
+
+export interface Sameness {
+  /** Les phrases dites dans PLUS d'un essai d'un même job, avec le nombre d'essais. */
+  withinJobs: Array<{ jobId: string; sentence: string; runs: number }>;
+  /** Les phrases dites par PLUS d'un job, avec les jobs. */
+  acrossJobs: Array<{ sentence: string; jobs: string[] }>;
+}
+
+/** Ce qui se répète : la même phrase d'un essai à l'autre, et d'un job à l'autre. */
+export function sameness(records: readonly AnnouncementRecord[]): Sameness {
+  const runsOf = new Map<string, Map<string, Set<number>>>();
+  const jobsOf = new Map<string, Set<string>>();
+  const shown = new Map<string, string>();
+  for (const r of records) {
+    if (r.text === null) continue;
+    for (const s of splitSentences(r.text)) {
+      const key = sentenceKey(s);
+      if (key === '') continue;
+      shown.set(key, shown.get(key) ?? s.trim());
+      const byJob = runsOf.get(r.jobId) ?? new Map<string, Set<number>>();
+      runsOf.set(r.jobId, byJob);
+      byJob.set(key, (byJob.get(key) ?? new Set()).add(r.run));
+      jobsOf.set(key, (jobsOf.get(key) ?? new Set()).add(r.jobId));
+    }
+  }
+  const withinJobs: Sameness['withinJobs'] = [];
+  for (const [jobId, byJob] of runsOf) {
+    for (const [key, runs] of byJob) {
+      if (runs.size > 1) withinJobs.push({ jobId, sentence: shown.get(key)!, runs: runs.size });
+    }
+  }
+  const acrossJobs: Sameness['acrossJobs'] = [];
+  for (const [key, jobs] of jobsOf) {
+    if (jobs.size > 1) acrossJobs.push({ sentence: shown.get(key)!, jobs: [...jobs] });
+  }
+  return { withinJobs, acrossJobs };
+}
+
 export interface AnnouncementMeasure {
-  job: { id: string; agentId: string; resultChars: number; channels: string[] };
+  jobs: Array<{ id: string; agentId: string; resultChars: number }>;
   records: AnnouncementRecord[];
+  sameness: Sameness;
 }
 
 /**
- * Rejoue `runs` fois l'annonce du job `jobId`. `announce` : la génération ; par
- * défaut celle du runner, sans traceur (rien n'est écrit en base).
+ * Rejoue `runs` fois l'annonce de chacun des jobs `jobIds`. `announce` : la
+ * génération ; par défaut celle du runner, sans traceur (rien n'est écrit en
+ * base).
  */
-export async function measureJobAnnouncement(
+export async function measureJobAnnouncements(
   db: AnyDrizzleDb,
   opts: {
-    jobId: string;
+    jobIds: readonly string[];
     runs: number;
     announce?: (db: AnyDrizzleDb, jobId: string) => Promise<JobAnnouncement>;
     onRecord?: (r: AnnouncementRecord) => void;
   },
 ): Promise<AnnouncementMeasure> {
-  const [job] = await db
-    .select({ agentId: agentJobs.agentId, result: agentJobs.result })
-    .from(agentJobs)
-    .where(eq(agentJobs.id, opts.jobId))
-    .limit(1);
-  if (!job?.agentId) throw new Error(`no job ${opts.jobId} with an agent`);
-  const result = job.result ?? '';
-  const channels = await reachableChannels(db, job.agentId);
   const announce = opts.announce ?? ((d, id) => writeJobAnnouncement(d, id, { observe: null }));
+  const jobs: AnnouncementMeasure['jobs'] = [];
   const records: AnnouncementRecord[] = [];
-  for (let run = 1; run <= opts.runs; run++) {
-    const startedAt = Date.now();
-    let out: JobAnnouncement;
-    try {
-      out = await announce(db, opts.jobId);
-    } catch (err) {
-      out = {
-        ok: false,
-        code: 'announcement_threw',
-        detail: err instanceof Error ? err.message : String(err),
-      };
+  for (const jobId of opts.jobIds) {
+    const [job] = await db
+      .select({ agentId: agentJobs.agentId, result: agentJobs.result })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, jobId))
+      .limit(1);
+    if (!job?.agentId) throw new Error(`no job ${jobId} with an agent`);
+    const result = job.result ?? '';
+    jobs.push({ id: jobId, agentId: job.agentId, resultChars: result.length });
+    for (let run = 1; run <= opts.runs; run++) {
+      const startedAt = Date.now();
+      let out: JobAnnouncement;
+      try {
+        out = await announce(db, jobId);
+      } catch (err) {
+        out = {
+          ok: false,
+          code: 'announcement_threw',
+          detail: err instanceof Error ? err.message : String(err),
+        };
+      }
+      const r = recordAnnouncement(jobId, run, out, Date.now() - startedAt, result);
+      records.push(r);
+      opts.onRecord?.(r);
     }
-    const r = recordAnnouncement(run, out, Date.now() - startedAt, result, channels);
-    records.push(r);
-    opts.onRecord?.(r);
   }
-  return {
-    job: { id: opts.jobId, agentId: job.agentId, resultChars: result.length, channels },
-    records,
-  };
+  return { jobs, records, sameness: sameness(records) };
 }
 
-/** Le résumé : combien d'annonces sur combien font chaque chose. */
+/** Le résumé d'un job : combien d'annonces sur combien font chaque chose. */
 export function summarizeAnnouncements(records: readonly AnnouncementRecord[]): string {
   const ok = records.filter((r) => r.text !== null);
   const count = (f: (r: AnnouncementRecord) => boolean) => `${ok.filter(f).length}/${ok.length}`;
@@ -186,8 +238,19 @@ export function summarizeAnnouncements(records: readonly AnnouncementRecord[]): 
     `words ${words.join(', ') || '-'} (median ${words[Math.floor(words.length / 2)] ?? '-'})`,
     `reads the result (a 5+ word phrase of it) ${count((r) => r.sharedPhrase !== null)}`,
     `repeats numbers of the result ${count((r) => r.numbersFromResult.length > 0)}`,
-    `says where to read it ${count((r) => r.saysWhere)}`,
-    `offers a channel ${count((r) => r.offersChannels.length > 0)}`,
+    `names a channel ${count((r) => r.channelNames.length > 0)}`,
+    `says where to read it ${count((r) => r.whereToRead.length > 0)}`,
     `markdown ${count((r) => r.markdown)}, url ${count((r) => r.url)}`,
   ].join('\n');
+}
+
+/** Le résumé de ce qui se répète. */
+export function summarizeSameness(s: Sameness): string {
+  const lines = [
+    `sentences repeated across runs of one job: ${s.withinJobs.length}`,
+    ...s.withinJobs.map((w) => `  ${w.jobId.slice(0, 8)} ×${w.runs}: "${w.sentence}"`),
+    `sentences repeated across jobs: ${s.acrossJobs.length}`,
+    ...s.acrossJobs.map((a) => `  ${a.jobs.map((j) => j.slice(0, 8)).join(', ')}: "${a.sentence}"`),
+  ];
+  return lines.join('\n');
 }
