@@ -43,8 +43,8 @@ function answerFor(url: string): Response {
       ],
     });
   }
-  if (url.includes('/chat/completions')) {
-    return Response.json({ choices: [{ message: { content: 'bonjour' } }] });
+  if (url.includes('/audio/transcriptions')) {
+    return Response.json({ text: 'bonjour', usage: { seconds: 1 } });
   }
   return Response.json({ candidates: [{ content: { parts: [{ text: 'bonjour' }] } }] });
 }
@@ -94,7 +94,7 @@ describe('adapters use the connection’s fetch, never the global one', () => {
       });
       const { urls, connection } = recorder();
       const out = await getTranscriptionAdapter(provider).transcribe(
-        { audio: new Uint8Array([1, 2]), mimeType: 'audio/wav' },
+        { audio: new Uint8Array([1, 2]), mimeType: 'audio/wav', model: 'x-ai/grok-stt-1.0' },
         connection,
       );
       expect(out.text).toBe('bonjour');
@@ -139,9 +139,13 @@ describe('bindSpeech / bindTranscription', () => {
   it('a bound transcription transcribes with its connection', async () => {
     const { urls, connection } = recorder();
     const listen = bindTranscription(getTranscriptionAdapter('openrouter'), connection);
-    const out = await listen.transcribe({ audio: new Uint8Array([1]), mimeType: 'audio/ogg' });
+    const out = await listen.transcribe({
+      audio: new Uint8Array([1]),
+      mimeType: 'audio/ogg',
+      model: 'x-ai/grok-stt-1.0',
+    });
     expect(out.text).toBe('bonjour');
-    expect(urls).toEqual(['https://openrouter.ai/api/v1/chat/completions']);
+    expect(urls).toEqual(['https://openrouter.ai/api/v1/audio/transcriptions']);
   });
 
   it('refuses an empty key when binding', () => {

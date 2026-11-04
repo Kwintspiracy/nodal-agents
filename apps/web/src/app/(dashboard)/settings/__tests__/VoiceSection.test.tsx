@@ -76,7 +76,24 @@ const GOOGLE = {
   cacheSeconds: 3600,
 };
 const GOOGLE_NO_KEY = { source: 'google', state: 'unavailable', code: 'voice_key_missing' };
-const FIRST = { source: 'openrouter', model: 'google/gemini-3.8-flash-tts', voice: 'Kore' };
+const FIRST = {
+  source: 'openrouter',
+  model: 'google/gemini-3.8-flash-tts',
+  voice: 'Kore',
+  transcriptionModel: 'x-ai/grok-stt-1.0',
+};
+
+/** The models of OpenRouter's transcription endpoint (#976). */
+const EAR = {
+  state: 'available',
+  models: [
+    { id: 'x-ai/grok-stt-1.0', label: 'SpaceXAI: Grok STT 1.0' },
+    { id: 'openai/gpt-transcribe', label: 'OpenAI: GPT Transcribe' },
+  ],
+  listedAt: '2026-11-03T10:00:00.000Z',
+  cacheSeconds: 3600,
+};
+const EAR_NO_KEY = { state: 'unavailable', code: 'voice_key_missing' };
 
 type Seen = { method: string; url: string; body: unknown };
 
@@ -94,7 +111,8 @@ beforeEach(() => {
   seen = [];
   audio = installFakeAudio(vi.stubGlobal);
   answers = {
-    state: () => Response.json({ setting: FIRST, sources: [OPENROUTER, GOOGLE] }),
+    state: () =>
+      Response.json({ setting: FIRST, sources: [OPENROUTER, GOOGLE], transcription: EAR }),
     put: (body) => Response.json(body),
     sample: () =>
       new Response(
@@ -110,7 +128,16 @@ beforeEach(() => {
             },
           ],
           ['audio_end', { sentence: 0, complete: true }],
-          ['done', { speechError: null, source: 'openrouter', model: 'x', voice: 'y' }],
+          [
+            'done',
+            {
+              speechError: null,
+              source: 'openrouter',
+              model: 'x',
+              voice: 'y',
+              transcriptionModel: 'x-ai/grok-stt-1.0',
+            },
+          ],
         ]),
         { headers: { 'content-type': 'text/event-stream' } },
       ),
@@ -214,7 +241,14 @@ describe('the Voice section @cap:parler-a-un-agent/ecran', () => {
       {
         method: 'PUT',
         url: '/api/voice/setting',
-        body: { setting: { source: 'openrouter', model: 'x-ai/grok-voice-tts-1.0', voice: 'leo' } },
+        body: {
+          setting: {
+            source: 'openrouter',
+            model: 'x-ai/grok-voice-tts-1.0',
+            voice: 'leo',
+            transcriptionModel: 'x-ai/grok-stt-1.0',
+          },
+        },
       },
     ]);
     expect(container.textContent).not.toContain('Save');
@@ -234,7 +268,8 @@ describe('the Voice section @cap:parler-a-un-agent/ecran', () => {
   });
 
   it('Google without a key: says so and what to do, offers no model', async () => {
-    answers.state = () => Response.json({ setting: FIRST, sources: [OPENROUTER, GOOGLE_NO_KEY] });
+    answers.state = () =>
+      Response.json({ setting: FIRST, sources: [OPENROUTER, GOOGLE_NO_KEY], transcription: EAR });
     await render();
     await click(q('voice-source-google'));
     expect(q('voice-source-unavailable')!.textContent).toBe(
@@ -257,6 +292,7 @@ describe('the Voice section @cap:parler-a-un-agent/ecran', () => {
         url: '/api/voice/sample',
         body: {
           text: 'Hello, this is how I sound when I answer you.',
+          // The voice only: the sample speaks, it does not listen (#976).
           setting: { source: 'openrouter', model: 'x-ai/grok-voice-tts-1.0', voice: 'eve' },
         },
       },
@@ -314,6 +350,7 @@ describe('the Voice section @cap:parler-a-un-agent/ecran', () => {
               source: 'openrouter',
               model: 'minimax/speech-2.8-turbo',
               voice: 'English_CalmWoman',
+              transcriptionModel: 'x-ai/grok-stt-1.0',
             },
           ],
         ]),
@@ -350,6 +387,7 @@ describe('the Voice section @cap:parler-a-un-agent/ecran', () => {
               source: 'google',
               model: 'gemini-3.8-flash-tts',
               voice: 'Kore',
+              transcriptionModel: 'x-ai/grok-stt-1.0',
             },
           ],
         ]),
@@ -417,6 +455,7 @@ describe('the Voice section @cap:parler-a-un-agent/ecran', () => {
         setting: null,
         settingProblem: { code: 'voice_setting_unreadable' },
         sources: [OPENROUTER, GOOGLE],
+        transcription: EAR,
       });
     await render();
     expect(q('voice-setting-problem')!.textContent).toBe(
@@ -424,5 +463,65 @@ describe('the Voice section @cap:parler-a-un-agent/ecran', () => {
     );
     await click(q('voice-source-openrouter'));
     expect(optionTexts('voice-model')[0]).toBe('Choose a model');
+  });
+});
+
+describe('the Voice section — the transcription model (#976) @cap:parler-a-un-agent/ecran', () => {
+  it('shows the stored model among those OpenRouter lists for transcription, and how long the list is kept', async () => {
+    await render();
+    expect(q<HTMLSelectElement>('voice-transcription')!.value).toBe('x-ai/grok-stt-1.0');
+    expect(optionTexts('voice-transcription')).toEqual([
+      'Choose a model',
+      'SpaceXAI: Grok STT 1.0',
+      'OpenAI: GPT Transcribe',
+    ]);
+    expect(q('voice-transcription-listed')!.textContent).toBe(
+      'Transcription models listed by OpenRouter, kept for an hour.',
+    );
+  });
+
+  // Mutation verified: `pickEar` not wired (the select changes nothing) → red.
+  it('choosing another transcription model, then Save, sends it with the voice unchanged', async () => {
+    await render();
+    await choose('voice-transcription', 'openai/gpt-transcribe');
+    await act(async () => {
+      q<HTMLFormElement>('voice-section')!.requestSubmit();
+    });
+    await act(async () => {});
+    expect(seen.filter((s) => s.method === 'PUT').map((s) => s.body)).toEqual([
+      { setting: { ...FIRST, transcriptionModel: 'openai/gpt-transcribe' } },
+    ]);
+  });
+
+  it('without an OpenRouter key: says so, offers no model, and the voice stays choosable', async () => {
+    answers.state = () =>
+      Response.json({ setting: FIRST, sources: [OPENROUTER, GOOGLE], transcription: EAR_NO_KEY });
+    await render();
+    expect(q('voice-transcription')).toBeNull();
+    expect(q('voice-transcription-unavailable')!.textContent).toBe(
+      'No OpenRouter key in this workspace. Add one in LLM Providers to transcribe what you say.',
+    );
+    expect(q<HTMLSelectElement>('voice-model')!.value).toBe('google/gemini-3.8-flash-tts');
+  });
+
+  it('a model that did not write down what the voice said is refused at Save, with what it wrote', async () => {
+    answers.put = () =>
+      Response.json(
+        {
+          error: 'transcription_not_faithful',
+          source: 'openrouter',
+          detail: 'deepgram/nova-3 wrote nothing for the voice saying "OK."',
+        },
+        { status: 409 },
+      );
+    await render();
+    await choose('voice-transcription', 'openai/gpt-transcribe');
+    await act(async () => {
+      q<HTMLFormElement>('voice-section')!.requestSubmit();
+    });
+    await act(async () => {});
+    expect(q('voice-save-error')!.textContent).toBe(
+      'This model did not write down what the voice said, so it was not saved: deepgram/nova-3 wrote nothing for the voice saying "OK."',
+    );
   });
 });
