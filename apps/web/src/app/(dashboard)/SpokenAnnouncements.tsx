@@ -15,12 +15,18 @@
 // One player per tab: the conversation page only re-reads
 // (`ConversationEvents`), it does not play.
 //
+// The stream opens once the tab has started a voice turn
+// (`armSpokenAnnouncements`, the mic's press), not on every page of every tab:
+// a stream that never closes made every dashboard page one that never finishes
+// loading (#992's e2e, which waits for the network to go idle). Only a tab
+// where the person spoke expects an announcement.
+//
 // The dashboard closed entirely: nothing is said, and nothing is replayed
 // later. The result is in the conversation, written.
 
 import { useEffect } from 'react';
 import { toast } from 'sonner';
-import { playJobReply } from './chat/job-reply-voice.ts';
+import { playJobReply, useSpokenAnnouncementsArmed } from './chat/job-reply-voice.ts';
 
 /** How many finished jobs' replies are kept for the "Speaking" pill of the voice that follows. */
 const REPLIES_KEPT = 50;
@@ -35,7 +41,9 @@ function dataOf(e: MessageEvent): Record<string, unknown> | null {
 }
 
 export default function SpokenAnnouncements() {
+  const armed = useSpokenAnnouncementsArmed();
   useEffect(() => {
+    if (!armed) return;
     const source = new EventSource('/api/events');
     // The result each finished job carries: the thread shows it, and the
     // "Speaking" pill marks it while its announcement plays.
@@ -72,7 +80,7 @@ export default function SpokenAnnouncements() {
       leaving.abort();
       source.close();
     };
-  }, []);
+  }, [armed]);
 
   return null;
 }

@@ -75,6 +75,7 @@ const { startSpokenStream, stopSpeaking, useSpeaking } = await import('../chat/v
 const { installFakeAudio, pcmBase64, sseBody } = await import('../chat/__tests__/fake-audio.ts');
 const { ApprovalsProvider } = await import('@/components/ApprovalsProvider');
 const { default: SpokenAnnouncements } = await import('../SpokenAnnouncements.tsx');
+const { armSpokenAnnouncements } = await import('../chat/job-reply-voice.ts');
 const { default: ConversationEvents } = await import('../chat/[id]/ConversationEvents.tsx');
 
 let container: HTMLDivElement;
@@ -112,8 +113,12 @@ async function flush(): Promise<void> {
   });
 }
 
-/** The shell alone (any page but the conversation), or with the conversation page. */
-async function render(withConversationPage = false): Promise<void> {
+/**
+ * The shell alone (any page but the conversation), or with the conversation
+ * page, in a tab where the person has spoken (`arm`, the mic's press).
+ */
+async function render(withConversationPage = false, arm = true): Promise<void> {
+  if (arm) armSpokenAnnouncements();
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
@@ -172,6 +177,16 @@ afterEach(() => {
 });
 
 describe('the announcement of a finished voice job is heard on any dashboard page (#967) @cap:parler-a-un-agent/ecran', () => {
+  // FIRST in this file (its module state is its own): the tab has not spoken yet.
+  it('before any voice turn in the tab: no stream is open (a page still finishes loading); the press opens it', async () => {
+    await render(false, false);
+    expect(FakeEventSource.all).toEqual([]);
+    await act(async () => {
+      armSpokenAnnouncements();
+    });
+    expect(FakeEventSource.all.map((s) => s.url)).toEqual(['/api/events']);
+  });
+
   it('no conversation page open: the shell, on the workspace stream, plays it once, at once', async () => {
     voices.set('aud-j1', voiceStream(SPOKEN_JOB));
     await render();

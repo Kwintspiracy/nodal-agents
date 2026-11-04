@@ -885,3 +885,39 @@ describe('the spoken reply arrives as it is written (#943) @cap:parler-a-un-agen
     expect(audio.scheduled).toEqual([]);
   });
 });
+
+// #967 — the work a spoken turn launches announces itself when it finishes,
+// through the dashboard shell's player (`SpokenAnnouncements`). It listens only
+// once the tab has spoken: the PRESS arms it, before the turn leaves, so a job
+// that finishes fast is already heard. Mutation verified: the
+// `armSpokenAnnouncements()` call removed from `press` → red.
+describe('the press arms the announcements of the work it launches (#967) @cap:parler-a-un-agent/ecran', () => {
+  it('holding the mic opens the workspace event stream of the shell player', async () => {
+    const opened: string[] = [];
+    vi.stubGlobal(
+      'EventSource',
+      class {
+        static readonly CLOSED = 2;
+        readyState = 1;
+        onerror: (() => void) | null = null;
+        constructor(url: string) {
+          opened.push(url);
+        }
+        addEventListener(): void {}
+        close(): void {
+          this.readyState = 2;
+        }
+      },
+    );
+    const { default: SpokenAnnouncements } = await import('../../SpokenAnnouncements.tsx');
+    await render(
+      <>
+        <SpokenAnnouncements />
+        <ThreadComposer conversationId="conv-1" />
+      </>,
+    );
+    await hold();
+    expect(opened).toEqual(['/api/events']);
+    await releaseAt();
+  });
+});

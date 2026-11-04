@@ -16,11 +16,44 @@
 // refusée ou oubliée par le runner, le flux coupé, l'annonce que l'agent n'a
 // pas pu écrire, la voix en échec. Le résultat, lui, est déjà écrit dans le fil.
 
+import { useSyncExternalStore } from 'react';
 import { readSseMessages } from '@/lib/sse.ts';
 import { queueSpokenStream, readSpokenEvent } from './voice-playback.ts';
 import { speechErrorText } from './voice-turn.ts';
 
 export type JobReplyVoiceFailure = { text: string; detail?: string };
+
+// LE PLAYER EST ARMÉ par le premier tour dit de l'onglet. Le player des
+// annonces (`SpokenAnnouncements`, dans la coquille du tableau de bord) écoute
+// le flux de tout l'espace ; ouvert d'office sur chaque page de chaque onglet,
+// ce flux ne se fermait jamais, et toute page devenait une page qui ne finit
+// jamais de charger (les parcours e2e qui attendent le réseau au repos ont
+// rougi : CI de #992). Seul un onglet où la personne a parlé attend une
+// annonce : le geste `press` du micro l'arme, AVANT que le tour parte, si bien
+// qu'un job qui finit vite est déjà écouté. Il reste armé tant que l'onglet
+// vit. Un onglet rechargé pendant le travail n'est plus armé : rien n'est dit,
+// le résultat est dans le fil.
+let armed = false;
+const armedListeners = new Set<() => void>();
+
+/** La personne parle à l'agent dans cet onglet : les annonces de ses travaux seront entendues. */
+export function armSpokenAnnouncements(): void {
+  if (armed) return;
+  armed = true;
+  for (const l of armedListeners) l();
+}
+
+/** L'onglet attend-il des annonces ? */
+export function useSpokenAnnouncementsArmed(): boolean {
+  return useSyncExternalStore(
+    (l) => {
+      armedListeners.add(l);
+      return () => armedListeners.delete(l);
+    },
+    () => armed,
+    () => false,
+  );
+}
 
 /** Ce que le runner a dit en refusant la voix, en mots de l'écran. */
 function refusalText(status: number, error: string): string {
