@@ -58,6 +58,16 @@ export function refusalText(r: { error: string; source?: string; detail?: string
     // the vendor's words say why.
     case 'speech_no_credit':
       return `The ${sourceLabel(r.source)} key has no credit left. The voice was not saved.`;
+    // The transcription model was tried before it was saved (#976): the voice
+    // said "OK." and the model had to write it down.
+    case 'transcription_not_faithful':
+      return `This model did not write down what the voice said, so it was not saved: ${r.detail ?? r.error}`;
+    case 'transcription_needs_voice':
+      return `The transcription model is tried on what the voice says, and the voice did not speak: ${r.detail ?? r.error}`;
+    case 'transcription_model_not_offered':
+      return 'OpenRouter does not serve this transcription model.';
+    case 'transcription_failed':
+      return `This model did not transcribe what the voice said, so it was not saved: ${r.detail ?? r.error}`;
     case 'speech_provider_error':
     case 'speech_bad_request':
       return `This voice did not speak, so it was not saved: ${r.detail ?? r.error}`;
@@ -88,4 +98,20 @@ export function listedText(source: string, cacheSeconds: number): string {
   const kept =
     hours === 1 ? 'an hour' : hours >= 1 ? `${hours} hours` : `${cacheSeconds / 60} minutes`;
   return `Models and voices listed by ${sourceLabel(source)}, kept for ${kept}.`;
+}
+
+/** The line under the transcription picker: where the list comes from (#976). */
+export function earListedText(cacheSeconds: number): string {
+  const hours = cacheSeconds / 3600;
+  const kept =
+    hours === 1 ? 'an hour' : hours >= 1 ? `${hours} hours` : `${cacheSeconds / 60} minutes`;
+  return `Transcription models listed by OpenRouter, kept for ${kept}.`;
+}
+
+/** Why the transcription models cannot be chosen (#976). */
+export function earUnavailableText(code: string, detail?: string): string {
+  if (code === 'voice_key_missing') {
+    return 'No OpenRouter key in this workspace. Add one in LLM Providers to transcribe what you say.';
+  }
+  return sourceUnavailableText('openrouter', code, detail);
 }

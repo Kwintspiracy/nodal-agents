@@ -466,6 +466,17 @@ describe('the chat microphone, state by state (#942) @cap:parler-a-un-agent/ecra
     expect(noteText()).toBe('Nothing heard. Keep holding the button while you speak.');
   });
 
+  // #976. Mutation verified: the model dropped from the note → red.
+  it('nothing heard by a model: the composer names the model that wrote nothing', async () => {
+    endReply = async () => sse([['nothing_heard', { durationMs: 2265, model: 'deepgram/nova-3' }]]);
+    await render(<ThreadComposer conversationId="conv-1" />);
+    await hold();
+    await releaseAt();
+    expect(noteText()).toBe(
+      'Nothing heard by deepgram/nova-3. Keep holding the button while you speak.',
+    );
+  });
+
   it('the keyboard: Space held on the focused button talks, Escape cancels', async () => {
     await render(<ThreadComposer conversationId="conv-1" />);
     const key = (type: string, k: string): Promise<void> =>
@@ -550,7 +561,8 @@ describe('the chat microphone says every route outcome (#942) @cap:parler-a-un-a
   });
 
   it('no speech key: said before the person has spoken', async () => {
-    startReply = () => json({ error: 'speech_not_configured' }, 409);
+    // #976: the runner says the code of its resolution, and the source.
+    startReply = () => json({ error: 'voice_key_missing', source: 'openrouter' }, 409);
     await render(<ThreadComposer conversationId="conv-1" />);
     await hold();
     expect(noteText()).toBe(

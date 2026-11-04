@@ -67,10 +67,26 @@ const GOOGLE = {
   listedAt: '2026-11-03T10:00:00.000Z',
   cacheSeconds: 3600,
 };
-const FIRST = { source: 'openrouter', model: 'google/gemini-3.8-flash-tts', voice: 'Kore' };
+const FIRST = {
+  source: 'openrouter',
+  model: 'google/gemini-3.8-flash-tts',
+  voice: 'Kore',
+  transcriptionModel: 'x-ai/grok-stt-1.0',
+};
 
 /** Une seconde de silence en PCM 16 bits mono à 24 kHz : ce que la route rend, en base64. */
 const SILENT_PCM = Buffer.alloc(24_000 * 2).toString('base64');
+
+/** The models of OpenRouter's transcription endpoint (#976). */
+const EAR = {
+  state: 'available',
+  models: [
+    { id: 'x-ai/grok-stt-1.0', label: 'SpaceXAI: Grok STT 1.0' },
+    { id: 'openai/gpt-transcribe', label: 'OpenAI: GPT Transcribe' },
+  ],
+  listedAt: '2026-11-03T10:00:00.000Z',
+  cacheSeconds: 3600,
+};
 
 type Seen = { method: string; path: string; body: unknown };
 
@@ -90,14 +106,14 @@ async function stubVoice(page: Page, sources: unknown[]): Promise<Seen[]> {
       await route.fulfill({ json: route.request().postDataJSON() as { setting: unknown } });
       return;
     }
-    await route.fulfill({ json: { setting: FIRST, sources } });
+    await route.fulfill({ json: { setting: FIRST, sources, transcription: EAR } });
   });
   await page.route('**/api/voice/sample', async (route) => {
     note(route);
     const body = [
       `event: audio\ndata: ${JSON.stringify({ seq: 0, sentence: 0, mimeType: 'audio/pcm', sampleRate: 24_000, base64: SILENT_PCM })}\n\n`,
       `event: audio_end\ndata: ${JSON.stringify({ sentence: 0, complete: true })}\n\n`,
-      `event: done\ndata: ${JSON.stringify({ speechError: null, source: 'google', model: 'gemini-3.8-flash-tts', voice: 'Puck' })}\n\n`,
+      `event: done\ndata: ${JSON.stringify({ speechError: null, source: 'google', model: 'gemini-3.8-flash-tts', voice: 'Puck', transcriptionModel: 'x-ai/grok-stt-1.0' })}\n\n`,
     ].join('');
     await route.fulfill({ status: 200, headers: { 'content-type': 'text/event-stream' }, body });
   });
@@ -105,7 +121,7 @@ async function stubVoice(page: Page, sources: unknown[]): Promise<Seen[]> {
 }
 
 test.describe('the Voice setting @cap:parler-a-un-agent/ecran', () => {
-  test('shows the stored voice, tries another before saving it, and saves exactly that one', async ({
+  test('shows the stored voice and ear, tries another voice before saving it, and saves exactly that setting', async ({
     page,
   }) => {
     const seen = await stubVoice(page, [OPENROUTER, GOOGLE]);
@@ -139,6 +155,7 @@ test.describe('the Voice setting @cap:parler-a-un-agent/ecran', () => {
       .toEqual([
         {
           text: 'Hello, this is how I sound when I answer you.',
+          // The voice only: the sample speaks, it does not listen (#976).
           setting: { source: 'google', model: 'gemini-3.8-flash-tts', voice: 'Puck' },
         },
       ]);
@@ -147,10 +164,23 @@ test.describe('the Voice setting @cap:parler-a-un-agent/ecran', () => {
     // Trying never saves.
     expect(seen.filter((s) => s.method === 'PUT')).toEqual([]);
 
+    // #976: the ear is chosen in the same section, among OpenRouter's transcription models.
+    await expect(section.getByTestId('voice-transcription')).toHaveValue('x-ai/grok-stt-1.0');
+    await section.getByTestId('voice-transcription').selectOption('openai/gpt-transcribe');
+
     await section.getByRole('button', { name: 'Save' }).click();
     await expect
       .poll(() => seen.filter((s) => s.method === 'PUT').map((s) => s.body))
-      .toEqual([{ setting: { source: 'google', model: 'gemini-3.8-flash-tts', voice: 'Puck' } }]);
+      .toEqual([
+        {
+          setting: {
+            source: 'google',
+            model: 'gemini-3.8-flash-tts',
+            voice: 'Puck',
+            transcriptionModel: 'openai/gpt-transcribe',
+          },
+        },
+      ]);
     await expect(section.getByRole('button', { name: 'Save' })).toHaveCount(0);
   });
 

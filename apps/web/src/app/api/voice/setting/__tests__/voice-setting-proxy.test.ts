@@ -74,7 +74,12 @@ describe('the web door of the voice setting is a pass-through (#969) @cap:parler
   it('write: the setting as sent, the entity of the session; a refusal keeps its status and code', async () => {
     runnerAnswer = () =>
       Response.json({ error: 'voice_not_offered', detail: 'x offers leo' }, { status: 409 });
-    const setting = { source: 'openrouter', model: 'x-ai/grok-voice-tts-1.0', voice: 'Kore' };
+    const setting = {
+      source: 'openrouter',
+      model: 'x-ai/grok-voice-tts-1.0',
+      voice: 'Kore',
+      transcriptionModel: 'x-ai/grok-stt-1.0',
+    };
     const res = await PUT(
       new Request('http://web.test/api/voice/setting', {
         method: 'PUT',
