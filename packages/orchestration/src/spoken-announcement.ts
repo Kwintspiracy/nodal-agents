@@ -38,7 +38,14 @@
 //     fichier, impression, envoi) sa seule confirmation ;
 //   - une demande en anglais au résultat en français (b41632f5) a été
 //     annoncée en français deux fois sur cinq : la langue est celle de la
-//     demande, même quand le résultat en a une autre.
+//     demande, même quand le résultat en a une autre ;
+//   - « garde le fait sans lequel la personne serait trompée (pas fini, pas
+//     confirmé) » a fait repasser le contenu de la recherche par ses réserves
+//     (« the rumoured January cuts are unconfirmed », 5/5 de 37 à 44 mots) :
+//     le fait gardé est l'état du TRAVAIL (une impression en cours, un envoi
+//     non remis), jamais une réserve de son contenu ; pour un travail,
+//     « seulement que c'est fait », en une phrase (la tournure de la v3, qui
+//     tenait 0/5).
 // La ligne de forme du tour vocal (`replyRenderingLine`) n'est PAS reprise :
 // son « la première phrase part pendant que la suite s'écrit » appelle une
 // suite, et une annonce n'en a pas. C'est le modèle qui juge question ou
@@ -74,11 +81,11 @@ export function buildSpokenAnnouncement(input: {
       '- If they asked a question they want answered (a fact, whether something works), ' +
       'say the answer simply, in plain spoken words.\n' +
       '- If they asked for a piece of work (research, a document, a page, a file, a print, ' +
-      'a send), only confirm it is done: nothing from its content, no gist, no summary, no ' +
-      'finding, no number, no name.\n' +
+      'a send), say only that it is done, in one short sentence. Nothing from its content: ' +
+      'no gist, no main story, no finding, no number, no name, no caveat about what it says.\n' +
+      '- If the work itself is not finished or not confirmed yet (a print still running, a ' +
+      'message not delivered), add that in a few words. That is the only thing you add.\n' +
       '- Never say where to read it, and never offer to send it anywhere: they know.\n' +
-      '- If they need a fact so as not to be misled (something not finished or not confirmed ' +
-      'yet), keep it, in a few words.\n' +
       '- No stock phrase: say it the way you would say it this time.\n' +
       '- Never say a web address, a file path or markup, and never explain what you are ' +
       'saying or leaving out, or why.\n' +

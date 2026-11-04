@@ -29,11 +29,13 @@ const RULE =
   '- If they asked a question they want answered (a fact, whether something works), ' +
   'say the answer simply, in plain spoken words.\n' +
   '- If they asked for a piece of work (research, a document, a page, a file, a print, ' +
-  'a send), only confirm it is done: nothing from its content, no gist, no summary, no ' +
-  'finding, no number, no name.\n' +
+  'a send), say only that it is done, in one short sentence. Nothing from its content: ' +
+  'no gist, no main story, no finding, no number, no name, no caveat about what it says.\n' +
+  // Replay 5: "keep a fact not to be misled" brought the research's caveats
+  // back in. The fact kept is the state of the WORK, never of its content.
+  '- If the work itself is not finished or not confirmed yet (a print still running, a ' +
+  'message not delivered), add that in a few words. That is the only thing you add.\n' +
   '- Never say where to read it, and never offer to send it anywhere: they know.\n' +
-  '- If they need a fact so as not to be misled (something not finished or not confirmed ' +
-  'yet), keep it, in a few words.\n' +
   '- No stock phrase: say it the way you would say it this time.\n' +
   '- Never say a web address, a file path or markup, and never explain what you are ' +
   'saying or leaving out, or why.\n' +

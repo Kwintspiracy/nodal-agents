@@ -2144,7 +2144,7 @@ describe('a voice-launched job announces its end, out loud (#967) @cap:parler-a-
     expect(asked).toContain(
       'Tell them, in your own words, that what they asked for is done. Speak the language of their request above, even when the result is written in another language.',
     );
-    expect(asked).toContain('only confirm it is done: nothing from its content');
+    expect(asked).toContain('say only that it is done, in one short sentence.');
     expect(asked).toContain('Never say where to read it, and never offer to send it anywhere');
     // Its tokens are traced, on the job, under their own source.
     const traced = await db
