@@ -99,6 +99,9 @@ const approval = (id: string) => ({
   gateReasons: [],
 });
 
+const { toast } = await import('sonner');
+const { startSpokenStream, stopSpeaking, useSpeaking } = await import('../voice-playback.ts');
+const { installFakeAudio, pcmBase64, sseBody } = await import('./fake-audio.ts');
 const { ApprovalsProvider } = await import('@/components/ApprovalsProvider');
 const { default: ConversationApprovals } = await import('../[id]/ConversationApprovals.tsx');
 const { default: ConversationEvents } = await import('../[id]/ConversationEvents.tsx');
@@ -225,5 +228,177 @@ describe('the conversation follows the push stream (#944) @cap:suivre-execution/
     expect(source.readyState).toBe(FakeEventSource.CLOSED);
     // afterEach unmounts again: give it a fresh root.
     root = createRoot(container);
+  });
+});
+
+// #967 — a job launched by a spoken turn says its reply when it finishes. The
+// runner follows the job's `job.finished` with `reply.audio`, a pointer; the
+// page reads the voice behind it (`/api/voice/replies/:id`) and plays it AFTER
+// the voice already playing, never over it. Rendered with the REAL playback
+// (`voice-playback.ts`) on the fake AudioContext, which records what would be
+// heard and when. Only `fetch` (the voice route) and EventSource are stand-ins.
+//
+// Mutations verified (each turns a case red):
+//   - `playJobReply` opening with `startSpokenStream` instead of
+//     `queueSpokenStream` → "after the reply that is playing" (the ack is cut);
+//   - `nextWaiting()` removed from `finishIfDone` → same case (never plays);
+//   - the `reply.audio` listener removed → "plays once, at once";
+//   - `stopSpeaking` not clearing the queue → "Stop while it waits".
+describe('the spoken reply of a finished job plays in its conversation (#967) @cap:parler-a-un-agent/ecran', () => {
+  let audio: ReturnType<typeof installFakeAudio>;
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+  /** What the voice route answers, per audio id. */
+  let voices: Map<string, () => Response>;
+
+  /** Two samples of 0.5 and -0.5, as the route sends them. */
+  const JOB_VOICE = pcmBase64([16384, -16384]);
+  /** Two samples of 0.25: the acknowledgement already playing. */
+  const ACK = new Uint8Array([0x00, 0x20, 0x00, 0x20]);
+
+  function voiceStream(events: Array<[string, unknown]>): () => Response {
+    return () =>
+      new Response(sseBody(events), {
+        status: 200,
+        headers: { 'Content-Type': 'text/event-stream' },
+      });
+  }
+
+  beforeEach(() => {
+    audio = installFakeAudio((name, value) => vi.stubGlobal(name, value));
+    voices = new Map();
+    vi.mocked(toast.error).mockReset();
+    fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = typeof input === 'string' ? input : (input as Request).url;
+      const id = decodeURIComponent(url.split('/api/voice/replies/')[1] ?? '');
+      const answer = voices.get(id);
+      if (!answer) return Response.json({ error: 'reply_audio_not_found' }, { status: 404 });
+      return answer();
+    });
+  });
+
+  afterEach(() => {
+    stopSpeaking();
+    fetchSpy.mockRestore();
+  });
+
+  const finished = (jobId: string, reply: string) =>
+    act(async () => {
+      FakeEventSource.last!.emit('job.finished', { type: 'job.finished', jobId, reply }, 'b:1');
+      FakeEventSource.last!.emit(
+        'reply.audio',
+        { type: 'reply.audio', jobId, conversationId: 'conv-1', audioId: `aud-${jobId}` },
+        'b:2',
+      );
+    });
+
+  const SPOKEN_JOB: Array<[string, unknown]> = [
+    ['audio', { seq: 0, sentence: 0, mimeType: 'audio/pcm', sampleRate: 4, base64: JOB_VOICE }],
+    ['audio_end', { sentence: 0, complete: true }],
+    ['done', { speechError: null }],
+  ];
+
+  it('nothing playing: the reply of the job plays once, at once, from the pointer', async () => {
+    voices.set('aud-j1', voiceStream(SPOKEN_JOB));
+    await render();
+    await finished('j1', 'The buyout is the main story.');
+    await flush();
+    await flush();
+
+    expect(fetchSpy.mock.calls.map((c) => String(c[0]))).toEqual(['/api/voice/replies/aud-j1']);
+    expect(audio.scheduled.map((s) => s.samples)).toEqual([[0.5, -0.5]]);
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+
+  it('after the reply that is playing: the playing one is never cut, the job reply follows it', async () => {
+    voices.set('aud-j1', voiceStream(SPOKEN_JOB));
+    const seen: Array<string | null> = [];
+    function Probe() {
+      seen.push(useSpeaking()?.reply ?? null);
+      return null;
+    }
+    await render();
+    const probe = createRoot(document.createElement('div'));
+    await act(async () => {
+      probe.render(<Probe />);
+    });
+
+    // The acknowledgement of the voice turn is playing.
+    const ack = startSpokenStream({ reply: 'On it.', onError: () => {} });
+    await act(async () => {
+      ack.push({ seq: 0, sentence: 0, mimeType: 'audio/pcm', sampleRate: 4, bytes: ACK });
+      ack.end();
+      await flush();
+    });
+    expect(audio.scheduled).toHaveLength(1);
+
+    // The job finishes while it plays.
+    await finished('j1', 'The buyout is the main story.');
+    await flush();
+    await flush();
+    expect(audio.scheduled.map((s) => [s.samples, s.stopped])).toEqual([[[0.25, 0.25], false]]);
+    expect(seen.at(-1)).toBe('On it.');
+
+    // The acknowledgement ends: the job reply plays, once, after it.
+    audio.currentTime = 0.6;
+    await act(async () => {
+      audio.scheduled[0]!.finish();
+      await flush();
+    });
+    await flush();
+    expect(audio.scheduled.map((s) => [s.samples, s.stopped])).toEqual([
+      [[0.25, 0.25], false],
+      [[0.5, -0.5], false],
+    ]);
+    expect(audio.scheduled[1]!.at).toBeGreaterThanOrEqual(0.6);
+    expect(seen.at(-1)).toBe('The buyout is the main story.');
+    await act(async () => {
+      audio.scheduled[1]!.finish();
+      await flush();
+    });
+    expect(audio.scheduled).toHaveLength(2);
+    expect(seen.at(-1)).toBe(null);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      probe.unmount();
+    });
+  });
+
+  it('Stop while it waits: it does not play after the voice that was stopped', async () => {
+    voices.set('aud-j1', voiceStream(SPOKEN_JOB));
+    await render();
+    const ack = startSpokenStream({ reply: 'On it.', onError: () => {} });
+    await act(async () => {
+      ack.push({ seq: 0, sentence: 0, mimeType: 'audio/pcm', sampleRate: 4, bytes: ACK });
+      await flush();
+    });
+    await finished('j1', 'The buyout is the main story.');
+    await flush();
+    await flush();
+    stopSpeaking();
+    await flush();
+    expect(audio.scheduled.map((s) => [s.samples, s.stopped])).toEqual([[[0.25, 0.25], true]]);
+  });
+
+  it('a voice the runner no longer has, or one that failed, is said; the reply stays written', async () => {
+    voices.set(
+      'aud-j2',
+      voiceStream([['done', { speechError: { code: 'voice_key_missing', detail: 'openrouter' } }]]),
+    );
+    await render();
+    await finished('j1', 'Gone.');
+    await finished('j2', 'No key.');
+    await flush();
+    await flush();
+    expect(vi.mocked(toast.error).mock.calls).toEqual([
+      [
+        'The reply is written above, but it could not be spoken: its voice is no longer available.',
+        undefined,
+      ],
+      [
+        'The reply is written above, but it could not be spoken: the voice has no key for its source. Add one in LLM Providers, or choose another voice in Settings.',
+        { description: 'openrouter' },
+      ],
+    ]);
+    expect(audio.scheduled).toEqual([]);
   });
 });

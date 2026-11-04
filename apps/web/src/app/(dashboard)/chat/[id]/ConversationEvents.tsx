@@ -15,10 +15,18 @@
 // `EventSource` reconnects by itself and sends the last id it saw; the runner
 // answers with what was missed, or `resync`, which re-reads the same way.
 // `LiveRefresh` stays: it is the floor if the stream cannot be opened.
+//
+// A job launched by a spoken turn says its reply when it finishes (#967): the
+// runner follows its `job.finished` with `reply.audio`, a pointer to the voice,
+// and this component plays it (`playJobReply`) after the voice already
+// playing, never over it. Only an open conversation page hears it: nothing is
+// replayed later, the reply is in the thread as text.
 
 import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import { toast } from 'sonner';
 import { useApprovals } from '@/components/ApprovalsProvider';
+import { playJobReply } from '../job-reply-voice.ts';
 
 /** The events that change what this page shows. `ready` changes nothing. */
 export const CONVERSATION_REREAD_EVENTS = [
@@ -49,6 +57,36 @@ export default function ConversationEvents({ conversationId }: { conversationId:
       }, 0);
     };
     for (const type of CONVERSATION_REREAD_EVENTS) source.addEventListener(type, reread);
+
+    // The reply each finished job carries, for the voice that follows it.
+    const replies = new Map<string, string>();
+    const leaving = new AbortController();
+    const read = (e: MessageEvent): Record<string, unknown> | null => {
+      try {
+        const data: unknown = JSON.parse(String(e.data));
+        return typeof data === 'object' && data !== null ? (data as Record<string, unknown>) : null;
+      } catch {
+        return null;
+      }
+    };
+    source.addEventListener('job.finished', (e) => {
+      const data = read(e);
+      if (typeof data?.['jobId'] === 'string' && typeof data['reply'] === 'string') {
+        replies.set(data['jobId'], data['reply']);
+      }
+    });
+    source.addEventListener('reply.audio', (e) => {
+      const data = read(e);
+      const audioId = data?.['audioId'];
+      const jobId = data?.['jobId'];
+      if (typeof audioId !== 'string' || typeof jobId !== 'string') return;
+      void playJobReply({
+        audioId,
+        reply: replies.get(jobId) ?? '',
+        signal: leaving.signal,
+        onFailed: (f) => toast.error(f.text, f.detail ? { description: f.detail } : undefined),
+      });
+    });
     source.onerror = () => {
       // CONNECTING: the browser is already retrying. CLOSED: it gave up (the
       // proxy or the runner refused); said, and the page keeps its polling.
@@ -60,6 +98,7 @@ export default function ConversationEvents({ conversationId }: { conversationId:
     };
     return () => {
       if (queued !== null) clearTimeout(queued);
+      leaving.abort();
       source.close();
     };
   }, [conversationId, router, refresh]);

@@ -45,6 +45,8 @@ import {
   and,
   eq,
   asc,
+  cancelJobs,
+  inTransaction,
   readVoiceSetting,
   writeVoiceSetting,
 } from '@nodal-agents/db';
@@ -61,6 +63,9 @@ import { TITLE_SYSTEM_PROMPT } from '../../chat/conversation-title.ts';
 import { ACTION_RECHECK } from '../../llm/action-recheck.ts';
 import { REDACTED_TEXT } from '@nodal-agents/shared';
 import { openUtterances, VOICE_LIMITS } from '../../chat/voice-utterances.ts';
+import { finalizeJobFailure, finalizeJobSuccess } from '../../job/finalize.ts';
+import { publishJobEnded } from '../../events/publish.ts';
+import { speakFinishedJob } from '../../chat/job-reply-voice.ts';
 
 // Provider calls leave through packages/llm's own transport (#608): routed back
 // to the global fetch, so the stub below is the network boundary — for the
@@ -228,6 +233,8 @@ function network(opts: {
   google?: (input: string) => Response | Promise<Response>;
   /** The tool calls the worker makes, one per request, before it answers 'Done.'. */
   worker?: Array<{ name: string; args: Record<string, unknown> }>;
+  /** #967 — what the worker answers instead of 'Done.'. */
+  workerReply?: string;
 }) {
   const workerCalls = [...(opts.worker ?? [])];
   const sent = {
@@ -339,7 +346,7 @@ function network(opts: {
         if (next) {
           text = '';
           toolCall = next;
-        } else text = 'Done.';
+        } else text = opts.workerReply ?? 'Done.';
       }
       const usage = { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 };
       const finish = toolCall ? 'tool_calls' : 'stop';
@@ -1893,5 +1900,400 @@ describe('the voice turn speaks with the workspace voice (#969) @cap:parler-a-un
     });
     expect(refused.status).toBe(409);
     expect(((await refused.json()) as { error: string }).error).toBe('voice_not_offered');
+  });
+});
+
+// ─── #967 — the reply of a voice-launched job, spoken when it finishes ───────
+//
+// What is proven, on the real runner (the real voice turn, the real job, the
+// real gates, the real /api/events and /api/voice/replies routes; only the
+// network is a stub): a job launched by a spoken turn that finishes with a
+// reply yields ONE `reply.audio`, right after its `job.finished`, and the voice
+// read from the pointer is the bytes the fake voice returned for the sentences
+// of the reply stored on the row. Jobs that do not speak (typed, delegated,
+// failed, stopped, empty) change nothing on the stream: their `job.finished` is
+// the same object as before #967, and no voice is asked of the vendor.
+//
+// Mutations verified (each turns a case red):
+//   - `spokenReplyOf` without the `replyRendering` check → "a typed-chat job";
+//   - without the `parentJobId` check → "a delegated job";
+//   - the listener check removed → "nobody listening";
+//   - `onFinished` called before `publishJobEnded` → the order assertion of
+//     "a voice-launched job";
+//   - `redactSecretsInText` removed from `spokenReplyOf` → "a secret";
+//   - `spokenFinalReplyLine` not pushed → the worker request-body assertion;
+//   - the timing line built with `VOICE_TIMING_MARKS` → "one timing line".
+
+describe('the reply of a voice-launched job is spoken when it finishes (#967) @cap:parler-a-un-agent/moteur', () => {
+  const FINAL_REPLY_LINE = '- final reply: your final reply is what the person hears';
+
+  /** `/api/events`, read as it arrives; the reader stays open for the test. */
+  async function listenEvents(
+    app: ReturnType<typeof createApp>,
+    conversationId?: string,
+  ): Promise<{ events: VoiceEvent[]; close: () => void }> {
+    const ctl = new AbortController();
+    const query = new URLSearchParams({ entityId: seed.entityId });
+    if (conversationId) query.set('conversationId', conversationId);
+    const res = await app.fetch(
+      new Request(`http://localhost/api/events?${query.toString()}`, {
+        headers: AUTH,
+        signal: ctl.signal,
+      }),
+    );
+    expect(res.status).toBe(200);
+    const evs: VoiceEvent[] = [];
+    void (async () => {
+      try {
+        for await (const e of events(res)) evs.push(e);
+      } catch {
+        // closed by the test
+      }
+    })();
+    await waitUntil(() => evs.some((e) => e.event === 'ready'));
+    return { events: evs, close: () => ctl.abort() };
+  }
+
+  async function waitUntil(check: () => boolean, ms = 4000): Promise<void> {
+    const until = Date.now() + ms;
+    while (!check()) {
+      if (Date.now() > until) throw new Error('waitUntil: condition never met');
+      await new Promise((r) => setTimeout(r, 5));
+    }
+  }
+
+  /** Time for an event that should not come to come anyway. */
+  const quiet = (): Promise<void> => new Promise((r) => setTimeout(r, 150));
+
+  const ofJob = (evs: VoiceEvent[], jobId: string): VoiceEvent[] =>
+    evs.filter((e) => e.data['jobId'] === jobId);
+
+  /** The voice the pointer leads to, read to its `done`. */
+  async function readReply(
+    app: ReturnType<typeof createApp>,
+    audioId: string,
+  ): Promise<{ status: number; events: VoiceEvent[]; body?: unknown }> {
+    const res = await call(app, 'GET', `/api/voice/replies/${audioId}?entityId=${seed.entityId}`);
+    if (!(res.headers.get('content-type') ?? '').includes('text/event-stream')) {
+      return { status: res.status, events: [], body: await res.json() };
+    }
+    const evs: VoiceEvent[] = [];
+    await drain(events(res), evs);
+    return { status: res.status, events: evs };
+  }
+
+  /** A row the gates can finish, as a job of the conversation. */
+  async function jobRow(opts: {
+    conversationId: string;
+    replyRendering: 'text' | 'spoken';
+    parentJobId?: string;
+  }): Promise<string> {
+    const [job] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId,
+        channel: 'dashboard',
+        task: 'a spoken request',
+        status: 'processing',
+        messages: [],
+        chainCount: 0,
+        conversationId: opts.conversationId,
+        replyRendering: opts.replyRendering,
+        ...(opts.parentJobId ? { parentJobId: opts.parentJobId, delegationDepth: 1 } : {}),
+      })
+      .returning({ id: agentJobs.id });
+    return job!.id;
+  }
+
+  const finish = (jobId: string, result: string) =>
+    finalizeJobSuccess(db as never, {
+      jobId,
+      result,
+      resultKind: 'prose',
+      repairTurn: 'unsupported',
+    });
+
+  const REPLY =
+    'Microsoft is offering buyouts to about sixty thousand employees. The last layoffs were in July and September.';
+
+  it('a voice-launched job that finishes yields exactly one spoken reply, after its job.finished, read from the pointer', async () => {
+    const app = createApp(makeDeps(), testEnv);
+    const conv = await conversation();
+    const stream = await listenEvents(app, conv);
+    const sent = network({ front: { text: 'On it.', instruction: '' }, workerReply: REPLY });
+
+    const { body } = await say(app, conv, FIXTURE, { format: 'audio/wav' });
+    const jobId = body['spawnedJobId'] as string;
+    await settled(jobId);
+
+    // The row: the job inherited the spoken rendering and holds the reply.
+    const [row] = await db
+      .select({
+        status: agentJobs.status,
+        result: agentJobs.result,
+        replyRendering: agentJobs.replyRendering,
+        parentJobId: agentJobs.parentJobId,
+      })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, jobId));
+    expect(row).toEqual({
+      status: 'completed',
+      result: REPLY,
+      replyRendering: 'spoken',
+      parentJobId: null,
+    });
+    // Part 1: the worker's request, as the provider received it, says the
+    // final reply is written for the ear.
+    expect(systemOf(sent.worker[0]!)).toContain(FINAL_REPLY_LINE);
+
+    await waitUntil(() => ofJob(stream.events, jobId).length >= 2);
+    await quiet();
+    const mine = ofJob(stream.events, jobId);
+    expect(mine.map((e) => e.event)).toEqual(['job.finished', 'reply.audio']);
+    // job.finished is the object it was before #967, to the key.
+    expect(mine[0]!.data).toEqual({
+      type: 'job.finished',
+      jobId,
+      conversationId: conv,
+      parentJobId: null,
+      status: 'completed',
+      reply: REPLY,
+    });
+    const audioId = mine[1]!.data['audioId'] as string;
+    expect(mine[1]!.data).toEqual({ type: 'reply.audio', jobId, conversationId: conv, audioId });
+
+    const voice = await readReply(app, audioId);
+    expect(voice.status).toBe(200);
+    // One synthesis per sentence of the stored reply, once, after the ack.
+    expect(sent.speech.map((s) => s['input'])).toEqual([
+      'On it.',
+      'Microsoft is offering buyouts to about sixty thousand employees.',
+      'The last layoffs were in July and September.',
+    ]);
+    expect(voice.events.map((e) => e.event)).toEqual([
+      'audio',
+      'audio_end',
+      'audio',
+      'audio_end',
+      'done',
+    ]);
+    expect(heardAudio(voice.events)).toEqual(Buffer.concat([VOICE_PCM, VOICE_PCM]));
+    expect(voice.events.filter((e) => e.event === 'audio').map((e) => e.data['seq'])).toEqual([
+      0, 1,
+    ]);
+    expect(voice.events.at(-1)!.data).toEqual({ speechError: null });
+
+    // A second reader, late, gets the same voice from seq 0; nothing is synthesised again.
+    const again = await readReply(app, audioId);
+    expect(heardAudio(again.events)).toEqual(Buffer.concat([VOICE_PCM, VOICE_PCM]));
+    expect(sent.speech).toHaveLength(3);
+    stream.close();
+  });
+
+  it('a typed-chat job yields none: its job.finished is unchanged, no voice is asked for', async () => {
+    const app = createApp(makeDeps(), testEnv);
+    const conv = await conversation();
+    const stream = await listenEvents(app, conv);
+    const sent = network({ front: { text: 'Launching.', instruction: '' }, workerReply: REPLY });
+
+    const res = await call(app, 'POST', '/api/chat', {
+      entityId: seed.entityId,
+      agentId,
+      conversationId: conv,
+      message: TRANSCRIPT,
+    });
+    expect(res.status).toBe(200);
+    const [job] = await jobsOf(conv);
+    await settled(job!.id);
+    expect(systemOf(sent.worker[0]!)).not.toContain('- final reply:');
+
+    await waitUntil(() => ofJob(stream.events, job!.id).length >= 1);
+    await quiet();
+    expect(ofJob(stream.events, job!.id)).toEqual([
+      {
+        event: 'job.finished',
+        data: {
+          type: 'job.finished',
+          jobId: job!.id,
+          conversationId: conv,
+          parentJobId: null,
+          status: 'completed',
+          reply: REPLY,
+        },
+      },
+    ]);
+    expect(stream.events.filter((e) => e.event === 'reply.audio')).toEqual([]);
+    expect(sent.speech).toEqual([]);
+    stream.close();
+  });
+
+  it('a delegated job yields none, even when it carries the spoken rendering', async () => {
+    const app = createApp(makeDeps(), testEnv);
+    const conv = await conversation();
+    const stream = await listenEvents(app, conv);
+    const sent = network({});
+    const parent = await jobRow({ conversationId: conv, replyRendering: 'spoken' });
+    const child = await jobRow({
+      conversationId: conv,
+      replyRendering: 'spoken',
+      parentJobId: parent,
+    });
+
+    await finish(child, 'The full report, with its sources.');
+    await waitUntil(() => ofJob(stream.events, child).length >= 1);
+    await quiet();
+    expect(ofJob(stream.events, child).map((e) => e.event)).toEqual(['job.finished']);
+    expect(stream.events.filter((e) => e.event === 'reply.audio')).toEqual([]);
+    expect(sent.speech).toEqual([]);
+    stream.close();
+  });
+
+  it('a spoken job that fails, is stopped, or ends with no reply says nothing: the runner writes no words', async () => {
+    const app = createApp(makeDeps(), testEnv);
+    const conv = await conversation();
+    const stream = await listenEvents(app, conv);
+    const sent = network({});
+
+    const failed = await jobRow({ conversationId: conv, replyRendering: 'spoken' });
+    await finalizeJobFailure(db as never, {
+      jobId: failed,
+      errorCode: 'llm_error',
+      userMessage: 'The model did not answer.',
+    });
+    const stopped = await jobRow({ conversationId: conv, replyRendering: 'spoken' });
+    await inTransaction(db as never, (tx) => cancelJobs(tx as never, { ids: [stopped] }));
+    const empty = await jobRow({ conversationId: conv, replyRendering: 'spoken' });
+    await db
+      .update(agentJobs)
+      .set({ status: 'completed', result: '   ' })
+      .where(eq(agentJobs.id, empty));
+    // The gate the row skipped, called as it would be: what it publishes is what speaks.
+    const finished = await publishJobEnded(db as never, empty);
+    expect(finished).not.toBeNull();
+    expect(speakFinishedJob(db as never, finished!)).toBeNull();
+
+    await waitUntil(
+      () =>
+        ofJob(stream.events, failed).length >= 1 &&
+        ofJob(stream.events, stopped).length >= 1 &&
+        ofJob(stream.events, empty).length >= 1,
+    );
+    await quiet();
+    expect(ofJob(stream.events, failed).map((e) => e.event)).toEqual(['job.failed']);
+    expect(ofJob(stream.events, stopped).map((e) => e.event)).toEqual(['job.finished']);
+    expect(ofJob(stream.events, stopped)[0]!.data['status']).toBe('cancelled');
+    expect(ofJob(stream.events, empty).map((e) => e.event)).toEqual(['job.finished']);
+    expect(stream.events.filter((e) => e.event === 'reply.audio')).toEqual([]);
+    expect(sent.speech).toEqual([]);
+    stream.close();
+  });
+
+  it('nobody listening when the job finishes: nothing is synthesised, nothing is offered later', async () => {
+    const app = createApp(makeDeps(), testEnv);
+    const conv = await conversation();
+    const sent = network({});
+    const warn = vi.spyOn(console, 'warn');
+    const job = await jobRow({ conversationId: conv, replyRendering: 'spoken' });
+    await finish(job, REPLY);
+    await quiet();
+    expect(sent.speech).toEqual([]);
+    expect(warn.mock.calls.map((c) => String(c[0]))).toContain(
+      `[voice-job-reply] job ${job} ended with a spoken reply and no listener: not spoken`,
+    );
+    warn.mockRestore();
+    // A client that comes afterwards is offered nothing: no event, no voice.
+    const late = await listenEvents(app, conv);
+    await quiet();
+    expect(late.events.filter((e) => e.event === 'reply.audio')).toEqual([]);
+    late.close();
+  });
+
+  it('a secret in the reply is masked in what the voice says; the row keeps it', async () => {
+    const app = createApp(makeDeps(), testEnv);
+    const conv = await conversation();
+    const stream = await listenEvents(app, conv);
+    const sent = network({});
+    const secret = `sk-or-v1-${'a'.repeat(64)}`;
+    const job = await jobRow({ conversationId: conv, replyRendering: 'spoken' });
+    await finish(job, `Your key is ${secret} and it works.`);
+    await waitUntil(() => ofJob(stream.events, job).length >= 2);
+    const audioId = ofJob(stream.events, job)[1]!.data['audioId'] as string;
+    await readReply(app, audioId);
+    const said = sent.speech.map((s) => String(s['input'])).join(' ');
+    expect(said).not.toContain(secret);
+    expect(said).toContain(REDACTED_TEXT);
+    const [row] = await db
+      .select({ result: agentJobs.result })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job));
+    expect(row!.result).toContain(secret);
+    stream.close();
+  });
+
+  it('the voice is read in its own workspace only, and an unknown one is refused, never guessed', async () => {
+    const app = createApp(makeDeps(), testEnv);
+    const unknown = await readReply(app, randomUUID());
+    expect(unknown).toMatchObject({ status: 404, body: { error: 'reply_audio_not_found' } });
+
+    const conv = await conversation();
+    const stream = await listenEvents(app, conv);
+    network({});
+    const job = await jobRow({ conversationId: conv, replyRendering: 'spoken' });
+    await finish(job, REPLY);
+    await waitUntil(() => ofJob(stream.events, job).length >= 2);
+    const audioId = ofJob(stream.events, job)[1]!.data['audioId'] as string;
+    const res = await call(app, 'GET', `/api/voice/replies/${audioId}?entityId=${randomUUID()}`);
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ error: 'reply_audio_not_found' });
+    const noEntity = await call(app, 'GET', `/api/voice/replies/${audioId}`);
+    expect(noEntity.status).toBe(400);
+    stream.close();
+  });
+
+  it('one timing line per spoken job reply, numbers and voice ids only, never the words', async () => {
+    const app = createApp(makeDeps(), testEnv);
+    const conv = await conversation();
+    const stream = await listenEvents(app, conv);
+    network({});
+    const warn = vi.spyOn(console, 'warn');
+    const job = await jobRow({ conversationId: conv, replyRendering: 'spoken' });
+    await finish(job, REPLY);
+    await waitUntil(() => ofJob(stream.events, job).length >= 2);
+    await readReply(app, ofJob(stream.events, job)[1]!.data['audioId'] as string);
+    await waitUntil(() =>
+      warn.mock.calls.some((c) => String(c[0]).startsWith('[voice-job-reply] timing')),
+    );
+    const lines = warn.mock.calls
+      .map((c) => String(c[0]))
+      .filter((l) => l.startsWith('[voice-job-reply] timing'));
+    warn.mockRestore();
+    expect(lines).toHaveLength(1);
+    const fields = JSON.parse(lines[0]!.slice('[voice-job-reply] timing '.length)) as Record<
+      string,
+      unknown
+    >;
+    expect(Object.keys(fields)).toEqual([
+      'source',
+      'model',
+      'voice',
+      'firstSentenceVendorByteMs',
+      'firstSentenceVendorDoneMs',
+      'firstAudioMs',
+      'lastAudioMs',
+    ]);
+    expect(fields).toMatchObject({
+      source: 'openrouter',
+      model: 'google/gemini-3.8-flash-tts',
+      voice: 'Kore',
+    });
+    for (const k of ['firstSentenceVendorByteMs', 'firstSentenceVendorDoneMs', 'firstAudioMs']) {
+      expect(typeof fields[k]).toBe('number');
+    }
+    expect(fields['lastAudioMs'] as number).toBeGreaterThanOrEqual(
+      fields['firstAudioMs'] as number,
+    );
+    for (const word of ['Microsoft', 'buyouts', 'layoffs']) expect(lines[0]).not.toContain(word);
+    stream.close();
   });
 });

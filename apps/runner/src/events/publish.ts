@@ -42,6 +42,7 @@ import {
   readQuestionToolInput,
   readStatedPurpose,
   redactSecretsInText,
+  type ReplyRendering,
 } from '@nodal-agents/shared';
 import type { ApprovalGateRequest } from '@nodal-agents/tools';
 import { jobEvents, type ApprovalRequestKind, type JobEventBus } from './job-events.ts';
@@ -69,15 +70,33 @@ function lost(bus: JobEventBus, what: string, err: unknown): void {
 }
 
 /**
+ * Un job fini, tel que sa ligne le dit au moment où son `job.finished` part :
+ * ce qu'un geste de plus (la réponse dite, #967) lit sans relire la base.
+ */
+export interface FinishedJob {
+  jobId: string;
+  entityId: string;
+  conversationId: string | null;
+  parentJobId: string | null;
+  status: 'completed' | 'cancelled';
+  /** `agent_jobs.result`, tel qu'en base. */
+  result: string | null;
+  replyRendering: ReplyRendering;
+}
+
+/**
  * Un job vient de poser son statut terminal : `job.finished` (completed,
  * cancelled) ou `job.failed`. Le statut est RELU sur la ligne, pas passé par
  * l'appelant : l'événement dit ce que la base dit.
+ *
+ * Rend le job quand un `job.finished` est parti, `null` sinon (un échec, une
+ * lecture en échec, un job sans espace).
  */
 export async function publishJobEnded(
   db: AnyDrizzleDb,
   jobId: string,
   bus: JobEventBus = jobEvents,
-): Promise<void> {
+): Promise<FinishedJob | null> {
   try {
     const [row] = await db
       .select({
@@ -87,6 +106,7 @@ export async function publishJobEnded(
         status: agentJobs.status,
         result: agentJobs.result,
         error: agentJobs.error,
+        replyRendering: agentJobs.replyRendering,
       })
       .from(agentJobs)
       .where(eq(agentJobs.id, jobId))
@@ -95,7 +115,7 @@ export async function publishJobEnded(
     // Un job sans espace n'a aucun client qui puisse l'écouter.
     if (row.entityId === null) {
       console.warn(`[job-events] job ${jobId} ended without a workspace: no client to tell`);
-      return;
+      return null;
     }
     const base = {
       jobId,
@@ -109,7 +129,13 @@ export async function publishJobEnded(
         status: row.status,
         reply: redactSecretsInText(row.result ?? ''),
       });
-      return;
+      return {
+        ...base,
+        entityId: row.entityId,
+        status: row.status,
+        result: row.result,
+        replyRendering: row.replyRendering,
+      };
     }
     if (row.status === 'failed') {
       bus.publish(row.entityId, row.conversationId, {
@@ -118,12 +144,13 @@ export async function publishJobEnded(
         error: row.error ?? '',
         reason: oneLine(redactSecretsInText(row.result ?? '')),
       });
-      return;
+      return null;
     }
     // Une porte terminale qui publie un job encore vivant : une erreur de câblage.
     throw new Error(`job ${jobId} is ${String(row.status)}, not terminal`);
   } catch (err) {
     lost(bus, `the end of job ${jobId}`, err);
+    return null;
   }
 }
 
@@ -238,11 +265,22 @@ export async function publishApprovalsResolved(
  * une fois COMMIS, devient les événements du flux. `lost` (une annonce faite
  * dans une transaction dont le COMMIT ne peut pas être suivi) dit à chaque
  * espace de relire la base.
+ *
+ * `onFinished` : ce qui suit un `job.finished`, juste après lui, sur le même
+ * bus — la réponse dite d'un job lancé par la voix (#967,
+ * chat/job-reply-voice.ts, branchée par `createApp`). Il ne doit rien attendre :
+ * l'écouteur publie les fins une par une.
  */
-export function transitionListener(bus: JobEventBus = jobEvents): TransitionListener {
+export function transitionListener(
+  bus: JobEventBus = jobEvents,
+  onFinished?: (db: AnyDrizzleDb, job: FinishedJob) => void,
+): TransitionListener {
   return {
     committed: async (db, t) => {
-      for (const jobId of t.endedJobIds) await publishJobEnded(db, jobId, bus);
+      for (const jobId of t.endedJobIds) {
+        const finished = await publishJobEnded(db, jobId, bus);
+        if (finished && onFinished) onFinished(db, finished);
+      }
       await publishApprovalsResolved(db, t.settledRequestIds, bus);
     },
     lost: () => bus.resyncEverywhere('event_lost'),

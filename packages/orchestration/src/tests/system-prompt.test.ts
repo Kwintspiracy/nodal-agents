@@ -2059,6 +2059,84 @@ ${sentence}`).length > 0,
     expect(renderingLines(prompt)).toEqual([]);
   });
 
+  // #967 — job f7aecffd: the spoken line was there, and the final reply came out
+  // as headings, numbered lists and URLs, shaped on the handoff note and the
+  // delegate's report. The final-reply line says the form holds against what
+  // the job worked from. Mutations verified: the line's gate reduced to
+  // `replyRendering === 'spoken'` → red (chat surface and delegate carry it);
+  // the push removed from buildJobContextBlock → red.
+  const finalReplyLines = (prompt: string): string[] =>
+    prompt.split('\n').filter((l) => l.startsWith('- final reply:'));
+  const FINAL_REPLY =
+    '- final reply: your final reply is what the person hears when this job finishes. ' +
+    'Write it for the ear even when what you worked from is shaped for reading (the request, ' +
+    "a note handed on with it, a teammate's report, a page or a file you read): keep its " +
+    'substance, say it in plain sentences, and leave its headings, lists, links and source ' +
+    "addresses out of what you say. A teammate's full report stays readable in its own run.";
+
+  it('the final reply of a spoken job is written for the ear, on every job surface, right after the rendering line (#967)', async () => {
+    const { entityId, root, worker } = await seedTeam();
+    for (const agent of [
+      makeAgent(root.id, entityId, root.personality, 'orchestrator'),
+      makeAgent(worker.id, entityId, worker.personality),
+    ]) {
+      for (const ctx of [
+        { origin: 'dashboard', replyRendering: 'spoken', availableToolNames: [...ALWAYS_ON_TOOLS] },
+        {
+          origin: 'telegram',
+          telegramChatId: '199791464',
+          channelDelivery: TELEGRAM_FACTS,
+          availableToolNames: withSend,
+          replyRendering: 'spoken',
+        },
+        { origin: 'dashboard', surface: 'cli-runtime', replyRendering: 'spoken' },
+      ] satisfies JobContext[]) {
+        const prompt = await buildSystemPrompt(agent, db, ctx);
+        const jobContext = prompt.split('## Job context')[1]?.split('\n## ')[0] ?? '';
+        expect({ role: agent.role, ctx: ctx.origin, lines: finalReplyLines(jobContext) }).toEqual({
+          role: agent.role,
+          ctx: ctx.origin,
+          lines: [FINAL_REPLY],
+        });
+        expect(jobContext).toContain(`${SPOKEN}\n${FINAL_REPLY}`);
+      }
+    }
+  });
+
+  it('no final-reply line where the reply is read, is the chat turn itself, or goes to a parent (#967)', async () => {
+    const { entityId, root, worker } = await seedTeam();
+    const rootAgent = makeAgent(root.id, entityId, root.personality, 'orchestrator');
+    const workerAgent = makeAgent(worker.id, entityId, worker.personality);
+    const cases: Array<[typeof rootAgent, JobContext]> = [
+      [rootAgent, { origin: 'dashboard', availableToolNames: [...ALWAYS_ON_TOOLS] }],
+      [rootAgent, { origin: 'dashboard', replyRendering: 'text' }],
+      [rootAgent, { origin: 'telegram', channelDelivery: TELEGRAM_FACTS, availableToolNames: withSend }],
+      [rootAgent, { origin: 'dashboard', surface: 'chat', replyRendering: 'spoken' }],
+      [
+        workerAgent,
+        {
+          origin: 'internal',
+          isDelegated: true,
+          delegationDepth: 1,
+          replyRendering: 'spoken',
+          availableToolNames: ALWAYS_ON_TOOLS.filter((t) => t !== 'dashboard_publish'),
+        },
+      ],
+    ];
+    for (const [agent, ctx] of cases) {
+      const prompt = await buildSystemPrompt(agent, db, ctx);
+      expect({ ctx, lines: finalReplyLines(prompt) }).toEqual({ ctx, lines: [] });
+    }
+    // The spoken chat turn is unchanged by #967: its rendering line, and only it.
+    const typed = await buildSystemPrompt(rootAgent, db, { origin: 'dashboard', surface: 'chat' });
+    const spoken = await buildSystemPrompt(rootAgent, db, {
+      origin: 'dashboard',
+      surface: 'chat',
+      replyRendering: 'spoken',
+    });
+    expect(spoken.replace(`${SPOKEN}\n`, '')).toBe(typed);
+  });
+
   it('indexes only the deferred tools the job holds', async () => {
     const { entityId, worker } = await seedTeam();
     const workerAgent = makeAgent(worker.id, entityId, worker.personality);

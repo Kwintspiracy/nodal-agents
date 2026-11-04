@@ -205,6 +205,8 @@ export {
   RUNNING_WORK_MAX_JOBS,
   buildRunningWorkBlock,
 } from './system-prompt';
+// #967 — l'annonce dite d'un job lancé par la voix.
+export { buildSpokenAnnouncement, reachableChannels } from './spoken-announcement';
 export type {
   JobContext,
   DeploymentContext,
