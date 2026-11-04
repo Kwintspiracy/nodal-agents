@@ -33,10 +33,16 @@ export interface AnnouncementRecord {
   /** Titres, gras, puces, listes numérotées, code. */
   markdown: boolean;
   url: boolean;
-  /** La plus longue suite d'au moins 5 mots reprise telle quelle du résultat, ou null. */
+  /** La plus longue suite d'au moins 4 mots reprise telle quelle du résultat, ou null. */
   sharedPhrase: string | null;
   /** Les nombres du résultat (3 chiffres et plus) que l'annonce répète. */
   numbersFromResult: string[];
+  /**
+   * TOUT nombre que l'annonce dit, en chiffres ou en toutes lettres (« sixty
+   * thousand » échappait au relevé du rejeu 5) : l'annonce d'un travail n'en
+   * dit aucun.
+   */
+  numbers: string[];
   /** Les canaux de messagerie que l'annonce nomme (la liste des canaux de Nodal). */
   channelNames: string[];
   /** Les tournures « où le lire » que l'annonce porte. */
@@ -47,11 +53,17 @@ const MARKDOWN = /(^|\n)\s*(#{1,6}\s|[-*+]\s|\d+[.)]\s)|\*\*|__|`/;
 const URL = /https?:\/\/|www\./i;
 /**
  * « Où le lire », en anglais et en français : Nodal nommé, un « lire / read »,
- * ou le fil désigné comme lieu (« in the chat », « dans la conversation ») —
- * le rejeu 6 disait « I've put the summary in the chat for you to read ».
+ * le fil désigné comme lieu (« in the chat », « dans la conversation »), ou
+ * le geste de l'y avoir mis (« written it up », « put the summary ») — le
+ * rejeu 6 disait « I've put the summary in the chat for you to read » et
+ * « I've written it up in the conversation ».
  */
 const WHERE_TO_READ =
-  /\bnodal\b|\bread (it|the|them|this|that|your)\b|\bto read\b|\breadable\b|\bin the (chat|conversation|thread)\b|\blire\b|\blis-le\b|\bconsulter\b|\bdans (le fil|la conversation|le chat)\b/gi;
+  /\bnodal\b|\bread (it|the|them|this|that|your)\b|\bto read\b|\breadable\b|\bin the (chat|conversation|thread)\b|\bwritten (it|them|everything) up\b|\bput (it|them|the \w+|everything)\b|\blire\b|\blis-le\b|\bconsulter\b|\bdans (le fil|la conversation|le chat)\b|\bje l'ai (mis|mise|écrit|rédigé)\b/gi;
+
+/** Un nombre en toutes lettres, en anglais et en français. */
+const NUMBER_WORDS =
+  /\b(twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion|vingt|trente|quarante|cinquante|soixante|cent|mille|milliard)s?\b/gi;
 
 function normalisedWords(text: string): string[] {
   return text
@@ -62,7 +74,7 @@ function normalisedWords(text: string): string[] {
 }
 
 /** La plus longue suite de mots (≥ `min`) de `text` qui figure dans `source`. */
-export function longestSharedPhrase(text: string, source: string, min = 5): string | null {
+export function longestSharedPhrase(text: string, source: string, min = 4): string | null {
   const words = normalisedWords(text);
   const haystack = ` ${normalisedWords(source).join(' ')} `;
   let best: string | null = null;
@@ -103,6 +115,7 @@ export function recordAnnouncement(
     url: false,
     sharedPhrase: null,
     numbersFromResult: [],
+    numbers: [],
     channelNames: [],
     whereToRead: [],
   };
@@ -127,6 +140,12 @@ export function recordAnnouncement(
     url: URL.test(text),
     sharedPhrase: longestSharedPhrase(text, result),
     numbersFromResult: numbersOf(text).filter((n) => resultNumbers.has(n)),
+    numbers: [
+      ...new Set([
+        ...(text.match(/\d[\d,.]*/g) ?? []),
+        ...(text.match(NUMBER_WORDS) ?? []).map((w) => w.toLowerCase()),
+      ]),
+    ],
     channelNames: CHANNELS.filter((c) => new RegExp(`\\b${c}\\b`, 'i').test(text)),
     whereToRead: [...new Set((text.match(WHERE_TO_READ) ?? []).map((m) => m.toLowerCase()))],
   };
@@ -240,8 +259,9 @@ export function summarizeAnnouncements(records: readonly AnnouncementRecord[]): 
             .join(', ')})`
         : ''),
     `words ${words.join(', ') || '-'} (median ${words[Math.floor(words.length / 2)] ?? '-'})`,
-    `reads the result (a 5+ word phrase of it) ${count((r) => r.sharedPhrase !== null)}`,
+    `reads the result (a 4+ word phrase of it) ${count((r) => r.sharedPhrase !== null)}`,
     `repeats numbers of the result ${count((r) => r.numbersFromResult.length > 0)}`,
+    `says a number (digits or words) ${count((r) => r.numbers.length > 0)}`,
     `names a channel ${count((r) => r.channelNames.length > 0)}`,
     `says where to read it ${count((r) => r.whereToRead.length > 0)}`,
     `markdown ${count((r) => r.markdown)}, url ${count((r) => r.url)}`,

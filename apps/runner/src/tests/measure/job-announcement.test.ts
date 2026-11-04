@@ -202,9 +202,46 @@ describe('the announcement replay of #967 @cap:parler-a-un-agent/moteur', () => 
     ]);
     const measure = await measureJobAnnouncements(db as never, { jobIds: [printJob], runs: 2 });
     expect(measure.records.map((r) => r.whereToRead)).toEqual([
-      ['in the chat', 'to read'],
+      ['put the summary', 'in the chat', 'to read'],
       ['dans la conversation'],
     ]);
+  });
+
+  // The four texts of replay 6 (f7aecffd) that said where to read it while the
+  // detector reported 0, and two French forms. Mutations verified: the
+  // `written … up` and `put …` branches removed → red.
+  it('the four replay-6 forms of "where to read it", and their French forms, are all counted', async () => {
+    fakeModel([
+      "Done. I've finished the search on the latest Microsoft layoff news and it's ready for you to read.",
+      "The Microsoft layoffs research is done. I've written it up in the conversation.",
+      "The Microsoft layoffs search is done. I've put the summary in the chat for you to read.",
+      "The Microsoft layoffs research is done. I've put the summary in the conversation for you to read.",
+      "C'est fait, je l'ai mis dans le fil.",
+      'La recherche est prête à lire.',
+    ]);
+    const measure = await measureJobAnnouncements(db as never, { jobIds: [printJob], runs: 6 });
+    expect(measure.records.map((r) => r.whereToRead.length > 0)).toEqual([
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+    ]);
+    expect(measure.records[1]!.whereToRead).toEqual(['written it up', 'in the conversation']);
+    expect(measure.records[4]!.whereToRead).toEqual(["je l'ai mis", 'dans le fil']);
+  });
+
+  // Replay 5, run 2: "about sixty thousand employees" passed the digits-only
+  // check. Mutation verified: NUMBER_WORDS not read → red.
+  it('a number is flagged in digits or in words, whatever the result says', async () => {
+    fakeModel([
+      'It is done: about sixty thousand people are concerned.',
+      'It is done, 2 pages.',
+      'It is done.',
+    ]);
+    const measure = await measureJobAnnouncements(db as never, { jobIds: [printJob], runs: 3 });
+    expect(measure.records.map((r) => r.numbers)).toEqual([['sixty', 'thousand'], ['2'], []]);
   });
 
   it('a call the model refuses is recorded as a failure, with no key in it', async () => {
@@ -222,8 +259,11 @@ describe('the announcement replay of #967 @cap:parler-a-un-agent/moteur', () => 
     expect(measure.records[0]!.detail ?? '').not.toContain('sk-or-v1-' + 'b'.repeat(64));
   });
 
-  it('a shared phrase is five words at least, read on words, not on punctuation', () => {
-    expect(longestSharedPhrase('It is ready now.', 'It is ready now, really.')).toBeNull();
+  it('a shared phrase is four words at least, read on words, not on punctuation', () => {
+    expect(longestSharedPhrase('It is ready.', 'It is ready, really.')).toBeNull();
+    expect(longestSharedPhrase('It is ready now.', 'It is ready now, really.')).toBe(
+      'it is ready now',
+    );
     expect(
       longestSharedPhrase(
         'About 60,000 employees are eligible!',
