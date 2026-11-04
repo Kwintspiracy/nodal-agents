@@ -2051,15 +2051,16 @@ ${sentence}`).length > 0,
   });
 
   // #987 — a heard reply answers what was asked and stops. The rule is a fact
-  // told to the model in the rendering line: the spoken chat turn and the
-  // non-delegated spoken job carry it, nothing else does. Mutation verified:
-  // the sentence removed from `replyRenderingLine` → red (first test); the
-  // `isDelegated` guard removed → red (third).
+  // told to the model in the rendering line: the spoken chat turn carries it,
+  // a typed chat turn and a delegated job do not. Which prompts get the line is
+  // not this test's subject (#967). Mutation verified: the sentence removed
+  // from `replyRenderingLine` → red (first test); the sentence moved to the chat
+  // surface line, or the `isDelegated` guard removed → red (second).
   const BREVITY = 'the reply answers just that, in as few short sentences as it needs, then stops';
   const BREVITY_NEVER = ['no background', 'no extra advice', 'no offer to do more'];
   const BREVITY_KEEPS_WARNING = 'A warning they need in order not to be misled stays.';
 
-  it('a spoken chat turn and a non-delegated spoken job carry the brevity rule, once, in the rendering line (#987)', async () => {
+  it('a spoken chat turn carries the brevity rule, once, in the rendering line (#987)', async () => {
     const { entityId, root, worker } = await seedTeam();
     for (const agent of [
       makeAgent(root.id, entityId, root.personality, 'orchestrator'),
@@ -2067,8 +2068,6 @@ ${sentence}`).length > 0,
     ]) {
       for (const ctx of [
         { origin: 'dashboard', surface: 'chat', replyRendering: 'spoken' },
-        { origin: 'dashboard', replyRendering: 'spoken', availableToolNames: [...ALWAYS_ON_TOOLS] },
-        { origin: 'api', replyRendering: 'spoken' },
       ] satisfies JobContext[]) {
         const prompt = await buildSystemPrompt(agent, db, ctx);
         const [line, ...extra] = renderingLines(prompt);
@@ -2089,7 +2088,7 @@ ${sentence}`).length > 0,
     }
   });
 
-  it('a typed turn, a typed job and a delegated job carry no brevity rule (#987)', async () => {
+  it('a typed chat turn and a delegated job carry no brevity rule (#987)', async () => {
     const { entityId, root, worker } = await seedTeam();
     const rootAgent = makeAgent(root.id, entityId, root.personality, 'orchestrator');
     const workerAgent = makeAgent(worker.id, entityId, worker.personality);
@@ -2099,12 +2098,6 @@ ${sentence}`).length > 0,
         origin: 'dashboard',
         surface: 'chat',
         replyRendering: 'text',
-      }),
-      await buildSystemPrompt(rootAgent, db, { origin: 'api' }),
-      await buildSystemPrompt(rootAgent, db, {
-        origin: 'telegram',
-        channelDelivery: TELEGRAM_FACTS,
-        availableToolNames: withSend,
       }),
       await buildSystemPrompt(workerAgent, db, {
         origin: 'internal',
