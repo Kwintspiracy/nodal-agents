@@ -123,15 +123,21 @@ describe('the spoken announcement of a finished voice job (#967) @cap:parler-a-u
           'Write only what you say to them now, in the language of their request.\n' +
           '- If the result is a short answer (a fact, a confirmation, a sentence or two), say it ' +
           'in plain spoken words. Never say a web address, a file path or markup.\n' +
-          '- Otherwise it is a document. Do not tell them what it says: no summary, no finding, ' +
-          'no number, no name from it. Say only that it is ready, that they can read it in Nodal, ' +
-          'and offer to send it to them on telegram or discord or slack. Two short sentences at most.',
+          '- Otherwise it is a document. Do not tell them what it says: no gist, no summary, no ' +
+          'finding, no number, no name from it. Say only that it is ready, that they can read it ' +
+          'in Nodal, and offer to send it to them on telegram or discord or slack. Two short ' +
+          'sentences at most.\n' +
+          // Run 1 of the second replay narrated the rule ("it's a document, so I
+          // won't read out the details"): the announcement never explains itself.
+          'Never explain what you are saying or leaving out, or why.',
       );
       // The rule is the last thing the model reads, after the whole result.
       expect(prompt.indexOf(job.result.trim())).toBeLessThan(
         prompt.indexOf('Write only what you say'),
       );
-      expect(prompt.endsWith('Two short sentences at most.')).toBe(true);
+      expect(prompt.endsWith('Never explain what you are saying or leaving out, or why.')).toBe(
+        true,
+      );
     });
   }
 

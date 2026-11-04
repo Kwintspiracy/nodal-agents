@@ -32,6 +32,13 @@
 // son « la première phrase part pendant que la suite s'écrit » appelle une
 // suite, et une annonce n'en a pas. C'est le modèle qui juge si le résultat
 // est court ou un document ; le runner ne mesure aucune longueur.
+//
+// Seconde mesure (même job, 5 essais) : 23 à 38 mots, rien du rapport lu,
+// « où le lire » et l'offre 5/5 — mais un essai en a encore donné l'essentiel
+// (« not a layoff ») et un autre a raconté la règle (« it's a document, so I
+// won't read out the details »), comme le tour de #977 racontait son
+// aiguillage. D'où « no gist » et la dernière ligne : l'annonce n'explique
+// jamais ce qu'elle dit ou tait.
 
 import { countActiveConversations, listChannelBindings } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from './types';
@@ -84,8 +91,9 @@ export function buildSpokenAnnouncement(input: {
       'Write only what you say to them now, in the language of their request.\n' +
       '- If the result is a short answer (a fact, a confirmation, a sentence or two), say it ' +
       'in plain spoken words. Never say a web address, a file path or markup.\n' +
-      '- Otherwise it is a document. Do not tell them what it says: no summary, no finding, ' +
-      'no number, no name from it. Say only that it is ready, that they can read it in Nodal, ' +
-      `${offer}. Two short sentences at most.`,
+      '- Otherwise it is a document. Do not tell them what it says: no gist, no summary, no ' +
+      'finding, no number, no name from it. Say only that it is ready, that they can read it ' +
+      `in Nodal, ${offer}. Two short sentences at most.\n` +
+      'Never explain what you are saying or leaving out, or why.',
   };
 }

@@ -2142,8 +2142,9 @@ describe('a voice-launched job announces its end, out loud (#967) @cap:parler-a-
     expect(asked.startsWith(`The person asked:\n${TRANSCRIPT}\n\n`)).toBe(true);
     expect(asked).toContain(`<<<\n${RESULT}\n>>>`);
     expect(asked).toContain(
-      'Do not tell them what it says: no summary, no finding, no number, no name from it.',
+      'Do not tell them what it says: no gist, no summary, no finding, no number, no name from it.',
     );
+    expect(asked).toContain('Never explain what you are saying or leaving out, or why.');
     expect(asked).toContain('and nothing else: there is no channel you can send it on.');
     // Its tokens are traced, on the job, under their own source.
     const traced = await db
