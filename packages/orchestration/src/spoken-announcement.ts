@@ -21,13 +21,20 @@
 // liaisons ACTIVES de l'agent qui ont au moins une conversation approuvée —
 // celles où un envoi arrive vraiment. Jamais une liste du code.
 //
-// La forme « entendue » est la ligne même du tour vocal (`replyRenderingLine`,
-// system-prompt.ts) : une seule définition de ce qu'une voix rend, lue par
-// tout ce qui est dit.
+// LA CONSIGNE, mesurée (rejeu sur le job f7aecffd, 04/11) : avec la règle dans
+// le seul prompt système, et le résultat entier dans le message, Haiku 5.5 a
+// résumé le rapport cinq fois sur cinq (122 à 162 mots), puis ajouté « le
+// rapport complet est dans Nodal ». Le résultat cité TIRE vers le résumé. La
+// règle est donc dite APRÈS le résultat, dans le message, et elle est
+// tranchée pour un document : rien de ce qu'il dit — ni l'essentiel, ni un
+// chiffre, ni un constat —, seulement qu'il est prêt, où le lire, et l'offre.
+// La ligne de forme du tour vocal (`replyRenderingLine`) n'est PAS reprise :
+// son « la première phrase part pendant que la suite s'écrit » appelle une
+// suite, et une annonce n'en a pas. C'est le modèle qui juge si le résultat
+// est court ou un document ; le runner ne mesure aucune longueur.
 
 import { countActiveConversations, listChannelBindings } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from './types';
-import { replyRenderingLine } from './system-prompt';
 
 /**
  * Les canaux où l'agent peut joindre la personne : ses liaisons activées qui
@@ -44,9 +51,9 @@ export async function reachableChannels(db: AnyDrizzleDb, agentId: string): Prom
 }
 
 /**
- * La consigne de l'annonce : le système (la personnalité de l'agent, la forme
- * entendue, ce qu'il annonce et vers où) et le message (la demande de la
- * personne et le résultat, cités tels qu'en base).
+ * La consigne de l'annonce : le système (la personnalité de l'agent, et le
+ * fait que ce qu'il écrit est dit) et le message (la demande de la personne,
+ * le résultat cité tel qu'en base, puis la règle de l'annonce).
  */
 export function buildSpokenAnnouncement(input: {
   /** `agents.personality`, telle quelle. */
@@ -61,24 +68,24 @@ export function buildSpokenAnnouncement(input: {
   // Le roster de l'équipe n'a rien à faire dans une annonce : le
   // marqueur reste vide, comme sans équipe.
   const personality = input.personality.replace('{{team}}', '').trim();
-  const rendering = replyRenderingLine({ origin: 'dashboard', replyRendering: 'spoken' });
   const offer =
     input.channels.length > 0
-      ? `offer to send it to them on ${input.channels.join(' or ')}`
-      : 'there is no channel you can send it on, so say only where to read it';
-  const announcement =
-    '- announcement: the work the person asked you for has just finished, and you now tell ' +
-    'them so, out loud. Its result is written in the conversation, where it stays for ' +
-    'reading; the message below quotes their request and that result. Speak in the ' +
-    'language of their request, in a few short sentences. A short result (a fact, a ' +
-    'confirmation, a sentence or two) is simply said. A longer one (a report, a list, ' +
-    'sources, a document) is never read out: say it is ready, that they can read it in ' +
-    `Nodal, and ${offer}. ` +
-    'Say no address and no list. Their answer to you is their next message.';
+      ? `and offer to send it to them on ${input.channels.join(' or ')}`
+      : 'and nothing else: there is no channel you can send it on';
   return {
-    system: `${personality}\n\n## Job context\n${rendering ?? ''}\n${announcement}`,
+    system:
+      `${personality}\n\n## Announcement\n` +
+      'The work the person asked you for has just finished. You are now telling them, out ' +
+      'loud: what you write is turned into speech and heard, not read.',
     prompt:
       `The person asked:\n${input.request.trim()}\n\n` +
-      `The result of the work, as the conversation shows it:\n${input.result.trim()}`,
+      'The result of the work, written in the conversation where they can read it:\n' +
+      `<<<\n${input.result.trim()}\n>>>\n\n` +
+      'Write only what you say to them now, in the language of their request.\n' +
+      '- If the result is a short answer (a fact, a confirmation, a sentence or two), say it ' +
+      'in plain spoken words. Never say a web address, a file path or markup.\n' +
+      '- Otherwise it is a document. Do not tell them what it says: no summary, no finding, ' +
+      'no number, no name from it. Say only that it is ready, that they can read it in Nodal, ' +
+      `${offer}. Two short sentences at most.`,
   };
 }

@@ -606,7 +606,7 @@ function channelDeliveryLine(
  * qu'une voix ne rend pas. Un délégué répond à son parent, jamais à la
  * personne : il n'en lit rien.
  */
-export function replyRenderingLine(ctx: JobContext): string | null {
+function replyRenderingLine(ctx: JobContext): string | null {
   if (ctx.replyRendering !== 'spoken' || ctx.isDelegated) return null;
   return (
     '- rendering: spoken — your reply is turned into speech and heard, not read. ' +

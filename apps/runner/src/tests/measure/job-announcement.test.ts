@@ -156,7 +156,7 @@ describe('the announcement replay of #967 @cap:parler-a-un-agent/moteur', () => 
     expect(seen).toHaveLength(3);
     expect(seen[0]!.model).toBe('anthropic/claude-haiku-5.5');
     expect(seen[0]!.system).toContain('You are Alfred.');
-    expect(seen[0]!.system).toContain('offer to send it to them on telegram');
+    expect(seen[0]!.user).toContain('offer to send it to them on telegram');
     expect(seen[0]!.user).toContain(RESULT);
 
     const [announces, reads, marked] = measure.records;

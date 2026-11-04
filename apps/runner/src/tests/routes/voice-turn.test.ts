@@ -342,7 +342,7 @@ function network(opts: {
       let parts: string[] | null = null;
       let toolCall: { name: string; args: Record<string, unknown> } | null = null;
       if (system.startsWith(TITLE_SYSTEM_PROMPT.slice(0, 40))) text = 'Tokyo time';
-      else if (system.includes('\n- announcement: ')) {
+      else if (system.includes('\n## Announcement\n')) {
         sent.announcement.push(body);
         if (opts.announcement?.status && opts.announcement.status !== 200) {
           return new Response(JSON.stringify({ error: { message: 'upstream refused' } }), {
@@ -2132,17 +2132,19 @@ describe('a voice-launched job announces its end, out loud (#967) @cap:parler-a-
     expect(voice.status).toBe(200);
 
     // The announcement request, as the provider received it: the agent's own
-    // personality, the "heard" line, the offer rule, and the result quoted.
+    // personality, the fact that it is heard, the result quoted whole, and the
+    // rule after it (the prompt itself: spoken-announcement.test.ts).
     expect(sent.announcement).toHaveLength(1);
     const system = systemOf(sent.announcement[0]!);
-    expect(system.startsWith('You are a test agent.\n\n## Job context\n')).toBe(true);
-    expect(system).toContain(SPOKEN_LINE);
-    expect(system).toContain('is never read out: say it is ready, that they can read it in Nodal');
-    expect(system).toContain('there is no channel you can send it on');
+    expect(system.startsWith('You are a test agent.\n\n## Announcement\n')).toBe(true);
+    expect(system).toContain('what you write is turned into speech and heard, not read.');
     const asked = textOf(sent.announcement[0]!.messages.at(-1)!.content);
-    expect(asked).toBe(
-      `The person asked:\n${TRANSCRIPT}\n\nThe result of the work, as the conversation shows it:\n${RESULT}`,
+    expect(asked.startsWith(`The person asked:\n${TRANSCRIPT}\n\n`)).toBe(true);
+    expect(asked).toContain(`<<<\n${RESULT}\n>>>`);
+    expect(asked).toContain(
+      'Do not tell them what it says: no summary, no finding, no number, no name from it.',
     );
+    expect(asked).toContain('and nothing else: there is no channel you can send it on.');
     // Its tokens are traced, on the job, under their own source.
     const traced = await db
       .select({ source: llmCalls.source })
@@ -2209,7 +2211,9 @@ describe('a voice-launched job announces its end, out loud (#967) @cap:parler-a-
       await finish(job, RESULT);
       await waitUntil(() => ofJob(stream.events, job).length >= 2);
       await readReply(app, ofJob(stream.events, job)[1]!.data['audioId'] as string);
-      expect(systemOf(sent.announcement[0]!)).toContain('offer to send it to them on telegram.');
+      expect(textOf(sent.announcement[0]!.messages.at(-1)!.content)).toContain(
+        'and offer to send it to them on telegram. Two short sentences at most.',
+      );
     } finally {
       await db.delete(telegramAllowedChats).where(eq(telegramAllowedChats.agentId, agentId));
       await db.delete(channelBindings).where(eq(channelBindings.agentId, agentId));

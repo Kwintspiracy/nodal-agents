@@ -1,16 +1,16 @@
 // spoken-announcement.test.ts — ce que l'agent dit quand un job lancé par la voix finit (#967).
 //
 // Ce qui se prouve, sur une vraie base : la consigne de l'annonce porte la
-// personnalité de l'agent, la forme entendue (la ligne même du tour vocal),
-// la règle « un résultat court se dit, un document ne se lit jamais », et les
-// canaux où la personne est VRAIMENT joignable, lus dans les liaisons de
-// l'agent — jamais une liste du code. Le résultat est cité tel qu'en base.
+// personnalité de l'agent, le fait que ce qu'il écrit est dit, et APRÈS le
+// résultat cité tel qu'en base, la règle : un résultat court se dit, un
+// document ne se raconte jamais (ni résumé, ni chiffre, ni constat), il est
+// prêt, où le lire, et l'offre des canaux où la personne est VRAIMENT
+// joignable, lus dans les liaisons de l'agent — jamais une liste du code.
+// Les trois jobs du rejeu du 04/11 sont les fixtures (fixtures/
+// spoken-announcement-jobs.json) : f7aecffd (le rapport de 3 737 caractères),
+// 22720a8c et 3b33bf31 (deux résultats courts).
 //
-// Mutations vérifiées (chacune rougit un cas) :
-//   - `reachableChannels` sans le filtre `enabled` → « a disabled binding » ;
-//   - sans le compte des conversations approuvées → « a binding with no
-//     approved conversation » ;
-//   - la ligne de forme retirée du système → « the announcement is heard ».
+// Mutations vérifiées : voir le corps de la PR #967.
 
 import { describe, it, expect, beforeAll } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
@@ -23,6 +23,7 @@ import {
 } from '@nodal-agents/db';
 import { buildSpokenAnnouncement, reachableChannels } from '../spoken-announcement';
 import type { AnyDrizzleDb } from '../types';
+import JOBS from './fixtures/spoken-announcement-jobs.json';
 
 let db: TestDb;
 let entityId = '';
@@ -103,43 +104,51 @@ describe('the spoken announcement of a finished voice job (#967) @cap:parler-a-u
     expect(await reachableChannels(db as unknown as AnyDrizzleDb, await newAgent())).toEqual([]);
   });
 
-  it('the announcement is heard, in the agent’s own voice, and a document is offered, never read', () => {
-    const { system, prompt } = buildSpokenAnnouncement({
-      personality: 'You are Alfred.\n\n{{team}}',
-      channels: ['telegram', 'discord'],
-      request: 'Search the web for the latest news about Microsoft layoffs.',
-      result: RESULT,
+  for (const job of JOBS) {
+    it(`job ${job.job} (${job.kind}): the result is quoted whole, and the rule comes AFTER it`, () => {
+      const { system, prompt } = buildSpokenAnnouncement({
+        personality: 'You are Alfred.\n\n{{team}}',
+        channels: ['telegram', 'discord', 'slack'],
+        request: job.request,
+        result: job.result,
+      });
+      expect(system).toBe(
+        'You are Alfred.\n\n## Announcement\n' +
+          'The work the person asked you for has just finished. You are now telling them, out ' +
+          'loud: what you write is turned into speech and heard, not read.',
+      );
+      // The voice turn's rendering line is not reused: its "while the rest is
+      // still being written" invites a rest an announcement does not have.
+      expect(system).not.toContain('rendering:');
+      expect(prompt).toBe(
+        `The person asked:\n${job.request.trim()}\n\n` +
+          'The result of the work, written in the conversation where they can read it:\n' +
+          `<<<\n${job.result.trim()}\n>>>\n\n` +
+          'Write only what you say to them now, in the language of their request.\n' +
+          '- If the result is a short answer (a fact, a confirmation, a sentence or two), say it ' +
+          'in plain spoken words. Never say a web address, a file path or markup.\n' +
+          '- Otherwise it is a document. Do not tell them what it says: no summary, no finding, ' +
+          'no number, no name from it. Say only that it is ready, that they can read it in Nodal, ' +
+          'and offer to send it to them on telegram or discord or slack. Two short sentences at most.',
+      );
+      // The rule is the last thing the model reads, after the whole result.
+      expect(prompt.indexOf(job.result.trim())).toBeLessThan(
+        prompt.indexOf('Write only what you say'),
+      );
+      expect(prompt.endsWith('Two short sentences at most.')).toBe(true);
     });
-    expect(system.startsWith('You are Alfred.\n\n## Job context\n')).toBe(true);
-    expect(system).not.toContain('{{team}}');
-    // The voice turn's own rendering line: one definition of what a voice carries.
-    expect(system).toContain('- rendering: spoken — your reply is turned into speech and heard');
-    const announcement = system.split('\n').find((l) => l.startsWith('- announcement:'));
-    expect(announcement).toBeDefined();
-    expect(announcement).toContain(
-      'A short result (a fact, a confirmation, a sentence or two) is simply said.',
-    );
-    expect(announcement).toContain(
-      'is never read out: say it is ready, that they can read it in Nodal',
-    );
-    expect(announcement).toContain('offer to send it to them on telegram or discord');
-    // The request and the result are quoted as stored, never cut or picked.
-    expect(prompt).toBe(
-      'The person asked:\nSearch the web for the latest news about Microsoft layoffs.\n\n' +
-        `The result of the work, as the conversation shows it:\n${RESULT}`,
-    );
-  });
+  }
 
-  it('no reachable channel: no channel is named, and the announcement says only where to read', () => {
-    const { system } = buildSpokenAnnouncement({
+  it('no reachable channel: none is named, and the document is only said ready, where to read it', () => {
+    const { prompt } = buildSpokenAnnouncement({
       personality: 'You are Alfred.',
       channels: [],
-      request: 'Print the recipe.',
-      result: 'Printed.',
+      request: JOBS[0]!.request,
+      result: JOBS[0]!.result,
     });
-    expect(system).toContain(
-      'there is no channel you can send it on, so say only where to read it',
+    expect(prompt).toContain(
+      'that they can read it in Nodal, and nothing else: there is no channel you can send it on.',
     );
-    for (const c of ['telegram', 'slack', 'discord', 'whatsapp']) expect(system).not.toContain(c);
+    expect(prompt.split('>>>')[1]).not.toMatch(/telegram|slack|discord|whatsapp/i);
   });
 });
