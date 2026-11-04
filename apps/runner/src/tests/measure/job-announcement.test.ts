@@ -193,6 +193,20 @@ describe('the announcement replay of #967 @cap:parler-a-un-agent/moteur', () => 
     expect(measure.sameness.acrossJobs).toEqual([]);
   });
 
+  // Replay 6: "I've put the summary in the chat for you to read" was not
+  // counted. Mutation verified: the `to read` / `in the chat` branches removed → red.
+  it('"in the chat for you to read" and "dans la conversation" count as saying where to read it', async () => {
+    fakeModel([
+      "The research is done. I've put the summary in the chat for you to read.",
+      "C'est fait, tout est dans la conversation.",
+    ]);
+    const measure = await measureJobAnnouncements(db as never, { jobIds: [printJob], runs: 2 });
+    expect(measure.records.map((r) => r.whereToRead)).toEqual([
+      ['in the chat', 'to read'],
+      ['dans la conversation'],
+    ]);
+  });
+
   it('a call the model refuses is recorded as a failure, with no key in it', async () => {
     vi.stubGlobal(
       'fetch',

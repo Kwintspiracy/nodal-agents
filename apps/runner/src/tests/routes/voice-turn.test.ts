@@ -2145,7 +2145,7 @@ describe('a voice-launched job announces its end, out loud (#967) @cap:parler-a-
       'Tell them, in your own words, that what they asked for is done. Speak the language of their request above, even when the result is written in another language.',
     );
     expect(asked).toContain('say only that it is done, in one short sentence.');
-    expect(asked).toContain('Never say where to read it, and never offer to send it anywhere');
+    expect(asked).toContain('never offer to send it anywhere: they know.');
     // Its tokens are traced, on the job, under their own source.
     const traced = await db
       .select({ source: llmCalls.source })
@@ -2216,7 +2216,7 @@ describe('a voice-launched job announces its end, out loud (#967) @cap:parler-a-
       await readReply(app, ofJob(stream.events, job)[1]!.data['audioId'] as string);
       const rule = textOf(sent.announcement[0]!.messages.at(-1)!.content).split('>>>')[1]!;
       expect(`${systemOf(sent.announcement[0]!)}\n${rule}`).not.toMatch(
-        /telegram|slack|discord|whatsapp|\bnodal\b/i,
+        /telegram|slack|discord|whatsapp/i,
       );
     } finally {
       await db.delete(telegramAllowedChats).where(eq(telegramAllowedChats.agentId, agentId));

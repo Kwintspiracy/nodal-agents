@@ -34,8 +34,11 @@ const RULE =
   // Replay 5: "keep a fact not to be misled" brought the research's caveats
   // back in. The fact kept is the state of the WORK, never of its content.
   '- If the work itself is not finished or not confirmed yet (a print still running, a ' +
-  'message not delivered), add that in a few words. That is the only thing you add.\n' +
-  '- Never say where to read it, and never offer to send it anywhere: they know.\n' +
+  'message not delivered), add that in a few words, without naming a device, a model or ' +
+  'a file. That is the only thing you add.\n' +
+  // Replay 6: "in the chat for you to read" passed "never say where to read it".
+  '- Never say where it is or that it can be read (not in Nodal, not in the chat, not ' +
+  '"ready for you to read"), and never offer to send it anywhere: they know.\n' +
   '- No stock phrase: say it the way you would say it this time.\n' +
   '- Never say a web address, a file path or markup, and never explain what you are ' +
   'saying or leaving out, or why.\n' +
@@ -73,14 +76,16 @@ describe('the spoken announcement of a finished voice job (#967) @cap:parler-a-u
     });
   }
 
-  it('no channel and no "read it in Nodal" is put in its mouth: the rule names none', () => {
+  it('no channel is put in its mouth, and Nodal is named only as a place NOT to point to', () => {
     const { system, prompt } = buildSpokenAnnouncement({
       personality: 'You are Alfred.',
       request: JOBS[0]!.request,
       result: JOBS[0]!.result,
     });
     const rule = prompt.split('>>>')[1]!;
-    expect(`${system}\n${rule}`).not.toMatch(/telegram|slack|discord|whatsapp|\bnodal\b/i);
+    expect(`${system}\n${rule}`).not.toMatch(/telegram|slack|discord|whatsapp/i);
+    expect(rule.match(/nodal/gi)).toEqual(['Nodal']);
+    expect(rule).toContain('Never say where it is or that it can be read (not in Nodal,');
     expect(rule).toContain('never offer to send it anywhere');
   });
 });

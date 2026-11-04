@@ -45,7 +45,12 @@
 //     le fait gardé est l'état du TRAVAIL (une impression en cours, un envoi
 //     non remis), jamais une réserve de son contenu ; pour un travail,
 //     « seulement que c'est fait », en une phrase (la tournure de la v3, qui
-//     tenait 0/5).
+//     tenait 0/5) ;
+//   - « never say where to read it » n'a pas suffi (« I've put the summary in
+//     the chat for you to read », 3/5) : la consigne nomme ce qui est exclu
+//     (pas dans Nodal, pas dans le chat, pas « prêt à lire ») ; et l'état d'une
+//     impression a nommé le modèle de l'imprimante (1/5) : l'état se dit sans
+//     nommer un appareil, un modèle ou un fichier.
 // La ligne de forme du tour vocal (`replyRenderingLine`) n'est PAS reprise :
 // son « la première phrase part pendant que la suite s'écrit » appelle une
 // suite, et une annonce n'en a pas. C'est le modèle qui juge question ou
@@ -84,8 +89,10 @@ export function buildSpokenAnnouncement(input: {
       'a send), say only that it is done, in one short sentence. Nothing from its content: ' +
       'no gist, no main story, no finding, no number, no name, no caveat about what it says.\n' +
       '- If the work itself is not finished or not confirmed yet (a print still running, a ' +
-      'message not delivered), add that in a few words. That is the only thing you add.\n' +
-      '- Never say where to read it, and never offer to send it anywhere: they know.\n' +
+      'message not delivered), add that in a few words, without naming a device, a model or ' +
+      'a file. That is the only thing you add.\n' +
+      '- Never say where it is or that it can be read (not in Nodal, not in the chat, not ' +
+      '"ready for you to read"), and never offer to send it anywhere: they know.\n' +
       '- No stock phrase: say it the way you would say it this time.\n' +
       '- Never say a web address, a file path or markup, and never explain what you are ' +
       'saying or leaving out, or why.\n' +

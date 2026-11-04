@@ -45,9 +45,13 @@ export interface AnnouncementRecord {
 
 const MARKDOWN = /(^|\n)\s*(#{1,6}\s|[-*+]\s|\d+[.)]\s)|\*\*|__|`/;
 const URL = /https?:\/\/|www\./i;
-/** « Où le lire », en anglais et en français : Nodal nommé, ou un « lire / read it ». */
+/**
+ * « Où le lire », en anglais et en français : Nodal nommé, un « lire / read »,
+ * ou le fil désigné comme lieu (« in the chat », « dans la conversation ») —
+ * le rejeu 6 disait « I've put the summary in the chat for you to read ».
+ */
 const WHERE_TO_READ =
-  /\bnodal\b|\bread (it|the|them|this|that|your)\b|\breadable\b|\blire\b|\blis-le\b|\bconsulter\b/gi;
+  /\bnodal\b|\bread (it|the|them|this|that|your)\b|\bto read\b|\breadable\b|\bin the (chat|conversation|thread)\b|\blire\b|\blis-le\b|\bconsulter\b|\bdans (le fil|la conversation|le chat)\b/gi;
 
 function normalisedWords(text: string): string[] {
   return text
