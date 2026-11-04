@@ -1,17 +1,4 @@
 {
-  "id": "gen-1754956801-transcription",
-  "provider": "Google",
-  "model": "google/gemini-2.5-flash",
-  "object": "chat.completion",
-  "created": 1754956801,
-  "choices": [
-    {
-      "logprobs": null,
-      "finish_reason": "stop",
-      "native_finish_reason": "STOP",
-      "index": 0,
-      "message": { "role": "assistant", "content": "", "refusal": null, "reasoning": null }
-    }
-  ],
-  "usage": { "prompt_tokens": 61, "completion_tokens": 0, "total_tokens": 61 }
+  "text": "",
+  "usage": { "seconds": 2 }
 }

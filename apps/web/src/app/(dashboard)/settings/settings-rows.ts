@@ -337,7 +337,7 @@ export function buildSettingRows(src: SettingsSource): SettingRow[] {
     id: 'voice',
     group: 'workspace',
     name: 'Voice',
-    lede: 'The voice Nodal speaks with: in every voice turn, and for the audio files your agents make.',
+    lede: 'The voice Nodal speaks with, and the model that writes down what you say to it.',
     // La section lit la voix elle-même, par la route du runner (#969).
     value: 'Source, model and voice',
   });
