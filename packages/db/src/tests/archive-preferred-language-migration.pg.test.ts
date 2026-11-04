@@ -1,12 +1,15 @@
 // archive-preferred-language-migration.pg.test.ts — migration 0162 contre un VRAI Postgres.
 //
 // CE QUE CELA PROUVE (#986) :
-//   - le souvenir que l'entretien d'accueil écrivait, « Operator — preferred
-//     language: … », est ARCHIVÉ — la ligne reste, lisible et réversible ;
+//   - le souvenir que l'entretien d'accueil écrivait — souvenir d'espace,
+//     saisi, préférence, « Operator — preferred language: … » — est ARCHIVÉ
+//     (archived, valid_to posé) ; la ligne reste, lisible et réversible ;
+//   - plusieurs lignes de ce genre dans un même espace : toutes archivées ;
 //   - rien d'autre n'est touché : un préfixe voisin (« preferred languages »),
 //     un autre préfixe de l'entretien, les mêmes mots au milieu d'une phrase,
-//     un préfixe qui ne diffère que par son tiret ;
-//   - une ligne déjà archivée ne voit pas son `updated_at` réécrit ;
+//     un tiret différent, une minuscule, la même phrase écrite par un agent, ou
+//     d'une autre source, ou d'une autre catégorie ;
+//   - une ligne déjà archivée, ou déjà close (valid_to), n'est pas réécrite ;
 //   - l'entrée du journal existe.
 //
 // Le démarrage est un TEST, pas un `beforeAll` (invariant #4).
@@ -57,29 +60,38 @@ async function newAgent(db: Db, entityId: string): Promise<string> {
   return r[0]!.id;
 }
 
+/** Une ligne telle que l'entretien l'écrivait, sauf ce que `opts` change. */
 async function memory(
   db: Db,
   entityId: string,
   fact: string,
-  opts: { agentId?: string; archived?: boolean; source?: string } = {},
+  opts: {
+    agentId?: string;
+    archived?: boolean;
+    source?: string;
+    category?: string;
+    closed?: boolean;
+  } = {},
 ): Promise<string> {
   const r = await rows<{ id: string }>(
     db,
-    sql`INSERT INTO agent_memory (entity_id, agent_id, fact, category, importance, source, archived, updated_at)
-        VALUES (${entityId}, ${opts.agentId ?? null}, ${fact}, 'preference', 5, ${opts.source ?? 'manual'},
-                ${opts.archived ?? false}, '2026-01-01T00:00:00Z')
+    sql`INSERT INTO agent_memory (entity_id, agent_id, fact, category, importance, source, archived, valid_to, updated_at)
+        VALUES (${entityId}, ${opts.agentId ?? null}, ${fact}, ${opts.category ?? 'preference'}, 5,
+                ${opts.source ?? 'manual'}, ${opts.archived ?? false},
+                ${opts.closed ? '2026-01-01T00:00:00Z' : null}, '2026-01-01T00:00:00Z')
         RETURNING id`,
   );
   return r[0]!.id;
 }
 
-async function stateOf(
-  db: Db,
-  id: string,
-): Promise<{ fact: string; archived: boolean; touched: boolean }> {
-  const r = await rows<{ fact: string; archived: boolean; touched: boolean }>(
+type State = { fact: string; archived: boolean; closed: boolean; touched: boolean };
+
+async function stateOf(db: Db, id: string): Promise<State> {
+  const r = await rows<State>(
     db,
-    sql`SELECT fact, archived, updated_at > '2026-01-01T00:00:00Z' AS touched FROM agent_memory WHERE id = ${id}`,
+    sql`SELECT fact, archived, valid_to IS NOT NULL AS closed,
+               updated_at > '2026-01-01T00:00:00Z' AS touched
+        FROM agent_memory WHERE id = ${id}`,
   );
   if (!r[0]) expect.fail(`memory ${id} is gone — the migration must never delete`);
   return r[0];
@@ -101,45 +113,68 @@ describe('migration 0162_archive_preferred_language @cap:se-souvenir/moteur', ()
     await runMigrations(pg.url, { patchVectorAsText: true });
   }, 120_000);
 
-  // Mutation vérifiée : le UPDATE retiré → rouge (les deux lignes au préfixe
-  // restent actives) ; le préfixe comparé par `LIKE 'Operator — preferred language%'`
-  // → rouge (« preferred languages » est archivée).
-  it('archives the rows that start with the platform prefix, and only them', async () => {
+  // Mutations vérifiées : le UPDATE neutralisé → rouge (les lignes de
+  // l'entretien restent actives) ; le préfixe comparé par
+  // `LIKE 'Operator — preferred language%'` → rouge (« preferred languages »
+  // est archivée) ; la condition `agent_id IS NULL` retirée → rouge (la copie
+  // d'un agent est archivée).
+  it('archives every row the interview wrote, and only those', async () => {
     const { db, close } = createClient(harness().url, { max: 1 });
     try {
       const ws = await newEntity(db);
       const agent = await newAgent(db, ws);
-      const onboarding = await memory(db, ws, 'Operator — preferred language: Francais');
-      const byAgent = await memory(db, ws, 'Operator — preferred language: 中文', {
-        agentId: agent,
-        source: 'agent',
-      });
-      const lookAlikes = await Promise.all([
-        memory(db, ws, 'Operator — preferred languages: French, English'),
-        memory(db, ws, 'Operator — what to call them: Quentin'),
-        memory(db, ws, 'Note: Operator — preferred language: French was asked at onboarding'),
-        memory(db, ws, 'Operator - preferred language: French'),
-        memory(db, ws, 'operator — preferred language: French'),
-      ]);
+      const interview = [
+        await memory(db, ws, 'Operator — preferred language: Francais'),
+        await memory(db, ws, 'Operator — preferred language: 中文'),
+      ];
+      const untouched = [
+        await memory(db, ws, 'Operator — preferred languages: French, English'),
+        await memory(db, ws, 'Operator — what to call them: Quentin'),
+        await memory(db, ws, 'Note: Operator — preferred language: French was asked at onboarding'),
+        await memory(db, ws, 'Operator - preferred language: French'),
+        await memory(db, ws, 'operator — preferred language: French'),
+        await memory(db, ws, 'Operator — preferred language: French', {
+          agentId: agent,
+          source: 'agent',
+        }),
+        // Saisie à la main mais rattachée à un agent : pas une ligne de l'entretien.
+        await memory(db, ws, 'Operator — preferred language: French', { agentId: agent }),
+        await memory(db, ws, 'Operator — preferred language: French', { source: 'agent' }),
+        await memory(db, ws, 'Operator — preferred language: French', { category: 'context' }),
+      ];
       const alreadyArchived = await memory(db, ws, 'Operator — preferred language: English', {
         archived: true,
+      });
+      const alreadyClosed = await memory(db, ws, 'Operator — preferred language: Deutsch', {
+        closed: true,
       });
 
       for (const statement of migrationStatements()) await db.execute(sql.raw(statement));
 
-      expect(await stateOf(db, onboarding)).toEqual({
+      expect(await stateOf(db, interview[0]!)).toEqual({
         fact: 'Operator — preferred language: Francais',
         archived: true,
+        closed: true,
         touched: true,
       });
-      expect(await stateOf(db, byAgent)).toMatchObject({ archived: true, touched: true });
-      for (const id of lookAlikes) {
-        expect(await stateOf(db, id), `look-alike ${id}`).toMatchObject({
+      expect(await stateOf(db, interview[1]!)).toMatchObject({ archived: true, closed: true });
+      for (const id of untouched) {
+        expect(await stateOf(db, id), `untouched ${id}`).toMatchObject({
           archived: false,
+          closed: false,
           touched: false,
         });
       }
-      expect(await stateOf(db, alreadyArchived)).toMatchObject({ archived: true, touched: false });
+      expect(await stateOf(db, alreadyArchived)).toMatchObject({
+        archived: true,
+        closed: false,
+        touched: false,
+      });
+      expect(await stateOf(db, alreadyClosed)).toMatchObject({
+        archived: false,
+        closed: true,
+        touched: false,
+      });
     } finally {
       await close();
     }

@@ -25,7 +25,7 @@ import { buildSystemPrompt } from '../system-prompt';
 /** La règle, telle que le modèle la lit. */
 const RULE =
   'Reply in the language of the message you are answering; a run with no message from the ' +
-  'person (a scheduled run) uses the language of its task text.';
+  'person (a scheduled run) uses the language of the request or task text it carries.';
 
 const deployment = { os: 'Windows 11', networkMode: 'loopback' as const };
 const conversation = {
@@ -113,7 +113,7 @@ describe('la langue du message, et aucune langue préférée @cap:parler-a-un-ag
     } as never);
     expect(prompt).toContain('- Scheduled run of "Revue du matin".');
     expect(prompt).toContain(
-      'a run with no message from the person (a scheduled run) uses the language of its task text',
+      'a run with no message from the person (a scheduled run) uses the language of the request or task text it carries',
     );
     // Le texte de tâche est le message d'ouverture du job (execute.ts,
     // `openingMessages(job.task, job.handoffNote)`) : c'est lui que le modèle

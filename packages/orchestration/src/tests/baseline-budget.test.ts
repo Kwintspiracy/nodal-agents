@@ -14,13 +14,14 @@
 // regrossir le socle devient une décision, pas une dérive.
 //
 // Le seuil, 5 100, et pourquoi il n'est pas plus bas : le socle budgété en
-// fait 5 067 (4 915, puis +58 net : la demi-phrase « a state a tool returned
+// fait 5 089 (4 915, puis +58 net : la demi-phrase « a state a tool returned
 // as waiting on a person is delivered, not blocked », revenue du banc `print`,
-// moins un raccourci de la phrase d'ouverture de Verify ; puis +94 le
+// moins un raccourci de la phrase d'ouverture de Verify ; puis +116 le
 // 04/11/2026, #986 : « Language mirror » dit qu'un run sans message de la
-// personne — une planification — prend la langue du texte de sa tâche. Le
-// seuil 5 000 → 5 100 pour cette demi-phrase, et pour elle seule). Chacune des sections retirées, remise seule, le fait sortir du
-// budget, la plus petite (le bloc d'approbation, 343 car.) comprise. Descendre
+// personne — une planification — prend la langue de la demande ou du texte
+// de tâche qu'il porte. Le seuil 5 000 → 5 100 pour cette demi-phrase, et
+// pour elle seule). Chacune des sections retirées, remise seule, le fait
+// sortir du budget, la plus petite (le bloc d'approbation, 343 car.) comprise. Descendre
 // le socle sous ~4 760 sans baisser le seuil rouvrirait ce trou : la marge est
 // voulue petite, une phrase, pas une section.
 //
@@ -79,7 +80,7 @@ describe('chaque règle gardée garde une phrase repérable', () => {
     ],
     [
       'un run planifié prend la langue de sa tâche (#986)',
-      'a run with no message from the person (a scheduled run) uses the language of its task text',
+      'a run with no message from the person (a scheduled run) uses the language of the request or task text it carries',
     ],
     ['ne jamais traduire le code', 'Never translate code, identifiers'],
     ['anglais quand rien ne dit la langue', 'or English if there is none yet'],

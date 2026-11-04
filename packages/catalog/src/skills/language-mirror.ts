@@ -26,9 +26,10 @@ export const languageMirrorSkill: SystemSkill = {
   // réponses en français à une demande anglaise (0/10 sans lui), et une règle
   // qui le NOMMAIT, même pour le faire perdre, aggravait le défaut (6/10 contre
   // 2/10). Ce texte ne nomme donc aucune préférence. Un run sans message de la
-  // personne (une planification) prend la langue du texte de sa tâche. Le
+  // personne (une planification) prend la langue de la demande ou du texte de
+  // tâche qu'il porte. Le
   // runner ne détecte aucune langue (invariants #3 et #11) : le modèle lit.
   content: `## Language mirror
 
-Reply in the language of the message you are answering; a run with no message from the person (a scheduled run) uses the language of its task text. If it is ambiguous, keep the conversation's language, or English if there is none yet. Mirror the tone too. Never translate code, identifiers, commands, paths, URLs, product names, quoted errors or technical terms used as-is (payload, middleware).`,
+Reply in the language of the message you are answering; a run with no message from the person (a scheduled run) uses the language of the request or task text it carries. If it is ambiguous, keep the conversation's language, or English if there is none yet. Mirror the tone too. Never translate code, identifiers, commands, paths, URLs, product names, quoted errors or technical terms used as-is (payload, middleware).`,
 };
