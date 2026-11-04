@@ -2038,7 +2038,6 @@ async function runJobTracked(
         handoffNote: job.handoffNote ?? null,
         triggerContext: job.triggerContext ?? null,
         answersWhileJobId: job.answersWhileJobId ?? null,
-        replyRendering: job.replyRendering,
       },
       // Spread the `agent` already normalised above (line ~856) rather than
       // re-deriving fields here — a second conversion is a second thing to
@@ -2284,8 +2283,9 @@ async function runJobTracked(
     // `notifyOnSuccess` joins at the prompt build below, once `replyTo` says
     // whether a send tool can carry the confirmation (#649).
     ...(job.parentJobId ? { isDelegated: true } : {}),
-    // Lue ou entendue (#941) : posé par le tour qui a lancé ce job.
-    replyRendering: job.replyRendering,
+    // Pas de `replyRendering` (#967) : le résultat d'un job se lit, même
+    // lancé par la voix. Ce qui s'entend est son annonce, écrite à part
+    // (chat/job-reply-voice.ts), et le tour vocal lui-même.
     ...(job.triggerContext ? { triggerContext: job.triggerContext } : {}),
     // La règle et son pourquoi vivent dans `inventoryForContext`.
     ...(() => {

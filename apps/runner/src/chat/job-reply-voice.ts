@@ -1,57 +1,68 @@
-// chat/job-reply-voice.ts — la réponse d'un job lancé par la voix, DITE quand il finit (#967).
+// chat/job-reply-voice.ts — ce que l'agent DIT quand un job lancé par la voix finit (#967).
 //
 // Un tour vocal qui lance un travail dit son accusé, puis le job tourne — 68 s
-// pour la recherche du propriétaire le 04/11 — et finissait en silence : la
-// réponse était dans le fil, écrite, et rien ne disait qu'elle était là.
+// pour la recherche du propriétaire le 04/11 — et finissait en silence : le
+// résultat était dans le fil, écrit, et rien ne disait qu'il était là.
 //
-// LA RÈGLE. Un job qui finit (`completed`) avec une réponse, sans parent, et
-// dont la réponse est DITE (`agent_jobs.reply_rendering = 'spoken'`, hérité du
-// tour vocal, #958) : le runner la met en voix UNE fois, avec la voix de
-// l'espace (`openReplyVoice`, la même porte que le tour et l'essai des
-// réglages), phrase par phrase. Les mots sont ceux de l'agent, tels qu'en
-// base, masqués de leurs secrets comme le `reply` de son `job.finished` :
-// rien n'est écrit, coupé ni réécrit ici (invariants #2 et #3).
+// LA RÈGLE DU PROPRIÉTAIRE (04/11). Un job lancé par la voix finit par DEUX
+// choses, écrites l'une et l'autre par l'agent : son RÉSULTAT, écrit pour être
+// lu, inchangé sur toute surface ; et une ANNONCE courte, écrite pour
+// l'oreille — un résultat court est simplement dit, un document n'est jamais
+// lu à voix haute : l'annonce dit qu'il est prêt, où le lire, et propose de
+// l'envoyer sur un canal où la personne est joignable
+// (packages/orchestration/src/spoken-announcement.ts).
 //
-// La règle se lit sur les FAITS de la ligne, jamais sur le canal : un job
-// tapé (chat écrit, Telegram, Slack, Discord, MCP, routine) porte `text`, un
-// délégué a un parent. Aucun des deux ne passe par ici, et leur `job.finished`
-// est celui d'avant, à l'octet.
+// QUI PARLE. Un job qui finit (`completed`) avec un résultat, sans parent, et
+// né d'une demande DITE (`agent_jobs.reply_rendering = 'spoken'`, hérité du
+// tour vocal, #958). La règle se lit sur les FAITS de la ligne, jamais sur le
+// canal : un job tapé (chat écrit, Telegram, Slack, Discord, MCP, routine)
+// porte `text`, un délégué a un parent. Aucun ne passe par ici, et leur
+// `job.finished` est celui d'avant, à l'octet.
 //
 // CE QUI N'EST PAS DIT, et pourquoi (invariant #2 : le runner n'écrit aucun mot
 // pour la personne) :
 //   - un job en ÉCHEC : son `job.failed` part comme toujours, l'explication
 //     qu'il porte est rangée dans le fil, lue ; aucune annonce n'est inventée ;
 //   - un job ARRÊTÉ (`cancelled`) : la personne a demandé l'arrêt ;
-//   - un job fini SANS réponse (texte vide) : il n'y a rien à dire, rien ne
-//     part.
+//   - un job fini SANS résultat (texte vide) : il n'y a rien à annoncer.
+//
+// LE CHEMIN. Au `job.finished`, le pointeur `reply.audio` part tout de suite ;
+// puis l'agent écrit son annonce (`writeJobAnnouncement`, une génération
+// courte), rangée sur la ligne (`agent_jobs.spoken_announcement`), puis dite
+// UNE fois avec la voix de l'espace (`openReplyVoice`, la porte du tour et de
+// l'essai des réglages), phrase par phrase. Ce qui est dit est l'annonce telle
+// que l'agent l'a écrite, masquée de ses secrets ; rien n'est coupé, réécrit
+// ni choisi ici.
 //
 // OÙ VA LA VOIX. Pas dans le flux des événements : chaque onglet ouvert sur
-// l'espace recevrait des mégaoctets qu'il ne joue pas. Le flux porte un
-// POINTEUR (`reply.audio`, juste après le `job.finished` du job), et la voix
-// se lit sur `GET /api/voice/replies/:audioId` (routes/voice-reply.ts), par le
-// même protocole que la fin d'un tour dit (`audio`, `audio_end`, `done`). Le
-// tableau de bord et un module sans écran la lisent de la même façon (règle de
-// #948).
+// l'espace recevrait des mégaoctets qu'il ne joue pas. Le flux porte le
+// POINTEUR, et la voix se lit sur `GET /api/voice/replies/:audioId`
+// (routes/voice-reply.ts), par le même protocole que la fin d'un tour dit
+// (`audio`, `audio_end`, `done`). Le tableau de bord et un module sans écran
+// la lisent de la même façon (règle de #948).
 //
 // PERSONNE N'ÉCOUTE : rien n'est produit. Au moment où le job finit, le bus
-// sait qui écoute sa conversation (`listenersOf`) ; à zéro, aucune voix n'est
-// demandée au fournisseur, aucun `reply.audio` ne part, et rien n'est rejoué
-// plus tard — la réponse est dans le fil, écrite. La voix produite est gardée
-// `REPLY_AUDIO_KEEP_MS` après sa fin, pour un lecteur qui l'ouvre en retard
-// (un onglet qui attend qu'une autre voix finisse, un module qui se
-// reconnecte), puis oubliée.
+// sait qui écoute sa conversation (`listenersOf`) ; à zéro, aucune annonce
+// n'est écrite, aucune voix demandée, aucun `reply.audio` ne part, et rien
+// n'est rejoué plus tard — le résultat est dans le fil, écrit. La voix
+// produite est gardée `REPLY_AUDIO_KEEP_MS` après sa fin, pour un lecteur qui
+// l'ouvre en retard (un onglet qui attend qu'une autre voix finisse, un module
+// qui se reconnecte), puis oubliée.
 //
-// LA MESURE. Une ligne par réponse dite, des nombres et des identifiants
+// LA MESURE. Une ligne par annonce dite, des nombres et des identifiants
 // seulement, jamais les mots : `[voice-job-reply] timing {…}`, en
-// millisecondes depuis la fin du job (le COMMIT de son statut), jusqu'au
-// premier octet de voix sorti et jusqu'au dernier.
+// millisecondes depuis la fin du job (le COMMIT de son statut) : l'annonce
+// écrite, puis le premier et le dernier octet de voix sortis.
 
 import { randomUUID } from 'node:crypto';
+import { agentJobs, eq } from '@nodal-agents/db';
 import { splitSentences } from '@nodal-agents/speech';
 import { redactSecretsInText } from '@nodal-agents/shared';
 import type { RunnerDeps } from '../deps.ts';
 import { jobEvents, type JobEventBus } from '../events/job-events.ts';
 import type { FinishedJob } from '../events/publish.ts';
+import { makeLlmCallSink } from '../llm/call-sink.ts';
+import { writeJobAnnouncement } from './job-announcement.ts';
 import { JOB_REPLY_TIMING_MARKS, createVoiceTiming, openReplyVoice } from './run-voice-turn.ts';
 
 /** Un événement du flux de la voix, tel que `routes/voice-reply.ts` l'écrit. */
@@ -74,15 +85,14 @@ export const REPLY_AUDIO_KEEP_MS = 120_000;
 
 const replies = new Map<string, ReplyAudio>();
 
-/**
- * Les mots à dire de ce job, ou `null` s'il ne parle pas : la règle de l'en-tête,
- * sur les faits de la ligne.
- */
-export function spokenReplyOf(job: FinishedJob): string | null {
-  if (job.status !== 'completed' || job.parentJobId !== null) return null;
-  if (job.replyRendering !== 'spoken') return null;
-  const text = redactSecretsInText(job.result ?? '').trim();
-  return text === '' ? null : text;
+/** Ce job finit-il par une annonce dite ? La règle de l'en-tête, sur les faits de la ligne. */
+export function announcesItsEnd(job: FinishedJob): boolean {
+  return (
+    job.status === 'completed' &&
+    job.parentJobId === null &&
+    job.replyRendering === 'spoken' &&
+    (job.result ?? '').trim() !== ''
+  );
 }
 
 function emitTo(reply: ReplyAudio, e: ReplyAudioEvent): void {
@@ -97,9 +107,10 @@ function emitTo(reply: ReplyAudio, e: ReplyAudioEvent): void {
 }
 
 /**
- * Le job vient de finir et son `job.finished` est parti. S'il parle et que
- * quelqu'un écoute, la voix démarre, et `reply.audio` part tout de suite
- * (avant la voix elle-même) : rend son identifiant. `null` : rien n'est dit.
+ * Le job vient de finir et son `job.finished` est parti. S'il s'annonce et que
+ * quelqu'un écoute, `reply.audio` part tout de suite (avant l'annonce même),
+ * puis l'annonce s'écrit et se dit : rend son identifiant. `null` : rien n'est
+ * dit.
  */
 export function speakFinishedJob(
   db: RunnerDeps['db'],
@@ -108,12 +119,11 @@ export function speakFinishedJob(
 ): string | null {
   const bus = opts.bus ?? jobEvents;
   const now = opts.now ?? Date.now;
-  const text = spokenReplyOf(job);
-  if (text === null) return null;
+  if (!announcesItsEnd(job)) return null;
   const endedAt = now();
   if (bus.listenersOf(job.entityId, job.conversationId) === 0) {
     console.warn(
-      `[voice-job-reply] job ${job.jobId} ended with a spoken reply and no listener: not spoken`,
+      `[voice-job-reply] job ${job.jobId} ended with a spoken request and no listener: nothing said`,
     );
     return null;
   }
@@ -138,25 +148,48 @@ export function speakFinishedJob(
     if (event === 'audio' || event === 'audio_end') emitTo(reply, { event, data });
   };
   void (async () => {
+    let said: string | null = null;
     let speechError: { code: string; detail?: string } | null = null;
     try {
-      const opened = await openReplyVoice(db, job.entityId, emit, timing);
-      if (opened.voice) {
-        for (const sentence of splitSentences(text)) opened.voice.say(sentence);
-        opened.voice.end();
-        speechError = await opened.voice.done;
+      const announcement = await writeJobAnnouncement(db, job.jobId, {
+        observe: makeLlmCallSink(db, {
+          source: 'announcement',
+          entityId: job.entityId,
+          getJobId: () => job.jobId,
+          conversationId: job.conversationId,
+        }),
+      });
+      timing.mark('announcement');
+      if (!announcement.ok) {
+        speechError = {
+          code: announcement.code,
+          ...(announcement.detail ? { detail: redactSecretsInText(announcement.detail) } : {}),
+        };
       } else {
-        speechError = opened.unavailable;
+        // Les mots de l'agent, rangés tels quels ; ce qui est DIT est masqué.
+        await db
+          .update(agentJobs)
+          .set({ spokenAnnouncement: announcement.text })
+          .where(eq(agentJobs.id, job.jobId));
+        said = redactSecretsInText(announcement.text);
+        const opened = await openReplyVoice(db, job.entityId, emit, timing);
+        if (opened.voice) {
+          for (const sentence of splitSentences(said)) opened.voice.say(sentence);
+          opened.voice.end();
+          speechError = await opened.voice.done;
+        } else {
+          speechError = opened.unavailable;
+        }
       }
     } catch (err) {
       speechError = {
         code: 'speech_failed',
-        detail: err instanceof Error ? err.message : String(err),
+        detail: redactSecretsInText(err instanceof Error ? err.message : String(err)),
       };
     }
     if (reply.events.some((e) => e.event === 'audio')) timing.mark('lastAudio');
     reply.ended = true;
-    emitTo(reply, { event: 'done', data: { speechError } });
+    emitTo(reply, { event: 'done', data: { text: said, speechError } });
     reply.readers.clear();
     // `warn` : le canal des lignes de journal du runner, comme `[voice-turn]`.
     console.warn(timing.line());

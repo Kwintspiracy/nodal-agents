@@ -11,6 +11,7 @@
 // actions are stand-ins.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import type { MockInstance } from 'vitest';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 
@@ -231,7 +232,8 @@ describe('the conversation follows the push stream (#944) @cap:suivre-execution/
   });
 });
 
-// #967 — a job launched by a spoken turn says its reply when it finishes. The
+// #967 — a job launched by a spoken turn announces its end: its result stays
+// written in the thread, and the agent's short announcement is SPOKEN. The
 // runner follows the job's `job.finished` with `reply.audio`, a pointer; the
 // page reads the voice behind it (`/api/voice/replies/:id`) and plays it AFTER
 // the voice already playing, never over it. Rendered with the REAL playback
@@ -246,7 +248,7 @@ describe('the conversation follows the push stream (#944) @cap:suivre-execution/
 //   - `stopSpeaking` not clearing the queue → "Stop while it waits".
 describe('the spoken reply of a finished job plays in its conversation (#967) @cap:parler-a-un-agent/ecran', () => {
   let audio: ReturnType<typeof installFakeAudio>;
-  let fetchSpy: ReturnType<typeof vi.spyOn>;
+  let fetchSpy: MockInstance<typeof fetch>;
   /** What the voice route answers, per audio id. */
   let voices: Map<string, () => Response>;
 
@@ -397,6 +399,26 @@ describe('the spoken reply of a finished job plays in its conversation (#967) @c
       [
         'The reply is written above, but it could not be spoken: the voice has no key for its source. Add one in LLM Providers, or choose another voice in Settings.',
         { description: 'openrouter' },
+      ],
+    ]);
+    expect(audio.scheduled).toEqual([]);
+  });
+
+  it('an announcement the agent could not write is said as such; nothing plays', async () => {
+    voices.set(
+      'aud-j3',
+      voiceStream([
+        ['done', { text: null, speechError: { code: 'announcement_failed', detail: 'HTTP 500' } }],
+      ]),
+    );
+    await render();
+    await finished('j3', 'The result.');
+    await flush();
+    await flush();
+    expect(vi.mocked(toast.error).mock.calls).toEqual([
+      [
+        'The result is written above, but its spoken announcement could not be written.',
+        { description: 'HTTP 500' },
       ],
     ]);
     expect(audio.scheduled).toEqual([]);

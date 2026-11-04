@@ -107,7 +107,7 @@ export type JobEventPayload =
     }
   | {
       /**
-       * La réponse finale d'un job lancé par la voix est DITE (#967). Publié
+       * Un job lancé par la voix a fini : son ANNONCE est dite (#967). Publié
        * juste après son `job.finished`, et seulement quand quelqu'un écoute.
        * Un pointeur, pas l'audio : la voix se lit sur
        * `GET /api/voice/replies/:audioId` (routes/voice-reply.ts). Un onglet

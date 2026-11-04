@@ -198,6 +198,8 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       handoff_note text,
       -- mirrors migration 0157 (#941) : la réponse se lit, ou s'entend.
       reply_rendering text NOT NULL DEFAULT 'text' CHECK (reply_rendering IN ('text','spoken')),
+      -- mirrors migration 0161 (#967) : ce que l'agent a dit quand le job a fini.
+      spoken_announcement text,
       chat_id text,
       chat_channel text,
       conversation_id uuid,

@@ -1,4 +1,4 @@
-// routes/voice-reply.ts — la voix de la réponse d'un job lancé par la voix (#967).
+// routes/voice-reply.ts — la voix de l'annonce d'un job lancé par la voix (#967).
 //
 //   GET /api/voice/replies/:audioId?entityId=<uuid>
 //     → 200 un flux d'événements (SSE, ci-dessous)
@@ -7,15 +7,18 @@
 //     → 404 { error: 'reply_audio_not_found' }   inconnue, oubliée, ou d'un autre espace
 //
 // D'OÙ VIENT `audioId`. Du flux des événements (`GET /api/events`,
-// routes/events.ts) : quand un job lancé par un tour DIT finit avec une
-// réponse, son `job.finished` est suivi, sur le même flux, de
+// routes/events.ts) : quand un job lancé par un tour DIT finit avec un
+// résultat, son `job.finished` est suivi, sur le même flux, de
 //
 //   event: reply.audio   data: { type, jobId, conversationId, audioId }
 //
-// La règle (qui parle, qui ne parle pas, et pourquoi) est dans
-// chat/job-reply-voice.ts. `reply.audio` ne part que si quelqu'un écoute la
-// conversation du job (ou tout l'espace) quand il finit : sans auditeur, rien
-// n'est produit ni rejoué plus tard ; la réponse reste écrite dans le fil.
+// Ce qui est dit est l'ANNONCE que l'agent écrit pour l'oreille quand le job
+// finit (un résultat court, dit ; un document : prêt, où le lire, et l'offre de
+// l'envoyer sur un canal joignable) — jamais le résultat lu à voix haute, qui
+// reste écrit dans le fil. La règle (qui parle, qui ne parle pas, et pourquoi)
+// est dans chat/job-reply-voice.ts. `reply.audio` ne part que si quelqu'un
+// écoute la conversation du job (ou tout l'espace) quand il finit : sans
+// auditeur, rien n'est produit ni rejoué plus tard.
 //
 // LE FLUX. Les mêmes événements, aux mêmes formes, que la voix de la fin d'un
 // tour dit (l'en-tête de routes/voice-turn.ts) :
@@ -28,10 +31,15 @@
 //   event: audio_end  data: { sentence, complete }   la phrase `sentence` est
 //                     finie, UNE fois par phrase dont un `audio` est sorti ;
 //                     `complete` faux : elle s'est arrêtée en route
-//   event: done       data: { speechError }   le DERNIER événement ; `speechError`
-//                     { code, detail? } : la voix a échoué ou n'a pas pu
+//   event: done       data: { text, speechError }   le DERNIER événement ;
+//                     `text` : l'annonce dite, masquée de ses secrets (`null` :
+//                     elle n'a pas pu s'écrire) ; `speechError` { code,
+//                     detail? } : l'annonce n'a pas pu s'écrire
+//                     (`announcement_unavailable` l'agent sans modèle,
+//                     `announcement_failed` le modèle en échec,
+//                     `announcement_empty`), ou la voix a échoué ou n'a pas pu
 //                     s'ouvrir (pas de clé pour la source, réglage illisible) —
-//                     le texte, lui, est dans le fil
+//                     le résultat, lui, est dans le fil
 //
 // La voix est produite UNE fois, au runner, pour tous ses lecteurs : un lecteur
 // qui ouvre le flux en retard reçoit tout depuis `seq` 0, puis le direct. Elle

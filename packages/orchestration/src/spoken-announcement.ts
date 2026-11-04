@@ -70,7 +70,7 @@ export function buildSpokenAnnouncement(input: {
     '- announcement: the work the person asked you for has just finished, and you now tell ' +
     'them so, out loud. Its result is written in the conversation, where it stays for ' +
     'reading; the message below quotes their request and that result. Speak in the ' +
-    "language of their request, in a few short sentences. A short result (a fact, a " +
+    'language of their request, in a few short sentences. A short result (a fact, a ' +
     'confirmation, a sentence or two) is simply said. A longer one (a report, a list, ' +
     'sources, a document) is never read out: say it is ready, that they can read it in ' +
     `Nodal, and ${offer}. ` +

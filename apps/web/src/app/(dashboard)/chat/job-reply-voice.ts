@@ -1,9 +1,11 @@
 'use client';
 
-// job-reply-voice.ts — la réponse d'un job lancé par la voix, jouée quand il
+// job-reply-voice.ts — l'annonce d'un job lancé par la voix, jouée quand il
 // finit (#967), du point de vue du navigateur.
 //
-// Le runner pousse `reply.audio` sur le flux des événements, juste après le
+// Le résultat du job est dans le fil, écrit pour être lu. Ce qui se joue est
+// l'ANNONCE que l'agent écrit pour l'oreille quand le job finit. Le runner
+// pousse `reply.audio` sur le flux des événements, juste après le
 // `job.finished` du job : un POINTEUR. La voix se lit sur
 // `/api/voice/replies/:audioId` (la porte web de la route du runner, dont
 // l'en-tête décrit le protocole), exactement comme un module sans écran la lit,
@@ -11,8 +13,8 @@
 // (`queueSpokenStream`) : une réponse en cours n'est jamais coupée.
 //
 // Chaque échec est un FAIT dit à l'écran (invariant #4), jamais tu : la voix
-// refusée ou oubliée par le runner, le flux coupé, la voix en échec. La
-// réponse, elle, est déjà écrite dans le fil.
+// refusée ou oubliée par le runner, le flux coupé, l'annonce que l'agent n'a
+// pas pu écrire, la voix en échec. Le résultat, lui, est déjà écrit dans le fil.
 
 import { readSseMessages } from '@/lib/sse.ts';
 import { queueSpokenStream, readSpokenEvent } from './voice-playback.ts';
@@ -72,7 +74,9 @@ export async function playJobReply(opts: {
         const err = data['speechError'] as { code?: unknown; detail?: unknown } | null;
         if (err && typeof err.code === 'string') {
           opts.onFailed({
-            text: speechErrorText(err.code),
+            text: err.code.startsWith('announcement_')
+              ? 'The result is written above, but its spoken announcement could not be written.'
+              : speechErrorText(err.code),
             ...(typeof err.detail === 'string' ? { detail: err.detail } : {}),
           });
         }

@@ -35,8 +35,9 @@
 // appels de modèle l'un après l'autre et 4,5 à 7 s pour une voix qui rendait la
 // réponse ENTIÈRE avant le premier son.
 //
-// Le job lancé hérite de la forme `spoken` : sa réponse finale est écrite pour
-// être dite, et elle est dite quand il finit (#967, chat/job-reply-voice.ts).
+// Le job lancé hérite de la forme `spoken` : son résultat s'écrit pour être lu,
+// et quand il finit l'agent écrit une annonce courte, qui est dite (#967,
+// chat/job-reply-voice.ts).
 //
 // LA VOIX est celle que l'espace a choisie (#969) : sa source, son modèle et sa
 // voix, relus à chaque tour par `resolveVoice` (job/resolve-voice.ts), la même
@@ -195,12 +196,13 @@ export const VOICE_TIMING_MARKS = [
 ] as const;
 
 /**
- * Les temps de la réponse DITE d'un job (#967), en millisecondes depuis la fin
- * du job (le COMMIT de son statut terminal) : le fournisseur pour la première
- * phrase, puis le premier et le dernier octet de voix sortis. Personne n'y
- * parle : ni transcription, ni fragment.
+ * Les temps de l'annonce DITE d'un job (#967), en millisecondes depuis la fin
+ * du job (le COMMIT de son statut terminal) : l'annonce écrite par l'agent, le
+ * fournisseur de voix pour la première phrase, puis le premier et le dernier
+ * octet de voix sortis. Personne n'y parle : ni transcription, ni fragment.
  */
 export const JOB_REPLY_TIMING_MARKS = [
+  'announcement',
   'firstSentenceVendorByte',
   'firstSentenceVendorDone',
   'firstAudio',
