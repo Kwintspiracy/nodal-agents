@@ -19,6 +19,13 @@ import { OptionRadio } from '@/components/ui/OptionRadio.tsx';
 import ChoiceTile from '@/components/ui/ChoiceTile.tsx';
 import TextButton from '@/components/ui/TextButton.tsx';
 import {
+  AUTONOMY_ANSWER_INDEX,
+  DONE_MARKER,
+  INTERVIEW_KICKOFF,
+  INTERVIEW_MEMORY,
+  interviewMemoryFor,
+} from './interview.ts';
+import {
   createLlmKeyAction,
   updateLlmKeyAction,
   listLlmKeysAction,
@@ -140,40 +147,10 @@ Never claim to have done something you haven't. Don't guess at irreversible acti
 If a request is ambiguous, ask one sharp clarifying question rather than guessing — unless the obvious reading is safe and reversible, in which case proceed and state what you assumed.`;
 
 // ── Welcome interview (step 4) ──────────────────────────────────────────────
-const DONE_MARKER = '[[INTERVIEW_DONE]]';
-
-// The six things to capture, in order. The WEB saves the user's answers to
-// memory: the chat surface only exposes run_task to the agent, so it can't call
-// save_memory itself there. Index = number of answers the user has given.
-const INTERVIEW_MEMORY: Array<{ prefix: string; category: 'context' | 'preference' }> = [
-  { prefix: 'Operator — what to call them:', category: 'context' },
-  { prefix: 'Operator — preferred language:', category: 'preference' },
-  { prefix: 'Operator — where they are based:', category: 'context' },
-  { prefix: 'Operator — goal with Nodal-Agents / where they want help:', category: 'context' },
-  { prefix: 'How the operator wants to work together:', category: 'preference' },
-];
-
-// Hidden first message that drives the interview. The agent generates ALL of the
-// wording; the web only sends this instruction and strips the DONE marker — so
-// the runner stays silent (invariant 2). SHORT, plain text, one concrete
-// question at a time, strictly NO task execution.
-const INTERVIEW_KICKOFF = `[Onboarding — your first meeting with your operator. Run a warm, BRIEF get-acquainted chat. Hard rules:
-- Plain text ONLY. No markdown, no **bold**, no bullet points, no headings.
-- Every message is 1-2 SHORT sentences. Warm but concise.
-- Ask ONE short, concrete question per message. Never vague, never multi-part.
-- This is NOT a work session: do NOT start, plan, or build anything. If they mention a task, warmly say you'll be ready once they're set up, then move on.
-
-Ask these FIVE things, in order, one per message, no extras:
-1. What to call them.
-2. Which language they'd like you to speak — ask openly; do NOT suggest or list specific languages (never "French or English?"). Any language in the world is fine.
-3. Where they're based.
-4. Their goal with Nodal-Agents and where you can help most — just the gist, not specifics (you're not doing it now).
-5. While carrying out their requests, whether you should run tools and commands on your own, or check with them for approval before acting.
-
-Start now: one short friendly line (you just want to get to know them, no work yet) + question 1 ONLY. After each answer, a 3-5 word acknowledgement at most, then the next question. After the FIFTH answer, one short warm wrap-up line and end that final message with ${DONE_MARKER} on its own line.]`;
+// The questions, and where each answer is saved: ./interview.ts.
 
 // ── Autonomy confirmation (step 5) ──────────────────────────────────────────
-// The interview's FIFTH answer ("take initiative or stick to exactly what you're
+// The interview's LAST answer ("take initiative or stick to exactly what you're
 // asked") DRIVES the ROOT agent's real autonomy — it no longer just lands in
 // memory. Onboarding is a deliberate act, so the created ROOT gets ALL grants ON
 // (DEFAULT_ROOT_GRANTS); this step only picks the autonomy level. We pre-select
@@ -183,7 +160,7 @@ Start now: one short friendly line (you just want to get to know them, no work y
 // Modes come from the shared source of truth (identical text + order in Settings
 // → ROOT agent): apps/web/src/lib/autonomy.ts.
 
-// Pre-select the autonomy mode from the operator's free-text 5th answer. Pure
+// Pre-select the autonomy mode from the operator's free-text last answer. Pure
 // keyword heuristic — deliberately biased toward the SAFER mode on ambiguity
 // (the operator sees and can change the pick before it is applied).
 function inferAutonomy(answer: string): AutonomyLevel {
@@ -318,7 +295,7 @@ export default function OnboardingFlow() {
   const transcriptRef = useRef<HTMLDivElement>(null);
 
   // ── Step 5 — autonomy confirmation ─────────────────────────────────────
-  // Pre-selected from the interview's 5th answer, adjustable by the operator,
+  // Pre-selected from the interview's last answer, adjustable by the operator,
   // then applied to the created ROOT agent on Continue. Defaults to the safe
   // mode until the answer comes in.
   const [autonomy, setAutonomy] = useState<AutonomyLevel>('propose_confirm');
@@ -545,15 +522,13 @@ export default function OnboardingFlow() {
 
     // Persist the answer to memory (web-side: the chat surface gives the agent
     // only run_task, so it can't save_memory itself here).
-    const slot = INTERVIEW_MEMORY[answerCount];
-    if (slot) {
-      void createMemoryAction({ fact: `${slot.prefix} ${answer}`, category: slot.category });
-    }
-    // The FIFTH answer (index 4 — "take initiative or stick to exactly what you
+    const memory = interviewMemoryFor(answerCount, answer);
+    if (memory) void createMemoryAction(memory);
+    // The LAST answer (AUTONOMY_ANSWER_INDEX — "take initiative or stick to exactly what you
     // ask") also DRIVES the ROOT autonomy: pre-select the mode from it so the
     // confirmation step opens on the inferred choice. The answer still goes to
     // memory above — this only adds the autonomy application.
-    if (answerCount === INTERVIEW_MEMORY.length - 1) {
+    if (answerCount === AUTONOMY_ANSWER_INDEX) {
       setAutonomy(inferAutonomy(answer));
     }
     setAnswerCount((n) => n + 1);
