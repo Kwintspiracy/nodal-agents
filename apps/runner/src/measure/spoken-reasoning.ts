@@ -6,7 +6,8 @@
 // lui donne, et relève pour chaque tour : la décision (`run_task` appelé ou
 // non, et si c'était le bon choix), le temps jusqu'au premier fragment de
 // texte, les jetons de sortie, et si la réponse s'ouvre en racontant son
-// aiguillage (« This is a general knowledge question, so… »).
+// aiguillage (« This is a general knowledge question, so… »), et la longueur
+// de la réponse en mots et en phrases (#987).
 //
 // POURQUOI UN SCRIPT, ET PAS UNE SCÉNARIO DU BANC. `packages/bench` joue ses
 // essais contre une stack qui tourne, par MCP ; un paquet ne peut pas importer
@@ -55,13 +56,16 @@ export interface MeasureRequest {
 }
 
 /**
- * Les douze demandes par défaut : six qui demandent un travail (une
+ * Les dix-sept demandes par défaut : sept qui demandent un travail (une
  * recherche, un fichier, une impression, une délégation de code, une
- * automatisation, une page à lire), six qui n'en demandent aucun (l'heure
- * ailleurs, un fait, un bonjour, un avis, un calcul connu, une explication
- * courte). En français, la langue du propriétaire ; `--requests` en donne
- * d'autres. Aucune ne sort de la base : le job qu'un tour crée est annulé
- * avec lui, jamais exécuté.
+ * automatisation, une page à lire, une recherche sur le web), dix qui n'en
+ * demandent aucun (l'heure ailleurs, un fait, un bonjour, un avis, un calcul
+ * connu, une explication courte, et quatre demandes en anglais). Douze en français, la langue du
+ * propriétaire ; cinq en anglais (#987), dont la question du climat de Tokyo
+ * qui a ouvert le sujet de la longueur et une histoire de trois paragraphes
+ * qui en demande, elle, beaucoup ;
+ * `--requests` en donne d'autres. Aucune ne sort de la base : le job qu'un tour
+ * crée est annulé avec lui, jamais exécuté.
  */
 export const SPOKEN_REASONING_REQUESTS: readonly MeasureRequest[] = [
   {
@@ -100,6 +104,29 @@ export const SPOKEN_REASONING_REQUESTS: readonly MeasureRequest[] = [
     text: 'Explique-moi en deux phrases la différence entre un virus et une bactérie.',
     needsTask: false,
   },
+  {
+    id: 'weather-en',
+    text: "What's the weather usually like in Tokyo in November?",
+    needsTask: false,
+  },
+  { id: 'egg-en', text: 'How long does it take to boil an egg?', needsTask: false },
+  {
+    id: 'virus-bacterium-en',
+    text: "What's the difference between a virus and a bacterium?",
+    needsTask: false,
+  },
+  {
+    // Une demande de longueur (#987) : la règle de brièveté ne doit pas la
+    // plafonner. La réponse attendue garde ses trois paragraphes.
+    id: 'story-en',
+    text: 'Tell me a three-paragraph story about a robot learning to cook.',
+    needsTask: false,
+  },
+  {
+    id: 'news-en',
+    text: 'Search the web for the latest news about Microsoft layoffs.',
+    needsTask: true,
+  },
 ];
 
 /**
@@ -134,6 +161,62 @@ export function opensWithRoutingNarration(reply: string): boolean {
   return ROUTING_NARRATION.some((re) => re.test(opening));
 }
 
+/**
+ * Un mot : une suite de caractères entre deux blancs qui porte au moins une
+ * lettre ou un chiffre. « 16 », « °C » et « to » comptent chacun pour un ; un
+ * tiret seul, non. C'est ce qu'une voix dit comme un mot.
+ */
+export function wordCount(reply: string): number {
+  return reply.split(/\s+/).filter((token) => /[\p{L}\p{N}]/u.test(token)).length;
+}
+
+/**
+ * Des abréviations qui finissent par un point sans finir la phrase. Les sigles
+ * en lettres pointées (« e.g. », « i.e. », « U.S. ») sont reconnus à leur
+ * forme, pas listés.
+ */
+const ABBREVIATIONS = new Set([
+  'mr',
+  'mrs',
+  'ms',
+  'dr',
+  'prof',
+  'st',
+  'vs',
+  'approx',
+  'mme',
+  'mlle',
+]);
+
+/**
+ * Le nombre de phrases d'une réponse : une fin de phrase est « . ! ? … » suivi
+ * d'un blanc (ou de la fin du texte), SAUF si le mot qui précède est une
+ * abréviation (« e.g. », « Dr. »), ou si ce qui suit commence par une
+ * minuscule ou un chiffre (« e.g. a jacket »). Un nombre décimal
+ * (« 3.5 ») n'a pas de blanc après son point : il n'en finit jamais une.
+ * Un repérage, pas un analyseur : sa limite est dite par ses tests.
+ */
+export function sentenceCount(reply: string): number {
+  const text = reply.trim();
+  let count = 0;
+  let start = 0;
+  for (const m of text.matchAll(/[.!?…]+["'”’)\]]*(?=\s|$)/gu)) {
+    const before = text.slice(start, m.index);
+    const lastWord = /(\S+)$/u.exec(before)?.[1] ?? '';
+    const dotted = /^(\p{L}\.)+\p{L}$/u.test(lastWord);
+    const abbreviation =
+      m[0].startsWith('.') && (dotted || ABBREVIATIONS.has(lastWord.toLowerCase()));
+    const after = text.slice(m.index + m[0].length).trimStart();
+    const continues = after !== '' && /^[\p{Ll}\p{N}]/u.test(after);
+    const empty = !/[\p{L}\p{N}]/u.test(before);
+    if (abbreviation || continues || empty) continue;
+    count++;
+    start = m.index + m[0].length;
+  }
+  if (/[\p{L}\p{N}]/u.test(text.slice(start))) count++;
+  return count;
+}
+
 /** Un tour joué, tel que la mesure le relève. */
 export interface TurnRecord {
   effort: MeasuredEffort;
@@ -156,6 +239,9 @@ export interface TurnRecord {
   calls: Array<{ reasoningEffort: string | null; outputTokens: number | null; ms: number | null }>;
   opening: string;
   routingNarration: boolean;
+  /** La longueur de la réponse écrite (#987) : ses mots et ses phrases. */
+  replyWords: number;
+  replySentences: number;
   /** Le tour a échoué : le code rendu par `runChatTurn`. */
   error?: string;
 }
@@ -295,6 +381,8 @@ export async function playMeasuredTurn(
         calls,
         opening: openingOf(reply),
         routingNarration: opensWithRoutingNarration(reply),
+        replyWords: wordCount(reply),
+        replySentences: sentenceCount(reply),
         ...(result.ok ? {} : { error: result.error }),
       };
       throw new RollbackTurn();
@@ -360,6 +448,14 @@ export interface EffortSummary {
   firstDeltaP90Ms: number | null;
   replyOutputTokensMedian: number | null;
   routingNarrations: number;
+  /**
+   * Les mots des réponses directes (#987) : celles des demandes sans travail
+   * qui ont répondu sans erreur et sans lancer de job — les mêmes que
+   * `noTaskAnswered`. Un tour en erreur ou escaladé à tort n'a pas de réponse
+   * à mesurer ; le compter à zéro tirerait la médiane vers le bas.
+   */
+  noTaskWordsMedian: number | null;
+  noTaskWordsMax: number | null;
 }
 
 function percentile(values: readonly number[], p: number): number | null {
@@ -377,6 +473,9 @@ export function summarize(records: readonly TurnRecord[]): EffortSummary[] {
     const tokens = rows.flatMap((r) => (r.replyOutputTokens === null ? [] : [r.replyOutputTokens]));
     const task = rows.filter((r) => r.needsTask);
     const noTask = rows.filter((r) => !r.needsTask);
+    const answeredWords = noTask
+      .filter((r) => r.error === undefined && !r.calledRunTask)
+      .map((r) => r.replyWords);
     return {
       effort,
       turns: rows.length,
@@ -391,6 +490,8 @@ export function summarize(records: readonly TurnRecord[]): EffortSummary[] {
       firstDeltaP90Ms: percentile(deltas, 90),
       replyOutputTokensMedian: percentile(tokens, 50),
       routingNarrations: rows.filter((r) => r.routingNarration).length,
+      noTaskWordsMedian: percentile(answeredWords, 50),
+      noTaskWordsMax: answeredWords.length === 0 ? null : Math.max(...answeredWords),
     };
   });
 }
@@ -399,15 +500,16 @@ export function summarize(records: readonly TurnRecord[]): EffortSummary[] {
 export function summaryTable(rows: readonly EffortSummary[]): string {
   const ms = (v: number | null): string => (v === null ? 'n/a' : `${(v / 1000).toFixed(2)} s`);
   const lines = [
-    '| Effort | Right decisions | Task launched | No-task answered | First text (median / p90) | Reply output tokens (median) | Routing narrations | Errors |',
-    '|---|---|---|---|---|---|---|---|',
+    '| Effort | Right decisions | Task launched | No-task answered | First text (median / p90) | Reply output tokens (median) | Routing narrations | No-task words (median / max) | Errors |',
+    '|---|---|---|---|---|---|---|---|---|',
   ];
   for (const r of rows) {
     lines.push(
       `| ${r.effort} | ${r.rightDecisions}/${r.turns} | ${r.taskLaunched}/${r.taskTurns} | ` +
         `${r.noTaskAnswered}/${r.noTaskTurns} | ${ms(r.firstDeltaMedianMs)} / ${ms(r.firstDeltaP90Ms)} ` +
         `(${r.withText} turns with text) | ${r.replyOutputTokensMedian ?? 'n/a'} | ` +
-        `${r.routingNarrations} | ${r.errors} |`,
+        `${r.routingNarrations} | ${r.noTaskWordsMedian ?? 'n/a'} / ${r.noTaskWordsMax ?? 'n/a'} | ` +
+        `${r.errors} |`,
     );
   }
   return lines.join('\n');
