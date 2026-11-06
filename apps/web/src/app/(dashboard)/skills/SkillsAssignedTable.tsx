@@ -31,7 +31,7 @@ import RowActionButton from '@/components/ui/RowActionButton';
 import Modal from '@/components/ui/Modal.tsx';
 import AssignSkillModal from './AssignSkillModal.tsx';
 import SkillForm from './SkillForm.tsx';
-import SkillUpdateAction, { SkillKeepLocalAction } from './SkillUpdateAction.tsx';
+import SkillUpdateAction, { SkillKeepLocalAction, toUpdatableSkill } from './SkillUpdateAction.tsx';
 import SkillSourceProblemPill from './SkillSourceProblemPill.tsx';
 
 type Props = {
@@ -115,9 +115,11 @@ function SkillTableRow({ skill, agents }: { skill: SkillRow; agents: AgentRow[] 
             recette `meta`. */}
         <CellTitle
           badge={
-            skill.isCommunity && skill.updateDetail?.sourceProblem ? (
+            // Whatever the origin: a community skill's source check and the
+            // boot seeder (system skill the owner edited) raise the same flag.
+            skill.updateDetail?.sourceProblem ? (
               <SkillSourceProblemPill detail={skill.updateDetail} />
-            ) : skill.isCommunity && skill.updateAvailable ? (
+            ) : skill.updateAvailable ? (
               <StatusPill variant="warn" label="Update available" />
             ) : undefined
           }
@@ -152,13 +154,8 @@ function SkillTableRow({ skill, agents }: { skill: SkillRow; agents: AgentRow[] 
 
       <Td align="right">
         <CellActions>
-          {skill.isCommunity && skill.updateAvailable && (
-            <SkillUpdateAction
-              slug={skill.slug}
-              name={skill.name}
-              updateDetail={skill.updateDetail}
-              hasScripts={Boolean(skill.installedScripts && skill.installedScripts.length > 0)}
-            >
+          {skill.updateAvailable && (
+            <SkillUpdateAction skill={toUpdatableSkill(skill)}>
               {({ onClick, pending }) => (
                 <RowActionButton
                   square
@@ -166,7 +163,9 @@ function SkillTableRow({ skill, agents }: { skill: SkillRow; agents: AgentRow[] 
                   title={
                     skill.updateDetail?.scriptsState === 'conflict'
                       ? 'Update available (replaces your edited scripts)'
-                      : 'Update available'
+                      : skill.contentOverridden
+                        ? 'Update available (replaces your changes)'
+                        : 'Update available'
                   }
                   disabled={pending}
                   onClick={onClick}
@@ -174,21 +173,19 @@ function SkillTableRow({ skill, agents }: { skill: SkillRow; agents: AgentRow[] 
               )}
             </SkillUpdateAction>
           )}
-          {skill.isCommunity &&
-            skill.updateAvailable &&
-            skill.updateDetail?.scriptsState === 'conflict' && (
-              <SkillKeepLocalAction slug={skill.slug} name={skill.name}>
-                {({ onClick, pending }) => (
-                  <RowActionButton
-                    square
-                    icon={<ShieldCheck size={16} />}
-                    title="Keep your version"
-                    disabled={pending}
-                    onClick={onClick}
-                  />
-                )}
-              </SkillKeepLocalAction>
-            )}
+          {skill.updateAvailable && skill.updateDetail?.scriptsState === 'conflict' && (
+            <SkillKeepLocalAction slug={skill.slug} name={skill.name}>
+              {({ onClick, pending }) => (
+                <RowActionButton
+                  square
+                  icon={<ShieldCheck size={16} />}
+                  title="Keep your version"
+                  disabled={pending}
+                  onClick={onClick}
+                />
+              )}
+            </SkillKeepLocalAction>
+          )}
           <RowActionButton
             square
             icon={<UserPlus size={16} />}
