@@ -41,7 +41,7 @@ import {
   agentJobs,
   approvalRequests,
   readRunState,
-  runHeadOf,
+  runOriginOf,
 } from '@nodal-agents/db';
 import type { AnyDrizzleDb, RunState, RunStatus, TransitionListener } from '@nodal-agents/db';
 import {
@@ -72,15 +72,40 @@ function oneLine(text: string): string {
 }
 
 /**
- * L'appareil d'où vient la demande d'un job (#945) : son chat, quand il a été
- * résolu sur le canal `device` (`designateChat`). Un délégué hérite du chat de
- * son parent (router/delegate.ts) : ses demandes reviennent au même appareil.
+ * L'appareil d'un chat (#945) : le chat lui-même, quand il a été résolu sur le
+ * canal `device` (`designateChat`) ; null sinon.
  */
-export function originDeviceOf(job: {
+export function deviceOfChat(chat: {
   chatId: string | null;
   chatChannel: string | null;
 }): string | null {
-  return job.chatChannel === 'device' && job.chatId ? job.chatId : null;
+  return chat.chatChannel === 'device' && chat.chatId ? chat.chatId : null;
+}
+
+/** D'où vient la demande d'un job : la tête de son run, et son appareil s'il en a un. */
+interface JobOrigin {
+  headJobId: string;
+  deviceId: string | null;
+}
+
+/**
+ * L'appareil d'où vient la demande d'un job : celui du chat de la TÊTE de son
+ * run (`runOriginOf`, @nodal-agents/db) — la même lecture que l'envoi d'une
+ * carte (approvals/notify.ts) et que la liste des cartes (routes/devices.ts).
+ * Un délégué, un enfant du tableau des tâches, une tête relancée : tous
+ * reviennent à l'appareil de la demande.
+ */
+async function originOfJob(
+  db: AnyDrizzleDb,
+  entityId: string | null,
+  jobId: string,
+): Promise<JobOrigin> {
+  if (!entityId) return { headJobId: jobId, deviceId: null };
+  const origin = await runOriginOf(db, entityId, jobId);
+  return {
+    headJobId: origin?.headJobId ?? jobId,
+    deviceId: origin ? deviceOfChat(origin) : null,
+  };
 }
 
 function lost(bus: JobEventBus, what: string, err: unknown): void {
@@ -97,9 +122,20 @@ function lost(bus: JobEventBus, what: string, err: unknown): void {
 // `get_task` en boucle, jusqu'à trente minutes. L'appareil reçoit la MÊME
 // lecture (`readRunState`, @nodal-agents/db — celle de `get_task`), poussée à
 // chaque transition du run : un job pris (`claimJob`, execute.ts), une demande
-// posée ou tranchée, un job fini. Sur la tête du run (`runHeadOf`) : le job que
-// la demande a lancé, quel que soit le délégué qui a bougé. Les livrables sont
-// ceux que `get_task` rend, des chemins — jamais lus dans le texte de l'agent.
+// posée ou tranchée, un job fini. Sur la tête du run (`runOriginOf`) : le job
+// que la demande a lancé, quel que soit le délégué qui a bougé. Les livrables
+// sont ceux que `get_task` rend, des chemins — jamais lus dans le texte de
+// l'agent.
+//
+// L'ORDRE EST PROUVÉ (revue Reviewer A de #1005, passe 2). Deux transitions
+// d'un même run, poussées ensemble, liraient chacune la base et publieraient
+// dans l'ordre où leurs lectures reviennent : une lecture plus ancienne
+// pouvait partir en dernier, et l'appareil finir sur `waiting` après `done`.
+// Les poussées d'un run sont donc SÉRIALISÉES (`runPushes`) : chacune lit la
+// base après que la précédente a publié, si bien que la dernière publiée est
+// la lecture la plus récente — le serveur ne publie jamais une lecture plus
+// ancienne que la dernière. Et chaque `state` porte `seq`, le numéro de son
+// événement dans l'espace : croissant, de quoi comparer côté client.
 
 const DEVICE_RUN_STATE = {
   running: 'working',
@@ -113,7 +149,7 @@ const DEVICE_RUN_STATE = {
 export function runStateEvent(
   conversationId: string | null,
   state: RunState,
-): Extract<DeviceEvent, { type: 'state' }> {
+): Omit<Extract<DeviceEvent, { type: 'state' }>, 'seq'> {
   const reason = state.status === 'failed' ? oneLine(redactSecretsInText(state.result ?? '')) : '';
   return {
     type: 'state',
@@ -131,32 +167,56 @@ export function runStateEvent(
   };
 }
 
-/** Le job, réduit à ce qui dit où pousser l'état de son run. */
-interface DeviceJobRef {
-  jobId: string;
+/** Le run, réduit à ce qui dit où pousser son état. */
+interface RunRef {
   entityId: string | null;
   conversationId: string | null;
-  deviceId: string | null;
+  origin: JobOrigin;
 }
 
-async function pushRunState(db: AnyDrizzleDb, job: DeviceJobRef, bus: JobEventBus): Promise<void> {
-  if (!job.deviceId || !job.entityId) return;
+/** La poussée en cours (ou la dernière) de chaque run, par `<espace>:<tête>`. */
+const runPushes = new Map<string, Promise<void>>();
+
+/** Lit le run et publie son état, maintenant. Ne lève jamais : un échec est dit. */
+async function readAndPublishRunState(
+  db: AnyDrizzleDb,
+  entityId: string,
+  run: RunRef,
+  deviceId: string,
+  bus: JobEventBus,
+): Promise<void> {
+  const head = run.origin.headJobId;
   try {
-    const head = await runHeadOf(db, job.entityId, job.jobId);
-    const state = await readRunState(db, job.entityId, head);
+    const state = await readRunState(db, entityId, head);
     if (!state) throw new Error(`run head ${head} not found`);
+    const event = runStateEvent(run.conversationId, state);
     bus.publish(
-      job.entityId,
-      job.conversationId,
-      {
-        type: 'device.event',
-        event: DeviceEventSchema.parse(runStateEvent(job.conversationId, state)),
-      },
-      job.deviceId,
+      entityId,
+      run.conversationId,
+      (seq) => ({ type: 'device.event', event: DeviceEventSchema.parse({ ...event, seq }) }),
+      deviceId,
     );
   } catch (err) {
-    lost(bus, `the run state of job ${job.jobId}`, err);
+    lost(bus, `the run state of ${head}`, err);
   }
+}
+
+/**
+ * Pousse l'état du run à l'appareil d'où vient sa demande — APRÈS toute
+ * poussée de ce run encore en cours (l'ordre prouvé, ci-dessus).
+ */
+function pushRunState(db: AnyDrizzleDb, run: RunRef, bus: JobEventBus): Promise<void> {
+  const { entityId } = run;
+  const deviceId = run.origin.deviceId;
+  if (!deviceId || !entityId) return Promise.resolve();
+  const key = `${entityId}:${run.origin.headJobId}`;
+  const previous = runPushes.get(key) ?? Promise.resolve();
+  const next = previous.then(() => readAndPublishRunState(db, entityId, run, deviceId, bus));
+  runPushes.set(key, next);
+  void next.then(() => {
+    if (runPushes.get(key) === next) runPushes.delete(key);
+  });
+  return next;
 }
 
 /**
@@ -171,12 +231,7 @@ export async function publishJobClaimed(
 ): Promise<void> {
   try {
     const [row] = await db
-      .select({
-        entityId: agentJobs.entityId,
-        conversationId: agentJobs.conversationId,
-        chatId: agentJobs.chatId,
-        chatChannel: agentJobs.chatChannel,
-      })
+      .select({ entityId: agentJobs.entityId, conversationId: agentJobs.conversationId })
       .from(agentJobs)
       .where(eq(agentJobs.id, jobId))
       .limit(1);
@@ -184,10 +239,9 @@ export async function publishJobClaimed(
     await pushRunState(
       db,
       {
-        jobId,
         entityId: row.entityId,
         conversationId: row.conversationId,
-        deviceId: originDeviceOf(row),
+        origin: await originOfJob(db, row.entityId, jobId),
       },
       bus,
     );
@@ -236,14 +290,13 @@ export async function publishJobEnded(
         result: agentJobs.result,
         error: agentJobs.error,
         replyRendering: agentJobs.replyRendering,
-        chatId: agentJobs.chatId,
-        chatChannel: agentJobs.chatChannel,
       })
       .from(agentJobs)
       .where(eq(agentJobs.id, jobId))
       .limit(1);
     if (!row) throw new Error(`job ${jobId} not found`);
-    const deviceId = originDeviceOf(row);
+    const origin = await originOfJob(db, row.entityId, jobId);
+    const deviceId = origin.deviceId;
     // Un job sans espace n'a aucun client qui puisse l'écouter.
     if (row.entityId === null) {
       console.warn(`[job-events] job ${jobId} ended without a workspace: no client to tell`);
@@ -266,7 +319,11 @@ export async function publishJobEnded(
         },
         deviceId,
       );
-      await pushRunState(db, { ...base, entityId: row.entityId, deviceId }, bus);
+      await pushRunState(
+        db,
+        { entityId: row.entityId, conversationId: row.conversationId, origin },
+        bus,
+      );
       return {
         ...base,
         entityId: row.entityId,
@@ -288,7 +345,11 @@ export async function publishJobEnded(
         },
         deviceId,
       );
-      await pushRunState(db, { ...base, entityId: row.entityId, deviceId }, bus);
+      await pushRunState(
+        db,
+        { entityId: row.entityId, conversationId: row.conversationId, origin },
+        bus,
+      );
       return null;
     }
     // Une porte terminale qui publie un job encore vivant : une erreur de câblage.
@@ -325,16 +386,13 @@ export async function publishApprovalRequested(
 ): Promise<void> {
   try {
     const [job] = await db
-      .select({
-        conversationId: agentJobs.conversationId,
-        chatId: agentJobs.chatId,
-        chatChannel: agentJobs.chatChannel,
-      })
+      .select({ conversationId: agentJobs.conversationId })
       .from(agentJobs)
       .where(eq(agentJobs.id, req.jobId))
       .limit(1);
     if (!job) throw new Error(`job ${req.jobId} not found`);
-    const deviceId = originDeviceOf(job);
+    const origin = await originOfJob(db, req.entityId, req.jobId);
+    const deviceId = origin.deviceId;
     const words = requestWords(req.kind, req.toolInput);
     const base = {
       approvalId: req.approvalRequestId,
@@ -364,7 +422,7 @@ export async function publishApprovalRequested(
     }
     await pushRunState(
       db,
-      { jobId: req.jobId, entityId: req.entityId, conversationId: job.conversationId, deviceId },
+      { entityId: req.entityId, conversationId: job.conversationId, origin },
       bus,
     );
   } catch (err) {
@@ -395,8 +453,6 @@ export async function publishApprovalsResolved(
         kind: approvalRequests.kind,
         status: approvalRequests.status,
         conversationId: agentJobs.conversationId,
-        chatId: agentJobs.chatId,
-        chatChannel: agentJobs.chatChannel,
       })
       .from(approvalRequests)
       .leftJoin(agentJobs, eq(agentJobs.id, approvalRequests.jobId))
@@ -407,10 +463,8 @@ export async function publishApprovalsResolved(
         console.warn(`[job-events] request ${row.id} has no workspace: no client to tell`);
         continue;
       }
-      const deviceId = originDeviceOf({
-        chatId: row.chatId ?? null,
-        chatChannel: row.chatChannel ?? null,
-      });
+      const origin = await originOfJob(db, row.entityId, row.jobId);
+      const deviceId = origin.deviceId;
       bus.publish(
         row.entityId,
         row.conversationId ?? null,
@@ -426,12 +480,7 @@ export async function publishApprovalsResolved(
       );
       await pushRunState(
         db,
-        {
-          jobId: row.jobId,
-          entityId: row.entityId,
-          conversationId: row.conversationId ?? null,
-          deviceId,
-        },
+        { entityId: row.entityId, conversationId: row.conversationId ?? null, origin },
         bus,
       );
     }

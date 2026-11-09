@@ -29,8 +29,8 @@
 //
 // THE CARDS. What the stream can lose, the base keeps: a pending request
 // survives a restart, its event does not. After a `resync` (or at start) the
-// device reads here every request of ITS jobs (their chat is this device)
-// still waiting for a person, as the very `card` it was sent as — the same
+// device reads here every request of ITS runs (the chat of the run's head is
+// this device, `runOriginOf`) still waiting for a person, as the very `card` it was sent as — the same
 // composition (`composeRequestCard`, approvals/notify.ts) and the same
 // builder (`deviceEventFor`, devices/device-sink.ts). A server's form
 // (elicitation) is not a device card: it waits on the dashboard, and is not
@@ -51,6 +51,7 @@ import {
   approvalRequests,
   approvalsOldestFirst,
   inArray,
+  runOriginOf,
 } from '@nodal-agents/db';
 import { deviceAdapter } from '@nodal-agents/delivery';
 import type { DeviceEvent, ShellGateReason } from '@nodal-agents/shared';
@@ -60,6 +61,7 @@ import { authorizeDevice } from '../devices/device-guard.ts';
 import { deviceEventsOf } from '../devices/device-events.ts';
 import { deviceEventFor } from '../devices/device-sink.ts';
 import { composeRequestCard } from '../approvals/notify.ts';
+import { deviceOfChat } from '../events/publish.ts';
 import { openNewConversation, resolveConversation } from '../job/conversation-id.ts';
 import { streamJobEvents } from './events.ts';
 
@@ -98,10 +100,14 @@ export async function deviceCardsRoute(c: Context, deps: RunnerDeps): Promise<Re
   if (!guard.ok) return guard.response;
   const { device } = guard;
 
-  // The requests of THIS device's jobs, in its workspace, still pending.
-  const rows = await deps.db
+  // The workspace's requests still pending, then those whose run came from
+  // THIS device — read the one way (`runOriginOf`): the chat of the run's
+  // head, through delegation, task-board children and relaunches, as the
+  // send (approvals/notify.ts) and the pushed state (events/publish.ts) read it.
+  const pending = await deps.db
     .select({
       id: approvalRequests.id,
+      jobId: approvalRequests.jobId,
       kind: approvalRequests.kind,
       toolName: approvalRequests.toolName,
       toolInput: approvalRequests.toolInput,
@@ -114,13 +120,20 @@ export async function deviceCardsRoute(c: Context, deps: RunnerDeps): Promise<Re
       and(
         eq(approvalRequests.entityId, device.entityId),
         eq(agentJobs.entityId, device.entityId),
-        eq(agentJobs.chatChannel, 'device'),
-        eq(agentJobs.chatId, device.id),
         eq(approvalRequests.status, 'pending'),
         inArray(approvalRequests.kind, ['approval', 'question']),
       ),
     )
     .orderBy(approvalsOldestFirst);
+  const deviceOfJob = new Map<string, string | null>();
+  const rows = [];
+  for (const row of pending) {
+    if (!deviceOfJob.has(row.jobId)) {
+      const origin = await runOriginOf(deps.db, device.entityId, row.jobId);
+      deviceOfJob.set(row.jobId, origin ? deviceOfChat(origin) : null);
+    }
+    if (deviceOfJob.get(row.jobId) === device.id) rows.push(row);
+  }
 
   const cards: Extract<DeviceEvent, { type: 'card' }>[] = [];
   for (const row of rows) {
