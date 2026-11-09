@@ -57,6 +57,7 @@ import { executeJob } from '../../job/execute.ts';
 import { notifyApprovalCreated } from '../../approvals/notify.ts';
 import { publishApprovalRequested, publishJobEnded } from '../../events/publish.ts';
 import { speakFinishedJob } from '../../chat/job-reply-voice.ts';
+import { jobEvents } from '../../events/job-events.ts';
 import { readSse, type SseEvent } from '../chat/_sse-reader.ts';
 
 vi.setConfig({ testTimeout: 30_000 });
@@ -803,6 +804,8 @@ describe('a job launched by voice from a device ends on that device (#945) @cap:
       result: 'Done.',
     });
     const onB = await device(app, deviceB);
+    // The streams of the tests before are closed: only device B listens.
+    await waitFor(() => jobEvents.listenersOf(x.entityId, null, deviceA) === 0);
     const finished = await publishJobEnded(db as RunnerDeps['db'], job);
     expect(speakFinishedJob(db as RunnerDeps['db'], finished!)).toBeNull();
     await settle();
