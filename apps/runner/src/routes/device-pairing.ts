@@ -11,7 +11,8 @@
 // THE OWNER'S SIDE (DEVICE_OWNER_ROUTES), behind `requireRunnerAuth`: the
 // dashboard calls them with the worker secret and the workspace of the
 // session; a session bearer reaches only its own workspace; a device key is
-// refused by the device gate.
+// refused by the device gate. The REQUESTS are the install's, not a
+// workspace's: only a single-user install acts on them (`hostWideRefusal`).
 //
 // A request belongs to NO workspace until it is confirmed: every Devices page
 // lists the requests waiting, and the one that confirms binds the device to
@@ -23,6 +24,7 @@
 import type { Context } from 'hono';
 import { z } from 'zod';
 import {
+  isSingleUserInstall,
   createDevicePairing,
   createPairedDevice,
   dismissDevicePairing,
@@ -145,6 +147,20 @@ function ownerWorkspace(c: Context, entityId: string): Response | null {
   return null;
 }
 
+/**
+ * A pairing request belongs to no workspace: acting on one is a host-wide
+ * action, which Nodal allows on a SINGLE-USER install only — the same rule as
+ * the network bind and the auth mode (`isSingleUserInstall`,
+ * @nodal-agents/db). With a second account, an owner role cannot tell "owns
+ * this workspace" from "owns this install", and the first workspace to
+ * confirm would take another person's device (review of #1015, pass 1). So
+ * nobody lists, confirms, refuses or dismisses a request there, whoever calls.
+ */
+async function hostWideRefusal(c: Context, deps: RunnerDeps): Promise<Response | null> {
+  if (await isSingleUserInstall(deps.db)) return null;
+  return c.json({ error: 'multi_user_host' }, 403);
+}
+
 const EntityQuerySchema = z.object({ entityId: z.string().guid() });
 const PairingParamSchema = z.string().guid();
 
@@ -178,6 +194,8 @@ export async function listPairingsRoute(c: Context, deps: RunnerDeps): Promise<R
   if (!q.success) return c.json({ error: 'invalid_request', issues: q.error.issues }, 400);
   const refused = ownerWorkspace(c, q.data.entityId);
   if (refused) return refused;
+  const hostWide = await hostWideRefusal(c, deps);
+  if (hostWide) return hostWide;
   const now = new Date();
   const rows = await listDevicePairings(deps.db, {
     now,
@@ -200,6 +218,8 @@ export async function confirmPairingRoute(c: Context, deps: RunnerDeps): Promise
   const { entityId } = body.data;
   const refused = ownerWorkspace(c, entityId);
   if (refused) return refused;
+  const hostWide = await hostWideRefusal(c, deps);
+  if (hostWide) return hostWide;
 
   const now = new Date();
   try {
@@ -234,6 +254,8 @@ export async function refusePairingRoute(c: Context, deps: RunnerDeps): Promise<
   if (!pairingId.success || !body.success) return c.json({ error: 'invalid_request' }, 400);
   const refused = ownerWorkspace(c, body.data.entityId);
   if (refused) return refused;
+  const hostWide = await hostWideRefusal(c, deps);
+  if (hostWide) return hostWide;
   const done = await refuseDevicePairing(deps.db, { pairingId: pairingId.data, now: new Date() });
   if (!done) return c.json({ error: 'pairing_not_pending' }, 404);
   return c.json({ refused: true });
@@ -245,6 +267,8 @@ export async function dismissPairingRoute(c: Context, deps: RunnerDeps): Promise
   if (!pairingId.success || !q.success) return c.json({ error: 'invalid_request' }, 400);
   const refused = ownerWorkspace(c, q.data.entityId);
   if (refused) return refused;
+  const hostWide = await hostWideRefusal(c, deps);
+  if (hostWide) return hostWide;
   const done = await dismissDevicePairing(deps.db, { pairingId: pairingId.data, now: new Date() });
   if (!done) return c.json({ error: 'pairing_not_expired' }, 404);
   return c.json({ dismissed: true });

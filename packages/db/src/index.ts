@@ -57,6 +57,7 @@ export {
   renameWorkspaceDevice,
   revokeWorkspaceDevice,
 } from './queries/devices.ts';
+export { isSingleUserInstall } from './queries/install.ts';
 export {
   createDevicePairing,
   pollDevicePairing,
