@@ -144,7 +144,6 @@ import {
   codeProjects,
   entities,
   entityMembers,
-  users,
   createAgentRepo,
   createSkillRepo,
   assignSkillRepo,
@@ -188,6 +187,7 @@ import {
   approvalsNewestFirst,
   showConversationsTo,
   workspaceSandboxReader,
+  isSingleUserInstall,
 } from '@nodal-agents/db';
 import {
   deliverableStatuses,
@@ -389,9 +389,9 @@ async function getSession() {
  * config must be edited directly on the server.
  */
 async function assertMonoUserHostInstall(): Promise<ActionResult<never> | null> {
-  const db = getDb();
-  const rows = await db.select({ id: users.id }).from(users).limit(2);
-  if (rows.length > 1) {
+  // The same query the runner's pairing routes read (#946): one meaning of
+  // "single-user install" for the whole product.
+  if (!(await isSingleUserInstall(getDb()))) {
     return fail(
       'multi_user_host',
       `This action changes configuration for the entire host and is only allowed on a single-user install. With multiple accounts, edit ${NODALAI_CONFIG_PATH} directly on the server.`,

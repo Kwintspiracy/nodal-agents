@@ -17,6 +17,8 @@ import { z } from 'zod';
 import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
 import { resolveApprovalDecision } from '../approvals/resolve.ts';
+import type { AnsweredBy } from '../approvals/responders.ts';
+import { deviceHoldsCard } from '../devices/device-scope.ts';
 
 // ─── Request schema ───────────────────────────────────────────────────────────
 
@@ -68,8 +70,22 @@ export async function approveRoute(
   // Qui a répondu (#799) : la session pour un appelant non sûr, ce que le web
   // a lu dans la sienne pour un appelant de confiance. Sans lui, la réponse
   // est refusée plutôt qu'attribuée à quelqu'un de supposé.
-  const userId = c.get('callerTrusted') ? responderUserId : c.get('callerUserId');
-  if (userId === undefined) return c.json({ error: 'responder_required' }, 400);
+  //
+  // Un APPAREIL (#946) répond avec sa clé : c'est elle qui dit qui a répondu
+  // (la conversation de canal `device`, son id), jamais `responderUserId`. Et
+  // il ne répond qu'à une carte posée sur LUI ; une autre répond comme une
+  // demande inexistante.
+  const device = c.get('callerDevice');
+  let answeredBy: AnsweredBy;
+  if (device) {
+    const card = await deviceHoldsCard(deps.db, device.id, approvalRequestId);
+    if (!card) return c.json({ error: 'approval_not_found' }, 404);
+    answeredBy = { channel: 'device', agentId: card.agentId, conversationId: device.id };
+  } else {
+    const userId = c.get('callerTrusted') ? responderUserId : c.get('callerUserId');
+    if (userId === undefined) return c.json({ error: 'responder_required' }, 400);
+    answeredBy = { userId };
+  }
 
   // Dashboard-driven resolution → resolvedBy: 'api'. Shares the channel-neutral
   // core with the Telegram inline-button path (approvals/resolve.ts).
@@ -77,7 +93,7 @@ export async function approveRoute(
     approvalRequestId,
     decision,
     resolvedBy: 'api',
-    answeredBy: { userId },
+    answeredBy,
     notes: notes ?? null,
     answer: answer ?? null,
     ...(free === true ? { free: true } : {}),

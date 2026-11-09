@@ -1135,6 +1135,13 @@
       "when": 1786436900000,
       "tag": "0163_device_channel",
       "breakpoints": true
+    },
+    {
+      "idx": 164,
+      "version": "7",
+      "when": 1786437000000,
+      "tag": "0164_device_pairing",
+      "breakpoints": true
     }
   ]
 }

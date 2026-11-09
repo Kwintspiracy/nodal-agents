@@ -23,9 +23,8 @@
 // nor another workspace's.
 //
 // THE CONVERSATION. The device's current conversation with its workspace's
-// ROOT agent — the agent the dashboard's chat talks to — on the thread
-// (`device`, its id), resolved like a Telegram chat's (`resolveConversation`).
-// `fresh: true` opens a new one, as `/new` does on a channel.
+// ROOT agent (devices/device-conversation.ts, the path a confirmed pairing
+// takes too). `fresh: true` opens a new one, as `/new` does on a channel.
 //
 // THE CARDS. What the stream can lose, the base keeps: a pending request
 // survives a restart, its event does not. After a `resync` (or at start) the
@@ -36,16 +35,15 @@
 // (elicitation) is not a device card: it waits on the dashboard, and is not
 // listed.
 //
-// THE GUARD: `authorizeDevice` (devices/device-guard.ts), behind
-// `requireRunnerAuth` (server.ts) — the guard `/api/events` uses. #946
-// replaces it with device tokens, in that one place.
+// THE GUARD: the device's own key (#946). The device gate (devices/device-auth.ts)
+// accepts nothing else on these routes — never the worker secret — and
+// `authorizeDevice` (devices/device-guard.ts) checks the route names the
+// key's own device.
 
 import type { Context } from 'hono';
 import { z } from 'zod';
 import {
   eq,
-  entities,
-  agents,
   and,
   agentJobs,
   approvalRequests,
@@ -59,10 +57,10 @@ import type { RunnerDeps } from '../deps.ts';
 import { jobEvents, type JobEventBus } from '../events/job-events.ts';
 import { authorizeDevice } from '../devices/device-guard.ts';
 import { deviceEventsOf } from '../devices/device-events.ts';
+import { deviceConversation } from '../devices/device-conversation.ts';
 import { deviceEventFor } from '../devices/device-sink.ts';
 import { composeRequestCard } from '../approvals/notify.ts';
 import { deviceOfChat } from '../events/publish.ts';
-import { openNewConversation, resolveConversation } from '../job/conversation-id.ts';
 import { streamJobEvents } from './events.ts';
 
 const EventsQuerySchema = z.object({
@@ -179,33 +177,19 @@ export async function deviceConversationRoute(c: Context, deps: RunnerDeps): Pro
   if (!guard.ok) return guard.response;
   const { device } = guard;
 
-  // The workspace's ROOT agent, as the dashboard's chat resolves it — and an
-  // active agent of THIS workspace: a root that left it answers nobody.
-  const [root] = await deps.db
-    .select({ agentId: agents.id })
-    .from(entities)
-    .innerJoin(agents, and(eq(agents.id, entities.rootAgentId), eq(agents.entityId, entities.id)))
-    .where(and(eq(entities.id, device.entityId), eq(agents.active, true)))
-    .limit(1);
-  if (!root) return c.json({ error: 'no_root_agent' }, 409);
-
-  // The advisory lock of the thread holds until COMMIT: two first requests
-  // of a device never open two conversations (job/conversation-id.ts).
-  const conversation = await deps.db.transaction(async (tx) => {
-    const key = {
-      db: tx as unknown as RunnerDeps['db'],
+  const outcome = await deps.db.transaction((tx) =>
+    deviceConversation(tx as unknown as RunnerDeps['db'], {
       entityId: device.entityId,
-      agentId: root.agentId,
-      channel: 'device',
-      chatId: device.id,
-    };
-    return parsed.data.fresh ? openNewConversation(key) : resolveConversation(key);
-  });
+      deviceId: device.id,
+      fresh: parsed.data.fresh === true,
+    }),
+  );
+  if (!outcome.ok) return c.json({ error: outcome.code }, 409);
 
   return c.json({
     entityId: device.entityId,
-    agentId: root.agentId,
-    conversationId: conversation.id,
+    agentId: outcome.agentId,
+    conversationId: outcome.conversationId,
   });
 }
 

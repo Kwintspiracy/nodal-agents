@@ -95,6 +95,7 @@ import { resolveEar } from '../job/resolve-voice.ts';
 import { readBoundedBody } from '../lib/read-bounded-body.ts';
 import { createVoiceTiming, hearVoiceTurn, speakVoiceTurn } from '../chat/run-voice-turn.ts';
 import { sseEvent, SSE_HEADERS } from './sse.ts';
+import { callerReachesConversation } from '../devices/device-scope.ts';
 import {
   VOICE_FORMATS,
   VOICE_LIMITS,
@@ -131,6 +132,9 @@ function ownTurn(c: Context, turnId: string): VoiceUtterance | undefined {
   const u = peekUtterance(turnId);
   if (!u) return undefined;
   if (!c.get('callerTrusted') && u.entityId !== c.get('callerEntityId')) return undefined;
+  // Un appareil (#946) n'atteint que les tours qu'IL a ouverts.
+  const device = c.get('callerDevice');
+  if (device && u.deviceId !== device.id) return undefined;
   return u;
 }
 
@@ -150,6 +154,10 @@ export async function voiceTurnStartRoute(c: Context, deps: RunnerDeps): Promise
     .where(and(eq(conversations.id, conversationId), eq(conversations.entityId, entityId)))
     .limit(1);
   if (!conv?.agentId) return c.json({ error: 'conversation_not_found' }, 404);
+  // Un appareil (#946) ne parle que dans SES conversations.
+  if (!(await callerReachesConversation(c, deps.db, conversationId))) {
+    return c.json({ error: 'conversation_not_found' }, 404);
+  }
 
   // Dit AVANT que la personne parle : sans oreille (pas de clé OpenRouter, un
   // réglage de voix illisible), rien de ce qu'elle dirait ne serait entendu.
@@ -163,6 +171,7 @@ export async function voiceTurnStartRoute(c: Context, deps: RunnerDeps): Promise
     entityId,
     conversationId,
     agentId: conv.agentId,
+    deviceId: c.get('callerDevice')?.id ?? null,
     format:
       format === 'audio/pcm' && sampleRate !== undefined
         ? { kind: 'audio/pcm', sampleRate }

@@ -7,6 +7,7 @@ import {
   DEVICE_CAPABILITIES,
   DeviceEventSchema,
   DeviceStreamResyncSchema,
+  isDeviceTokenRoute,
   JOB_CHANNELS,
   JobChannelSchema,
   keepsTurnsInChat,
@@ -112,5 +113,38 @@ describe('the protocol events a device receives (#945) @cap:parler-par-canal-ext
 
   it('declares the four capabilities the devices table accepts', () => {
     expect([...DEVICE_CAPABILITIES]).toEqual(['microphone', 'speaker', 'screen', 'buttons']);
+  });
+});
+
+describe('where a device key is accepted, read from the route table (#946) @cap:parler-par-canal-externe/moteur', () => {
+  it('every route of DEVICE_GESTURES, with its method, and no other', () => {
+    for (const [method, path] of [
+      ['GET', '/api/devices/0b6f5a4e-1f2a-4c3b-9d8e-7f6a5b4c3d2e/events'],
+      ['POST', '/api/devices/0b6f5a4e-1f2a-4c3b-9d8e-7f6a5b4c3d2e/conversation'],
+      ['POST', '/api/voice/turns'],
+      ['POST', '/api/voice/turns/t1/chunks/0'],
+      ['POST', '/api/voice/turns/t1/end'],
+      ['DELETE', '/api/voice/turns/t1'],
+      ['POST', '/api/chat/stream'],
+      ['POST', '/api/chat/stop'],
+      ['POST', '/api/approve'],
+      ['GET', '/api/voice/replies/a1'],
+    ]) {
+      expect(isDeviceTokenRoute(method!, path!)).toBe(true);
+    }
+    for (const [method, path] of [
+      ['GET', '/api/devices/0b6f5a4e-1f2a-4c3b-9d8e-7f6a5b4c3d2e/conversation'],
+      ['GET', '/api/events'],
+      ['POST', '/api/agent'],
+      ['POST', '/api/chat'],
+      ['POST', '/api/devices/pair'],
+      ['POST', '/api/devices/pair/poll'],
+      ['GET', '/api/workspace-devices'],
+      ['POST', '/api/voice/turns/t1/chunks'],
+      ['POST', '/api/voice/turns//end'],
+      ['GET', '/api/voice/setting'],
+    ]) {
+      expect(isDeviceTokenRoute(method!, path!)).toBe(false);
+    }
   });
 });

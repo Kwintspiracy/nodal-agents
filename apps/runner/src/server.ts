@@ -34,6 +34,18 @@ import {
 import { eventsRoute } from './routes/events.ts';
 import { deviceCardsRoute, deviceConversationRoute, deviceEventsRoute } from './routes/devices.ts';
 import { createDeviceSink } from './devices/device-sink.ts';
+import { createDeviceGate } from './devices/device-auth.ts';
+import {
+  confirmPairingRoute,
+  devicePairRoute,
+  devicePollRoute,
+  dismissPairingRoute,
+  listDevicesRoute,
+  listPairingsRoute,
+  refusePairingRoute,
+  removeDeviceRoute,
+  renameDeviceRoute,
+} from './routes/device-pairing.ts';
 import { bindDeviceSink } from '@nodal-agents/delivery';
 import { transitionListener } from './events/publish.ts';
 import { voiceReplyRoute } from './routes/voice-reply.ts';
@@ -169,6 +181,15 @@ export function createApp(
 
   app.use('/api/*', requireTrustedOrigin);
 
+  // ── deviceGate (#946) ─────────────────────────────────────────────────────────
+  //
+  // Where a device key is accepted, and where it is not, decided from the
+  // protocol's route table (devices/device-auth.ts): verified on the routes of
+  // DEVICE_GESTURES, refused on every other. A device's own routes then accept
+  // nothing BUT a device key (`authorizeDevice`, devices/device-guard.ts): no
+  // worker secret, no session, no local trust.
+  app.use('/api/*', createDeviceGate(deps));
+
   // ── requireRunnerAuth ────────────────────────────────────────────────────────
   //
   // Unified auth gate for /api/agent, /api/chat, /api/approve, /api/cron.
@@ -205,6 +226,13 @@ export function createApp(
     c: Context,
     next: () => Promise<void>,
   ): Promise<Response | void> => {
+    // A device (#946): the device gate has verified its key, on a route that
+    // accepts one, and scoped the caller to it — never trusted, even in
+    // local-trust.
+    if (c.get('callerDevice')) {
+      await next();
+      return;
+    }
     // local-trust: no auth required (intentional single-user no-auth for trusted local/dev use)
     if (runnerEnv.AUTH_MODE === 'local-trust') {
       c.set('callerTrusted', true);
@@ -257,10 +285,9 @@ export function createApp(
   app.use('/api/chat/stop', requireRunnerAuth);
   app.use('/api/chat/live', requireRunnerAuth);
   // Le tour vocal (#941) : la même garde que /api/chat, sur la création du tour
-  // et sur chacun de ses chemins. SEAM #946 : le jeton d'un module s'ajoute À
-  // CETTE GARDE, comme une autre preuve qui pose `callerTrusted` /
-  // `callerEntityId` ; la route ne lit que ces deux faits, et ne demande
-  // jamais une session du tableau de bord.
+  // et sur chacun de ses chemins. La clé d'un appareil (#946) y entre par la
+  // porte des appareils, qui pose `callerDevice` / `callerEntityId` ; la route
+  // ne lit que ces faits, et ne demande jamais une session du tableau de bord.
   app.use('/api/voice/turns', requireRunnerAuth);
   app.use('/api/voice/turns/*', requireRunnerAuth);
   // La voix de l'espace et son essai (#969) : la même garde, pour la même
@@ -269,13 +296,19 @@ export function createApp(
   app.use('/api/voice/sample', requireRunnerAuth);
   // La voix de la réponse d'un job lancé par la voix (#967) : la même garde.
   app.use('/api/voice/replies/*', requireRunnerAuth);
-  // #944 — le flux poussé des événements de job. Même garde que /api/chat* :
-  // c'est par elle, et par elle seule, que le jeton d'appareil de #946 entrera.
+  // #944 — le flux poussé des événements de job. Même garde que /api/chat*.
+  // Un appareil n'y entre pas (#946) : il lit SON flux, /api/devices/:id/events.
   app.use('/api/events', requireRunnerAuth);
-  // #945 — les routes d'un appareil : la MÊME garde que /api/events, puis
-  // `authorizeDevice` (devices/device-guard.ts), le seul endroit que #946
-  // remplace par les jetons d'appareil.
-  app.use('/api/devices/*', requireRunnerAuth);
+  // #946 — les routes PROPRES d'un appareil (`/api/devices/:deviceId/…`) ne
+  // passent PAS par cette garde : la porte des appareils n'y accepte que la
+  // clé de l'appareil (jamais WORKER_SECRET), puis `authorizeDevice`
+  // (devices/device-guard.ts) vérifie que la route nomme CET appareil.
+  // L'appairage (`/api/devices/pair*`) se fait sans clé, et le côté du
+  // propriétaire garde cette garde-ci : un appareil n'y entre jamais.
+  app.use('/api/device-pairings', requireRunnerAuth);
+  app.use('/api/device-pairings/*', requireRunnerAuth);
+  app.use('/api/workspace-devices', requireRunnerAuth);
+  app.use('/api/workspace-devices/*', requireRunnerAuth);
   app.use('/api/approve', requireRunnerAuth);
   app.use('/api/cron', requireRunnerAuth);
   // P11 — le diff d'un fichier écrit par un tour. Même garde que /api/approve :
@@ -303,6 +336,15 @@ export function createApp(
   app.get('/api/devices/:deviceId/events', (c) => deviceEventsRoute(c, deps));
   app.get('/api/devices/:deviceId/cards', (c) => deviceCardsRoute(c, deps));
   app.post('/api/devices/:deviceId/conversation', (c) => deviceConversationRoute(c, deps));
+  app.post('/api/devices/pair', (c) => devicePairRoute(c, deps));
+  app.post('/api/devices/pair/poll', (c) => devicePollRoute(c, deps));
+  app.get('/api/device-pairings', (c) => listPairingsRoute(c, deps));
+  app.post('/api/device-pairings/:pairingId/confirm', (c) => confirmPairingRoute(c, deps));
+  app.post('/api/device-pairings/:pairingId/refuse', (c) => refusePairingRoute(c, deps));
+  app.delete('/api/device-pairings/:pairingId', (c) => dismissPairingRoute(c, deps));
+  app.get('/api/workspace-devices', (c) => listDevicesRoute(c, deps));
+  app.patch('/api/workspace-devices/:deviceId', (c) => renameDeviceRoute(c, deps));
+  app.delete('/api/workspace-devices/:deviceId', (c) => removeDeviceRoute(c, deps));
 
   app.post('/api/voice/turns', (c) => voiceTurnStartRoute(c, deps));
   app.post('/api/voice/turns/:turnId/chunks/:seq', (c) => voiceTurnChunkRoute(c));
@@ -311,7 +353,7 @@ export function createApp(
   app.get('/api/voice/setting', (c) => voiceSettingReadRoute(c, deps));
   app.put('/api/voice/setting', (c) => voiceSettingWriteRoute(c, deps));
   app.post('/api/voice/sample', (c) => voiceSampleRoute(c, deps));
-  app.get('/api/voice/replies/:audioId', (c) => voiceReplyRoute(c));
+  app.get('/api/voice/replies/:audioId', (c) => voiceReplyRoute(c, deps));
 
   app.post('/api/approve', (c) => approveRoute(c, deps, runnerEnv));
 
