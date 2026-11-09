@@ -755,6 +755,9 @@ export function connect(
         return;
       case 'card.closed': {
         const ev = data as EventOf<'card.closed'>;
+        // Said once: a close replayed around a reconnect, or one that follows
+        // the close a re-read already gave, is not handed over again.
+        if (settledCards.has(ev.cardId)) return;
         settleCard(ev.cardId);
         emit('card.closed', { ...ev, source: 'stream' });
         return;
@@ -857,6 +860,10 @@ export function connect(
     let delay = initialMs;
     let connections = 0;
     while (!ended) {
+      // A stream opened WITHOUT a resume id replays nothing: what it says next
+      // may come from a runner that restarted, whose `seq` count from 1 again.
+      // The last `seq` of every run is forgotten, as on a `resync`.
+      if (lastEventId === null) lastStateSeq.clear();
       const attempt = new AbortController();
       const abortAttempt = (): void => attempt.abort();
       life.signal.addEventListener('abort', abortAttempt, { once: true });
