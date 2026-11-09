@@ -142,3 +142,209 @@ export const DEVICE_GESTURES = {
   readonly { method: 'GET' | 'POST' | 'DELETE'; path: `/api/${string}` }[]
 >;
 export type DeviceGesture = keyof typeof DEVICE_GESTURES;
+
+// ─── Pairing (#946) ──────────────────────────────────────────────────────────
+//
+// A device pairs FROM ITS OWN SIDE, in the style of RFC 8628 (the device
+// authorization grant): it holds no key yet, asks Nodal for a pairing code,
+// shows it or says it aloud, and polls until the owner confirms or refuses it
+// in Settings → Devices. On confirmation it receives, ONCE, its own key: a
+// device token, scoped to its own routes and its own conversation. A device
+// never holds the worker secret.
+//
+//   POST /api/devices/pair        DevicePairRequest → 201 DevicePairStarted
+//                                                      429 { error: 'rate_limited', reason }
+//   POST /api/devices/pair/poll   DevicePollRequest → 202 { status: 'pending' }
+//                                                      200 { status: 'paired', deviceId, token, conversationId }
+//                                                      403 { status: 'refused' }
+//                                                      410 { status: 'expired' }  (also: a wrong code,
+//                                                          or a token already handed over)
+//                                                      429 { status: 'slow_down' } (polled faster than
+//                                                          `intervalSeconds`)
+//
+// After pairing, every request of the device carries
+//   Authorization: Bearer ndv_<43 base64url chars>
+// It is accepted on the routes of DEVICE_GESTURES (`isDeviceTokenRoute`), and
+// refused by every other route of the runner, the two pairing routes included:
+// a device reaches those without a key.
+
+/** How long a pairing code lives. */
+export const DEVICE_PAIRING_TTL_SECONDS = 600;
+/** How often a device may poll. */
+export const DEVICE_PAIRING_INTERVAL_SECONDS = 2;
+/** The longest name a device may give itself. */
+export const DEVICE_NAME_MAX = 60;
+
+/** A device token: `ndv_` then 32 random bytes in base64url (43 characters). */
+export const DEVICE_TOKEN_PREFIX = 'ndv_';
+export const DEVICE_TOKEN_RE = /^ndv_[A-Za-z0-9_-]{43}$/;
+
+const DeviceNameSchema = z.string().trim().min(1).max(DEVICE_NAME_MAX);
+
+export const DevicePairRequestSchema = z
+  .object({
+    name: DeviceNameSchema,
+    capabilities: z.array(DeviceCapabilitySchema).max(DEVICE_CAPABILITIES.length),
+    protocolVersion: z.number().int().min(1),
+  })
+  .strict();
+export type DevicePairRequest = z.infer<typeof DevicePairRequestSchema>;
+
+export const DevicePairStartedSchema = z.object({
+  pairingId: z.string().guid(),
+  /** Secret: what the device polls with. Never shown. */
+  deviceCode: z.string().min(43),
+  /** Six digits the device shows or says, for the owner to compare. */
+  userCode: z.string().regex(/^[0-9]{6}$/),
+  expiresInSeconds: z.literal(DEVICE_PAIRING_TTL_SECONDS),
+  intervalSeconds: z.literal(DEVICE_PAIRING_INTERVAL_SECONDS),
+});
+export type DevicePairStarted = z.infer<typeof DevicePairStartedSchema>;
+
+export const DevicePairRateLimitedSchema = z.object({
+  error: z.literal('rate_limited'),
+  /** `per_address`: too many requests from this address in a minute; `pending_cap`: too many waiting. */
+  reason: z.enum(['per_address', 'pending_cap']),
+});
+
+export const DevicePollRequestSchema = z
+  .object({ deviceCode: z.string().min(1).max(200) })
+  .strict();
+export type DevicePollRequest = z.infer<typeof DevicePollRequestSchema>;
+
+export const DevicePollResponseSchema = z.discriminatedUnion('status', [
+  z.object({ status: z.literal('pending') }),
+  z.object({
+    status: z.literal('paired'),
+    deviceId: z.string().guid(),
+    /** Returned ONCE. Nodal keeps only its hash. */
+    token: z.string().regex(DEVICE_TOKEN_RE),
+    conversationId: z.string().guid(),
+  }),
+  z.object({ status: z.literal('refused') }),
+  z.object({ status: z.literal('expired') }),
+  z.object({ status: z.literal('slow_down') }),
+]);
+export type DevicePollResponse = z.infer<typeof DevicePollResponseSchema>;
+
+/** The HTTP status of each poll answer. */
+export const DEVICE_POLL_STATUS = {
+  pending: 202,
+  paired: 200,
+  refused: 403,
+  expired: 410,
+  slow_down: 429,
+} as const satisfies Record<DevicePollResponse['status'], number>;
+
+/** The gestures of a device that has no key yet. */
+export const DEVICE_PAIRING_GESTURES = {
+  pair: [
+    { method: 'POST', path: '/api/devices/pair' },
+    { method: 'POST', path: '/api/devices/pair/poll' },
+  ],
+} as const satisfies Record<
+  string,
+  readonly { method: 'GET' | 'POST' | 'DELETE'; path: `/api/${string}` }[]
+>;
+
+/** Does `path` match the route pattern `pattern` (`:name` is one non-empty segment)? */
+function matchesRoute(pattern: string, path: string): boolean {
+  const a = pattern.split('/');
+  const b = path.split('/');
+  return (
+    a.length === b.length &&
+    a.every((seg, i) => (seg.startsWith(':') ? (b[i] ?? '') !== '' : seg === b[i]))
+  );
+}
+
+function namedBy(
+  routes: Record<string, readonly { method: string; path: string }[]>,
+  method: string,
+  path: string,
+  keep: (pattern: string) => boolean = () => true,
+): boolean {
+  return Object.values(routes).some((list) =>
+    list.some((r) => keep(r.path) && r.method === method && matchesRoute(r.path, path)),
+  );
+}
+
+/**
+ * The routes that accept a device token: every route of DEVICE_GESTURES, and
+ * no other. The runner refuses a device token everywhere else.
+ */
+export function isDeviceTokenRoute(method: string, path: string): boolean {
+  return namedBy(DEVICE_GESTURES, method, path);
+}
+
+/**
+ * A device's own routes (`/api/devices/:deviceId/...`): they accept a device
+ * token and NOTHING ELSE — no worker secret, no session, no local trust.
+ */
+export function isDeviceOwnRoute(method: string, path: string): boolean {
+  return namedBy(DEVICE_GESTURES, method, path, (p) => p.startsWith('/api/devices/:deviceId/'));
+}
+
+// ─── The owner's side: Settings → Devices (#946) ─────────────────────────────
+//
+// Separate from the device routes: they never accept a device token, and keep
+// the owner's guard (the dashboard calls them with the worker secret and the
+// workspace it read from the session; a session bearer reaches only its own).
+//
+//   GET    /api/device-pairings?entityId=           → { pairings: DevicePairingView[] }
+//   POST   /api/device-pairings/:pairingId/confirm  { entityId } → { deviceId, conversationId }
+//   POST   /api/device-pairings/:pairingId/refuse   { entityId } → { refused: true }
+//   DELETE /api/device-pairings/:pairingId?entityId= (an expired request, dismissed) → { dismissed: true }
+//   GET    /api/workspace-devices?entityId=         → { devices: PairedDeviceView[] }
+//   PATCH  /api/workspace-devices/:deviceId         { entityId, name } → { device: PairedDeviceView }
+//   DELETE /api/workspace-devices/:deviceId?entityId= → { removed: true }: its key stops at
+//                                                       once, its open streams are closed
+//
+// A pairing request belongs to NO workspace until the owner confirms it from
+// one: every workspace's Devices page lists the requests waiting, and
+// confirming binds the device to that workspace.
+
+export const DEVICE_OWNER_ROUTES = {
+  listPairings: { method: 'GET', path: '/api/device-pairings' },
+  confirmPairing: { method: 'POST', path: '/api/device-pairings/:pairingId/confirm' },
+  refusePairing: { method: 'POST', path: '/api/device-pairings/:pairingId/refuse' },
+  dismissPairing: { method: 'DELETE', path: '/api/device-pairings/:pairingId' },
+  listDevices: { method: 'GET', path: '/api/workspace-devices' },
+  renameDevice: { method: 'PATCH', path: '/api/workspace-devices/:deviceId' },
+  removeDevice: { method: 'DELETE', path: '/api/workspace-devices/:deviceId' },
+} as const satisfies Record<
+  string,
+  { method: 'GET' | 'POST' | 'PATCH' | 'DELETE'; path: `/api/${string}` }
+>;
+
+export const DevicePairingViewSchema = z.object({
+  pairingId: z.string().guid(),
+  /** The name the device gives itself: TEXT, never markup. */
+  name: z.string(),
+  capabilities: z.array(DeviceCapabilitySchema),
+  userCode: z.string().regex(/^[0-9]{6}$/),
+  /** The address the request came from. */
+  from: z.string(),
+  requestedAt: z.string(),
+  expiresAt: z.string(),
+  /** `expired`: not confirmed in time; listed until dismissed or purged. */
+  state: z.enum(['pending', 'expired']),
+});
+export type DevicePairingView = z.infer<typeof DevicePairingViewSchema>;
+
+export const PairedDeviceViewSchema = z.object({
+  deviceId: z.string().guid(),
+  name: z.string(),
+  capabilities: z.array(DeviceCapabilitySchema),
+  pairedAt: z.string(),
+  /** The address it paired from; null for a device that never paired. */
+  pairedFrom: z.string().nullable(),
+  lastSeenAt: z.string().nullable(),
+  /** The device holds an open stream right now. */
+  connected: z.boolean(),
+});
+export type PairedDeviceView = z.infer<typeof PairedDeviceViewSchema>;
+
+export const DeviceConfirmRequestSchema = z.object({ entityId: z.string().guid() }).strict();
+export const DeviceRenameRequestSchema = z
+  .object({ entityId: z.string().guid(), name: DeviceNameSchema })
+  .strict();

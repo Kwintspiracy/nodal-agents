@@ -57,6 +57,7 @@ import { notifyApprovalCreated } from '../../approvals/notify.ts';
 import { publishJobEnded } from '../../events/publish.ts';
 import { speakFinishedJob } from '../../chat/job-reply-voice.ts';
 import { readSse, type SseEvent } from '../chat/_sse-reader.ts';
+import { drawDeviceToken } from '../../devices/device-secrets.ts';
 
 vi.setConfig({ testTimeout: 30_000 });
 
@@ -213,6 +214,9 @@ let y: Awaited<ReturnType<typeof seedMinimal>>;
 let deviceA = '';
 let deviceB = '';
 let deviceOfY = '';
+/** Each device's key (#946): what it presents on its routes. */
+const keyOf = new Map<string, string>();
+const as = (id: string): Record<string, string> => ({ Authorization: `Bearer ${keyOf.get(id)}` });
 
 beforeAll(async () => {
   ({ db } = await spinUpTestDb());
@@ -239,6 +243,11 @@ beforeAll(async () => {
     ])
     .returning({ id: devices.id });
   [deviceA, deviceB, deviceOfY] = rows.map((r) => r.id) as [string, string, string];
+  for (const id of [deviceA, deviceB, deviceOfY]) {
+    const { token, tokenHash } = drawDeviceToken();
+    await db.update(devices).set({ tokenHash }).where(eq(devices.id, id));
+    keyOf.set(id, token);
+  }
 });
 
 function makeDeps(
@@ -294,7 +303,7 @@ async function listenTo(
 }
 
 const device = (app: ReturnType<typeof createApp>, id: string) =>
-  listenTo(app, `/api/devices/${id}/events`);
+  listenTo(app, `/api/devices/${id}/events`, as(id));
 
 async function waitFor(check: () => boolean, ms = 3_000): Promise<void> {
   const until = Date.now() + ms;
@@ -311,7 +320,7 @@ async function postConversation(
   app: ReturnType<typeof createApp>,
   id: string,
   body: Record<string, unknown> = {},
-  headers: Record<string, string> = {},
+  headers: Record<string, string> = as(id),
 ): Promise<{ status: number; json: Record<string, unknown> }> {
   const res = await app.fetch(
     new Request(`http://localhost/api/devices/${id}/conversation`, {
@@ -407,7 +416,7 @@ describe('a device gets its conversation with the root (#945) @cap:parler-par-ca
     expect(seen!.lastSeenAt).toBeInstanceOf(Date);
   });
 
-  it('a session acts only as a device of ITS workspace; another workspace’s device is not found', async () => {
+  it('a device acts only as ITSELF, with its own key; the worker secret and a session are refused (#946)', async () => {
     const app = createApp(
       makeDeps(undefined, {
         getSession: async (req: Request) =>
@@ -418,11 +427,17 @@ describe('a device gets its conversation with the root (#945) @cap:parler-par-ca
       { ...testEnv, AUTH_MODE: 'bearer-token', BEARER_TOKEN: 'token' },
     );
     const asX = { Authorization: 'Bearer session-of-x' };
+    const secret = { Authorization: `Bearer ${testEnv.WORKER_SECRET}` };
     expect((await listenTo(app, `/api/devices/${deviceA}/events`)).status).toBe(401);
-    expect((await listenTo(app, `/api/devices/${deviceA}/events`, asX)).status).toBe(200);
-    expect((await listenTo(app, `/api/devices/${deviceOfY}/events`, asX)).status).toBe(404);
-    expect((await postConversation(app, deviceOfY, {}, asX)).status).toBe(404);
-    expect((await listenTo(app, `/api/devices/not-a-device/events`, asX)).status).toBe(404);
+    expect((await listenTo(app, `/api/devices/${deviceA}/events`, asX)).status).toBe(401);
+    expect((await listenTo(app, `/api/devices/${deviceA}/events`, secret)).status).toBe(401);
+    expect((await listenTo(app, `/api/devices/${deviceA}/events`, as(deviceA))).status).toBe(200);
+    // Device A's key on another device: B of its workspace, the device of Y.
+    expect((await listenTo(app, `/api/devices/${deviceB}/events`, as(deviceA))).status).toBe(404);
+    expect((await listenTo(app, `/api/devices/${deviceOfY}/events`, as(deviceA))).status).toBe(404);
+    expect((await postConversation(app, deviceOfY, {}, as(deviceA))).status).toBe(404);
+    expect((await postConversation(app, deviceOfY, {}, secret)).status).toBe(401);
+    expect((await listenTo(app, `/api/devices/not-a-device/events`, as(deviceA))).status).toBe(404);
   });
 });
 

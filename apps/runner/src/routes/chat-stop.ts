@@ -14,6 +14,7 @@ import { z } from 'zod';
 import { and, eq, conversations } from '@nodal-agents/db';
 import type { RunnerDeps } from '../deps.ts';
 import { stopChatTurn } from '../chat/turn-stop.ts';
+import { callerReachesConversation } from '../devices/device-scope.ts';
 
 const ChatStopRequestSchema = z.object({
   entityId: z.string().guid(),
@@ -42,6 +43,10 @@ export async function chatStopRoute(c: Context, deps: RunnerDeps): Promise<Respo
     .where(and(eq(conversations.id, conversationId), eq(conversations.entityId, entityId)))
     .limit(1);
   if (!conv) return c.json({ error: 'conversation_not_found' }, 404);
+  // Un appareil (#946) n'arrête que les tours de SES conversations.
+  if (!(await callerReachesConversation(c, deps.db, conversationId))) {
+    return c.json({ error: 'conversation_not_found' }, 404);
+  }
 
   return c.json({ stopped: stopChatTurn(conversationId) });
 }
