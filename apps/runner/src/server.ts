@@ -32,7 +32,7 @@ import {
   voiceSettingWriteRoute,
 } from './routes/voice-setting.ts';
 import { eventsRoute } from './routes/events.ts';
-import { deviceConversationRoute, deviceEventsRoute } from './routes/devices.ts';
+import { deviceCardsRoute, deviceConversationRoute, deviceEventsRoute } from './routes/devices.ts';
 import { createDeviceSink } from './devices/device-sink.ts';
 import { bindDeviceSink } from '@nodal-agents/delivery';
 import { transitionListener } from './events/publish.ts';
@@ -301,6 +301,7 @@ export function createApp(
   app.post('/api/chat/live', (c) => chatLiveRoute(c, deps));
   app.get('/api/events', (c) => eventsRoute(c, deps));
   app.get('/api/devices/:deviceId/events', (c) => deviceEventsRoute(c, deps));
+  app.get('/api/devices/:deviceId/cards', (c) => deviceCardsRoute(c, deps));
   app.post('/api/devices/:deviceId/conversation', (c) => deviceConversationRoute(c, deps));
 
   app.post('/api/voice/turns', (c) => voiceTurnStartRoute(c, deps));

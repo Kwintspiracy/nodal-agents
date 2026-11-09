@@ -44,6 +44,7 @@ import {
   jobChatOn,
   type ApprovalCard,
   type QuestionCard,
+  type ChannelAdapter,
   type ChannelKind,
   type ChannelCredentials,
   type SendResult,
@@ -620,99 +621,117 @@ export async function notifyApprovalCreated(
       }
     };
 
-    // The acting agent (whose action is gated) names the card — NOT the bot owner.
-    const [agent] = await deps.db
-      .select({ name: agents.name })
-      .from(agents)
-      .where(eq(agents.id, req.agentId))
-      .limit(1);
-    const who = agent?.name ?? 'An agent';
-
-    // ── P10a — une QUESTION n'est pas une approbation ─────────────────────────
-    //
-    // Elle ne demande pas « laisses-tu faire ceci ? » mais « laquelle ? ». Le
-    // corps est donc la voix de l'agent seule (invariant #2 : sa question,
-    // verbatim), et les boutons portent ses options plutôt qu'un ✅/❌.
-    //
-    // `readQuestionInput` rendant null (une ligne dont l'entrée ne se lit pas),
-    // on retombe sur la carte d'approbation : elle sait afficher n'importe
-    // quelle entrée, et une question sans carte serait un job suspendu en
-    // silence — exactement ce que ce module existe pour empêcher.
-    const adapterForKind = getAdapter(channel);
-
-    const question = req.kind === 'question' ? readQuestionToolInput(req.toolInput) : null;
-    if (question) {
-      const hasButtons =
-        adapterForKind.capabilities.buttons && adapterForKind.sendQuestionCard !== undefined;
-      const text = buildQuestionCardBody({
-        who,
-        question: question.question,
-        context: question.context,
-        hasButtons,
-      });
-      if (hasButtons && adapterForKind.sendQuestionCard) {
-        const card: QuestionCard = {
-          text,
-          options: question.options,
-          callbackId: `${APPROVAL_CALLBACK_PREFIX}:${req.approvalRequestId}`,
-        };
-        await record(await adapterForKind.sendQuestionCard(credentials, conversationId, card));
-      } else {
-        // LIMITE ASSUMÉE de P10a : un canal sans boutons (WhatsApp) ne permet
-        // pas de répondre en ligne. Les options sont numérotées pour que la
-        // question reste lisible, et le dashboard tranche. Lire un numéro dans
-        // un message entrant supposerait de rattacher ce message à CETTE
-        // question, ce qui est un autre problème — pas un repli qu'on improvise.
-        const numbered = question.options.map((o, i) => `${i + 1}. ${o}`).join('\n');
-        await record(
-          await adapterForKind.sendText(credentials, conversationId, `${text}\n\n${numbered}`),
-        );
-      }
-      return;
-    }
-    // Three tiers, WHY first: (1) the agent's own plain-language purpose —
-    // invariant #2 applies here, this is the agent's voice, so we show it
-    // verbatim or admit it's missing rather than invent one; (2) a
-    // deterministic, code-computed impact line (invariant #2 does NOT apply —
-    // this is platform UI describing what the action DOES, never the
-    // agent's voice); (3) the raw technical detail (command/path), secondary
-    // and truncated — the reviewer decides on 1+2, not on a wall of shell.
-    // The card used to be: the agent's purpose, ONE impact sentence, then a raw
-    // dump. For a THIRD-PARTY tool that sentence fell into
-    // computeApprovalImpactLine's `default:` branch and read "irreversible or
-    // destructive action" — about a call that merely fetched a CHANGELOG off
-    // GitHub. Reported live: "je ne comprends pas ce que j'approuve".
-    //
-    // explainApprovalRequest resolves where the tool actually comes from (which
-    // MCP server, at which endpoint, with which description THAT server
-    // supplies) and words it accordingly, instead of guessing. Arguments are
-    // redacted inside it — an approval card gets forwarded and screenshotted.
-    const body = await buildApprovalCardBody(deps.db, {
-      entityId: req.entityId,
-      agentId: req.agentId,
-      toolName: req.toolName,
-      toolInput: req.toolInput,
-      who,
-      gateReasons: req.gateReasons ?? [],
-    });
-
-    // Channel-neutral (W2): sent through the ChannelAdapter rather than the
-    // Telegram helper directly. `callbackId` carries the `apr:<id>` prefix so
-    // the adapter's own `:a`/`:r` suffixing reproduces approvalCallbackData's
-    // EXACT format — approval-callback.ts's parser is unchanged.
-    //
-    // Not every channel can render buttons (capabilities.buttons — WhatsApp
-    // today): sendApprovalCard is only called when the adapter actually
-    // implements it; otherwise this falls back to a plain sendText with an
-    // explicit dashboard pointer, closing the silent-swallow hole a bare
-    // `sendApprovalCard!` non-null assertion would otherwise hit on an
-    // adapter that never implements it (an approval on such a channel used
-    // to deliver NOTHING with no error).
     const adapter = getAdapter(channel);
-    if (adapter.capabilities.buttons && adapter.sendApprovalCard) {
-      const text = `${body}\n\nTap a button below to decide — or resolve it from the dashboard.`;
-      const card: ApprovalCard = {
-        text,
+    const composed = await composeRequestCard(deps.db, req, adapter);
+    await record(await sendComposedCard(adapter, credentials, conversationId, composed));
+  } catch (err) {
+    console.warn(
+      `[approval-notify] failed to send approval card for ${req.approvalRequestId}: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+  }
+}
+
+// ─── LA carte d'une demande, pour un canal (#945) ─────────────────────────────
+
+/**
+ * Ce qu'une demande devient sur un canal : une carte d'approbation, une carte
+ * de question, ou un texte quand le canal n'a pas de boutons. La forme même
+ * que `DeviceOutbound` (@nodal-agents/delivery) nomme pour un appareil.
+ */
+export type ComposedRequestCard =
+  | { kind: 'approval_card'; card: ApprovalCard }
+  | { kind: 'question_card'; card: QuestionCard }
+  | { kind: 'text'; text: string };
+
+/**
+ * LA composition d'une carte de demande (approbation ou question d'agent),
+ * pour l'adaptateur qui la portera. UNE fonction pour l'envoi de la carte
+ * (`notifyApprovalCreated`) et pour sa relecture par un appareil
+ * (`GET /api/devices/:deviceId/cards`, routes/devices.ts) : la carte relue est
+ * celle qui a été envoyée, jamais une seconde forme.
+ */
+export async function composeRequestCard(
+  db: RunnerDeps['db'],
+  req: Pick<
+    ApprovalGateRequest,
+    'approvalRequestId' | 'toolName' | 'toolInput' | 'agentId' | 'entityId' | 'kind' | 'gateReasons'
+  >,
+  adapter: ChannelAdapter,
+): Promise<ComposedRequestCard> {
+  // The acting agent (whose action is gated) names the card — NOT the bot owner.
+  const [agent] = await db
+    .select({ name: agents.name })
+    .from(agents)
+    .where(eq(agents.id, req.agentId))
+    .limit(1);
+  const who = agent?.name ?? 'An agent';
+  const callbackId = `${APPROVAL_CALLBACK_PREFIX}:${req.approvalRequestId}`;
+
+  // ── P10a — une QUESTION n'est pas une approbation ─────────────────────────
+  //
+  // Elle ne demande pas « laisses-tu faire ceci ? » mais « laquelle ? ». Le
+  // corps est donc la voix de l'agent seule (invariant #2 : sa question,
+  // verbatim), et les boutons portent ses options plutôt qu'un ✅/❌.
+  //
+  // `readQuestionInput` rendant null (une ligne dont l'entrée ne se lit pas),
+  // on retombe sur la carte d'approbation : elle sait afficher n'importe
+  // quelle entrée, et une question sans carte serait un job suspendu en
+  // silence — exactement ce que ce module existe pour empêcher.
+  const question = req.kind === 'question' ? readQuestionToolInput(req.toolInput) : null;
+  if (question) {
+    const hasButtons = adapter.capabilities.buttons && adapter.sendQuestionCard !== undefined;
+    const text = buildQuestionCardBody({
+      who,
+      question: question.question,
+      context: question.context,
+      hasButtons,
+    });
+    if (hasButtons) {
+      return { kind: 'question_card', card: { text, options: question.options, callbackId } };
+    }
+    // LIMITE ASSUMÉE de P10a : un canal sans boutons (WhatsApp) ne permet
+    // pas de répondre en ligne. Les options sont numérotées pour que la
+    // question reste lisible, et le dashboard tranche. Lire un numéro dans
+    // un message entrant supposerait de rattacher ce message à CETTE
+    // question, ce qui est un autre problème — pas un repli qu'on improvise.
+    const numbered = question.options.map((o, i) => `${i + 1}. ${o}`).join('\n');
+    return { kind: 'text', text: `${text}\n\n${numbered}` };
+  }
+  // Three tiers, WHY first: (1) the agent's own plain-language purpose —
+  // invariant #2 applies here, this is the agent's voice, so we show it
+  // verbatim or admit it's missing rather than invent one; (2) a
+  // deterministic, code-computed impact line (invariant #2 does NOT apply —
+  // this is platform UI describing what the action DOES, never the
+  // agent's voice); (3) the raw technical detail (command/path), secondary
+  // and truncated — the reviewer decides on 1+2, not on a wall of shell.
+  // The card used to be: the agent's purpose, ONE impact sentence, then a raw
+  // dump. For a THIRD-PARTY tool that sentence fell into
+  // computeApprovalImpactLine's `default:` branch and read "irreversible or
+  // destructive action" — about a call that merely fetched a CHANGELOG off
+  // GitHub. Reported live: "je ne comprends pas ce que j'approuve".
+  //
+  // explainApprovalRequest resolves where the tool actually comes from (which
+  // MCP server, at which endpoint, with which description THAT server
+  // supplies) and words it accordingly, instead of guessing. Arguments are
+  // redacted inside it — an approval card gets forwarded and screenshotted.
+  const body = await buildApprovalCardBody(db, {
+    entityId: req.entityId,
+    agentId: req.agentId,
+    toolName: req.toolName,
+    toolInput: req.toolInput,
+    who,
+    gateReasons: req.gateReasons ?? [],
+  });
+  // Not every channel can render buttons (capabilities.buttons — WhatsApp
+  // today): a card only where the adapter implements it; otherwise a plain
+  // text with an explicit dashboard pointer, never a card that cannot leave.
+  if (adapter.capabilities.buttons && adapter.sendApprovalCard) {
+    return {
+      kind: 'approval_card',
+      card: {
+        text: `${body}\n\nTap a button below to decide — or resolve it from the dashboard.`,
         approveLabel: APPROVAL_BUTTON_LABELS.approve,
         rejectLabel: APPROVAL_BUTTON_LABELS.reject,
         // Troisième action (lot approbations, parité avec le bouton web
@@ -720,19 +739,33 @@ export async function notifyApprovalCreated(
         // aujourd'hui — le flux de confirmation par édition de message vit
         // dans telegram/approval-callback.ts. Les autres adapters l'ignorent.
         alwaysLabel: APPROVAL_BUTTON_LABELS.always,
-        callbackId: `${APPROVAL_CALLBACK_PREFIX}:${req.approvalRequestId}`,
-      };
-      await record(await adapter.sendApprovalCard(credentials, conversationId, card));
-    } else {
-      const text = `${body}\n\nApprove or reject from the dashboard: Approvals page.`;
-      await record(await adapter.sendText(credentials, conversationId, text));
+        callbackId,
+      },
+    };
+  }
+  return { kind: 'text', text: `${body}\n\nApprove or reject from the dashboard: Approvals page.` };
+}
+
+/** Envoie la carte composée par l'adaptateur qui l'a vue composer. */
+async function sendComposedCard(
+  adapter: ChannelAdapter,
+  credentials: ChannelCredentials,
+  conversationId: string,
+  composed: ComposedRequestCard,
+): Promise<SendResult> {
+  switch (composed.kind) {
+    case 'question_card':
+      if (!adapter.sendQuestionCard) throw new Error(`${adapter.channel} draws no question card`);
+      return adapter.sendQuestionCard(credentials, conversationId, composed.card);
+    case 'approval_card':
+      if (!adapter.sendApprovalCard) throw new Error(`${adapter.channel} draws no approval card`);
+      return adapter.sendApprovalCard(credentials, conversationId, composed.card);
+    case 'text':
+      return adapter.sendText(credentials, conversationId, composed.text);
+    default: {
+      const unhandled: never = composed;
+      throw new Error(`composed_card_unhandled: ${JSON.stringify(unhandled)}`);
     }
-  } catch (err) {
-    console.warn(
-      `[approval-notify] failed to send approval card for ${req.approvalRequestId}: ${
-        err instanceof Error ? err.message : String(err)
-      }`,
-    );
   }
 }
 
