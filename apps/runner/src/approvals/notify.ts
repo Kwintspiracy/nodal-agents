@@ -23,6 +23,7 @@ import {
   getChannelBinding,
   getBindingCredentials,
   isConversationAllowed,
+  runOriginOf,
   decryptChannelSecret,
   resolveOwnerConversation,
   recordApprovalCardMessage,
@@ -51,7 +52,7 @@ import {
 } from '@nodal-agents/delivery';
 import type { ApprovalGateRequest } from '@nodal-agents/tools';
 import type { RunnerDeps } from '../deps.ts';
-import { publishApprovalRequested } from '../events/publish.ts';
+import { deviceOfChat, publishApprovalRequested } from '../events/publish.ts';
 import { loadElicitationCard, renderElicitationCardFor } from './elicitation-card-view.ts';
 
 /** callback_data carried by the buttons. Parsed by approval-callback.ts. Stays well under Telegram's 64-byte cap. */
@@ -435,7 +436,7 @@ export async function walkJobChainToRoot(
  * rather than ever falling back to the triggering conversation.
  *
  * channel=device (#945): the request was made on a device, and it is
- * answered there — `resolveDeviceDeliveryTarget` below. Never the agent's
+ * answered there — `resolveDeviceOrigin` below. Never the agent's
  * messaging channel: that is the owner's DEFAULT, for a request made nowhere.
  *
  * The root's `channel` column defaults via resolveTransportChannel + the
@@ -449,6 +450,11 @@ export async function resolveChannelApprovalDeliveryTarget(
   db: RunnerDeps['db'],
   jobId: string,
 ): Promise<ChannelApprovalDeliveryTarget | null> {
+  // A request made on a device is answered there (#945) — before any walk:
+  // its origin is read the one way (`resolveDeviceOrigin`).
+  const device = await resolveDeviceOrigin(db, jobId);
+  if (device.device) return device.target;
+
   const chain = await walkJobChainToRoot(db, jobId);
   if (!chain) return null;
 
@@ -461,8 +467,6 @@ export async function resolveChannelApprovalDeliveryTarget(
         rootHop.channel,
         await listActiveChannelsForAgent(db, rootHop.agentId),
       );
-
-  if (rootChannel === 'device') return resolveDeviceDeliveryTarget(db, chain);
 
   if (rootChannel === 'telegram') {
     const target = await resolveApprovalDeliveryTarget(db, jobId);
@@ -491,42 +495,58 @@ export async function resolveChannelApprovalDeliveryTarget(
 }
 
 /**
- * Where a request made on a DEVICE is answered (#945): that device — the
- * root's chat, recorded on channel `device` (`designateChat`).
+ * Where a request made on a DEVICE is answered (#945): that device — the chat
+ * of the HEAD of the job's run (`runOriginOf`, @nodal-agents/db), the one
+ * reading the cards list (routes/devices.ts) and the pushed run state
+ * (events/publish.ts) also make. A delegate, a task-board child born without
+ * a chat, a relaunched head: all answer on the device the request came from.
  *
- * The same rule as every channel, with the device's own facts. A device
- * belongs to the WORKSPACE, not to an agent: there is no binding to walk, and
- * its credential is the workspace (`getBindingCredentials`). There is no owner
- * conversation to swap to either: a device is paired by the workspace's owner
- * (#946), so the device the request came from is the owner's. It must still
- * be a device OF THIS WORKSPACE (`isConversationAllowed`); otherwise — a
- * removed device, a chat that names another workspace's device — null: the
- * request stays on the dashboard, and never goes to another channel.
+ * `{ device: false }`: the request was not made on a device; the caller goes
+ * on with the messaging channels. Otherwise the device, or null.
+ *
+ * A device belongs to the WORKSPACE, not to an agent: there is no binding to
+ * walk, and its credential is the workspace (`getBindingCredentials`). There
+ * is no owner conversation to swap to either: a device is paired by the
+ * workspace's owner (#946), so the device the request came from is the
+ * owner's. It must still be a device OF THIS WORKSPACE
+ * (`isConversationAllowed`); otherwise — a removed device, a chat that names
+ * another workspace's device — null: the request stays on the dashboard, and
+ * never goes to another channel.
  */
-async function resolveDeviceDeliveryTarget(
+export async function resolveDeviceOrigin(
   db: RunnerDeps['db'],
-  chain: NonNullable<Awaited<ReturnType<typeof walkJobChainToRoot>>>,
-): Promise<ChannelApprovalDeliveryTarget | null> {
-  const root = chain[chain.length - 1]!;
-  const deviceId = jobChatOn({ id: root.chatId, channel: root.chatChannel }, 'device');
-  if (!deviceId) return null;
-  const credentials = await getBindingCredentials(db, root.agentId, 'device');
-  const entityId = credentials?.['entityId'];
-  if (!credentials || !entityId) return null;
+  jobId: string,
+): Promise<{ device: false } | { device: true; target: ChannelApprovalDeliveryTarget | null }> {
+  const [job] = await db
+    .select({ entityId: agentJobs.entityId, agentId: agentJobs.agentId })
+    .from(agentJobs)
+    .where(eq(agentJobs.id, jobId))
+    .limit(1);
+  if (!job?.entityId || !job.agentId) return { device: false };
+  const origin = await runOriginOf(db, job.entityId, jobId);
+  const deviceId = origin ? deviceOfChat(origin) : null;
+  if (!deviceId) return { device: false };
+  const credentials = await getBindingCredentials(db, job.agentId, 'device');
+  if (!credentials || credentials['entityId'] !== job.entityId) {
+    return { device: true, target: null };
+  }
   const allowed = await isConversationAllowed(db, {
-    entityId,
-    agentId: root.agentId,
+    entityId: job.entityId,
+    agentId: job.agentId,
     channel: 'device',
     conversationId: deviceId,
   });
   if (!allowed) {
     console.warn(
-      `[approval-notify] device ${deviceId} is not a device of workspace ${entityId}: ` +
+      `[approval-notify] device ${deviceId} is not a device of workspace ${job.entityId}: ` +
         'the request stays on the dashboard',
     );
-    return null;
+    return { device: true, target: null };
   }
-  return { channel: 'device', agentId: root.agentId, credentials, conversationId: deviceId };
+  return {
+    device: true,
+    target: { channel: 'device', agentId: job.agentId, credentials, conversationId: deviceId },
+  };
 }
 
 /**
@@ -786,6 +806,8 @@ export async function resolveElicitationOriginTarget(
   db: RunnerDeps['db'],
   jobId: string,
 ): Promise<ChannelApprovalDeliveryTarget | null> {
+  const device = await resolveDeviceOrigin(db, jobId);
+  if (device.device) return device.target;
   const chain = await walkJobChainToRoot(db, jobId);
   if (!chain) return null;
   const root = chain[chain.length - 1]!;
@@ -795,7 +817,6 @@ export async function resolveElicitationOriginTarget(
   // d'autre.
   const chatId = jobChatOn({ id: root.chatId, channel: root.chatChannel }, root.channel);
   if (!chatId) return null;
-  if (root.channel === 'device') return resolveDeviceDeliveryTarget(db, chain);
   if (root.channel === 'telegram') {
     const target = await resolveTelegramDeliveryTarget(db, jobId);
     if (!target) return null;

@@ -99,9 +99,19 @@ export const DeviceEventSchema = z.discriminatedUnion('type', [
    * transitions (claimed, a request asked or settled, ended): a device follows
    * a job without polling. `jobId` is the job the request launched (the head
    * of its run), whichever of its delegates moved.
+   *
+   * ORDER. The server never publishes a reading of a run older than the last
+   * one it published for that run (its pushes are serialized, each reading
+   * the base after the previous one was published). `seq` lets the client
+   * prove it: within a run, a `state` whose `seq` is not higher than the last
+   * one shown is older — ignore it. `seq` is the event's number in the
+   * workspace's stream (the number in the SSE `id:`), so it restarts with the
+   * runner: after a `resync`, forget the last `seq` of every run.
    */
   z.object({
     type: z.literal('state'),
+    /** Higher is newer, within a runner's life (see ORDER above). */
+    seq: z.number().int().positive(),
     jobId: z.string(),
     conversationId: z.string().nullable(),
     state: DeviceRunStateSchema,
