@@ -46,7 +46,25 @@ describe('the protocol events a device receives (#945) @cap:parler-par-canal-ext
         choices: [{ label: 'Approve', decision: 'approve' }],
       },
       { type: 'card.closed', cardId: 'c', text: 'done' },
-      { type: 'state', jobId: 'j', conversationId: null, state: 'failed', reason: 'why' },
+      {
+        type: 'state',
+        jobId: 'j',
+        conversationId: null,
+        state: 'failed',
+        waitingFor: [],
+        deliverables: [
+          { path: 'out/a.md', type: 'document', declared: true, verification: 'green' },
+        ],
+        reason: 'why',
+      },
+      {
+        type: 'state',
+        jobId: 'j',
+        conversationId: 'c',
+        state: 'working',
+        waitingFor: [],
+        deliverables: [],
+      },
       { type: 'announce', jobId: 'j', conversationId: 'c', audioId: 'a' },
     ];
     for (const g of gestures) expect(DeviceEventSchema.parse(g)).toEqual(g);
@@ -54,8 +72,24 @@ describe('the protocol events a device receives (#945) @cap:parler-par-canal-ext
       false,
     );
     expect(
-      DeviceEventSchema.safeParse({ type: 'state', jobId: 'j', conversationId: null, state: 'x' })
-        .success,
+      DeviceEventSchema.safeParse({
+        type: 'state',
+        jobId: 'j',
+        conversationId: null,
+        state: 'x',
+        waitingFor: [],
+        deliverables: [],
+      }).success,
+    ).toBe(false);
+    // The end of a run always says its deliverables, even when there are none.
+    expect(
+      DeviceEventSchema.safeParse({
+        type: 'state',
+        jobId: 'j',
+        conversationId: null,
+        state: 'done',
+        waitingFor: [],
+      }).success,
     ).toBe(false);
     expect(DeviceStreamResyncSchema.parse({ type: 'resync', reason: 'runner_restarted' })).toEqual({
       type: 'resync',

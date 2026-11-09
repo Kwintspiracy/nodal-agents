@@ -77,7 +77,7 @@ describe('the push stream, with devices listening (#945) @cap:parler-par-canal-e
   });
 });
 
-describe('what a device hears of a job’s life (#945) @cap:parler-par-canal-externe/moteur', () => {
+describe('what a device hears of a job’s life, from the bus (#945) @cap:parler-par-canal-externe/moteur', () => {
   const at = (payload: StoredJobEvent['payload']): StoredJobEvent => ({
     id: 'boot:1',
     seq: 1,
@@ -86,7 +86,7 @@ describe('what a device hears of a job’s life (#945) @cap:parler-par-canal-ext
     payload,
   });
 
-  it('the root’s end: its reply as a bubble, then its state; a delegate’s end: nothing', () => {
+  it('the root’s reply as a bubble; a delegate’s end, a cancelled or empty end: no bubble', () => {
     expect(deviceEventsOf(at(finished('job-1', 'conv-1')))).toEqual([
       {
         type: 'bubble',
@@ -95,17 +95,18 @@ describe('what a device hears of a job’s life (#945) @cap:parler-par-canal-ext
         conversationId: 'conv-1',
         text: 'reply of job-1',
       },
-      { type: 'state', jobId: 'job-1', conversationId: 'conv-1', state: 'done' },
     ]);
     expect(deviceEventsOf(at({ ...finished('child', 'conv-1'), parentJobId: 'job-1' }))).toEqual(
       [],
     );
     expect(
       deviceEventsOf(at({ ...finished('job-2', null), status: 'cancelled', reply: '' })),
-    ).toEqual([{ type: 'state', jobId: 'job-2', conversationId: null, state: 'cancelled' }]);
+    ).toEqual([]);
   });
 
-  it('a failure says its reason as stored; a request makes the job wait', () => {
+  it('where the run stands is not guessed from one job’s event: it is pushed as the run’s state', () => {
+    // The run state (`state`, readRunState) is addressed to the device by
+    // events/publish.ts; a single job's end or request says nothing of it.
     expect(
       deviceEventsOf(
         at({
@@ -117,15 +118,7 @@ describe('what a device hears of a job’s life (#945) @cap:parler-par-canal-ext
           reason: 'The model did not answer.',
         }),
       ),
-    ).toEqual([
-      {
-        type: 'state',
-        jobId: 'job-3',
-        conversationId: null,
-        state: 'failed',
-        reason: 'The model did not answer.',
-      },
-    ]);
+    ).toEqual([]);
     expect(
       deviceEventsOf(
         at({
@@ -138,6 +131,6 @@ describe('what a device hears of a job’s life (#945) @cap:parler-par-canal-ext
           text: 'why',
         }),
       ),
-    ).toEqual([{ type: 'state', jobId: 'job-4', conversationId: null, state: 'waiting' }]);
+    ).toEqual([]);
   });
 });
