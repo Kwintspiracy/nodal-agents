@@ -79,7 +79,7 @@ const REFUSALS: Record<string, string> = {
   device_not_found: 'This device is no longer paired.',
   forbidden: 'This workspace is not yours.',
   multi_user_host:
-    'This install has several accounts. Only a single-user install can pair a device.',
+    'Only a single-user install can pair a device, and this one has several accounts.',
 };
 
 /** One call to an owner route of the runner, its answer checked by `schema`. */
@@ -194,7 +194,9 @@ export async function countPendingPairingsAction(): Promise<ActionResult<number>
     `/api/device-pairings?${q(session.entityId)}`,
     z.object({ pairings: z.array(DevicePairingViewSchema) }),
   );
-  if (!res.ok) return res;
+  // A multi-user install acts on no request (`multi_user_host`): none waits
+  // for this person, and the pill says 0 rather than a count it last saw.
+  if (!res.ok) return res.code === 'multi_user_host' ? ok(0) : res;
   return ok(res.data.pairings.filter((p) => p.state === 'pending').length);
 }
 
