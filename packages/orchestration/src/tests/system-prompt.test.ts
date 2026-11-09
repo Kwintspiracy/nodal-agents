@@ -2008,15 +2008,20 @@ ${sentence}`).length > 0,
     expect(typed).not.toContain('Open with one short sentence');
   });
 
-  // #977 — with reasoning off, Alfred's reply opened with "This is a general
-  // knowledge question, so I can answer it directly": the reply-or-escalate
-  // split of the chat surface line, said aloud. The line states the choice as
-  // silent, for every chat turn, typed or spoken, worker or orchestrator. A job
-  // has no such split (it holds its tools), so its prompt does not carry it.
-  // Mutation verified: the sentence removed from the surface line → red.
-  it('the reply-or-run_task choice is stated as silent on every chat turn, typed and spoken (#977)', async () => {
-    const SILENT =
-      'The choice between the two is silent: your reply never says which path you took or why.';
+  // #995 (replaces #977's test) — #977 added a sentence telling the reply to keep
+  // the reply-or-run_task choice silent; naming the choice made the model narrate
+  // it ("This is a general knowledge question I can answer directly…"), measured
+  // 16/130 with the sentence, 4/130 without. The general guard: on every chat
+  // turn, typed and spoken, orchestrator and worker, the built prompt never
+  // describes the routing choice to the reply. A job prompt is unchanged by it.
+  // Mutation verified: the #977 sentence put back in the surface line → red.
+  it('no chat prompt tells the reply anything about the routing choice (#995)', async () => {
+    const FORBIDDEN = [
+      /which path you took/i,
+      /choice between the two/i,
+      /never says which/i,
+      /(?:say|mention|state|announce|explain)[^.\n]{0,60}(?:answer(?:ing)? directly|escalat|run_task)/i,
+    ];
     const { entityId, root, worker } = await seedTeam();
     const agentsUnderTest = [
       makeAgent(root.id, entityId, root.personality, 'orchestrator'),
@@ -2030,19 +2035,24 @@ ${sentence}`).length > 0,
           replyRendering,
         });
         const surfaceLine = chat.split('\n').find((l) => l.startsWith('- surface: in-app'));
-        expect({ role: agent.role, replyRendering, said: surfaceLine?.includes(SILENT) }).toEqual({
-          role: agent.role,
-          replyRendering,
-          said: true,
-        });
-        expect(chat.split(SILENT)).toHaveLength(2);
+        // The surface line is really there, and still states the two paths as facts.
+        expect(surfaceLine).toContain('For conversation or recalling facts, just reply');
+        expect(surfaceLine).toContain('run_task');
+        for (const re of FORBIDDEN) {
+          expect({ role: agent.role, replyRendering, re: String(re), hit: re.test(chat) }).toEqual({
+            role: agent.role,
+            replyRendering,
+            re: String(re),
+            hit: false,
+          });
+        }
       }
       const job = await buildSystemPrompt(agent, db, {
         origin: 'dashboard',
         replyRendering: 'spoken',
         availableToolNames: [...ALWAYS_ON_TOOLS],
       });
-      expect(job).not.toContain(SILENT);
+      for (const re of FORBIDDEN) expect(re.test(job)).toBe(false);
     }
   });
 

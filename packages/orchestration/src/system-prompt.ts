@@ -643,12 +643,10 @@ function buildJobContextBlock(ctx: JobContext, availableTools: readonly string[]
       '- surface: in-app dashboard chat — you are talking directly with the user; reply in ' +
         'plain text. For conversation or recalling facts, just reply (your durable facts are ' +
         'loaded below). ' +
-        // #977 : ce partage entre répondre et escalader est le cadre que le
-        // modèle, raisonnement coupé, disait à voix haute (« This is a general
-        // knowledge question, so I can answer it directly »). Le choix est dit
-        // ici comme ce qu'il est, invisible : la réponse ne le raconte pas.
-        'The choice between the two is silent: your reply never says which path you took or ' +
-        'why. ' +
+        // #995 : volontairement AUCUNE phrase qui nomme le choix entre répondre
+        // et escalader (#977 en avait une : « le choix est silencieux… »). La
+        // nommer faisait que le modèle la répétait : mesuré 16/130 réponses qui
+        // racontent la décision avec la phrase, 4/130 sans. Ne pas la remettre.
         'For ANY action — using a connector or skill, delegating to your team, ' +
         'sending/fetching/creating/publishing, or (as the workspace ROOT) creating agents, ' +
         // Un FAIT, pas un ordre : sur cette surface, une consigne impérative est
