@@ -140,7 +140,8 @@ export async function uninstallSkillRoute(
 //
 // Applies a pending upstream update to an already-installed community skill:
 // re-downloads the source, replaces the store-dir files, and updates the DB
-// row (defaultContent always; content only when not owner-overridden). If the
+// row (content and defaultContent; an owner edit is replaced, which the
+// dashboard's update dialog says before the owner confirms). If the
 // skill's bundled scripts changed, revokes scripts_authorized on every
 // agent×skill assignment for it — see applySkillUpdate (skills/install.ts)
 // for the full security rationale.
