@@ -40,6 +40,7 @@ import {
   Brain,
   BookOpenText,
   Cube,
+  DeviceMobile,
   DiscordLogo,
   GearSix,
   Key,
@@ -70,7 +71,16 @@ export type PanelItem = {
    * qu'on branche. Absente, l'icône est grise comme le libellé.
    */
   tone?: 'agent' | 'skill' | 'conn';
+  /**
+   * Le NOM d'un compte que la ligne porte en pastille corail (#946 : les
+   * demandes d'appairage qui attendent, sur « Devices »). Un nom, comme
+   * `PanelDynamic` : le panneau sait quel crochet le lit.
+   */
+  counter?: PanelCounter;
 };
+
+/** Ce qu'une ligne du panneau peut compter. */
+export type PanelCounter = 'device-pairings';
 
 /**
  * Une LISTE qui n'existe qu'en base, et que le panneau lit à l'exécution.
@@ -258,6 +268,13 @@ const SETTINGS_GROUPS: readonly PanelGroup[] = [
       { href: '/settings?page=access', label: 'Access', icon: Key },
       { href: '/settings?page=safety', label: 'Safety', icon: ShieldCheck },
       { href: '/settings?page=workspace', label: 'Workspace', icon: Cube },
+      // #946 : la pastille corail dit qu'une demande d'appairage attend.
+      {
+        href: '/settings?page=devices',
+        label: 'Devices',
+        icon: DeviceMobile,
+        counter: 'device-pairings',
+      },
       { href: '/llm-providers', label: 'LLM Providers', icon: Sparkle },
       { href: '/settings?page=install', label: 'Install', icon: PlugsConnected },
     ],

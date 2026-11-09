@@ -12,7 +12,7 @@
 
 import type { SettingId } from './settings-rows.ts';
 
-export type SettingsPageKey = 'access' | 'safety' | 'workspace' | 'install';
+export type SettingsPageKey = 'access' | 'safety' | 'workspace' | 'devices' | 'install';
 
 export type SettingsPage = {
   key: SettingsPageKey;
@@ -49,6 +49,15 @@ export const SETTINGS_PAGES: readonly SettingsPage[] = [
     label: 'Workspace',
     lede: 'Where your agents work, and the facts of this installation.',
     ids: ['timezone', 'voice', 'workspaces', 'urls', 'session'],
+  },
+  {
+    // #946 : les appareils qui parlent aux agents, et les demandes
+    // d'appairage qui attendent. Entre Workspace et Install (maquette validée
+    // le 09/11).
+    key: 'devices',
+    label: 'Devices',
+    lede: 'Things that talk to your agents: a speaker, a desk companion, a script. Each one has its own key, and you can remove it at any time.',
+    ids: ['devices'],
   },
   {
     key: 'install',

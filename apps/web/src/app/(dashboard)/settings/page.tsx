@@ -43,6 +43,8 @@ import AutostartSection from './AutostartSection.tsx';
 import InstallNotesForm from './InstallNotesForm.tsx';
 import TimezoneForm from './TimezoneForm.tsx';
 import VoiceSection from './VoiceSection.tsx';
+import DevicesSection from './DevicesSection.tsx';
+import { deviceAddress } from '@/lib/device-address.ts';
 import SettingsSections from './SettingsSections.tsx';
 import SandboxSection from './SandboxSection.tsx';
 import { getSandboxAction } from '@/lib/sandbox-actions.ts';
@@ -110,6 +112,9 @@ export default async function SettingsPage({ searchParams }: PageProps) {
 
   const s = result.data;
   const grants = rootConfigResult.ok ? rootConfigResult.data.grants : DEFAULT_ROOT_GRANTS;
+  const rootAgentId = rootConfigResult.ok ? rootConfigResult.data.rootAgentId : null;
+  const rootAgentName =
+    (agentsResult.ok ? agentsResult.data : []).find((a) => a.id === rootAgentId)?.name ?? null;
 
   const rows = buildSettingRows({
     authMode: s.authMode,
@@ -162,6 +167,15 @@ export default async function SettingsPage({ searchParams }: PageProps) {
     ) : null,
     // #969 : la section lit et écrit la voix par la route du runner, elle-même.
     voice: <VoiceSection />,
+    // #946 : la section lit les appareils elle-même ; la page lui donne
+    // l'adresse qu'un appareil joint (le vrai réglage réseau) et le nom de
+    // l'agent racine, celui avec qui un appareil parle.
+    devices: networkResult.ok ? (
+      <DevicesSection
+        address={deviceAddress(networkResult.data, s.runnerUrl)}
+        rootAgentName={rootAgentName}
+      />
+    ) : null,
     autostart: autostartResult.ok ? <AutostartSection initial={autostartResult.data} /> : null,
     'install-notes': installNotesResult.ok ? (
       <InstallNotesForm initial={installNotesResult.data} />

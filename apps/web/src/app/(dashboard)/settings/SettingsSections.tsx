@@ -23,6 +23,7 @@ import {
   Checks,
   Clock,
   Cube,
+  DeviceMobile,
   EyeSlash,
   IdentificationCard,
   Key,
@@ -55,6 +56,7 @@ const ICONS: Record<SettingId, Icon> = {
   'mcp-server': PlugsConnected,
   timezone: Clock,
   voice: SpeakerHigh,
+  devices: DeviceMobile,
   autostart: Power,
   'install-notes': ListBullets,
   workspaces: Browser,
@@ -83,7 +85,10 @@ export default function SettingsSections({
             data-testid={`setting-section-${row.id}`}
             className="flex flex-col gap-4"
           >
-            <header className="flex flex-col gap-1">
+            {/* `heading: 'hidden'` : la page n'a QUE ce réglage et son panneau
+                porte ses propres titres (Devices, #946) ; le titre reste lu par
+                un lecteur d'écran. */}
+            <header className={row.heading === 'hidden' ? 'sr-only' : 'flex flex-col gap-1'}>
               <div className="flex items-center gap-2">
                 <span className="flex h-4 w-4 shrink-0 items-center justify-center text-ink-3">
                   <Glyph size={16} />
