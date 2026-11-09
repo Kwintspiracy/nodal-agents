@@ -133,8 +133,11 @@ export type DeviceEventType = DeviceEvent['type'];
  *   - SSE event `ready`, data `{}`: what was missed has been replayed, the
  *     stream is live;
  *   - SSE event `resync`, data `{ type: 'resync', reason }`: what was missed
- *     is no longer in memory — re-read the conversation (never nothing,
- *     invariant #4).
+ *     is no longer in memory (the runner restarted, or the device was away
+ *     longer than the buffer holds). Re-read your pending cards with
+ *     `GET /api/devices/:deviceId/cards` (DEVICE_GESTURES `cards`): every
+ *     request still waiting for a person, as the `card` it was sent as.
+ *     Never nothing (invariant #4).
  */
 export const DeviceStreamReadySchema = z.object({}).strict();
 export const DeviceStreamResyncSchema = z.object({
@@ -156,6 +159,8 @@ export const DeviceStreamResyncSchema = z.object({
 export const DEVICE_GESTURES = {
   conversation: [{ method: 'POST', path: '/api/devices/:deviceId/conversation' }],
   listen: [{ method: 'GET', path: '/api/devices/:deviceId/events' }],
+  /** What waits for a person on this device now: after a `resync`, or at start. */
+  cards: [{ method: 'GET', path: '/api/devices/:deviceId/cards' }],
   say: [
     { method: 'POST', path: '/api/voice/turns' },
     { method: 'POST', path: '/api/voice/turns/:turnId/chunks/:seq' },

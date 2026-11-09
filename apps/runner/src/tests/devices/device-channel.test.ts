@@ -322,6 +322,18 @@ async function waitFor(check: () => boolean, ms = 3_000): Promise<void> {
   }
 }
 
+/** `GET /api/devices/:id/cards`, as the device reads it. */
+async function getCards(
+  app: ReturnType<typeof createApp>,
+  id: string,
+  headers: Record<string, string> = as(id),
+): Promise<{ status: number; cards: unknown[] }> {
+  const res = await app.fetch(new Request(`http://localhost/api/devices/${id}/cards`, { headers }));
+  if (res.status !== 200) return { status: res.status, cards: [] };
+  const body = (await res.json()) as { cards: unknown[] };
+  return { status: 200, cards: body.cards };
+}
+
 /** Long enough for an event that should not come to arrive. */
 const settle = (): Promise<void> => new Promise((r) => setTimeout(r, 60));
 
@@ -446,6 +458,9 @@ describe('a device gets its conversation with the root (#945) @cap:parler-par-ca
     expect((await listenTo(app, `/api/devices/${deviceOfY}/events`, as(deviceA))).status).toBe(404);
     expect((await postConversation(app, deviceOfY, {}, as(deviceA))).status).toBe(404);
     expect((await postConversation(app, deviceOfY, {}, secret)).status).toBe(401);
+    expect((await getCards(app, deviceOfY, as(deviceA))).status).toBe(404);
+    expect((await getCards(app, deviceA, secret)).status).toBe(401);
+    expect((await getCards(app, deviceA, asX)).status).toBe(401);
     expect((await listenTo(app, `/api/devices/not-a-device/events`, as(deviceA))).status).toBe(404);
   });
 });
@@ -647,6 +662,159 @@ describe('what a job launched from a device asks comes back to THAT device (#945
     expect(onB.gestures()).toEqual([]);
     expect(telegramSends).toEqual([]);
     expect(await cardsOf(request!.id)).toEqual([{ channel: 'device', conversationId: deviceA }]);
+  });
+});
+
+// ─── 3b. What the stream lost, the cards route gives back ───────────────────
+
+describe('after a resync, a device re-reads its pending cards (#945) @cap:approuver-une-action/moteur', () => {
+  /** A device of X of its own, with its key: its list holds only what this test asks. */
+  async function newDevice(name: string): Promise<string> {
+    const [d] = await db
+      .insert(devices)
+      .values({ entityId: x.entityId, name, capabilities: ['speaker', 'buttons'] })
+      .returning({ id: devices.id });
+    // Its key (#946): what it presents on its routes.
+    const { token, tokenHash } = drawDeviceToken();
+    await db.update(devices).set({ tokenHash }).where(eq(devices.id, d!.id));
+    keyOf.set(d!.id, token);
+    return d!.id;
+  }
+
+  it('a card asked before a restart survives it: listed as sent, answered, and the job resumes', async () => {
+    const deviceA = await newDevice('Hall');
+    const deps = makeDeps(
+      makeMockLlmClient([
+        {
+          toolCalls: [
+            {
+              toolCallId: 'tc-ask-r',
+              toolName: 'ask_user',
+              args: { question: QUESTION, options: OPTIONS },
+            },
+          ],
+        },
+        {
+          text: 'Tray 2 it is.',
+          toolCalls: [
+            { toolCallId: 'tc-rr-r', toolName: 'return_result', args: { status: 'success' } },
+          ],
+        },
+      ]),
+    );
+    const app = createApp(deps, testEnv);
+    const conv = String((await postConversation(app, deviceA)).json['conversationId']);
+    const job = await deviceJob({
+      entityId: x.entityId,
+      agentId: x.agentId,
+      deviceId: deviceA,
+      conversationId: conv,
+    });
+    const before = await device(app, deviceA);
+    expect((await executeJob(job as JobId, deps, testEnv)).status).toBe('awaiting_approval');
+    await waitFor(() => before.gestures().some((e) => e.event === 'card'));
+    const sent = before.gestures().find((e) => e.event === 'card')!.data;
+
+    // The runner restarts: the device comes back with the id of an event of
+    // a runner that is gone. Its memory went with it — `resync`, nothing replayed.
+    const after = await listenTo(app, `/api/devices/${deviceA}/events`, {
+      ...as(deviceA),
+      'Last-Event-ID': 'a-runner-that-is-gone:7',
+    });
+    expect(after.events.map((e) => e.event)).toEqual(['resync']);
+    expect(after.events[0]!.data).toEqual({ type: 'resync', reason: 'runner_restarted' });
+
+    // The row survived: the card is listed, exactly as it was sent.
+    const listed = await getCards(app, deviceA);
+    expect(listed.status).toBe(200);
+    expect(listed.cards).toEqual([sent]);
+    expect(DeviceEventSchema.parse(listed.cards[0])).toMatchObject({
+      type: 'card',
+      kind: 'question',
+    });
+    // Another device's list does not hold it.
+    expect((await getCards(app, deviceB)).cards).toEqual([]);
+
+    // Answered as the dashboard answers: the job is re-queued, then resumes to its end.
+    const card = DeviceEventSchema.parse(sent);
+    const choice = card.type === 'card' ? card.choices[1]! : null;
+    const answered = await app.fetch(
+      new Request('http://localhost/api/approve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          approvalRequestId: card.type === 'card' ? card.cardId : '',
+          decision: choice!.decision,
+          answer: choice!.answer,
+          responderUserId: x.userId,
+        }),
+      }),
+    );
+    expect(answered.status).toBe(200);
+    expect((await getCards(app, deviceA)).cards).toEqual([]);
+    const [requeued] = await db.select().from(agentJobs).where(eq(agentJobs.id, job));
+    expect(requeued!.status).toBe('pending');
+    expect((await executeJob(job as JobId, deps, testEnv)).status).toBe('completed');
+    const [ended] = await db.select().from(agentJobs).where(eq(agentJobs.id, job));
+    expect(ended).toMatchObject({ status: 'completed', result: 'Tray 2 it is.' });
+  });
+
+  it('an approval waiting on the device is listed as the card it was sent as; settled ones and forms are not', async () => {
+    const deviceA = await newDevice('Study');
+    const app = createApp(makeDeps(), testEnv);
+    const job = await deviceJob({
+      entityId: x.entityId,
+      agentId: x.agentId,
+      deviceId: deviceA,
+      conversationId: null,
+      status: 'awaiting_approval',
+    });
+    const toolInput = { command: 'ls /tmp', purpose: 'List the scratch folder' };
+    const [request] = await db
+      .insert(approvalRequests)
+      .values({
+        entityId: x.entityId,
+        jobId: job,
+        agentId: x.agentId,
+        toolName: 'run_command',
+        toolInput,
+        kind: 'approval',
+      })
+      .returning({ id: approvalRequests.id });
+    // Two requests of the same job that are NOT waiting cards: a settled
+    // one, and a server's form (answered on the dashboard).
+    await db.insert(approvalRequests).values([
+      {
+        entityId: x.entityId,
+        jobId: job,
+        agentId: x.agentId,
+        toolName: 'run_command',
+        toolInput,
+        kind: 'approval',
+        status: 'approved',
+      },
+      {
+        entityId: x.entityId,
+        jobId: job,
+        agentId: x.agentId,
+        toolName: 'mcp_elicitation',
+        toolInput: { message: 'Fill the form' },
+        kind: 'elicitation',
+      },
+    ]);
+    const onA = await device(app, deviceA);
+    await notifyApprovalCreated(makeDeps(), {
+      approvalRequestId: request!.id,
+      toolName: 'run_command',
+      toolInput,
+      jobId: job,
+      agentId: x.agentId,
+      entityId: x.entityId,
+      kind: 'approval',
+    });
+    await waitFor(() => onA.gestures().some((e) => e.event === 'card'));
+    const sent = onA.gestures().find((e) => e.event === 'card')!.data;
+    expect((await getCards(app, deviceA)).cards).toEqual([sent]);
   });
 });
 

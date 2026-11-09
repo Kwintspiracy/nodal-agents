@@ -1,6 +1,7 @@
 // routes/devices.ts — the device routes (#945).
 //
 //   GET  /api/devices/:deviceId/events        the device's stream (SSE)
+//   GET  /api/devices/:deviceId/cards         → { cards: card[] } what waits for a person
 //   POST /api/devices/:deviceId/conversation  { fresh?: true } → { entityId, agentId, conversationId }
 //
 // A device then SAYS and SENDS through the routes the dashboard uses
@@ -25,6 +26,15 @@
 // ROOT agent (devices/device-conversation.ts, the path a confirmed pairing
 // takes too). `fresh: true` opens a new one, as `/new` does on a channel.
 //
+// THE CARDS. What the stream can lose, the base keeps: a pending request
+// survives a restart, its event does not. After a `resync` (or at start) the
+// device reads here every request of ITS jobs (their chat is this device)
+// still waiting for a person, as the very `card` it was sent as — the same
+// composition (`composeRequestCard`, approvals/notify.ts) and the same
+// builder (`deviceEventFor`, devices/device-sink.ts). A server's form
+// (elicitation) is not a device card: it waits on the dashboard, and is not
+// listed.
+//
 // THE GUARD: the device's own key (#946). The device gate (devices/device-auth.ts)
 // accepts nothing else on these routes — never the worker secret — and
 // `authorizeDevice` (devices/device-guard.ts) checks the route names the
@@ -32,11 +42,23 @@
 
 import type { Context } from 'hono';
 import { z } from 'zod';
+import {
+  eq,
+  and,
+  agentJobs,
+  approvalRequests,
+  approvalsOldestFirst,
+  inArray,
+} from '@nodal-agents/db';
+import { deviceAdapter } from '@nodal-agents/delivery';
+import type { DeviceEvent, ShellGateReason } from '@nodal-agents/shared';
 import type { RunnerDeps } from '../deps.ts';
 import { jobEvents, type JobEventBus } from '../events/job-events.ts';
 import { authorizeDevice } from '../devices/device-guard.ts';
 import { deviceEventsOf } from '../devices/device-events.ts';
 import { deviceConversation } from '../devices/device-conversation.ts';
+import { deviceEventFor } from '../devices/device-sink.ts';
+import { composeRequestCard } from '../approvals/notify.ts';
 import { streamJobEvents } from './events.ts';
 
 const EventsQuerySchema = z.object({
@@ -67,6 +89,62 @@ export async function deviceEventsRoute(
         ? [{ event: 'resync', data: e.payload }]
         : deviceEventsOf(e).map((event) => ({ event: event.type, data: event })),
   );
+}
+
+export async function deviceCardsRoute(c: Context, deps: RunnerDeps): Promise<Response> {
+  const guard = await authorizeDevice(c, deps, c.req.param('deviceId') ?? '');
+  if (!guard.ok) return guard.response;
+  const { device } = guard;
+
+  // The requests of THIS device's jobs, in its workspace, still pending.
+  const rows = await deps.db
+    .select({
+      id: approvalRequests.id,
+      kind: approvalRequests.kind,
+      toolName: approvalRequests.toolName,
+      toolInput: approvalRequests.toolInput,
+      gateReasons: approvalRequests.gateReasons,
+      agentId: approvalRequests.agentId,
+    })
+    .from(approvalRequests)
+    .innerJoin(agentJobs, eq(agentJobs.id, approvalRequests.jobId))
+    .where(
+      and(
+        eq(approvalRequests.entityId, device.entityId),
+        eq(agentJobs.entityId, device.entityId),
+        eq(agentJobs.chatChannel, 'device'),
+        eq(agentJobs.chatId, device.id),
+        eq(approvalRequests.status, 'pending'),
+        inArray(approvalRequests.kind, ['approval', 'question']),
+      ),
+    )
+    .orderBy(approvalsOldestFirst);
+
+  const cards: Extract<DeviceEvent, { type: 'card' }>[] = [];
+  for (const row of rows) {
+    if (!row.agentId) continue;
+    const composed = await composeRequestCard(
+      deps.db,
+      {
+        approvalRequestId: row.id,
+        toolName: row.toolName,
+        toolInput: row.toolInput,
+        agentId: row.agentId,
+        entityId: device.entityId,
+        kind: row.kind === 'question' ? 'question' : 'approval',
+        gateReasons: (row.gateReasons as readonly ShellGateReason[] | null) ?? [],
+      },
+      deviceAdapter,
+    );
+    const { event } = deviceEventFor(composed);
+    // A device draws every card (`capabilities.buttons`): anything else is a
+    // composition the device could not have been sent, said loud.
+    if (event.type !== 'card') {
+      throw new Error(`device_card_not_a_card: request ${row.id} composed as ${event.type}`);
+    }
+    cards.push(event);
+  }
+  return c.json({ cards });
 }
 
 const ConversationBodySchema = z
