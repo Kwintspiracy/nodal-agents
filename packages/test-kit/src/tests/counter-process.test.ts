@@ -147,8 +147,15 @@ describe('the counter file is never left empty, whatever the instant (#843, run 
     try {
       const seen: string[] = [];
       let reads = 0;
-      const until = Date.now() + 1_500;
-      while (Date.now() < until) {
+      // La propriété (jamais un entier déchiré) se juge sur CHAQUE lecture faite,
+      // quel que soit leur nombre. Combien il en faut pour que l'épreuve soit
+      // sérieuse ne dépend pas de la vitesse du coureur : on lit jusqu'à
+      // MIN_READS lectures ET MIN_COUNT réécritures vues du démon, sous une borne
+      // large (et non une fenêtre fixe qu'un coureur chargé ne remplit pas).
+      const MIN_READS = 100;
+      const MIN_COUNT = 50;
+      const until = Date.now() + 30_000;
+      while ((reads < MIN_READS || readCounter(counter) <= MIN_COUNT) && Date.now() < until) {
         reads++;
         try {
           const text = rawContent(counter);
@@ -160,15 +167,17 @@ describe('the counter file is never left empty, whatever the instant (#843, run 
           if (code !== 'EPERM' && code !== 'EBUSY' && code !== 'EACCES') throw e;
         }
       }
-      expect(reads).toBeGreaterThan(100);
+      // Les seuils ne sont atteints que par la boucle ci-dessus : les manquer
+      // veut dire qu'aucun démon ne comptait, pas qu'un coureur était lent.
+      expect(reads).toBeGreaterThanOrEqual(MIN_READS);
       expect(seen).toEqual([]);
       // Et le démon a bien compté pendant ce temps.
-      expect(readCounter(counter)).toBeGreaterThan(50);
+      expect(readCounter(counter)).toBeGreaterThan(MIN_COUNT);
     } finally {
       watch.kill();
       watch.release();
     }
-  });
+  }, 60_000);
 
   it('daemons killed at an arbitrary instant leave a whole integer behind, each one', async () => {
     const COUNT = 12;
