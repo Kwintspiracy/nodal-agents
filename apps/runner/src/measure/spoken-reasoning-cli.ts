@@ -152,7 +152,8 @@ try {
       say(
         `run ${r.run} ${r.effort.padEnd(6)} ${r.requestId.padEnd(14)} ` +
           `${r.calledRunTask ? 'run_task' : 'reply   '} ${r.rightDecision ? 'right' : 'WRONG'} ` +
-          `first ${r.firstDeltaMs ?? '-'} ms, ${r.replyOutputTokens ?? '-'} tok` +
+          `first ${r.firstDeltaMs ?? '-'} ms, ${r.replyOutputTokens ?? '-'} tok, ` +
+          `${r.replyWords} words, ${r.replySentences} sentences` +
           `${r.routingNarration ? ' NARRATES ROUTING' : ''}${r.error ? ` error ${r.error}` : ''} | ${r.opening}`,
       ),
   });

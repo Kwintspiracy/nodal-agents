@@ -613,6 +613,17 @@ function replyRenderingLine(ctx: JobContext): string | null {
     'Short sentences carry it; tables, lists, headings, links and other markup do not ' +
     'survive being read aloud, and numbers, dates and units are heard as they are written, ' +
     'so write them the way they are said. ' +
+    // #987 : une réponse entendue répond à ce qui a été demandé, et s'arrête.
+    // Le reste attend une deuxième question. Vaut pour toute demande, y compris
+    // l'accusé d'une tâche lancée. Une consigne au modèle : le runner n'écrit
+    // rien et ne coupe rien (invariant #2).
+    'Whatever was asked, a question or a task you start, the reply is usually one sentence, ' +
+    'two at most, that answers just that, then stops: no background, no extra advice, no ' +
+    'offer to do more, because the person asks again if they want more. ' +
+    'A warning they need in order not to be misled stays. ' +
+    // Ce que la personne a demandé long (une histoire, un mail, une liste) garde
+    // la longueur demandée : la règle borne ce qui n'a pas été demandé, pas ce qui l'a été.
+    'A reply the person asked to be long, a story, an email or a list, keeps the length asked. ' +
     // #943 : la réponse est dite phrase par phrase, et la première part en
     // voix dès qu'elle est écrite. Une première phrase courte, c'est le
     // premier son plus tôt. Une consigne au modèle, jamais un texte du runner.
