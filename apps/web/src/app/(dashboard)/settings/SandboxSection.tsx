@@ -22,8 +22,10 @@
  *     ligne, avec le code de la règle du bac à sable ;
  *   - retirer un dossier détecté, ou le rétablir. Le cache d'outils reste.
  *
- * Sur un système sans moteur (`SANDBOX_NOT_IMPLEMENTED`), rien ne fait
- * semblant de marcher : les contrôles sont éteints et la section dit pourquoi.
+ * Quand la machine ne confine pas, quel qu'en soit le code, rien ne fait
+ * semblant de marcher : l'interrupteur montre ÉTEINT et se verrouille (le
+ * moteur lance alors toute commande sans confinement, quoi que dise le choix),
+ * le choix gardé en base reste intact et la carte le dit en une ligne.
  */
 
 import { useState, useTransition } from 'react';
@@ -65,7 +67,6 @@ import {
   limitWords,
   limitsToggleWords,
   nodalDataRefusalWords,
-  notOnThisSystem,
   outsideSandboxWords,
   perimeterWords,
   sandboxRegime,
@@ -108,12 +109,14 @@ export default function SandboxSection({ initial }: Props) {
   const [refusal, setRefusal] = useState<{ path: string; within: string } | null>(null);
   const [pending, startTransition] = useTransition();
 
-  const unsupported = notOnThisSystem(initial);
   const view = { ...initial, enabled };
   const regime = sandboxRegime(view);
+  // Indisponible, quel qu'en soit le code : ce que le moteur applique, c'est
+  // « sans confinement ». L'interrupteur le montre, et se verrouille.
+  const locked = regime === 'unavailable';
   const card = stateCardWords(view);
   const perimeter = perimeterWords(view);
-  const controlsOff = !initial.isOwner || unsupported || pending;
+  const controlsOff = !initial.isOwner || locked || pending;
   const limits = initial.status.state === 'available' ? (initial.status.limits ?? []) : [];
 
   function applySwitch(next: boolean) {
@@ -204,21 +207,24 @@ export default function SandboxSection({ initial }: Props) {
               {card.title}
             </div>
             <p className="mt-0.5 text-body-13 text-ink-3">{card.body}</p>
-            {!initial.isOwner && !unsupported && (
+            {card.choice && (
+              <p className="mt-1 text-body-12 text-ink-4" data-testid="sandbox-stored-choice">
+                {card.choice}
+              </p>
+            )}
+            {!initial.isOwner && !locked && (
               <p className="mt-1 text-body-12 text-ink-4">
                 Only the workspace owner can change the sandbox.
               </p>
             )}
           </div>
           <div className="flex shrink-0 items-center gap-3">
-            {!unsupported && <MonoMicroTag tone="ink">owner only</MonoMicroTag>}
+            {!locked && <MonoMicroTag tone="ink">owner only</MonoMicroTag>}
             <Switch
-              checked={enabled && !unsupported}
+              checked={regime === 'active'}
               disabled={controlsOff}
               ariaLabel={
-                unsupported
-                  ? 'Sandbox for this workspace, not available on this system'
-                  : 'Sandbox for this workspace'
+                locked ? 'Sandbox for this workspace, unavailable' : 'Sandbox for this workspace'
               }
               onChange={() => {
                 if (enabled) setConfirmOff(true);
@@ -326,14 +332,12 @@ export default function SandboxSection({ initial }: Props) {
         <div className={CARD_HEAD}>
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
-              <h3 className={`text-title-15 ${unsupported ? 'text-ink-3' : 'text-ink'}`}>
+              <h3 className={`text-title-15 ${locked ? 'text-ink-3' : 'text-ink'}`}>
                 Allowed folders
               </h3>
-              {!unsupported && <CountPill items={counted} noun="folder" />}
+              <CountPill items={counted} noun="folder" />
             </div>
-            <p className="mt-0.5 text-body-13 text-ink-3">
-              {allowedFoldersLede(regime, unsupported)}
-            </p>
+            <p className="mt-0.5 text-body-13 text-ink-3">{allowedFoldersLede(regime)}</p>
           </div>
           <PrimaryButton
             variant={regime === 'active' ? 'ink' : 'neutral'}
@@ -362,64 +366,62 @@ export default function SandboxSection({ initial }: Props) {
           </div>
         )}
 
-        {!unsupported && (
-          <ul>
-            {inForce.map((f) => {
-              const { name, parent } = splitFolder(f.path);
-              const tag = folderTag(f);
-              const off = regime !== 'active';
-              const alert = f.state === 'missing' || f.state === 'refused';
-              return (
-                <li
-                  key={`${f.source}:${f.path}`}
-                  data-testid="sandbox-allowed-folder"
-                  data-state={f.state}
-                >
-                  <EdRow
-                    frame="list"
-                    dimmed={off}
-                    glyph={
-                      <Disc variant={alert ? 'warn' : 'neutral'} size="sm" shape="square">
-                        {alert ? <Warning /> : <FolderSimple />}
-                      </Disc>
-                    }
-                    name={name}
-                    description={<FolderParent parent={parent} path={f.path} />}
-                    {...(off
-                      ? {}
-                      : {
-                          meta: <TagMini variant={tag.variant}>{tag.label}</TagMini>,
-                          actions: (
-                            <span className="flex w-[104px] justify-end">
-                              {f.source === 'tool-cache' ? (
-                                <span
-                                  className="inline-flex items-center gap-1 text-body-12 text-ink-3"
-                                  title={TOOL_CACHE_NOTE}
-                                >
-                                  <Lock size={13} />
-                                  {ALWAYS_ON}
-                                </span>
-                              ) : (
-                                <PrimaryButton
-                                  variant="neutral"
-                                  size="sm"
-                                  disabled={controlsOff}
-                                  onClick={() => change(removeSandboxFolderAction, f.path)}
-                                >
-                                  Remove
-                                </PrimaryButton>
-                              )}
-                            </span>
-                          ),
-                        })}
-                  />
-                </li>
-              );
-            })}
-          </ul>
-        )}
+        <ul>
+          {inForce.map((f) => {
+            const { name, parent } = splitFolder(f.path);
+            const tag = folderTag(f);
+            const off = regime !== 'active';
+            const alert = f.state === 'missing' || f.state === 'refused';
+            return (
+              <li
+                key={`${f.source}:${f.path}`}
+                data-testid="sandbox-allowed-folder"
+                data-state={f.state}
+              >
+                <EdRow
+                  frame="list"
+                  dimmed={off}
+                  glyph={
+                    <Disc variant={alert ? 'warn' : 'neutral'} size="sm" shape="square">
+                      {alert ? <Warning /> : <FolderSimple />}
+                    </Disc>
+                  }
+                  name={name}
+                  description={<FolderParent parent={parent} path={f.path} />}
+                  {...(off
+                    ? {}
+                    : {
+                        meta: <TagMini variant={tag.variant}>{tag.label}</TagMini>,
+                        actions: (
+                          <span className="flex w-[104px] justify-end">
+                            {f.source === 'tool-cache' ? (
+                              <span
+                                className="inline-flex items-center gap-1 text-body-12 text-ink-3"
+                                title={TOOL_CACHE_NOTE}
+                              >
+                                <Lock size={13} />
+                                {ALWAYS_ON}
+                              </span>
+                            ) : (
+                              <PrimaryButton
+                                variant="neutral"
+                                size="sm"
+                                disabled={controlsOff}
+                                onClick={() => change(removeSandboxFolderAction, f.path)}
+                              >
+                                Remove
+                              </PrimaryButton>
+                            )}
+                          </span>
+                        ),
+                      })}
+                />
+              </li>
+            );
+          })}
+        </ul>
 
-        {!unsupported && regime === 'active' && removed.length > 0 && (
+        {regime === 'active' && removed.length > 0 && (
           <div className="bg-canvas/40" data-testid="sandbox-removed-folders">
             <div className={`border-t border-rule-2 px-5 pt-2.5 pb-1 ${CAPS}`}>
               {REMOVED_BY_YOU}

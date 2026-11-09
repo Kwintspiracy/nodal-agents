@@ -1932,6 +1932,11 @@ ${sentence}`).length > 0,
     'Short sentences carry it; tables, lists, headings, links and other markup do not ' +
     'survive being read aloud, and numbers, dates and units are heard as they are written, ' +
     'so write them the way they are said. ' +
+    'Whatever was asked, a question or a task you start, the reply is usually one sentence, ' +
+    'two at most, that answers just that, then stops: no background, no extra advice, no ' +
+    'offer to do more, because the person asks again if they want more. ' +
+    'A warning they need in order not to be misled stays. ' +
+    'A reply the person asked to be long, a story, an email or a list, keeps the length asked. ' +
     'Open with one short sentence: it is spoken while the rest is still being written.';
 
   it('a spoken reply is stated once in Job context, on every surface that carries it (#941)', async () => {
@@ -2053,6 +2058,75 @@ ${sentence}`).length > 0,
         availableToolNames: [...ALWAYS_ON_TOOLS],
       });
       for (const re of FORBIDDEN) expect(re.test(job)).toBe(false);
+    }
+  });
+
+  // #987 — a heard reply answers what was asked and stops. The rule is a fact
+  // told to the model in the rendering line: the spoken chat turn carries it,
+  // a typed chat turn and a delegated job do not. Which prompts get the line is
+  // not this test's subject (#967). Mutation verified: the sentence removed
+  // from `replyRenderingLine` → red (first test); the sentence moved to the chat
+  // surface line, or the `isDelegated` guard removed → red (second).
+  const BREVITY =
+    'the reply is usually one sentence, two at most, that answers just that, then stops';
+  const BREVITY_NEVER = ['no background', 'no extra advice', 'no offer to do more'];
+  const BREVITY_KEEPS_WARNING = 'A warning they need in order not to be misled stays.';
+  const BREVITY_KEEPS_LENGTH_ASKED =
+    'A reply the person asked to be long, a story, an email or a list, keeps the length asked.';
+
+  it('a spoken chat turn carries the brevity rule, once, in the rendering line (#987)', async () => {
+    const { entityId, root, worker } = await seedTeam();
+    for (const agent of [
+      makeAgent(root.id, entityId, root.personality, 'orchestrator'),
+      makeAgent(worker.id, entityId, worker.personality),
+    ]) {
+      for (const ctx of [
+        { origin: 'dashboard', surface: 'chat', replyRendering: 'spoken' },
+      ] satisfies JobContext[]) {
+        const prompt = await buildSystemPrompt(agent, db, ctx);
+        const [line, ...extra] = renderingLines(prompt);
+        expect({ role: agent.role, surface: ctx.surface, extra }).toEqual({
+          role: agent.role,
+          surface: ctx.surface,
+          extra: [],
+        });
+        expect(line).toContain(BREVITY);
+        for (const never of BREVITY_NEVER) expect(line).toContain(never);
+        expect(line).toContain(BREVITY_KEEPS_WARNING);
+        expect(line).toContain(BREVITY_KEEPS_LENGTH_ASKED);
+        // The kept parts of the line: no markup, numbers as said, a short first sentence.
+        expect(line).toContain('other markup do not survive being read aloud');
+        expect(line).toContain('write them the way they are said');
+        expect(line).toContain('Open with one short sentence');
+        expect(prompt.split(BREVITY)).toHaveLength(2);
+      }
+    }
+  });
+
+  it('a typed chat turn and a delegated job carry no brevity rule (#987)', async () => {
+    const { entityId, root, worker } = await seedTeam();
+    const rootAgent = makeAgent(root.id, entityId, root.personality, 'orchestrator');
+    const workerAgent = makeAgent(worker.id, entityId, worker.personality);
+    const prompts = [
+      await buildSystemPrompt(rootAgent, db, { origin: 'dashboard', surface: 'chat' }),
+      await buildSystemPrompt(rootAgent, db, {
+        origin: 'dashboard',
+        surface: 'chat',
+        replyRendering: 'text',
+      }),
+      await buildSystemPrompt(workerAgent, db, {
+        origin: 'internal',
+        isDelegated: true,
+        delegationDepth: 1,
+        replyRendering: 'spoken',
+        availableToolNames: ALWAYS_ON_TOOLS.filter((t) => t !== 'dashboard_publish'),
+      }),
+    ];
+    for (const prompt of prompts) {
+      expect(prompt).not.toContain(BREVITY);
+      expect(prompt).not.toContain(BREVITY_KEEPS_WARNING);
+      expect(prompt).not.toContain(BREVITY_KEEPS_LENGTH_ASKED);
+      for (const never of BREVITY_NEVER) expect(prompt).not.toContain(never);
     }
   });
 
