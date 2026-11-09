@@ -12,13 +12,13 @@
 //     anywhere else                   403 `device_token_not_accepted` — the
 //                                     owner's routes, the pairing routes, all
 //
-//   no device token
-//     on a device's own route         401 `device_token_required`: the worker
-//     (`/api/devices/:deviceId/…`)    secret, a session, local trust are
-//                                     refused there — a device never needs
-//                                     the worker secret
-//     anywhere else                   passes, to the guard the route has
-//                                     (`requireRunnerAuth`, server.ts)
+//   no device token                   passes, to the guard the route has:
+//                                     `requireRunnerAuth` (server.ts), or on a
+//                                     device's own routes `authorizeDevice`
+//                                     (devices/device-guard.ts), which wants
+//                                     a device key and nothing else — the
+//                                     worker secret, a session, local trust
+//                                     are refused there
 //
 // What a device may then reach is narrower than its workspace: its own device
 // routes (devices/device-guard.ts) and its own conversations
@@ -34,12 +34,7 @@
 
 import type { Context, Next } from 'hono';
 import { findDeviceByTokenHash, touchDevice } from '@nodal-agents/db';
-import {
-  DEVICE_TOKEN_PREFIX,
-  DEVICE_TOKEN_RE,
-  isDeviceOwnRoute,
-  isDeviceTokenRoute,
-} from '@nodal-agents/shared';
+import { DEVICE_TOKEN_PREFIX, DEVICE_TOKEN_RE, isDeviceTokenRoute } from '@nodal-agents/shared';
 import type { RunnerDeps } from '../deps.ts';
 import { hashDeviceSecret } from './device-secrets.ts';
 import { registerDeviceStream } from './device-streams.ts';
@@ -59,9 +54,6 @@ export function createDeviceGate(deps: Pick<RunnerDeps, 'db'>) {
     const bearer = bearerOf(c);
 
     if (bearer === null || !bearer.startsWith(DEVICE_TOKEN_PREFIX)) {
-      if (isDeviceOwnRoute(method, path)) {
-        return c.json({ error: 'device_token_required' }, 401);
-      }
       await next();
       return;
     }

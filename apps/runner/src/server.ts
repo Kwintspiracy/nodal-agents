@@ -32,7 +32,7 @@ import {
   voiceSettingWriteRoute,
 } from './routes/voice-setting.ts';
 import { eventsRoute } from './routes/events.ts';
-import { deviceConversationRoute, deviceEventsRoute } from './routes/devices.ts';
+import { deviceCardsRoute, deviceConversationRoute, deviceEventsRoute } from './routes/devices.ts';
 import { createDeviceSink } from './devices/device-sink.ts';
 import { createDeviceGate } from './devices/device-auth.ts';
 import {
@@ -185,8 +185,9 @@ export function createApp(
   //
   // Where a device key is accepted, and where it is not, decided from the
   // protocol's route table (devices/device-auth.ts): verified on the routes of
-  // DEVICE_GESTURES, refused on every other; and on a device's own routes,
-  // nothing else is accepted (no worker secret, no session, no local trust).
+  // DEVICE_GESTURES, refused on every other. A device's own routes then accept
+  // nothing BUT a device key (`authorizeDevice`, devices/device-guard.ts): no
+  // worker secret, no session, no local trust.
   app.use('/api/*', createDeviceGate(deps));
 
   // ── requireRunnerAuth ────────────────────────────────────────────────────────
@@ -333,6 +334,7 @@ export function createApp(
   app.post('/api/chat/live', (c) => chatLiveRoute(c, deps));
   app.get('/api/events', (c) => eventsRoute(c, deps));
   app.get('/api/devices/:deviceId/events', (c) => deviceEventsRoute(c, deps));
+  app.get('/api/devices/:deviceId/cards', (c) => deviceCardsRoute(c, deps));
   app.post('/api/devices/:deviceId/conversation', (c) => deviceConversationRoute(c, deps));
   app.post('/api/devices/pair', (c) => devicePairRoute(c, deps));
   app.post('/api/devices/pair/poll', (c) => devicePollRoute(c, deps));
