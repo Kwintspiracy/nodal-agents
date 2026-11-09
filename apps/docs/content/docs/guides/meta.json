@@ -8,6 +8,7 @@
     "discord",
     "slack",
     "whatsapp",
+    "connect-a-device",
     "event-triggers",
     "automations",
     "shell-commands",
