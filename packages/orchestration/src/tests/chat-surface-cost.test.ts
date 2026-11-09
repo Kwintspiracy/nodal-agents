@@ -185,10 +185,16 @@ describe('la surface chat ne reçoit que ce qu’elle peut obéir', () => {
   // request » (`buildDiscoverabilityBlock`) met le slug ET la description de
   // chaque skill non assignée dans le prompt de TOUS les agents. Cette skill
   // coûte 165 caractères. Le plafond reste un plafond : 13 649 aujourd'hui.
+  //
+  // Plafond 13 700 → 13 850 le 04/11/2026, #986 : « Language mirror » (socle,
+  // présent sur le chat) dit maintenant qu'un run sans message de la personne
+  // prend la langue de la demande ou du texte de tâche qu'il porte. Le chat
+  // pesait 13 692 caractères ; la demi-phrase en coûte 116
+  // (baseline-budget.test.ts, même décision). 13 808 aujourd'hui.
   it('le prompt du chat reste sous son plafond, et sous celui d’un job', async () => {
     const c = (await chat()).length;
     const j = (await job()).length;
-    expect(c, `chat ${c} car. (14 711 avant le régime du socle)`).toBeLessThanOrEqual(13_700);
+    expect(c, `chat ${c} car. (14 711 avant le régime du socle)`).toBeLessThanOrEqual(13_850);
     expect(c, `chat ${c} car. vs job ${j} car.`).toBeLessThan(j);
   });
 });

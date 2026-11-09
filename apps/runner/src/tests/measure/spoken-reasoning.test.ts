@@ -25,9 +25,12 @@ import {
 import {
   measureSpokenReasoning,
   opensWithRoutingNarration,
+  sentenceCount,
   summarize,
+  wordCount,
   SPOKEN_REASONING_REQUESTS,
   type MeasureRequest,
+  type TurnRecord,
 } from '../../measure/spoken-reasoning.ts';
 import { seedJob, type Body } from '../job/tool-loading-harness.ts';
 
@@ -272,10 +275,111 @@ describe('the #977 measurement tool', () => {
     expect((columns as unknown as { rows: unknown[] }).rows).toEqual([]);
   });
 
-  it('the default requests are 6 that need a task and 6 that do not', () => {
-    expect(SPOKEN_REASONING_REQUESTS).toHaveLength(12);
-    expect(SPOKEN_REASONING_REQUESTS.filter((r) => r.needsTask)).toHaveLength(6);
-    expect(new Set(SPOKEN_REASONING_REQUESTS.map((r) => r.id)).size).toBe(12);
+  it('the default requests are 7 that need a task and 10 that do not, with the five English ones of #987', () => {
+    expect(SPOKEN_REASONING_REQUESTS).toHaveLength(17);
+    expect(SPOKEN_REASONING_REQUESTS.filter((r) => r.needsTask)).toHaveLength(7);
+    expect(new Set(SPOKEN_REASONING_REQUESTS.map((r) => r.id)).size).toBe(17);
+    const english = SPOKEN_REASONING_REQUESTS.filter((r) => r.id.endsWith('-en')).map((r) => [
+      r.text,
+      r.needsTask,
+    ]);
+    expect(english).toEqual([
+      ["What's the weather usually like in Tokyo in November?", false],
+      ['How long does it take to boil an egg?', false],
+      ["What's the difference between a virus and a bacterium?", false],
+      ['Tell me a three-paragraph story about a robot learning to cook.', false],
+      ['Search the web for the latest news about Microsoft layoffs.', true],
+    ]);
+  });
+
+  // #987 — the length of a reply, counted on fixed replies. Mutation verified:
+  // `wordCount` counting every whitespace token (the lone dash too) → red;
+  // the abbreviation rule of `sentenceCount` removed → red.
+  const TOKYO =
+    'Tokyo in November is usually mild and dry: daytime highs around 16 to 18 °C, lows around 8 to 10 °C, with plenty of sunshine and little rain. Mornings and evenings are cool, so a light jacket is handy. Autumn foliage peaks in mid to late November, which makes it a popular month to visit. This is general climate knowledge, not a live forecast. If you want the forecast for specific dates, I can look it up.';
+
+  it.each([
+    [TOKYO, 77, 5],
+    ['Tokyo in November is usually mild and dry, with highs around 16 to 18 °C.', 15, 1],
+    ['Canberra. If you want, I can start a task that needs no tool.', 13, 2],
+    ['It is mild in places, e.g. Tokyo and Osaka.', 9, 1],
+    ['It is mild, i.e. not cold. Pack light.', 8, 2],
+    ['Ask Dr. Martin about it. He knows.', 7, 2],
+    ['It takes about 3.5 minutes.', 5, 1],
+    ['Yes - it is. Really!', 4, 2],
+    ['Wait... what? Fine', 3, 2],
+    ['Il fait doux, vers 16 à 18 °C. Prends une veste légère.', 12, 2],
+    ['No. It does not.', 4, 2],
+    ['', 0, 0],
+    ['   ', 0, 0],
+  ])('counts the words and the sentences of %j', (reply, words, sentences) => {
+    expect({ words: wordCount(reply), sentences: sentenceCount(reply) }).toEqual({
+      words,
+      sentences,
+    });
+  });
+
+  it('records the length of each reply and summarizes the no-task turns per effort', async () => {
+    const { entityId, agentId } = await seedJob(db, { model: MODEL, role: 'orchestrator' });
+    scriptedProvider();
+    const records = await measureSpokenReasoning(db as unknown as AnyDrizzleDb, {
+      entityId,
+      agentId,
+      efforts: ['off'],
+      runs: 1,
+      requests: REQUESTS,
+    });
+    vi.unstubAllGlobals();
+    // The scripted reply to the greeting is "I am well, thank you." (5 words,
+    // 1 sentence); to the fact it is NARRATED (13 words, 2 sentences); the
+    // escalated request streams no text.
+    expect(records.map((r) => [r.requestId, r.replyWords, r.replySentences])).toEqual([
+      ['file', 0, 0],
+      ['fact', 13, 2],
+      ['greeting', 5, 1],
+    ]);
+    const [off] = summarize(records);
+    expect({ median: off?.noTaskWordsMedian, max: off?.noTaskWordsMax }).toEqual({
+      median: 5,
+      max: 13,
+    });
+  });
+
+  const turn = (over: Partial<TurnRecord>): TurnRecord => ({
+    effort: 'off',
+    run: 1,
+    requestId: 'r',
+    needsTask: false,
+    calledRunTask: false,
+    rightDecision: true,
+    firstDeltaMs: 100,
+    totalMs: 200,
+    replyOutputTokens: 10,
+    turnOutputTokens: 10,
+    calls: [],
+    opening: '',
+    routingNarration: false,
+    replyWords: 0,
+    replySentences: 0,
+    ...over,
+  });
+
+  it('the summary gives, per effort, the median and the maximum words of the turns that answered without a task', () => {
+    const rows = summarize([
+      ...[10, 20, 30, 80].map((replyWords) => turn({ effort: 'off', replyWords })),
+      // Not answers to a no-task request: a task request, an escalation by
+      // mistake, a failed turn. None of them counts toward the words.
+      turn({ effort: 'off', needsTask: true, calledRunTask: true, replyWords: 400 }),
+      turn({ effort: 'off', calledRunTask: true, rightDecision: false, replyWords: 0 }),
+      turn({ effort: 'off', error: 'llm_error', replyWords: 0 }),
+      ...[5, 7, 9].map((replyWords) => turn({ effort: 'low', replyWords })),
+      turn({ effort: 'auto', needsTask: true, calledRunTask: true, replyWords: 3 }),
+    ]);
+    expect(rows.map((r) => [r.effort, r.noTaskWordsMedian, r.noTaskWordsMax])).toEqual([
+      ['off', 20, 80],
+      ['low', 7, 9],
+      ['auto', null, null],
+    ]);
   });
 
   it.each([

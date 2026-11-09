@@ -88,6 +88,9 @@ const TRANSCRIPT = 'What time is it in Tokyo?';
 const VOICE_PCM = Uint8Array.from({ length: 480 }, (_, i) => i % 251);
 
 const SPOKEN_LINE = '- rendering: spoken';
+// #990: the brevity rule of the spoken line. A job's result is a piece of work
+// to be read again, so it must never be capped by it (#992 keeps the line off).
+const BREVITY = 'usually one sentence, two at most';
 
 const testEnv: RunnerEnv = {
   DATABASE_URL: 'test://local',
@@ -757,9 +760,15 @@ describe('the voice turn route @cap:parler-a-un-agent/moteur', () => {
     const [job] = await jobsOf(conv);
     expect(job).toMatchObject({ id: jobId, task: TRANSCRIPT, replyRendering: 'spoken' });
     expect(job!.systemPrompt).not.toContain(SPOKEN_LINE);
+    expect(job!.systemPrompt).not.toContain(BREVITY);
     // The worker's request, as the provider received it, carries no "heard" fact.
     expect(sent.worker.length).toBeGreaterThan(0);
     expect(systemOf(sent.worker[0]!)).not.toContain('- rendering:');
+    expect(systemOf(sent.worker[0]!)).not.toContain(BREVITY);
+    // ...while the spoken chat turn that launched it does carry the brevity rule (#990).
+    expect(sent.front).toHaveLength(1);
+    expect(systemOf(sent.front[0]!)).toContain(SPOKEN_LINE);
+    expect(systemOf(sent.front[0]!)).toContain(BREVITY);
   });
 
   it('the job a voice turn launches writes its autonomy rows at start, so its tool calls run (#917)', async () => {
