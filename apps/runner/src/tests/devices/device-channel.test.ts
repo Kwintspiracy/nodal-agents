@@ -459,6 +459,8 @@ describe('a device gets its conversation with the root (#945) @cap:parler-par-ca
     expect((await postConversation(app, deviceOfY, {}, as(deviceA))).status).toBe(404);
     expect((await postConversation(app, deviceOfY, {}, secret)).status).toBe(401);
     expect((await getCards(app, deviceOfY, as(deviceA))).status).toBe(404);
+    expect((await getCards(app, deviceB, as(deviceA))).status).toBe(404);
+    expect((await getCards(app, deviceA, as(deviceA))).status).toBe(200);
     expect((await getCards(app, deviceA, secret)).status).toBe(401);
     expect((await getCards(app, deviceA, asX)).status).toBe(401);
     expect((await listenTo(app, `/api/devices/not-a-device/events`, as(deviceA))).status).toBe(404);
