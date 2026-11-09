@@ -5,6 +5,10 @@
 // install: both read this function, so the two cannot drift
 // (apps/docs/src/tests/connect-a-device.test.ts compares the page to it).
 //
+// A card is answered with the PERSON's choice, never a default: the example
+// asks (`askPerson`, the device's own screen or voice) and answers only with
+// what was chosen. The docs test refuses a snippet that answers otherwise.
+//
 // Not part of the built client file: a device needs the client, not its example.
 
 /** The example, for a Nodal reachable at `nodalUrl`. */
@@ -23,8 +27,8 @@ const nodal = connect(url, session);
 nodal.on('speech', (s) => s.type === 'audio' && play(s.audio, s.mimeType, s.sampleRate));
 nodal.on('bubble', (b) => console.log(b.text));
 nodal.on('card', async (card) => {
-  console.log(card.text);
-  await nodal.answer(card.cardId, card.choices[0]); // or let the person choose
+  const choice = await askPerson(card.text, card.choices); // show or say it; null: not now
+  if (choice) await nodal.answer(card.cardId, choice); // only ever the person's choice
 });
 nodal.on('closed', ({ error }) => console.error(error.message));
 

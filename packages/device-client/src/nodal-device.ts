@@ -22,8 +22,9 @@
 // network drop the client reconnects by itself, with backoff, sending
 // `Last-Event-ID`, and the runner replays what was missed — a card included.
 // When the runner cannot replay (it restarted, or the gap is too old) it says
-// `resync`, and the client passes it on: what was missed must be re-read,
-// never guessed (see the docs page, "When the stream says resync").
+// `resync`: the client passes it on, and re-reads the cards still waiting
+// (`GET /api/devices/:deviceId/cards`), handing each to `card` again. A
+// re-read a drop interrupts is done again before the next `ready`.
 //
 // A refused token (the owner removed the device, or revoked it) ends the
 // session with a `NodalDeviceError` of code `revoked`: never an endless retry.
@@ -54,14 +55,21 @@ export {
 // ─── Errors ──────────────────────────────────────────────────────────────────
 
 /**
- * Why a call failed, as a code a device can switch on:
+ * Why a call failed, as a code a device can switch on. EVERY failure of this
+ * client is a `NodalDeviceError`, the network's included: the transport is
+ * wrapped in one place (`transport`, below), and the original error is kept
+ * as `cause`.
  *   - `refused`: the owner refused the pairing;
  *   - `expired`: the pairing code expired before the owner confirmed it;
  *   - `revoked`: Nodal refused the device's token (removed or revoked): pair again;
  *   - `request_failed`: Nodal answered an error (`status`, and its own `serverCode`);
  *   - `turn_failed`: a spoken or typed turn failed after it started (`serverCode`);
  *   - `protocol`: Nodal answered something this client cannot read;
- *   - `closed`: the session was closed.
+ *   - `network`: Nodal could not be reached (no route, refused, DNS, a drop
+ *     before the answer);
+ *   - `stream_cut`: an answer or a stream stopped before its end;
+ *   - `aborted`: the call was aborted by the device's own `signal`;
+ *   - `closed`: the session was closed (by `close()`, while a call was running).
  */
 export type NodalDeviceErrorCode =
   | 'refused'
@@ -70,6 +78,9 @@ export type NodalDeviceErrorCode =
   | 'request_failed'
   | 'turn_failed'
   | 'protocol'
+  | 'network'
+  | 'stream_cut'
+  | 'aborted'
   | 'closed';
 
 export class NodalDeviceError extends Error {
@@ -82,9 +93,9 @@ export class NodalDeviceError extends Error {
   constructor(
     code: NodalDeviceErrorCode,
     message: string,
-    extra: { status?: number; serverCode?: string } = {},
+    extra: { status?: number; serverCode?: string; cause?: unknown } = {},
   ) {
-    super(message);
+    super(message, extra.cause !== undefined ? { cause: extra.cause } : undefined);
     this.name = 'NodalDeviceError';
     this.code = code;
     this.status = extra.status;
@@ -99,12 +110,42 @@ export interface FetchOptions {
   fetch?: typeof fetch;
 }
 
+function isAbort(err: unknown): boolean {
+  const name = (err as { name?: unknown } | null)?.name;
+  return name === 'AbortError' || name === 'TimeoutError';
+}
+
+/**
+ * THE one place a transport failure becomes a `NodalDeviceError`: a request
+ * that never got an answer (`network`), or a body that stopped mid-way
+ * (`stream_cut`); either one aborted by a signal is `aborted`.
+ */
+function transportError(err: unknown, phase: 'request' | 'body'): NodalDeviceError {
+  if (err instanceof NodalDeviceError) return err;
+  const detail = err instanceof Error ? err.message : String(err);
+  if (isAbort(err)) return new NodalDeviceError('aborted', `aborted: ${detail}`, { cause: err });
+  return phase === 'request'
+    ? new NodalDeviceError('network', `network: Nodal could not be reached (${detail})`, {
+        cause: err,
+      })
+    : new NodalDeviceError('stream_cut', `stream_cut: Nodal's answer stopped midway (${detail})`, {
+        cause: err,
+      });
+}
+
+/** The `fetch` every call of this client goes through: its failures are `NodalDeviceError`s. */
 function fetchOf(options: FetchOptions): typeof fetch {
   const f = options.fetch ?? globalThis.fetch;
   if (typeof f !== 'function') {
-    throw new TypeError('nodal-device: no fetch available; pass options.fetch');
+    throw new NodalDeviceError('network', 'network: no fetch available; pass options.fetch');
   }
-  return f;
+  return (async (input: RequestInfo | URL, init?: RequestInit) => {
+    try {
+      return await f(input, init);
+    } catch (err) {
+      throw transportError(err, 'request');
+    }
+  }) as typeof fetch;
 }
 
 /** `http://host:3001/` + `/api/x` → `http://host:3001/api/x`. */
@@ -122,7 +163,12 @@ function fill(path: string, params: Record<string, string>): string {
 }
 
 async function readJson(res: Response): Promise<Record<string, unknown>> {
-  const text = await res.text();
+  let text: string;
+  try {
+    text = await res.text();
+  } catch (err) {
+    throw transportError(err, 'body');
+  }
   if (text.trim() === '') return {};
   try {
     const value: unknown = JSON.parse(text);
@@ -316,7 +362,13 @@ export async function* readSse(
   let sawCr = false;
   try {
     for (;;) {
-      const { value, done } = await reader.read();
+      let chunk: ReadableStreamReadResult<Uint8Array>;
+      try {
+        chunk = await reader.read();
+      } catch (err) {
+        throw transportError(err, 'body');
+      }
+      const { value, done } = chunk;
       buffer += done ? decoder.decode() : decoder.decode(value, { stream: true });
       // A `\r\n` split across two reads: the `\n` that follows a `\r` already
       // seen ends nothing.
@@ -473,7 +525,8 @@ export interface NodalDeviceEvents {
   ready: { reconnected: boolean };
   /**
    * The runner could not replay what was missed (it restarted, or the gap is
-   * too old). Re-read what the device shows: never assume nothing happened.
+   * too old). The client then re-reads the cards still waiting and hands each
+   * to `card` again; a bubble or a state missed is not given back.
    */
   resync: { reason: string };
   /** The stream dropped; the client retries in `retryInMs`. */
@@ -722,6 +775,20 @@ export function connect(
     }
   };
 
+  let cardsToReread = false;
+  const rereadCards = async (): Promise<void> => {
+    const res = await request(
+      'GET',
+      fill(DEVICE_GESTURES.cards[0].path, { deviceId: session.deviceId }),
+    );
+    const cards = (await readJson(res))['cards'];
+    if (!Array.isArray(cards)) {
+      throw new NodalDeviceError('protocol', 'Nodal answered the waiting cards without their list');
+    }
+    cardsToReread = false;
+    for (const card of cards as EventOf<'card'>[]) emit('card', card);
+  };
+
   const listen = async (): Promise<void> => {
     let lastEventId: string | null = null;
     let delay = initialMs;
@@ -773,6 +840,8 @@ export function connect(
             lastEventId = msg.lastEventId;
             if (msg.event === 'ready') {
               delay = initialMs;
+              // A re-read a drop interrupted is done now, before going live.
+              if (cardsToReread) await rereadCards();
               emit('ready', { reconnected: connections > 0 });
               connections++;
             } else if (msg.event === 'resync') {
@@ -780,6 +849,11 @@ export function connect(
               const d = parseData(msg);
               emit('resync', { reason: str(d['reason']) ?? 'unknown' });
               connections++;
+              // What the stream lost, the base gives back: every card still
+              // waiting, handed to `card` again. Until it is read, the flag
+              // stays up, and a reconnect reads it before `ready`.
+              cardsToReread = true;
+              await rereadCards();
             } else {
               onDeviceEvent(msg.event, parseData(msg));
             }
@@ -855,9 +929,7 @@ export function connect(
           break;
       }
     }
-    throw new NodalDeviceError('turn_failed', 'the turn stream ended before done', {
-      serverCode: 'stream_cut',
-    });
+    throw new NodalDeviceError('stream_cut', 'stream_cut: the turn stream ended before done');
   };
 
   const say: NodalDevice['say'] = async (audio, mimeType, sayOptions = {}) => {
@@ -948,6 +1020,23 @@ export function connect(
     return (await readJson(res))['stopped'] === true || stopped;
   };
 
+  /**
+   * A gesture whose session ended while it ran (`close()`, a revoked key)
+   * fails with the session's end, not with the abort that end caused.
+   */
+  const gesture =
+    <A extends unknown[], R>(fn: (...args: A) => Promise<R>) =>
+    async (...args: A): Promise<R> => {
+      try {
+        return await fn(...args);
+      } catch (err) {
+        if (ended) throw ended;
+        if (err instanceof NodalDeviceError) throw err;
+        const detail = err instanceof Error ? err.message : String(err);
+        throw new NodalDeviceError('protocol', `protocol: ${detail}`, { cause: err });
+      }
+    };
+
   return {
     deviceId: session.deviceId,
     on(type, handler) {
@@ -956,15 +1045,15 @@ export function connect(
       set.add(handler as (e: never) => void);
       return () => set.delete(handler as (e: never) => void);
     },
-    say,
-    send,
-    answer,
-    cancel,
-    async newConversation() {
+    say: gesture(say),
+    send: gesture(send),
+    answer: gesture(answer),
+    cancel: gesture(cancel),
+    newConversation: gesture(async () => {
       const next = readConversation(true);
       conversation = next;
       return (await next).conversationId;
-    },
+    }),
     close() {
       end(new NodalDeviceError('closed', 'closed by the device'));
     },

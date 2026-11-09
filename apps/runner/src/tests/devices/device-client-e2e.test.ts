@@ -14,7 +14,8 @@
 //   2. it says the recorded fixture (`fixtures/voice-turn-question.wav`) as a
 //      spoken turn; the agent answers and launches a task (`run_task`);
 //   3. the task asks a question (`ask_user`): the card reaches the device, which
-//      answers it with its first choice; the task resumes and finishes;
+//      answers it with the person's choice (given on its command line); the
+//      task resumes and finishes;
 //   4. the reply's voice is written to a file by the device.
 //
 // What is asserted: what the device printed and wrote, and the rows in base
@@ -310,7 +311,7 @@ describe('the reference device client, end to end on the real runner (#947) @cap
     let stdout = '';
     let stderr = '';
     const exited = new Promise<number | null>((resolve) => {
-      child = spawn(process.execPath, [REFERENCE_CLIENT, baseUrl, FIXTURE, out], {
+      child = spawn(process.execPath, [REFERENCE_CLIENT, baseUrl, FIXTURE, out, OPTIONS[0]!], {
         cwd: work,
         env: { ...process.env, NODAL_SESSION_FILE: join(work, 'session.json') },
         stdio: ['ignore', 'pipe', 'pipe'],
@@ -336,7 +337,8 @@ describe('the reference device client, end to end on the real runner (#947) @cap
     // 2. The spoken turn: heard, answered, the task launched.
     expect(stdout).toContain(`Heard: ${TRANSCRIPT}\nReply: ${ACK}`);
     // 3. The card the task asked reached the device, which answered it.
-    expect(stdout).toContain(`→ ${OPTIONS[0]}`);
+    expect(stdout).toContain(`Choices: ${OPTIONS.join(' / ')}`);
+    expect(stdout).toContain(`Answered: ${OPTIONS[0]}`);
     expect(stdout).toContain('Job: done');
     // 4. The reply's voice, as the device wrote it: the vendor's PCM, whole.
     expect(existsSync(out)).toBe(true);

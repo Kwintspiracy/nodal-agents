@@ -66,4 +66,28 @@ describe('the Connect a device page @cap:parler-par-canal-externe/moteur', () =>
     expect(lines.length).toBeGreaterThan(10);
     expect(lines.length).toBeLessThanOrEqual(20);
   });
+
+  it('never answers a card without the person’s choice: not the snippet, not the reference client', () => {
+    // Review of #1013: copied verbatim, a snippet that answers `choices[0]`
+    // approves every action for every device that copies it.
+    const reference = readFileSync(
+      new URL('../../../../examples/device/reference-client.mjs', import.meta.url),
+      'utf8',
+    );
+    for (const [name, code] of [
+      ['snippet', connectSnippet('http://127.0.0.1:3001')],
+      ['reference client', reference],
+    ] as const) {
+      const answers = [...code.matchAll(/\.answer\(([^)]*)\)/g)].map((m) => m[1]!.trim());
+      expect(answers, name).toHaveLength(1);
+      // The choice answered is a variable, never an index into the card's choices…
+      expect(answers[0], name).toMatch(/^card\.cardId,\s*choice$/);
+      expect(code, name).not.toMatch(/choices\s*\[/);
+      // …and it is answered only when the person chose one.
+      expect(code, name).toMatch(/if \(!?choice\)/);
+    }
+    expect(connectSnippet('x')).toMatch(
+      /const choice = await askPerson\(card\.text, card\.choices\)/,
+    );
+  });
 });

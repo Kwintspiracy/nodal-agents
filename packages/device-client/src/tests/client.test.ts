@@ -658,3 +658,146 @@ describe('the other gestures @cap:parler-par-canal-externe/moteur', () => {
     device.close();
   });
 });
+
+describe('every failure is a NodalDeviceError, the network’s included (review of #1013) @cap:parler-par-canal-externe/moteur', () => {
+  const unreachable = (async () => {
+    throw new TypeError('fetch failed');
+  }) as typeof fetch;
+
+  it('a Nodal that cannot be reached: `network`, with the original error as its cause', async () => {
+    const err = await pair(BASE, { name: 'x', capabilities: [], fetch: unreachable }).catch(
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(NodalDeviceError);
+    expect(err).toMatchObject({ code: 'network' });
+    expect((err as Error).cause).toBeInstanceOf(TypeError);
+
+    const device = connect(BASE, session, { fetch: unreachable, backoff: { initialMs: 50 } });
+    await expect(device.send('hi')).rejects.toMatchObject({ code: 'network' });
+    device.close();
+  });
+
+  it('a poll that loses the network while the owner decides: `network`, not a raw TypeError', async () => {
+    let polls = 0;
+    const nodal = fakeNodal({
+      'POST /api/devices/pair': () =>
+        Response.json(
+          {
+            pairingId: 'p',
+            deviceCode: 'dc',
+            userCode: '123456',
+            expiresInSeconds: 600,
+            intervalSeconds: 0,
+          },
+          { status: 201 },
+        ),
+    });
+    const flaky = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith('/poll') && ++polls === 1) throw new TypeError('fetch failed');
+      return nodal.fetch(input, init);
+    }) as typeof fetch;
+    const pairing = await pair(BASE, { name: 'x', capabilities: [], fetch: flaky });
+    await expect(pairing.done()).rejects.toMatchObject({ code: 'network' });
+  });
+
+  it('a turn whose stream is cut midway: `stream_cut`', async () => {
+    const live = liveStream();
+    const turnStream = liveStream();
+    const nodal = fakeNodal({
+      'GET /api/devices/:id/events': () => live.response,
+      'POST /api/devices/:id/conversation': conversationRoute,
+      'POST /api/chat/stream': () => turnStream.response,
+    });
+    const device = connect(BASE, session, { fetch: nodal.fetch });
+    const sending = device.send('hi');
+    await until(() => nodal.requests.some((r) => r.path === '/api/chat/stream'));
+    turnStream.send('delta', { text: 'Hel' });
+    turnStream.drop();
+    await expect(sending).rejects.toMatchObject({ code: 'stream_cut' });
+    device.close();
+  });
+
+  it('close() during a turn: the turn fails with `closed`', async () => {
+    const live = liveStream();
+    const turnStream = liveStream();
+    const nodal = fakeNodal({
+      'GET /api/devices/:id/events': () => live.response,
+      'POST /api/devices/:id/conversation': conversationRoute,
+      'POST /api/chat/stream': () => turnStream.response,
+    });
+    const device = connect(BASE, session, { fetch: nodal.fetch });
+    const sending = device.send('hi');
+    await until(() => nodal.requests.some((r) => r.path === '/api/chat/stream'));
+    device.close();
+    const err = await sending.catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(NodalDeviceError);
+    expect(err).toMatchObject({ code: 'closed' });
+  });
+});
+
+describe('after a resync, the waiting cards come back (#1012) @cap:approuver-une-action/moteur', () => {
+  const waiting = {
+    type: 'card',
+    cardId: CARD,
+    kind: 'approval',
+    text: 'Approve?',
+    choices: [
+      { label: 'Approve', decision: 'approve' },
+      { label: 'Reject', decision: 'reject' },
+    ],
+  };
+
+  it('a card asked before the runner restarted reaches the device after `resync`, read from the cards route', async () => {
+    const live = liveStream();
+    const nodal = fakeNodal({
+      'GET /api/devices/:id/events': () => live.response,
+      'GET /api/devices/:id/cards': () => Response.json({ cards: [waiting] }),
+    });
+    const device = connect(BASE, session, { fetch: nodal.fetch });
+    const cards = collect(device, 'card');
+    const order: string[] = [];
+    device.on('resync', () => order.push('resync'));
+    device.on('card', () => order.push('card'));
+    live.send('resync', { type: 'resync', reason: 'runner_restarted' }, 'h1');
+    await until(() => cards.length === 1);
+    expect(cards).toEqual([waiting]);
+    expect(order).toEqual(['resync', 'card']);
+    expect(nodal.requests.find((r) => r.path.endsWith('/cards'))).toMatchObject({
+      method: 'GET',
+      path: `/api/devices/${DEVICE}/cards`,
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    device.close();
+  });
+
+  it('a re-read the network interrupted is done again, before the next `ready`', async () => {
+    const streams: LiveStream[] = [];
+    let cardReads = 0;
+    const nodal = fakeNodal({
+      'GET /api/devices/:id/events': () => {
+        const s = liveStream();
+        streams.push(s);
+        return s.response;
+      },
+      'GET /api/devices/:id/cards': () =>
+        ++cardReads === 1
+          ? Response.json({ error: 'busy' }, { status: 503 })
+          : Response.json({ cards: [waiting] }),
+    });
+    const device = connect(BASE, session, {
+      fetch: nodal.fetch,
+      backoff: { initialMs: 5, maxMs: 5 },
+    });
+    const cards = collect(device, 'card');
+    const ready = collect(device, 'ready');
+    await until(() => streams.length === 1);
+    streams[0]!.send('resync', { type: 'resync', reason: 'runner_restarted' }, 'h1');
+    await until(() => streams.length === 2);
+    // Reconnected from h1: no second resync, but the cards are still owed.
+    streams[1]!.send('ready', {}, 'h1');
+    await until(() => ready.length === 1);
+    expect(cards).toEqual([waiting]);
+    expect(cardReads).toBe(2);
+    device.close();
+  });
+});

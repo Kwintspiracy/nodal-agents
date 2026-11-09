@@ -71,8 +71,8 @@ const nodal = connect(url, session);
 nodal.on('speech', (s) => s.type === 'audio' && play(s.audio, s.mimeType, s.sampleRate));
 nodal.on('bubble', (b) => console.log(b.text));
 nodal.on('card', async (card) => {
-  console.log(card.text);
-  await nodal.answer(card.cardId, card.choices[0]); // or let the person choose
+  const choice = await askPerson(card.text, card.choices); // show or say it; null: not now
+  if (choice) await nodal.answer(card.cardId, choice); // only ever the person's choice
 });
 nodal.on('closed', ({ error }) => console.error(error.message));
 
@@ -81,18 +81,22 @@ console.log(turn.transcript, '→', turn.reply);
 await nodal.send('And tomorrow?'); // a typed turn
 ```
 
-`play` and `recordedWav` are yours: Nodal does not touch your audio hardware.
+`play`, `recordedWav` and `askPerson` are yours: Nodal does not touch your
+screen or your audio hardware. A card is answered **only with the person's
+choice**: show it, or say it, and answer with what the person chose. Never
+answer with a default: an approval is the person's decision.
 
 A complete, runnable version is `examples/device/reference-client.mjs` in the
 repository:
 
 ```bash
-node examples/device/reference-client.mjs http://127.0.0.1:3001 question.wav reply.audio
+node examples/device/reference-client.mjs http://127.0.0.1:3001 question.wav reply.audio Tokyo
 ```
 
 It pairs, says a recorded WAV file, writes the reply's voice to a file, and
-answers the first card it receives. CI runs it against a real runner on every
-change.
+prints the first card it receives. It answers that card with the choice given
+on the command line (`Tokyo` here) when the card offers it, and otherwise
+leaves it for the dashboard. CI runs it against a real runner on every change.
 
 ## The API
 
@@ -109,28 +113,39 @@ change.
 | `nodal.newConversation()`           | Starts a blank conversation, like `/new` on a channel.                                                                                                                                                        |
 | `nodal.close()`                     | Closes the connection.                                                                                                                                                                                        |
 
-Every failure is a `NodalDeviceError` with a `code`: `refused`, `expired`,
-`revoked`, `request_failed` (with Nodal's `status` and `serverCode`, for
-example `voice_key_missing` when the workspace has no speech key),
-`turn_failed`, `protocol` or `closed`.
+Every failure of the client is a `NodalDeviceError` with a `code`, the
+network's included (the original error is its `cause`):
+
+| `code`           | When                                                                                                                         |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `refused`        | The owner refused the pairing                                                                                                |
+| `expired`        | The code expired before the owner confirmed it                                                                               |
+| `revoked`        | Nodal refused the device's key (`device_token_invalid`, …): the device was removed, pair again                               |
+| `request_failed` | Nodal answered an error: its `status` and `serverCode`, for example `voice_key_missing` when the workspace has no speech key |
+| `turn_failed`    | A turn failed after it started (`serverCode`)                                                                                |
+| `network`        | Nodal could not be reached                                                                                                   |
+| `stream_cut`     | An answer or a stream stopped before its end                                                                                 |
+| `aborted`        | Your own `signal` aborted the call                                                                                           |
+| `protocol`       | Nodal answered something the client cannot read                                                                              |
+| `closed`         | The session was closed by `close()` while the call ran                                                                       |
 
 ## Events
 
 What Nodal sends to the device. A device only ever hears what its own requests
 produce and what is addressed to it.
 
-| Event          | When                                                                  | What it carries                                                                                                                                                 |
-| -------------- | --------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `bubble`       | A task launched from the device answered, or a message was sent to it | `text`, `jobId`, `conversationId`                                                                                                                               |
-| `card`         | A task asks the person: approve an action, or choose an option        | `cardId`, `kind` (`approval` or `question`), `text`, `choices`                                                                                                  |
-| `card.closed`  | The card was settled: here, on the dashboard, or by expiry            | `cardId`, `text` (what the card says now)                                                                                                                       |
-| `state`        | Where a task launched from the device stands                          | `jobId`, `state` (`working`, `waiting`, `done`, `cancelled`, `failed`), `waitingFor` (the cards it waits on), `deliverables` (the files it addressed), `reason` |
-| `announce`     | A task launched by voice ended and its announcement is spoken         | `jobId`, `audioId`. Its voice follows as `speech`                                                                                                               |
-| `speech`       | The agent's voice: the reply to `say`, or an announcement             | `audio` pieces in `seq` order, `sentence.end`, then `end`                                                                                                       |
-| `ready`        | The stream is live, after anything missed was replayed                | `reconnected`                                                                                                                                                   |
-| `resync`       | Nodal could not replay what was missed                                | `reason`                                                                                                                                                        |
-| `disconnected` | The stream dropped; the client retries by itself                      | `error`, `retryInMs`                                                                                                                                            |
-| `closed`       | The session ended for good                                            | `error` (`revoked`, or `closed` by you)                                                                                                                         |
+| Event          | When                                                                       | What it carries                                                                                                                                                 |
+| -------------- | -------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `bubble`       | A task launched from the device answered, or a message was sent to it      | `text`, `jobId`, `conversationId`                                                                                                                               |
+| `card`         | A task asks the person: approve an action, or choose an option             | `cardId`, `kind` (`approval` or `question`), `text`, `choices`                                                                                                  |
+| `card.closed`  | The card was settled: here, on the dashboard, or by expiry                 | `cardId`, `text` (what the card says now)                                                                                                                       |
+| `state`        | Where a task launched from the device stands                               | `jobId`, `state` (`working`, `waiting`, `done`, `cancelled`, `failed`), `waitingFor` (the cards it waits on), `deliverables` (the files it addressed), `reason` |
+| `announce`     | A task launched by voice ended and its announcement is spoken              | `jobId`, `audioId`. Its voice follows as `speech`                                                                                                               |
+| `speech`       | The agent's voice: the reply to `say`, or an announcement                  | `audio` pieces in `seq` order, `sentence.end`, then `end`                                                                                                       |
+| `ready`        | The stream is live, after anything missed was replayed                     | `reconnected`                                                                                                                                                   |
+| `resync`       | Nodal could not replay what was missed; the waiting cards follow as `card` | `reason`                                                                                                                                                        |
+| `disconnected` | The stream dropped; the client retries by itself                           | `error`, `retryInMs`                                                                                                                                            |
+| `closed`       | The session ended for good                                                 | `error` (`revoked`, or `closed` by you)                                                                                                                         |
 
 A card's `text` is the platform's fixed frame with the agent's words quoted in
 it, the same as on Telegram. Play `speech` pieces end to end: `audio/pcm` plays
@@ -146,11 +161,10 @@ device missed, a card included, then says `ready`. An event can arrive twice
 around a reconnect: `cardId` and `bubbleId` identify it.
 
 When Nodal cannot replay (the runner restarted, or the device was away too long)
-it says `resync` instead. What was missed must then be re-read. A device cannot
-re-read its waiting cards yet
-([#1012](https://github.com/Kwintspiracy/nodal-agents/issues/1012)): until it
-can, they are answered from **Approvals** in the dashboard, and a device should
-say so when it gets `resync`.
+it says `resync` instead. The client then re-reads the cards still waiting
+(`GET /api/devices/:deviceId/cards`) and hands each to your `card` handler
+again. A bubble or a state missed is not given back: a device that shows a
+history re-reads it from its conversation.
 
 ## The protocol under the client
 
@@ -162,6 +176,7 @@ requests, with `Authorization: Bearer <token>` on every one after pairing.
 | pair         | `POST /api/devices/pair`, then `POST /api/devices/pair/poll` every `intervalSeconds`                                                          |
 | conversation | `POST /api/devices/:deviceId/conversation` gives `entityId`, `agentId` and `conversationId`                                                   |
 | listen       | `GET /api/devices/:deviceId/events` (Server-Sent Events, `Last-Event-ID` to resume)                                                           |
+| cards        | `GET /api/devices/:deviceId/cards`: the cards still waiting, read after a `resync`                                                            |
 | say          | `POST /api/voice/turns`, the audio in `POST /api/voice/turns/:turnId/chunks/:seq`, then `POST /api/voice/turns/:turnId/end` (an event stream) |
 | send         | `POST /api/chat/stream`                                                                                                                       |
 | answer       | `POST /api/approve` with `approvalRequestId` (the `cardId`), `decision` and, for a question, `answer`                                         |
@@ -221,8 +236,11 @@ Nothing in the protocol needs a screen:
 - the device **says** its pairing code, and the owner types it in
   **Settings → Devices**;
 - a `card` is **read aloud**: its `text`, then its `choices` by `label`. The
-  person answers by voice; the device matches what was said to a `label`, and
-  calls `answer()` with that choice. A spoken answer that matches nothing is
-  asked again, never guessed;
+  person answers by voice. Nodal does not resolve a spoken answer yet
+  ([#1018](https://github.com/Kwintspiracy/nodal-agents/issues/1018)): `answer()`
+  takes one of the card's `choices`, so the device recognises the speech itself,
+  matches it to a `label`, and calls `answer()` with that choice. A spoken
+  answer that matches nothing is asked again, never guessed, and a card the
+  person does not answer stays waiting in **Approvals** on the dashboard;
 - `bubble` texts can be skipped: the reply to a spoken turn already comes as
   `speech`, and a task launched by voice ends with an `announce`.

@@ -24,6 +24,12 @@ export const DEVICE_GESTURES = {
       "path": "/api/devices/:deviceId/events"
     }
   ],
+  "cards": [
+    {
+      "method": "GET",
+      "path": "/api/devices/:deviceId/cards"
+    }
+  ],
   "say": [
     {
       "method": "POST",
