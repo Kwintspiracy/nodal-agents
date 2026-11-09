@@ -138,7 +138,7 @@ produce and what is addressed to it.
 | -------------- | -------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `bubble`       | A task launched from the device answered, or a message was sent to it      | `text`, `jobId`, `conversationId`                                                                                                                               |
 | `card`         | A task asks the person: approve an action, or choose an option             | `cardId`, `kind` (`approval` or `question`), `text`, `choices`                                                                                                  |
-| `card.closed`  | The card was settled: here, on the dashboard, or by expiry                 | `cardId`, `text` (what the card says now)                                                                                                                       |
+| `card.closed`  | The card was settled: here, on the dashboard, or by expiry                 | `cardId`, `text` (what the card says now), `source` (`stream`, or `reread` with `text: null`)                                                                   |
 | `state`        | Where a task launched from the device stands                               | `jobId`, `state` (`working`, `waiting`, `done`, `cancelled`, `failed`), `waitingFor` (the cards it waits on), `deliverables` (the files it addressed), `reason` |
 | `announce`     | A task launched by voice ended and its announcement is spoken              | `jobId`, `audioId`. Its voice follows as `speech`                                                                                                               |
 | `speech`       | The agent's voice: the reply to `say`, or an announcement                  | `audio` pieces in `seq` order, `sentence.end`, then `end`                                                                                                       |
@@ -157,14 +157,25 @@ sentence, at its `sentence.end`, and is dropped when `complete` is false.
 Every event carries a resume id. After a network drop, or a stream that stays
 silent past its 25-second ping, the client reconnects by itself with a backoff
 (0.5 s doubling to 30 s) and sends the last id it saw. Nodal replays what the
-device missed, a card included, then says `ready`. An event can arrive twice
-around a reconnect: `cardId` and `bubbleId` identify it.
+device missed, a card included, then says `ready`. A bubble or a state can
+arrive twice around a reconnect (`bubbleId` and `jobId` identify them); a card
+never does.
 
 When Nodal cannot replay (the runner restarted, or the device was away too long)
 it says `resync` instead. The client then re-reads the cards still waiting
-(`GET /api/devices/:deviceId/cards`) and hands each to your `card` handler
-again. A bubble or a state missed is not given back: a device that shows a
-history re-reads it from its conversation.
+(`GET /api/devices/:deviceId/cards`) and reconciles them with the cards it has
+delivered:
+
+- a card it delivered that is no longer waiting was settled while the device
+  was away (on the dashboard, or by expiry): you get its `card.closed` with
+  `source: 'reread'` and `text: null`, since how it was settled is not known.
+  Stop showing or saying it;
+- a card still waiting that you already have is not delivered again;
+- a card you did not have is delivered to `card`.
+
+A card is delivered once while it is open, and never again once settled, by a
+replay or a re-read. A bubble or a state missed is not given back: a device
+that shows a history re-reads it from its conversation.
 
 ## The protocol under the client
 

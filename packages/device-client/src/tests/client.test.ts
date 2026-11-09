@@ -801,3 +801,128 @@ describe('after a resync, the waiting cards come back (#1012) @cap:approuver-une
     device.close();
   });
 });
+
+describe('a re-read after resync settles what the gap settled (review of #1013, pass 2) @cap:approuver-une-action/moteur', () => {
+  const cardOf = (cardId: string) => ({
+    type: 'card' as const,
+    cardId,
+    kind: 'approval' as const,
+    text: `Approve ${cardId}?`,
+    choices: [
+      { label: 'Approve', decision: 'approve' as const },
+      { label: 'Reject', decision: 'reject' as const },
+    ],
+  });
+  const A = '0a0a0a0a-0000-4000-8000-00000000000a';
+  const B = '0b0b0b0b-0000-4000-8000-00000000000b';
+
+  /** A Nodal whose waiting cards the test sets, and whose cards route it can hold. */
+  function nodalWithCards() {
+    const live = liveStream();
+    const state = { waiting: [] as unknown[], hold: null as Promise<void> | null };
+    const nodal = fakeNodal({
+      'GET /api/devices/:id/events': () => live.response,
+      'GET /api/devices/:id/cards': async () => {
+        const listed = [...state.waiting];
+        if (state.hold) await state.hold;
+        return Response.json({ cards: listed });
+      },
+      'POST /api/approve': () => Response.json({ jobId: 'j', status: 'queued' }),
+    });
+    return { live, state, nodal };
+  }
+
+  it('a card settled during the gap gets its card.closed after resync, marked as learned from the re-read', async () => {
+    const { live, state, nodal } = nodalWithCards();
+    const device = connect(BASE, session, { fetch: nodal.fetch });
+    const closed = collect(device, 'card.closed');
+    const cards = collect(device, 'card');
+    live.send('card', cardOf(A), 'e1');
+    await until(() => cards.length === 1);
+    // The network drops, the owner rejects A on the dashboard: its card.closed
+    // is lost with the stream. The runner restarted: resync, and A is no longer waiting.
+    state.waiting = [];
+    live.send('resync', { type: 'resync', reason: 'runner_restarted' }, 'h1');
+    await until(() => closed.length === 1);
+    expect(closed).toEqual([{ type: 'card.closed', cardId: A, text: null, source: 'reread' }]);
+    device.close();
+  });
+
+  it('a card still waiting is not delivered twice; a new one is delivered once', async () => {
+    const { live, state, nodal } = nodalWithCards();
+    const device = connect(BASE, session, { fetch: nodal.fetch });
+    const cards = collect(device, 'card');
+    const closed = collect(device, 'card.closed');
+    live.send('card', cardOf(A), 'e1');
+    await until(() => cards.length === 1);
+    state.waiting = [cardOf(A), cardOf(B)];
+    live.send('resync', { type: 'resync', reason: 'runner_restarted' }, 'h1');
+    await until(() => cards.length === 2);
+    await new Promise((r) => setTimeout(r, 30));
+    expect(cards.map((c) => c.cardId)).toEqual([A, B]);
+    expect(closed).toEqual([]);
+    device.close();
+  });
+
+  it('two resync in a row: each re-read settles what it no longer lists, and delivers nothing twice', async () => {
+    const { live, state, nodal } = nodalWithCards();
+    const device = connect(BASE, session, { fetch: nodal.fetch });
+    const cards = collect(device, 'card');
+    const closed = collect(device, 'card.closed');
+    state.waiting = [cardOf(A), cardOf(B)];
+    live.send('resync', { type: 'resync', reason: 'runner_restarted' }, 'h1');
+    await until(() => cards.length === 2);
+    state.waiting = [cardOf(B)];
+    live.send('resync', { type: 'resync', reason: 'cursor_too_old' }, 'h2');
+    await until(() => closed.length === 1);
+    state.waiting = [cardOf(B)];
+    live.send('resync', { type: 'resync', reason: 'runner_restarted' }, 'h3');
+    await until(() => nodal.requests.filter((r) => r.path.endsWith('/cards')).length === 3);
+    await new Promise((r) => setTimeout(r, 30));
+    expect(cards.map((c) => c.cardId)).toEqual([A, B]);
+    expect(closed).toEqual([{ type: 'card.closed', cardId: A, text: null, source: 'reread' }]);
+    device.close();
+  });
+
+  it('a settled card is never brought back: not by a replay, not by a re-read that still lists it', async () => {
+    const { live, state, nodal } = nodalWithCards();
+    const device = connect(BASE, session, { fetch: nodal.fetch });
+    const cards = collect(device, 'card');
+    const closed = collect(device, 'card.closed');
+    live.send('card', cardOf(A), 'e1');
+    live.send('card.closed', { type: 'card.closed', cardId: A, text: '❌ Rejected' }, 'e2');
+    await until(() => closed.length === 1);
+    // A replay around a reconnect sends the card again: it stays settled.
+    live.send('card', cardOf(A), 'e1');
+    // A re-read read just before the settlement reached the base still lists it.
+    state.waiting = [cardOf(A)];
+    live.send('resync', { type: 'resync', reason: 'runner_restarted' }, 'h1');
+    await until(() => nodal.requests.some((r) => r.path.endsWith('/cards')));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(cards.map((c) => c.cardId)).toEqual([A]);
+    expect(closed.map((c) => c.source)).toEqual(['stream']);
+    device.close();
+  });
+
+  it('a card.closed on the stream says its source and its text, once', async () => {
+    const { live, nodal } = nodalWithCards();
+    const device = connect(BASE, session, { fetch: nodal.fetch });
+    const closed = collect(device, 'card.closed');
+    live.send('card', cardOf(A), 'e1');
+    live.send(
+      'card.closed',
+      { type: 'card.closed', cardId: A, text: '✅ Answered: Approve' },
+      'e2',
+    );
+    await until(() => closed.length === 1);
+    expect(closed).toEqual([
+      { type: 'card.closed', cardId: A, text: '✅ Answered: Approve', source: 'stream' },
+    ]);
+    // Settled once: a later re-read that no longer lists it does not close it again.
+    live.send('resync', { type: 'resync', reason: 'runner_restarted' }, 'h1');
+    await until(() => nodal.requests.some((r) => r.path.endsWith('/cards')));
+    await new Promise((r) => setTimeout(r, 30));
+    expect(closed.map((c) => c.source)).toEqual(['stream']);
+    device.close();
+  });
+});

@@ -511,10 +511,22 @@ type EventOf<T extends DeviceEvent['type']> = Extract<DeviceEvent, { type: T }>;
 export interface NodalDeviceEvents {
   /** Something to read or hear: an agent's reply to a job launched here, a message sent here. */
   bubble: EventOf<'bubble'>;
-  /** Nodal asks the person: approve an action, or choose an option. Answer with `answer()`. */
+  /**
+   * Nodal asks the person: approve an action, or choose an option. Answer with
+   * `answer()`. Each card is delivered ONCE while it is open, even when a
+   * reconnect replays it or a re-read lists it again.
+   */
   card: EventOf<'card'>;
-  /** A card was settled (here, elsewhere, or by expiry). Stop showing or saying it. */
-  'card.closed': EventOf<'card.closed'>;
+  /**
+   * A card was settled (here, elsewhere, or by expiry). Stop showing or saying it.
+   * `source: 'stream'`: Nodal said so, and `text` is what the card says now.
+   * `source: 'reread'`: the card was missing from the waiting cards read after
+   * a `resync`, so it was settled while the device was away; how is not known,
+   * and `text` is null.
+   */
+  'card.closed':
+    | (EventOf<'card.closed'> & { source: 'stream' })
+    | { type: 'card.closed'; cardId: string; text: null; source: 'reread' };
   /** Where a job launched from this device stands. */
   state: EventOf<'state'>;
   /** A job launched by voice ended, and its announcement is spoken: its voice follows as `speech`. */
@@ -709,12 +721,39 @@ export function connect(
     return conversation;
   };
 
+  // ── The cards the device holds open ──
+  // Every card delivered and not yet settled. A card is delivered once while it
+  // is open; a settled card (closed on the stream, or missing from a re-read)
+  // is never delivered again, by a replay or a re-read: a request never reopens.
+  const openCards = new Set<string>();
+  const settledCards = new Set<string>();
+  const SETTLED_KEPT = 1000;
+  const settleCard = (cardId: string): void => {
+    openCards.delete(cardId);
+    settledCards.add(cardId);
+    if (settledCards.size > SETTLED_KEPT) {
+      settledCards.delete(settledCards.values().next().value as string);
+    }
+  };
+  const deliverCard = (card: EventOf<'card'>): void => {
+    if (openCards.has(card.cardId) || settledCards.has(card.cardId)) return;
+    openCards.add(card.cardId);
+    emit('card', card);
+  };
+
   // ── The event stream ──
   const onDeviceEvent = (type: string, data: Record<string, unknown>): void => {
     switch (type) {
-      case 'bubble':
       case 'card':
-      case 'card.closed':
+        deliverCard(data as EventOf<'card'>);
+        return;
+      case 'card.closed': {
+        const ev = data as EventOf<'card.closed'>;
+        settleCard(ev.cardId);
+        emit('card.closed', { ...ev, source: 'stream' });
+        return;
+      }
+      case 'bubble':
       case 'state':
         emit(type, data as never);
         return;
@@ -786,7 +825,16 @@ export function connect(
       throw new NodalDeviceError('protocol', 'Nodal answered the waiting cards without their list');
     }
     cardsToReread = false;
-    for (const card of cards as EventOf<'card'>[]) emit('card', card);
+    const waiting = cards as EventOf<'card'>[];
+    const listed = new Set(waiting.map((c) => c.cardId));
+    // An open card the base no longer lists was settled during the gap: its
+    // `card.closed` was lost with the stream. Said now, never kept on screen.
+    for (const cardId of [...openCards]) {
+      if (listed.has(cardId)) continue;
+      settleCard(cardId);
+      emit('card.closed', { type: 'card.closed', cardId, text: null, source: 'reread' });
+    }
+    for (const card of waiting) deliverCard(card);
   };
 
   const listen = async (): Promise<void> => {
