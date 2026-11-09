@@ -132,14 +132,16 @@ export const SPOKEN_REASONING_REQUESTS: readonly MeasureRequest[] = [
 /**
  * Les ouvertures qui racontent l'aiguillage au lieu de répondre : le défaut
  * vu le 03/11 (« This is a general knowledge question, so I can answer it
- * directly. »). Lues sur la PREMIÈRE phrase seulement, en anglais et en
- * français. Un repérage, pas un juge : chaque ouverture est aussi rendue
+ * directly. » ; le 04/11 : « This is a creative writing request I can answer
+ * directly, so no delegation is needed. », #995). Lues sur la PREMIÈRE phrase
+ * seulement, en anglais et en français. Un repérage, pas un juge : chaque ouverture est aussi rendue
  * telle quelle dans le relevé, pour être relue.
  */
 const ROUTING_NARRATION: readonly RegExp[] = [
-  /\b(general[- ]knowledge|simple|quick|factual|straightforward|conversational|casual)\s+(question|request|query)\b/i,
+  /\b(general[- ]knowledge|simple|quick|factual|straightforward|conversational|casual|creative(?: writing)?|writing|trivia)\s+(question|request|query|task)\b/i,
   /\b(answer|reply|respond)\s+(to\s+)?(it|this|that)?\s*(directly|right away|myself|without)\b/i,
   /\bno need (to|for)\b.*\b(task|job|tool|delegat\w*)\b/i,
+  /\b(without|with no|no)\s+(any\s+)?(action|delegation|delegating)\b/i,
   /\b(doesn'?t|does not|won'?t|will not)\s+(need|require)\b.*\b(task|job|tool|delegat\w*)\b/i,
   /\bquestion\s+(de culture g[ée]n[ée]rale|g[ée]n[ée]rale|simple|factuelle)\b/i,
   /\bje (peux|vais) (y )?r[ée]pondre (directement|moi-m[êe]me|tout de suite|sans)\b/i,

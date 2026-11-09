@@ -388,6 +388,19 @@ describe('the #977 measurement tool', () => {
     ['No need to start a task for this: it is noon in Tokyo.', true],
     ["C'est une question de culture générale, je peux y répondre directement.", true],
     ['Pas besoin de lancer une tâche : il est midi à Tokyo.', true],
+    // #995 — the two openings heard live and measured on 2026-11-04.
+    [
+      'This is a general knowledge question I can answer directly without any action. In Paris, November is cool.',
+      true,
+    ],
+    ['This is a creative writing request I can answer directly, so no delegation is needed.', true],
+    ['This is a creative request, so I will just write it. Once upon a time.', true],
+    ['Without any action needed, here is the answer: nine minutes.', true],
+    // Not narration: an answer, a story, a pleasantry, an email.
+    ['In Paris, November is cool and damp, with highs around 10 degrees.', false],
+    ['Once upon a time, a robot named Pim wanted to learn to cook.', false],
+    ['Great question! Soft-boiled takes about six minutes.', false],
+    ['Subject: The heating is broken. Dear Mr. Martin, I am writing to ask for a repair.', false],
     ['Canberra est la capitale de l’Australie.', false],
     ['Il est midi à Tokyo, et la nuit tombe vers dix-sept heures.', false],
     ['Je m’en occupe.', false],
