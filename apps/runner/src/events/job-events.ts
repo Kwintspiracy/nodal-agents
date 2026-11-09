@@ -228,7 +228,12 @@ export class JobEventBus {
   publish(
     entityId: string,
     conversationId: string | null,
-    payload: JobEventPayload,
+    /**
+     * L'événement, ou de quoi le construire avec SON numéro dans l'espace :
+     * un `state` d'appareil le porte (`seq`, #945), pour qu'un client compare
+     * deux lectures d'un run sans deviner leur ordre.
+     */
+    payload: JobEventPayload | ((seq: number) => JobEventPayload),
     deviceId: string | null = null,
   ): StoredJobEvent {
     const ws = this.workspace(entityId);
@@ -238,7 +243,7 @@ export class JobEventBus {
       seq: ws.seq,
       conversationId,
       deviceId,
-      payload,
+      payload: typeof payload === 'function' ? payload(ws.seq) : payload,
     };
     ws.buffer.push(event);
     if (ws.buffer.length > this.capacity) ws.buffer.splice(0, ws.buffer.length - this.capacity);

@@ -97,3 +97,40 @@ export async function runHeadOf(
   }
   return head;
 }
+
+/** Le chat d'où vient la demande d'un run, et la tête qui le porte (#945). */
+export interface RunOrigin {
+  /** La tête du run (`runHeadOf`) : le job que la demande a lancé. */
+  readonly headJobId: string;
+  /** Le chat de la tête, et le canal sur lequel il a été résolu (`designateChat`). */
+  readonly chatId: string | null;
+  readonly chatChannel: string | null;
+}
+
+/**
+ * D'OÙ VIENT la demande dont ce job fait partie : le chat de la TÊTE de son
+ * run (#945, revue Reviewer A de #1005, passe 2).
+ *
+ * Le chat d'un job ne le dit pas : un délégué en hérite (router/delegate.ts),
+ * mais un enfant du tableau des tâches (`create_task`, cron/execute-ready.ts)
+ * naît sans chat, et une tête relancée (#531) porte ce que sa relance a
+ * recopié. La tête, elle, porte le chat de la demande. UNE lecture pour tout
+ * ce qui suit l'origine — l'envoi d'une carte à un appareil, la liste de ses
+ * cartes en attente, l'état poussé d'un run — par les mêmes liens que l'arrêt
+ * et le budget (`runHeadOf`), dans l'espace seulement.
+ *
+ * null quand le job n'est pas un job de cet espace.
+ */
+export async function runOriginOf(
+  db: AnyDrizzleDb,
+  entityId: string,
+  jobId: string,
+): Promise<RunOrigin | null> {
+  const headJobId = await runHeadOf(db, entityId, jobId);
+  const [row] = await db
+    .select({ chatId: agentJobs.chatId, chatChannel: agentJobs.chatChannel })
+    .from(agentJobs)
+    .where(and(eq(agentJobs.id, headJobId), eq(agentJobs.entityId, entityId)))
+    .limit(1);
+  return row ? { headJobId, chatId: row.chatId, chatChannel: row.chatChannel } : null;
+}

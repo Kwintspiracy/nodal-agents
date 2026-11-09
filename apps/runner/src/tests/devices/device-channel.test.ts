@@ -307,12 +307,30 @@ async function listenTo(
 const device = (app: ReturnType<typeof createApp>, id: string) =>
   listenTo(app, `/api/devices/${id}/events`, as(id));
 
+/**
+ * A gesture as the protocol parses it, the `seq` of a `state` set aside: the
+ * order is proven on its own (`seqsOf`), the content compared here.
+ */
+function withoutSeq(data: unknown): unknown {
+  const ev = DeviceEventSchema.parse(data);
+  if (ev.type !== 'state') return ev;
+  const { seq: _seq, ...rest } = ev;
+  return rest;
+}
+
 /** The `state` gestures a device received, checked against the protocol. */
 const statesOf = (l: Listener) =>
   l
     .gestures()
     .filter((e) => e.event === 'state')
-    .map((e) => DeviceEventSchema.parse(e.data));
+    .map((e) => withoutSeq(e.data) as Record<string, unknown>);
+
+/** The `seq` of each `state`, in arrival order: it must only grow. */
+const seqsOf = (l: Listener) =>
+  l
+    .gestures()
+    .filter((e) => e.event === 'state')
+    .map((e) => (e.data as { seq: number }).seq);
 
 async function waitFor(check: () => boolean, ms = 3_000): Promise<void> {
   const until = Date.now() + ms;
@@ -561,6 +579,9 @@ describe('what a job launched from a device asks comes back to THAT device (#945
     // Answered: the run works again — re-queued, nothing waits.
     await waitFor(() => statesOf(onA).length >= 3);
     expect(statesOf(onA)[2]).toMatchObject({ state: 'working', waitingFor: [] });
+    const seqs = seqsOf(onA);
+    expect(seqs).toEqual([...seqs].sort((a, b) => a - b));
+    expect(new Set(seqs).size).toBe(seqs.length);
     await settle();
     expect(onB.gestures()).toEqual([]);
     expect(telegramSends).toEqual([]);
@@ -820,6 +841,165 @@ describe('after a resync, a device re-reads its pending cards (#945) @cap:approu
   });
 });
 
+// ─── 3c. The origin is the RUN's: delegates, task-board children, relaunches ─
+
+describe('a job of a device’s run answers on that device, however it was born (#945) @cap:approuver-une-action/moteur', () => {
+  async function ownDevice(name: string): Promise<string> {
+    const [d] = await db
+      .insert(devices)
+      .values({ entityId: x.entityId, name, capabilities: ['speaker', 'buttons'] })
+      .returning({ id: devices.id });
+    // Its key (#946): what it presents on its routes.
+    const { token, tokenHash } = drawDeviceToken();
+    await db.update(devices).set({ tokenHash }).where(eq(devices.id, d!.id));
+    keyOf.set(d!.id, token);
+    return d!.id;
+  }
+
+  /** A job of X, born of `head` the way `link` says, with no chat of its own. */
+  async function bornOf(
+    head: string,
+    link: { parentJobId?: string; relaunchedFromJobId?: string },
+    extra: { channel: string; chatId?: string; chatChannel?: string; status: string },
+    conversationId: string | null,
+  ): Promise<string> {
+    const [row] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: x.entityId,
+        agentId: x.agentId,
+        task: 'born of a device run',
+        messages: [],
+        chainCount: 0,
+        ...(conversationId ? { conversationId } : {}),
+        ...link,
+        ...extra,
+      })
+      .returning({ id: agentJobs.id });
+    expect(head).not.toBe(row!.id);
+    return row!.id;
+  }
+
+  async function pendingQuestion(jobId: string): Promise<string> {
+    const toolInput = { question: QUESTION, options: OPTIONS };
+    const [request] = await db
+      .insert(approvalRequests)
+      .values({
+        entityId: x.entityId,
+        jobId,
+        agentId: x.agentId,
+        toolName: 'ask_user',
+        toolInput,
+        kind: 'question',
+      })
+      .returning({ id: approvalRequests.id });
+    await notifyApprovalCreated(makeDeps(), {
+      approvalRequestId: request!.id,
+      toolName: 'ask_user',
+      toolInput,
+      jobId,
+      agentId: x.agentId,
+      entityId: x.entityId,
+      kind: 'question',
+    });
+    return request!.id;
+  }
+
+  it('a task-board child (born without a chat): its states reach the device, and its card survives a resync', async () => {
+    const dev = await ownDevice('Board');
+    const deps = makeDeps(askUser());
+    const app = createApp(deps, testEnv);
+    const conv = String((await postConversation(app, dev)).json['conversationId']);
+    const head = await deviceJob({
+      entityId: x.entityId,
+      agentId: x.agentId,
+      deviceId: dev,
+      conversationId: conv,
+      status: 'awaiting_delegation',
+    });
+    // `create_task` → cron/execute-ready.ts: channel task-board, the creator as
+    // parent, NO chat.
+    const child = await bornOf(
+      head,
+      { parentJobId: head },
+      { channel: 'task-board', status: 'pending' },
+      conv,
+    );
+    const live = await device(app, dev);
+    expect((await executeJob(child as JobId, deps, testEnv)).status).toBe('awaiting_approval');
+    const [request] = await db
+      .select({ id: approvalRequests.id })
+      .from(approvalRequests)
+      .where(eq(approvalRequests.jobId, child));
+    await waitFor(() => statesOf(live).length >= 2);
+    // The run's state, under the job the request launched.
+    expect(statesOf(live)).toEqual([
+      {
+        type: 'state',
+        jobId: head,
+        conversationId: conv,
+        state: 'working',
+        waitingFor: [],
+        deliverables: [],
+      },
+      {
+        type: 'state',
+        jobId: head,
+        conversationId: conv,
+        state: 'waiting',
+        waitingFor: [request!.id],
+        deliverables: [],
+      },
+    ]);
+    await waitFor(() => live.gestures().some((e) => e.event === 'card'));
+    const sent = live.gestures().find((e) => e.event === 'card')!.data;
+
+    // A restart later, the device re-reads its cards: the child's is there.
+    const after = await listenTo(app, `/api/devices/${dev}/events`, {
+      ...as(dev),
+      'Last-Event-ID': 'a-runner-that-is-gone:3',
+    });
+    expect(after.events.map((e) => e.event)).toEqual(['resync']);
+    expect((await getCards(app, dev)).cards).toEqual([sent]);
+  });
+
+  it('a delegate’s and a relaunched head’s pending cards are listed for the device of the run', async () => {
+    const dev = await ownDevice('Porch');
+    const app = createApp(makeDeps(), testEnv);
+    const head = await deviceJob({
+      entityId: x.entityId,
+      agentId: x.agentId,
+      deviceId: dev,
+      conversationId: null,
+      status: 'awaiting_delegation',
+    });
+    // A delegate inherits the chat (router/delegate.ts)…
+    const delegate = await bornOf(
+      head,
+      { parentJobId: head },
+      { channel: 'internal', chatId: dev, chatChannel: 'device', status: 'awaiting_approval' },
+      null,
+    );
+    // …a head relaunched by its conversation's inbox (#531) carries none here.
+    const relaunched = await bornOf(
+      head,
+      { relaunchedFromJobId: head },
+      { channel: 'device', status: 'awaiting_approval' },
+      null,
+    );
+    const live = await device(app, dev);
+    const first = await pendingQuestion(delegate);
+    const second = await pendingQuestion(relaunched);
+    await waitFor(() => live.gestures().filter((e) => e.event === 'card').length >= 2);
+    const sent = live
+      .gestures()
+      .filter((e) => e.event === 'card')
+      .map((e) => e.data);
+    expect(sent.map((c) => (c as { cardId: string }).cardId)).toEqual([first, second]);
+    expect((await getCards(app, dev)).cards).toEqual(sent);
+  });
+});
+
 // ─── 4. The end of a job, and its spoken announcement ───────────────────────
 
 describe('a job launched by voice from a device ends on that device (#945) @cap:parler-par-canal-externe/moteur', () => {
@@ -854,7 +1034,7 @@ describe('a job launched by voice from a device ends on that device (#945) @cap:
     expect(audioId).not.toBeNull();
 
     await waitFor(() => onA.gestures().some((e) => e.event === 'announce'));
-    expect(onA.gestures().map((e) => DeviceEventSchema.parse(e.data))).toEqual([
+    expect(onA.gestures().map((e) => withoutSeq(e.data))).toEqual([
       {
         type: 'bubble',
         bubbleId: job,
@@ -962,7 +1142,7 @@ describe('a job launched by voice from a device ends on that device (#945) @cap:
     const onA = await device(app, deviceA);
     await publishJobEnded(db as RunnerDeps['db'], job);
     await waitFor(() => statesOf(onA).length > 0);
-    expect(onA.gestures().map((e) => e.data)).toEqual([
+    expect(onA.gestures().map((e) => withoutSeq(e.data))).toEqual([
       {
         type: 'state',
         jobId: job,

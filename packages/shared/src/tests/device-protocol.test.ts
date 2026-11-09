@@ -47,6 +47,7 @@ describe('the protocol events a device receives (#945) @cap:parler-par-canal-ext
       { type: 'card.closed', cardId: 'c', text: 'done' },
       {
         type: 'state',
+        seq: 7,
         jobId: 'j',
         conversationId: null,
         state: 'failed',
@@ -58,6 +59,7 @@ describe('the protocol events a device receives (#945) @cap:parler-par-canal-ext
       },
       {
         type: 'state',
+        seq: 7,
         jobId: 'j',
         conversationId: 'c',
         state: 'working',
@@ -73,9 +75,21 @@ describe('the protocol events a device receives (#945) @cap:parler-par-canal-ext
     expect(
       DeviceEventSchema.safeParse({
         type: 'state',
+        seq: 7,
         jobId: 'j',
         conversationId: null,
         state: 'x',
+        waitingFor: [],
+        deliverables: [],
+      }).success,
+    ).toBe(false);
+    // A state without its order is refused: the client could not compare it.
+    expect(
+      DeviceEventSchema.safeParse({
+        type: 'state',
+        jobId: 'j',
+        conversationId: null,
+        state: 'done',
         waitingFor: [],
         deliverables: [],
       }).success,
@@ -84,6 +98,7 @@ describe('the protocol events a device receives (#945) @cap:parler-par-canal-ext
     expect(
       DeviceEventSchema.safeParse({
         type: 'state',
+        seq: 7,
         jobId: 'j',
         conversationId: null,
         state: 'done',
