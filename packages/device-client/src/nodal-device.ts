@@ -527,7 +527,10 @@ export interface NodalDeviceEvents {
   'card.closed':
     | (EventOf<'card.closed'> & { source: 'stream' })
     | { type: 'card.closed'; cardId: string; text: null; source: 'reread' };
-  /** Where a job launched from this device stands. */
+  /**
+   * Where a job launched from this device stands. A state older than the last
+   * one shown for its run (a lower or equal `seq`) is never handed over.
+   */
   state: EventOf<'state'>;
   /** A job launched by voice ended, and its announcement is spoken: its voice follows as `speech`. */
   announce: EventOf<'announce'>;
@@ -741,6 +744,9 @@ export function connect(
     emit('card', card);
   };
 
+  /** The last `seq` shown per run (jobId). A `seq` counts within one runner's life. */
+  const lastStateSeq = new Map<string, number>();
+
   // ── The event stream ──
   const onDeviceEvent = (type: string, data: Record<string, unknown>): void => {
     switch (type) {
@@ -753,9 +759,18 @@ export function connect(
         emit('card.closed', { ...ev, source: 'stream' });
         return;
       }
+      case 'state': {
+        // Within a run, a `state` whose `seq` is not above the last one shown
+        // is older (published late): dropped, never shown over a newer one.
+        const ev = data as EventOf<'state'>;
+        const last = lastStateSeq.get(ev.jobId);
+        if (last !== undefined && ev.seq <= last) return;
+        lastStateSeq.set(ev.jobId, ev.seq);
+        emit('state', ev);
+        return;
+      }
       case 'bubble':
-      case 'state':
-        emit(type, data as never);
+        emit('bubble', data as EventOf<'bubble'>);
         return;
       case 'announce': {
         const ev = data as EventOf<'announce'>;
@@ -895,6 +910,9 @@ export function connect(
             } else if (msg.event === 'resync') {
               delay = initialMs;
               const d = parseData(msg);
+              // The runner may have restarted: its `seq` start again, so the
+              // last one shown of every run is forgotten.
+              lastStateSeq.clear();
               emit('resync', { reason: str(d['reason']) ?? 'unknown' });
               connections++;
               // What the stream lost, the base gives back: every card still

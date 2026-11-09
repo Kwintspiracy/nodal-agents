@@ -926,3 +926,52 @@ describe('a re-read after resync settles what the gap settled (review of #1013, 
     device.close();
   });
 });
+
+describe('a run’s state is never shown older than it is (seq, #1005) @cap:parler-par-canal-externe/moteur', () => {
+  const stateOf = (jobId: string, state: string, seq: number) => ({
+    type: 'state',
+    jobId,
+    conversationId: CONV,
+    state,
+    seq,
+    waitingFor: [],
+    deliverables: [],
+  });
+
+  it('a state older than the last one shown for its run is dropped; other runs are their own', async () => {
+    const live = liveStream();
+    const nodal = fakeNodal({ 'GET /api/devices/:id/events': () => live.response });
+    const device = connect(BASE, session, { fetch: nodal.fetch });
+    const states = collect(device, 'state');
+    live.send('state', stateOf('j1', 'working', 5), '5');
+    live.send('state', stateOf('j1', 'done', 9), '9');
+    // Published late: `waiting` (seq 7) arrives after `done` (seq 9).
+    live.send('state', stateOf('j1', 'waiting', 7), '7');
+    live.send('state', stateOf('j1', 'done', 9), '9');
+    live.send('state', stateOf('j2', 'working', 3), '10');
+    await until(() => states.some((s) => s.jobId === 'j2'));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(states.map((s) => `${s.jobId}:${s.state}:${s.seq}`)).toEqual([
+      'j1:working:5',
+      'j1:done:9',
+      'j2:working:3',
+    ]);
+    device.close();
+  });
+
+  it('after a resync (a restarted runner counts from 1 again), a lower seq is shown', async () => {
+    const live = liveStream();
+    const nodal = fakeNodal({
+      'GET /api/devices/:id/events': () => live.response,
+      'GET /api/devices/:id/cards': () => Response.json({ cards: [] }),
+    });
+    const device = connect(BASE, session, { fetch: nodal.fetch });
+    const states = collect(device, 'state');
+    live.send('state', stateOf('j1', 'working', 40), '40');
+    live.send('resync', { type: 'resync', reason: 'runner_restarted' }, '2');
+    live.send('state', stateOf('j1', 'done', 3), '3');
+    await until(() => states.length === 2);
+    expect(states.map((s) => `${s.state}:${s.seq}`)).toEqual(['working:40', 'done:3']);
+    device.close();
+  });
+});

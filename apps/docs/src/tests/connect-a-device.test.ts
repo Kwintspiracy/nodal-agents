@@ -42,6 +42,9 @@ describe('the Connect a device page @cap:parler-par-canal-externe/moteur', () =>
     }
     const stateRow = tableUnder('Events').find((r) => r.startsWith('| `state`'))!;
     for (const s of DEVICE_RUN_STATES) expect(stateRow).toContain(`\`${s}\``);
+    // Its ordering rule (#1005): `seq`, and what the client does with it.
+    expect(stateRow).toContain('`seq`');
+    expect(stateRow).toMatch(/dropped/);
   });
 
   it('documents every gesture and every route of the protocol', () => {

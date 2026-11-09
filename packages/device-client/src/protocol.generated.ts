@@ -134,6 +134,7 @@ export type DeviceEvent = {
     text: string;
 } | {
     type: "state";
+    seq: number;
     jobId: string;
     conversationId: string | null;
     state: "working" | "waiting" | "done" | "cancelled" | "failed";
