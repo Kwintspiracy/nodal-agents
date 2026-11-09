@@ -10,6 +10,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { DEVICE_CAPABILITIES, DEVICE_GESTURES, DeviceEventSchema } from '@nodal-agents/shared';
+import { connectSnippet } from '@nodal-agents/device-client/snippet';
 
 const page = readFileSync(
   new URL('../../content/docs/guides/connect-a-device.mdx', import.meta.url),
@@ -45,9 +46,11 @@ describe('the Connect a device page @cap:parler-par-canal-externe/moteur', () =>
     }
   });
 
-  it('names every capability a device can declare, and its 20-line example fits in 20 lines', () => {
+  it('names every capability a device can declare, and shows THE 20-line example, from its one source', () => {
     for (const c of DEVICE_CAPABILITIES) expect(page).toContain(`'${c}'`);
     const example = /```js title="speaker\.mjs"\n([\s\S]*?)```/.exec(page)?.[1] ?? '';
+    // The same text Settings → Devices can show, here with the same-machine address.
+    expect(example).toBe(connectSnippet('http://127.0.0.1:3001'));
     const lines = example.split('\n').filter((l) => l.trim() !== '');
     expect(lines.length).toBeGreaterThan(10);
     expect(lines.length).toBeLessThanOrEqual(20);

@@ -7,7 +7,8 @@
   "main": "./src/nodal-device.ts",
   "types": "./src/nodal-device.ts",
   "exports": {
-    ".": "./src/nodal-device.ts"
+    ".": "./src/nodal-device.ts",
+    "./snippet": "./src/snippet.ts"
   },
   "scripts": {
     "gen": "tsx scripts/gen-protocol.ts",
