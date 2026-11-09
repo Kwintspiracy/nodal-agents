@@ -8,7 +8,12 @@
 // @nodal-agents/shared, et une réponse d'une autre forme est une erreur dite,
 // jamais un écran à moitié rempli (invariant #4).
 
-import { VoiceStateSchema, type VoiceSetting, type VoiceState } from '@nodal-agents/shared';
+import {
+  VoiceStateSchema,
+  type SpeakingVoice,
+  type VoiceSetting,
+  type VoiceState,
+} from '@nodal-agents/shared';
 import { readSseMessages } from '@/lib/sse.ts';
 import { readSpokenEvent, type SpokenChunk } from '../chat/voice-playback.ts';
 
@@ -70,7 +75,8 @@ export type SampleDone = {
  */
 export async function playVoiceSample(opts: {
   text: string;
-  setting?: VoiceSetting;
+  /** La voix seule : l'essai parle, il n'écoute pas (#976). */
+  setting?: SpeakingVoice;
   signal: AbortSignal;
   onAudio: (chunk: SpokenChunk) => void;
   /** Une phrase est finie (`audio_end`), complète ou non : une voix compressée se joue alors. */

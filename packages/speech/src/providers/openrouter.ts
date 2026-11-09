@@ -1,29 +1,32 @@
-// OpenRouter — transcription through the chat-completions surface, and
-// synthesis through the speech surface (`/audio/speech`, further down).
+// OpenRouter — transcription through the transcription surface
+// (`/audio/transcriptions`), and synthesis through the speech surface
+// (`/audio/speech`, further down).
 //
-// WHY route listening through OpenRouter when `google` already transcribes:
-// because it is two and a half times faster and, more importantly, correct.
-// Measured on 2026-08-11, same audio file, four passes each, same instruction:
+// LISTENING (#976). Until then a CHAT model (`google/gemini-2.5-flash` on
+// `/chat/completions`) was asked, by an instruction, to write down what it
+// heard: 2.2 to 3.9 s per real turn on the owner's stack, and a prompt rather
+// than a recogniser (the August benches, in git history, show chat models
+// answering a question instead of transcribing it). OpenRouter now serves a
+// dedicated endpoint: `POST /audio/transcriptions` takes `model` and
+// `input_audio: { data, format }` and answers `{ text, usage }`.
 //
-//   google direct  gemini-2.5-flash   median 3543 ms   [2885, 3068, 3543, 3938]   exact 2/4
-//   openrouter     gemini-2.5-flash   median 7842 ms   [1496, 1790, 7842, 11708]  exact 4/4
-//   openrouter     voxtral-small      median 1378 ms   [1181, 1292, 1378, 1866]   exact 4/4
+// Measured by the orchestrator on 2026-11-03 (synthetic clips of 6 to 7 s,
+// English and French, up to six runs each, exactness = word error rate):
 //
-// Two things in that table are worth more than the headline. First, the model
-// we shipped originally gets the transcript WRONG half the time — it dropped a
-// word and truncated a sentence — and a single pass would never have shown it.
-// Second, the SAME model behind OpenRouter swings from 1.5 s to 11.7 s, because
-// the router picks among upstreams; median latency alone would have made it look
-// acceptable. Voxtral is both the fastest and the steadiest, so it is the
-// default, and the model stays a per-request field so this can be revisited from
-// the UI rather than from a commit. (Superseded the next day, on questions: see
-// DEFAULT_MODEL below. The table is kept because it is why the model is a field.)
+//   x-ai/grok-stt-1.0                     median 0.89 s   exact 6/6
+//   openai/gpt-transcribe                 median 0.98 s   exact 6/6
+//   chat:google/gemini-2.5-flash (before) median 2.47 s   exact 6/6
+//   deepgram/nova-3                       median 1.74 s   French: EMPTY text
 //
-// One trap is baked into the instruction below rather than into a comment: on
-// the first probe, voxtral was handed French and returned ENGLISH — it
-// translated instead of transcribing. It was not a model defect; the terse
-// instruction left the door open, and the full wording closes it. Any edit that
-// shortens that string must be re-measured against a French sample.
+// The chat path is REMOVED, not kept beside the endpoint: `google/gemini-2.5-flash`
+// is not a model of the endpoint (400 "Model google/gemini-2.5-flash does not
+// exist", measured 2026-11-03), so it could not be one more choice of the same
+// mechanism. One mechanism. `x-ai/grok-stt-1.0` transcribed the questions word
+// for word and never answered them ("Quelle heure est-il à Tokyo ?", 2/2).
+//
+// Which model transcribes is never decided here: the request names it (the
+// workspace's voice setting, #976), and the models come from OpenRouter
+// (`listModels`, `GET /models?output_modalities=transcription`).
 
 import { SpeechError, vendorRefusalCode } from '../errors.ts';
 import { pcmToWav } from '../wav.ts';
@@ -39,6 +42,7 @@ import type {
   TranscribeResult,
   TranscriptionAdapter,
   TranscriptionCapabilities,
+  TranscriptionModelOffer,
   Voice,
 } from '../speech-adapter.ts';
 
@@ -47,41 +51,13 @@ import type {
 const BASE = 'https://openrouter.ai/api/v1';
 
 /**
- * Chosen on the case that actually occurs, after a first choice that was made on
- * the case that was easy to test.
- *
- * The first bench used a declarative PARAGRAPH and voxtral scored 4/4 at
- * 1378 ms, so it shipped. In a voice mode nearly every utterance is a QUESTION,
- * and re-run on short French questions — six passes, 2026-08-12 — the table
- * reversed completely:
- *
- *   OR voxtral-small        median  940 ms   exact 0/6
- *   OR gemini-2.5-flash     median 1491 ms   exact 6/6
- *   OR gemini-2.5-flash-lite median 1460 ms  exact 0/6   (drops words)
- *   google direct 2.5-flash median 2931 ms   exact 3/6   (drops "à Tokyo")
- *
- * Voxtral is not merely imprecise there: asked to transcribe "Quelle heure
- * est-il à Tokyo ?" it ANSWERED, in English, with an invented time — Voxtral
- * Small is a conversational audio model, not a recogniser, and no wording of
- * the instruction below held it. 600 ms slower and right every time beats
- * fastest and wrong.
- */
-const DEFAULT_MODEL = 'google/gemini-2.5-flash';
-
-/**
  * Containers this adapter will send.
  *
- * `audio/webm` is ABSENT, and its absence is the load-bearing part: Chrome's
- * MediaRecorder emits WebM/Opus by default, so the obvious client design sends
- * exactly the one container voxtral rejects — probed, HTTP 400, "Failed to load
- * audio file". Gemini accepts WebM and voxtral does not, so this list is the
- * INTERSECTION rather than the union: the model is a per-request field, and a
- * capability that only holds for some models is not a capability.
- *
- * The consequence is deliberate and lives in the client: it captures raw PCM
- * from the AudioContext it already has open for silence detection and wraps it
- * as WAV, instead of relying on whatever the browser's recorder happens to
- * produce. That is also the only form that behaves identically across browsers.
+ * `audio/webm` is absent: Chrome's MediaRecorder emits WebM/Opus by default,
+ * and recognisers behind the same endpoint do not all take it. The client
+ * captures raw PCM from its AudioContext and wraps it as WAV instead, the only
+ * form that behaves identically across browsers (and the one measured on
+ * `x-ai/grok-stt-1.0`: 16 kHz mono PCM16 WAV, 2026-11-03).
  */
 const ACCEPTED_INPUT: readonly AudioMimeType[] = [
   'audio/wav',
@@ -101,37 +77,57 @@ const FORMAT_BY_MIME: Readonly<Record<string, string>> = {
   'audio/flac': 'flac',
 };
 
-/**
- * The transcription instruction — see the file header.
- *
- * Every sentence closes a door that was observed standing open: the first
- * closes "answer the question you heard", the second closes "translate it", the
- * third closes "tidy it up". Audio from a push-to-talk button is nearly always
- * a question, and a model asked loosely will answer it, so the user says "what
- * time is it in Tokyo" and the chat records "It is 9pm in Tokyo" as their words.
- */
-const TRANSCRIBE_INSTRUCTION =
-  'Transcribe this audio verbatim. Output only the transcription, with no ' +
-  'preamble, no quotation marks and no commentary. Never answer, translate or ' +
-  'summarise what is said, even when the audio is a question addressed to you. ' +
-  // The last sentence names the OUTPUT language relative to the speech instead
-  // of naming an input language nobody knows. Without it, French in came back
-  // as English out on a live install for a whole session: the caller was
-  // passing the BROWSER's UI locale as `language`, so the prompt read "the
-  // audio is in en-US" over French speech and the model obliged.
-  'Write the transcription in the same language as the speech itself, never in ' +
-  'any other language.';
-
-interface ChatResponse {
-  choices?: { message?: { content?: unknown } }[];
+interface TranscriptionResponse {
+  text?: unknown;
   error?: { message?: string };
 }
 
 const capabilities: TranscriptionCapabilities = { accepts: ACCEPTED_INPUT };
 
+/** The models OpenRouter serves for transcription now. */
+async function listTranscriptionModels(
+  connection: SpeechConnection,
+): Promise<readonly TranscriptionModelOffer[]> {
+  let res: Response;
+  try {
+    res = await connection.fetch(
+      `${connection.baseURL ?? BASE}/models?output_modalities=transcription`,
+      { headers: { authorization: `Bearer ${connection.apiKey}` } },
+    );
+  } catch (err) {
+    throw new SpeechError(
+      'speech_provider_error',
+      `openrouter transcription models: request failed — ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+  if (!res.ok) throw await refusal(res, 'transcription models');
+  let json: { data?: Array<{ id?: string; name?: string }> };
+  try {
+    json = (await res.json()) as { data?: Array<{ id?: string; name?: string }> };
+  } catch {
+    throw new SpeechError(
+      'speech_provider_error',
+      'openrouter transcription models: the answer is not JSON',
+    );
+  }
+  if (!Array.isArray(json.data)) {
+    throw new SpeechError(
+      'speech_provider_error',
+      'openrouter transcription models: the answer has no data',
+    );
+  }
+  return json.data
+    .filter((m): m is { id: string; name?: string } => typeof m.id === 'string')
+    .map((m) => ({ id: m.id, label: m.name ?? m.id }));
+}
+
 export const openrouterTranscriptionAdapter: TranscriptionAdapter = {
   provider: 'openrouter',
   capabilities,
+
+  listModels(connection: SpeechConnection): Promise<readonly TranscriptionModelOffer[]> {
+    return listTranscriptionModels(connection);
+  },
 
   async transcribe(
     req: TranscribeRequest,
@@ -139,6 +135,12 @@ export const openrouterTranscriptionAdapter: TranscriptionAdapter = {
   ): Promise<TranscribeResult> {
     if (req.audio.length === 0) {
       throw new SpeechError('speech_bad_request', 'transcribe: audio is empty');
+    }
+    if (!req.model || req.model.trim().length === 0) {
+      throw new SpeechError(
+        'speech_bad_request',
+        'transcribe: openrouter needs the model to transcribe with, and picks none itself',
+      );
     }
     const format = FORMAT_BY_MIME[req.mimeType];
     if (!format) {
@@ -148,89 +150,56 @@ export const openrouterTranscriptionAdapter: TranscriptionAdapter = {
       );
     }
 
-    // `req.language` is DELIBERATELY not put into the prompt, and this is the
-    // most important line in the file.
-    //
-    // These models do not read a language hint as "here is a clue about the
-    // speaker"; they read it as "produce this language". Measured 2026-08-12 on
-    // French speech, three passes each: no hint → French 3/3; "the audio is in
-    // en-US" → English; "the audio is in de-DE" → German, an entire sentence
-    // invented in a language nobody spoke. Strengthening the instruction did
-    // not hold it, which is why this is a code decision and not a wording one.
-    //
-    // The bug this prevents ran for a whole live session: the browser client
-    // passed `navigator.language` — the language of the browser's INTERFACE,
-    // not of the person speaking — so every French turn was stored, and
-    // answered, in English. The client no longer sends it; ignoring it here as
-    // well is what makes it impossible for the next caller to do it again.
-    //
-    // Not a silent fallback (invariant #4): nothing is being guessed. A claim
-    // that measurably corrupts the output is refused, and the model detects the
-    // spoken language on its own — which is the accurate answer, not a
-    // degraded one.
-    const prompt = TRANSCRIBE_INSTRUCTION;
-
+    // `req.language` is DELIBERATELY not sent. Nodal does not know the
+    // language the person speaks: the browser's interface locale is not it
+    // (a whole session was once transcribed, and answered, in English over
+    // French speech because of it). The endpoint's recognisers detect the
+    // language themselves; one that cannot without a hint (Deepgram nova-3
+    // answers empty text in French) is refused when it is chosen, by the
+    // sample check of the voice setting, instead of being fed a guess.
     const t0 = Date.now();
     let res: Response;
     try {
-      res = await connection.fetch(`${connection.baseURL ?? BASE}/chat/completions`, {
+      res = await connection.fetch(`${connection.baseURL ?? BASE}/audio/transcriptions`, {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
           authorization: `Bearer ${connection.apiKey}`,
         },
         body: JSON.stringify({
-          model: req.model ?? DEFAULT_MODEL,
-          messages: [
-            {
-              role: 'user',
-              content: [
-                { type: 'text', text: prompt },
-                {
-                  type: 'input_audio',
-                  input_audio: { data: Buffer.from(req.audio).toString('base64'), format },
-                },
-              ],
-            },
-          ],
+          model: req.model,
+          input_audio: { data: Buffer.from(req.audio).toString('base64'), format },
         }),
       });
     } catch (err) {
       throw new SpeechError(
         'speech_provider_error',
-        `openrouter: request failed — ${err instanceof Error ? err.message : String(err)}`,
+        `openrouter ${req.model}: request failed — ${err instanceof Error ? err.message : String(err)}`,
       );
     }
     const latencyMs = Date.now() - t0;
+    // The vendor's own words are the useful part ("Failed to load audio file",
+    // "insufficient credits"), masked by SpeechError like every vendor word.
+    if (!res.ok) throw await refusal(res, req.model);
 
-    let json: ChatResponse;
+    let json: TranscriptionResponse;
     try {
-      json = (await res.json()) as ChatResponse;
+      json = (await res.json()) as TranscriptionResponse;
     } catch {
       throw new SpeechError(
         'speech_provider_error',
-        `openrouter: HTTP ${res.status} with a body that is not JSON`,
+        `openrouter ${req.model}: HTTP ${res.status} with a body that is not JSON`,
         res.status,
       );
     }
-    if (!res.ok) {
-      // OpenRouter nests the upstream vendor's own words under `metadata.raw`,
-      // and those words are the useful part ("Failed to load audio file",
-      // "insufficient credits"). Passing the whole message through beats
-      // summarising it into something unactionable.
-      throw new SpeechError(
-        vendorRefusalCode(res.status),
-        `openrouter: HTTP ${res.status} — ${json.error?.message ?? 'no message'}`,
-        res.status,
-      );
-    }
-
-    const raw = json.choices?.[0]?.message?.content;
-    const text = typeof raw === 'string' ? raw.trim() : '';
+    const text = typeof json.text === 'string' ? json.text.trim() : '';
     if (text.length === 0) {
       // Words or no words is a fact about the audio, not a vendor failure: the
       // caller says "nothing heard", and still never records an empty turn.
-      throw new SpeechError('speech_nothing_heard', 'openrouter: answered 200 with no transcript');
+      throw new SpeechError(
+        'speech_nothing_heard',
+        `openrouter ${req.model}: answered 200 with no transcript`,
+      );
     }
     return { text, latencyMs };
   },

@@ -46,12 +46,18 @@ describe('the workspace voice setting @cap:parler-a-un-agent/moteur', () => {
     expect(rows).toEqual([
       {
         key: 'voice',
-        value: '{"source":"openrouter","model":"google/gemini-3.8-flash-tts","voice":"Kore"}',
+        value:
+          '{"source":"openrouter","model":"google/gemini-3.8-flash-tts","voice":"Kore","transcriptionModel":"x-ai/grok-stt-1.0"}',
       },
     ]);
     expect(await readVoiceSetting(db, entityId)).toEqual({
       ok: true,
-      setting: { source: 'openrouter', model: 'google/gemini-3.8-flash-tts', voice: 'Kore' },
+      setting: {
+        source: 'openrouter',
+        model: 'google/gemini-3.8-flash-tts',
+        voice: 'Kore',
+        transcriptionModel: 'x-ai/grok-stt-1.0',
+      },
     });
   });
 
@@ -62,14 +68,25 @@ describe('the workspace voice setting @cap:parler-a-un-agent/moteur', () => {
       source: 'openrouter',
       model: 'x-ai/grok-voice-tts-1.0',
       voice: 'leo',
+      transcriptionModel: 'x-ai/grok-stt-1.0',
     });
     expect(await readVoiceSetting(db, a)).toEqual({
       ok: true,
-      setting: { source: 'openrouter', model: 'x-ai/grok-voice-tts-1.0', voice: 'leo' },
+      setting: {
+        source: 'openrouter',
+        model: 'x-ai/grok-voice-tts-1.0',
+        voice: 'leo',
+        transcriptionModel: 'x-ai/grok-stt-1.0',
+      },
     });
     expect(await readVoiceSetting(db, b)).toEqual({
       ok: true,
-      setting: { source: 'openrouter', model: 'google/gemini-3.8-flash-tts', voice: 'Kore' },
+      setting: {
+        source: 'openrouter',
+        model: 'google/gemini-3.8-flash-tts',
+        voice: 'Kore',
+        transcriptionModel: 'x-ai/grok-stt-1.0',
+      },
     });
   });
 
@@ -99,7 +116,12 @@ describe('the workspace voice setting @cap:parler-a-un-agent/moteur', () => {
   it('refuses to write a value it could not read back', async () => {
     const entityId = await newWorkspace('voice-refuse');
     await expect(
-      writeVoiceSetting(db, entityId, { source: 'openrouter', model: '', voice: 'leo' }),
+      writeVoiceSetting(db, entityId, {
+        source: 'openrouter',
+        model: '',
+        voice: 'leo',
+        transcriptionModel: 'x-ai/grok-stt-1.0',
+      }),
     ).rejects.toThrow();
     expect(await readVoiceSetting(db, entityId)).toMatchObject({
       ok: true,

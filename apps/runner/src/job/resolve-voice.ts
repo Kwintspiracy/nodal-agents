@@ -37,15 +37,20 @@ import { providerFetch } from '@nodal-agents/llm';
 import { decrypt } from '@nodal-agents/secrets';
 import {
   VOICE_SOURCES,
+  type TranscriptionChoices,
   type VoiceFailureCode,
-  type VoiceSetting,
+  type SpeakingVoice,
   type VoiceSource,
   type VoiceSourceChoices,
 } from '@nodal-agents/shared';
 import {
   bindSpeech,
+  bindTranscription,
   getSpeechAdapter,
+  getTranscriptionAdapter,
   type BoundSpeech,
+  type BoundTranscription,
+  type TranscriptionModelOffer,
   type SpeechConnection,
   type SpeechModelOffer,
 } from '@nodal-agents/speech';
@@ -120,7 +125,7 @@ async function sourceConnection(
 export async function resolveVoice(
   db: AnyDrizzleDb,
   entityId: string | null,
-  setting?: VoiceSetting,
+  setting?: SpeakingVoice,
 ): Promise<VoiceResolution> {
   if (entityId === null) return { ok: false, code: 'voice_setting_missing' };
   let chosen = setting;
@@ -154,6 +159,7 @@ const catalog = new Map<string, Listed>();
 /** Vider la liste gardée — pour les tests. */
 export function clearVoiceCatalog(): void {
   catalog.clear();
+  earCatalog.clear();
 }
 
 /** La liste gardée appartient à la source, à son adresse et à SA clé, jamais à une autre. */
@@ -231,7 +237,7 @@ export async function voiceChoices(
  * pas, ou une voix que CE modèle n'offre pas, est refusé avec son code.
  */
 export function voiceRefusal(
-  setting: VoiceSetting,
+  setting: SpeakingVoice,
   choices: readonly VoiceSourceChoices[],
 ): VoiceFailure | null {
   const src = choices.find((c) => c.source === setting.source);
@@ -255,6 +261,112 @@ export function voiceRefusal(
         model.voices.length === 0 ? 'no voice' : model.voices.map((v) => v.id).join(', ')
       }`.slice(0, 300),
     };
+  }
+  return null;
+}
+
+// ─── L'oreille (#976) ────────────────────────────────────────────────────────
+//
+// Le modèle qui transcrit les tours dits est le même réglage (`transcriptionModel`),
+// relu par la même résolution, sur la clé OpenRouter de l'espace : la
+// transcription passe par l'endpoint de transcription d'OpenRouter
+// (`/audio/transcriptions`, packages/speech). Avant #976 elle passait par un
+// modèle de chat que rien ne permettait de choisir.
+
+/** L'oreille prête à transcrire : le modèle du réglage, et l'adaptateur lié à la clé. */
+export interface WorkspaceEar {
+  model: string;
+  transcription: BoundTranscription;
+}
+
+export type EarResolution = { ok: true; ear: WorkspaceEar } | ({ ok: false } & VoiceFailure);
+
+/**
+ * L'oreille de l'espace. `model` : un modèle à essayer AVANT de l'enregistrer
+ * (le contrôle d'un enregistrement) ; il passe par la même clé et le même
+ * adaptateur que le modèle enregistré.
+ */
+export async function resolveEar(
+  db: AnyDrizzleDb,
+  entityId: string | null,
+  model?: string,
+): Promise<EarResolution> {
+  if (entityId === null) return { ok: false, code: 'voice_setting_missing' };
+  let chosen = model;
+  if (!chosen) {
+    const read = await readVoiceSetting(db, entityId);
+    if (!read.ok) {
+      return { ok: false, code: read.code, ...(read.detail ? { detail: read.detail } : {}) };
+    }
+    chosen = read.setting.transcriptionModel;
+  }
+  const conn = await sourceConnection(db, entityId, 'openrouter');
+  if (!conn.ok) return conn;
+  return {
+    ok: true,
+    ear: {
+      model: chosen,
+      transcription: bindTranscription(getTranscriptionAdapter('openrouter'), conn.connection),
+    },
+  };
+}
+
+type ListedEar = { models: readonly TranscriptionModelOffer[]; listedAt: Date };
+const earCatalog = new Map<string, ListedEar>();
+
+/** Ce que l'endpoint de transcription offre à l'espace, ou pourquoi il ne l'offre pas. */
+export async function transcriptionChoices(
+  db: AnyDrizzleDb,
+  entityId: string,
+  now: () => number = Date.now,
+): Promise<TranscriptionChoices> {
+  const conn = await sourceConnection(db, entityId, 'openrouter');
+  if (!conn.ok) {
+    return {
+      state: 'unavailable',
+      code: conn.code,
+      ...(conn.detail ? { detail: conn.detail } : {}),
+    };
+  }
+  const k = catalogKey('openrouter', conn.connection);
+  try {
+    let listed = earCatalog.get(k);
+    if (!listed || now() - listed.listedAt.getTime() >= VOICE_CATALOG_TTL_MS) {
+      const adapter = getTranscriptionAdapter('openrouter');
+      if (!adapter.listModels)
+        throw new Error('the openrouter transcription adapter cannot list its models');
+      listed = { models: await adapter.listModels(conn.connection), listedAt: new Date(now()) };
+      earCatalog.set(k, listed);
+    }
+    return {
+      state: 'available',
+      models: listed.models.map((m) => ({ id: m.id, label: m.label })),
+      listedAt: listed.listedAt.toISOString(),
+      cacheSeconds: VOICE_CATALOG_TTL_MS / 1000,
+    };
+  } catch (err) {
+    return {
+      state: 'unavailable',
+      code: 'voice_catalog_unreachable',
+      detail: (err instanceof Error ? err.message : String(err)).slice(0, 300),
+    };
+  }
+}
+
+/** Le modèle de transcription est-il servi par l'endpoint ? `null` : oui. */
+export function transcriptionRefusal(
+  model: string,
+  choices: TranscriptionChoices,
+): VoiceFailure | null {
+  if (choices.state === 'unavailable') {
+    return {
+      code: choices.code,
+      source: 'openrouter',
+      ...(choices.detail ? { detail: choices.detail } : {}),
+    };
+  }
+  if (!choices.models.some((m) => m.id === model)) {
+    return { code: 'transcription_model_not_offered', source: 'openrouter', detail: model };
   }
   return null;
 }

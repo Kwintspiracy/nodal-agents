@@ -37,6 +37,7 @@ import {
 } from './voice-turn.ts';
 import { startSpokenStream, stopSpeaking, type SpokenStream } from './voice-playback.ts';
 import { stopChatTurn } from './chat-stream.ts';
+import { armSpokenAnnouncements } from './job-reply-voice.ts';
 
 /** Au-delà de cette distance du point d'appui, relâcher annule. */
 export const SLIDE_CANCEL_PX = 60;
@@ -50,7 +51,7 @@ export type VoicePhase = 'idle' | 'listening' | 'transcribing';
 export type VoiceNote =
   | { kind: 'cancelled' }
   | { kind: 'blocked' }
-  | { kind: 'nothing_heard' }
+  | { kind: 'nothing_heard'; model: string | null }
   | { kind: 'error'; text: string; detail?: string };
 
 type Active = {
@@ -193,7 +194,7 @@ export function useVoiceTurn(opts: {
     }
     setPhase('idle');
     if (outcome.kind === 'nothing_heard') {
-      setNote({ kind: 'nothing_heard' });
+      setNote({ kind: 'nothing_heard', model: outcome.model });
       await unused(me);
       return;
     }
@@ -254,6 +255,9 @@ export function useVoiceTurn(opts: {
     // celle qui joue, ni sur celle d'une réponse qui arrive encore.
     if (replyingTurn.current) replyingTurn.current.silenced = true;
     stopSpeaking();
+    // Le travail que ce tour lancera s'annoncera quand il finit (#967) : le
+    // player de la coquille écoute dès maintenant, avant que le tour parte.
+    armSpokenAnnouncements();
     setNote(null);
     setLevels([]);
     setStartedAt(null);
@@ -445,7 +449,11 @@ export function VoiceNoteLine({ note }: { note: VoiceNote }) {
       dot = <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-err" />;
       break;
     case 'nothing_heard':
-      text = 'Nothing heard. Keep holding the button while you speak.';
+      // Le modèle est nommé quand l'audio lui est parvenu (#976) : un modèle sans
+      // détection de langue peut rendre un texte vide pour une voix bien réelle.
+      text = note.model
+        ? `Nothing heard by ${note.model}. Keep holding the button while you speak.`
+        : 'Nothing heard. Keep holding the button while you speak.';
       break;
     case 'error':
       text = note.text;

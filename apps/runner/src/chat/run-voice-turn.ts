@@ -6,7 +6,7 @@
 //
 //   1. `hearVoiceTurn` : l'audio reçu par morceaux (`voice-utterances.ts`) est
 //      transcrit par packages/speech, sur la clé OpenRouter de l'espace
-//      (`resolveTranscription`). Tout ce qui se refuse se refuse ICI, avant
+//      (`resolveEar`, le modèle du réglage de voix, #976). Tout ce qui se refuse se refuse ICI, avant
 //      que la route ouvre son flux : un audio illisible, l'espace sans clé, la
 //      transcription en échec, et le « rien entendu ». Aucun n'écrit de ligne
 //      (invariant #4) : un message vide serait un tour que personne n'a dit ;
@@ -35,8 +35,9 @@
 // appels de modèle l'un après l'autre et 4,5 à 7 s pour une voix qui rendait la
 // réponse ENTIÈRE avant le premier son.
 //
-// Le job lancé hérite de la forme `spoken` : sa réponse finale est écrite pour
-// être dite (#967 la dira).
+// Le job lancé hérite de la forme `spoken` : son résultat s'écrit pour être lu,
+// et quand il finit l'agent écrit une annonce courte, qui est dite (#967,
+// chat/job-reply-voice.ts).
 //
 // LA VOIX est celle que l'espace a choisie (#969) : sa source, son modèle et sa
 // voix, relus à chaque tour par `resolveVoice` (job/resolve-voice.ts), la même
@@ -53,20 +54,43 @@ import {
   readWav,
   splitSentences,
 } from '@nodal-agents/speech';
-import { redactSecretsInText, type VoiceSetting } from '@nodal-agents/shared';
+import { redactSecretsInText, type SpeakingVoice } from '@nodal-agents/shared';
 import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
-import { resolveTranscription } from '../job/resolve-speech.ts';
-import { resolveVoice } from '../job/resolve-voice.ts';
+import { resolveEar, resolveVoice } from '../job/resolve-voice.ts';
 import { playChatTurn } from './play-turn.ts';
 import type { VoiceUtterance } from './voice-utterances.ts';
 import { createReplySpeech, type ReplySpeech, type SpeechFailure } from './voice-speech.ts';
 
 /** Ce que l'oreille a rendu. Les codes sont des faits ; l'écran ou le module les dit. */
 export type VoiceTurnHearing =
-  | { outcome: 'heard'; transcript: string; durationMs: number }
-  | { outcome: 'nothing_heard'; durationMs: number }
-  | { outcome: 'failed'; status: 400 | 409 | 502; error: string; detail?: string };
+  | { outcome: 'heard'; transcript: string; durationMs: number; model: string }
+  | { outcome: 'nothing_heard'; durationMs: number; model: string | null }
+  | {
+      outcome: 'failed';
+      status: 400 | 409 | 502;
+      error: string;
+      detail?: string;
+      /** Le modèle qui devait transcrire, quand il est connu. */
+      model?: string;
+    };
+
+/**
+ * Tout échec de l'oreille est écrit au journal du runner (#976) : son code, le
+ * modèle et les mots du fournisseur (masqués par packages/speech), JAMAIS les
+ * mots de la personne. Un tour du 03/11 a échoué en 502 `transcription_failed`
+ * après 0,75 s, et rien dans le journal ne disait pourquoi.
+ */
+function logHearingFailure(h: Extract<VoiceTurnHearing, { outcome: 'failed' }>): void {
+  console.warn(
+    `[voice-turn] transcription failed ${JSON.stringify({
+      error: h.error,
+      status: h.status,
+      model: h.model ?? null,
+      ...(h.detail ? { detail: h.detail.slice(0, 500) } : {}),
+    })}`,
+  );
+}
 
 /** L'audio du tour en WAV, avec sa durée. Un audio illisible est refusé, jamais deviné. */
 function utteranceAudio(
@@ -101,29 +125,54 @@ export async function hearVoiceTurn(
   deps: RunnerDeps,
   u: VoiceUtterance,
 ): Promise<VoiceTurnHearing> {
+  const failed = (h: Extract<VoiceTurnHearing, { outcome: 'failed' }>): VoiceTurnHearing => {
+    logHearingFailure(h);
+    return h;
+  };
   const audio = utteranceAudio(u);
   if (!audio.ok) {
-    return { outcome: 'failed', status: 400, error: 'audio_malformed', detail: audio.detail };
+    return failed({
+      outcome: 'failed',
+      status: 400,
+      error: 'audio_malformed',
+      detail: audio.detail,
+    });
   }
   // Aucun échantillon audible : rien n'a été dit, et rien ne part au fournisseur.
-  if (audio.durationMs === 0) return { outcome: 'nothing_heard', durationMs: 0 };
+  if (audio.durationMs === 0) return { outcome: 'nothing_heard', durationMs: 0, model: null };
 
-  const transcription = await resolveTranscription(deps.db, u.entityId);
-  if (!transcription) return { outcome: 'failed', status: 409, error: 'speech_not_configured' };
+  // L'oreille de l'espace (#976) : le modèle du réglage, relu à chaque tour.
+  const resolved = await resolveEar(deps.db, u.entityId);
+  if (!resolved.ok) {
+    return failed({
+      outcome: 'failed',
+      status: 409,
+      error: resolved.code,
+      ...(resolved.source || resolved.detail
+        ? { detail: [resolved.source, resolved.detail].filter(Boolean).join(': ') }
+        : {}),
+    });
+  }
+  const { model, transcription } = resolved.ear;
 
   try {
-    const { text } = await transcription.transcribe({ audio: audio.wav, mimeType: 'audio/wav' });
-    return { outcome: 'heard', transcript: text, durationMs: audio.durationMs };
+    const { text } = await transcription.transcribe({
+      audio: audio.wav,
+      mimeType: 'audio/wav',
+      model,
+    });
+    return { outcome: 'heard', transcript: text, durationMs: audio.durationMs, model };
   } catch (err) {
     if (err instanceof SpeechError && err.code === 'speech_nothing_heard') {
-      return { outcome: 'nothing_heard', durationMs: audio.durationMs };
+      return { outcome: 'nothing_heard', durationMs: audio.durationMs, model };
     }
-    return {
+    return failed({
       outcome: 'failed',
       status: 502,
       error: 'transcription_failed',
       detail: err instanceof Error ? err.message : String(err),
-    };
+      model,
+    });
   }
 }
 
@@ -145,7 +194,23 @@ export const VOICE_TIMING_MARKS = [
   'firstAudio',
   'done',
 ] as const;
-export type VoiceTimingMark = (typeof VOICE_TIMING_MARKS)[number];
+
+/**
+ * Les temps de l'annonce DITE d'un job (#967), en millisecondes depuis la fin
+ * du job (le COMMIT de son statut terminal) : l'annonce écrite par l'agent, le
+ * fournisseur de voix pour la première phrase, puis le premier et le dernier
+ * octet de voix sortis. Personne n'y parle : ni transcription, ni fragment.
+ */
+export const JOB_REPLY_TIMING_MARKS = [
+  'announcement',
+  'firstSentenceVendorByte',
+  'firstSentenceVendorDone',
+  'firstAudio',
+  'lastAudio',
+] as const;
+export type VoiceTimingMark =
+  | (typeof VOICE_TIMING_MARKS)[number]
+  | (typeof JOB_REPLY_TIMING_MARKS)[number];
 
 /**
  * La voix d'un tour, dans sa ligne (#969) : la source, le modèle et la voix
@@ -165,6 +230,8 @@ export interface VoiceTiming {
   mark(name: VoiceTimingMark): void;
   /** Nomme la voix du tour. */
   voice(v: VoiceTimingVoice): void;
+  /** Nomme le modèle qui a transcrit le tour (#976). */
+  ear(model: string | null): void;
   /** La ligne du journal. */
   line(): string;
 }
@@ -172,11 +239,17 @@ export interface VoiceTiming {
 export function createVoiceTiming(
   startedAt: number,
   now: () => number = Date.now,
-  /** Le nom de la ligne : `voice-turn` pour un tour, `voice-sample` pour l'essai des réglages. */
+  /**
+   * Le nom de la ligne : `voice-turn` pour un tour, `voice-sample` pour l'essai
+   * des réglages, `voice-job-reply` pour la réponse dite d'un job.
+   */
   label = 'voice-turn',
+  /** Les marques que la ligne écrit, dans cet ordre. */
+  marksOfLine: readonly VoiceTimingMark[] = VOICE_TIMING_MARKS,
 ): VoiceTiming {
   const marks = new Map<VoiceTimingMark, number>();
   let named: VoiceTimingVoice = { source: null, model: null, voice: null };
+  let earModel: string | null = null;
   return {
     mark(name) {
       if (!marks.has(name)) marks.set(name, now() - startedAt);
@@ -184,11 +257,15 @@ export function createVoiceTiming(
     voice(v) {
       named = v;
     },
+    ear(model) {
+      earModel = model;
+    },
     line() {
-      const ids = (['source', 'model', 'voice'] as const).map(
-        (k) => `"${k}":${JSON.stringify(named[k])}`,
-      );
-      const fields = VOICE_TIMING_MARKS.map((m) => `"${m}Ms":${String(marks.get(m) ?? null)}`);
+      const ids = [
+        ...(['source', 'model', 'voice'] as const).map((k) => `"${k}":${JSON.stringify(named[k])}`),
+        `"transcriptionModel":${JSON.stringify(earModel)}`,
+      ];
+      const fields = marksOfLine.map((m) => `"${m}Ms":${String(marks.get(m) ?? null)}`);
       return `[${label}] timing {${[...ids, ...fields].join(',')}}`;
     },
   };
@@ -209,7 +286,7 @@ export async function openReplyVoice(
   entityId: string,
   emit: VoiceTurnEmit,
   timing: VoiceTiming,
-  setting?: VoiceSetting,
+  setting?: SpeakingVoice,
 ): Promise<{
   voice: ReplySpeech | null;
   unavailable: SpeechFailure | null;

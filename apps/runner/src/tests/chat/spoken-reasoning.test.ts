@@ -149,7 +149,7 @@ describe('the effort of a spoken chat turn (#977) @cap:parler-a-un-agent/moteur'
 
   // Mutation verified: execute.ts resolving with `spokenReasoningEffort` when
   // the job's reply_rendering is 'spoken' → red (the job gets "off").
-  it('the job a spoken turn launches keeps the agent’s Reasoning, and is still heard', async () => {
+  it('the job a spoken turn launches keeps the agent’s Reasoning, and writes its result to be read', async () => {
     const ids = await agentWith({ reasoning: 'high', spoken: 'off' });
     const heard = await turn(ids, 'spoken', [
       { calls: [{ name: 'run_task', args: { instruction: '' } }] },
@@ -167,7 +167,8 @@ describe('the effort of a spoken chat turn (#977) @cap:parler-a-un-agent/moteur'
     expect(jobBodies.length).toBeGreaterThan(0);
     // Every request of the job, not just the first one.
     expect(jobBodies.map(reasoningOf)).toEqual(jobBodies.map(() => wire('high')));
-    // The job's prompt still says its reply is heard (#941): only the effort differs.
-    expect(systemText(jobBodies[0]!)).toContain('- rendering: spoken');
+    // #967: the job's result is read, its prompt no longer says "heard"; what is
+    // heard is its announcement (chat/job-reply-voice.ts).
+    expect(systemText(jobBodies[0]!)).not.toContain('- rendering:');
   });
 });

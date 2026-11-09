@@ -11,6 +11,12 @@
 // Deux lecteurs : le composeur (Stop prend la place d'Envoyer) et le fil (la
 // pastille « Speaking » sur la réponse qui joue).
 //
+// Deux façons d'ouvrir une voix. `startSpokenStream` prend la place de celle
+// qui joue : la réponse d'un tour que la personne vient de dire, l'essai des
+// réglages. `queueSpokenStream` attend son tour (#967) : la réponse d'un job
+// qui finit pendant qu'une autre voix parle ne la coupe jamais, elle joue
+// après. Stop jette l'une et les autres.
+//
 // LA VOIX ARRIVE EN MORCEAUX (#943), dans l'ordre de leur rang : la route du
 // tour les écrit phrase par phrase pendant que la réponse s'écrit. Ils sont
 // joués BOUT À BOUT sur un seul AudioContext : chaque unité est décodée en
@@ -202,6 +208,7 @@ function finishIfDone(me: Playback): void {
   if (!me.ended || me.sources.size > 0 || current !== me) return;
   current = null;
   emit();
+  nextWaiting();
 }
 
 function kill(me: Playback): void {
@@ -216,8 +223,23 @@ function kill(me: Playback): void {
   me.sources.clear();
 }
 
-/** Arrêter la voix qui joue, s'il y en a une. */
+/**
+ * Les voix qui attendent leur tour (#967), dans l'ordre : chacune démarre
+ * quand celle d'avant a fini de jouer. `drop` : elle ne jouera pas.
+ */
+const waiting: Array<{ start: () => void; drop: () => void }> = [];
+
+/** La voix en cours s'est tue d'elle-même : la suivante qui attend prend sa place. */
+function nextWaiting(): void {
+  while (current === null && waiting.length > 0) waiting.shift()!.start();
+}
+
+/**
+ * Arrêter la voix qui joue, s'il y en a une, et celles qui attendaient leur
+ * tour : Stop, ou la personne qui parle à l'agent, veulent le silence.
+ */
 export function stopSpeaking(): void {
+  for (const w of waiting.splice(0)) w.drop();
   if (!current) return;
   const me = current;
   current = null;
@@ -235,6 +257,52 @@ export function startSpokenStream(opts: {
   onError: (message: string) => void;
 }): SpokenStream {
   stopSpeaking();
+  return openPlayback(opts);
+}
+
+/**
+ * Ouvrir la voix d'une réponse APRÈS celle qui joue (#967) : la réponse d'un
+ * job qui finit pendant qu'une autre voix parle ne la coupe jamais. Elle
+ * attend que les voix d'avant aient fini de jouer, puis joue ce qu'elle a reçu
+ * entre-temps, dans l'ordre. Rien ne joue : elle démarre tout de suite. Stop
+ * (`stopSpeaking`) ou une voix qui prend la place la jettent avec le reste.
+ */
+export function queueSpokenStream(opts: {
+  reply: string;
+  onError: (message: string) => void;
+}): SpokenStream {
+  if (current === null && waiting.length === 0) return openPlayback(opts);
+  let real: SpokenStream | null = null;
+  let dropped = false;
+  const held: Array<(s: SpokenStream) => void> = [];
+  const pass = (call: (s: SpokenStream) => void): void => {
+    if (dropped) return;
+    if (real) call(real);
+    else held.push(call);
+  };
+  waiting.push({
+    start: () => {
+      const s = openPlayback(opts);
+      real = s;
+      for (const call of held.splice(0)) call(s);
+    },
+    drop: () => {
+      dropped = true;
+      held.length = 0;
+    },
+  });
+  return {
+    push: (chunk) => pass((s) => s.push(chunk)),
+    endSentence: (sentence, complete) => pass((s) => s.endSentence(sentence, complete)),
+    setReply: (reply) => pass((s) => s.setReply(reply)),
+    end: () => pass((s) => s.end()),
+    get stopped() {
+      return dropped || (real?.stopped ?? false);
+    },
+  };
+}
+
+function openPlayback(opts: { reply: string; onError: (message: string) => void }): SpokenStream {
   const me: Playback = {
     reply: opts.reply,
     sources: new Set(),
@@ -249,8 +317,13 @@ export function startSpokenStream(opts: {
   current = me;
   const fail = (message: string): void => {
     if (me.dead) return;
-    if (current === me) stopSpeaking();
-    else kill(me);
+    kill(me);
+    if (current === me) {
+      // Cette voix seule se tait : celles qui attendaient ne sont pas en cause.
+      current = null;
+      emit();
+      nextWaiting();
+    }
     opts.onError(message);
   };
   /** Une unité de plus, décodée puis programmée APRÈS celles d'avant. */

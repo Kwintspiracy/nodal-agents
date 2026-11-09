@@ -48,6 +48,8 @@ import {
 import {
   SAMPLE_SENTENCE,
   SOURCE_LABELS,
+  earListedText,
+  earUnavailableText,
   listedText,
   refusalText,
   sampleErrorText,
@@ -55,10 +57,14 @@ import {
   sourceUnavailableText,
 } from './voice-copy.ts';
 
-type Draft = { source: VoiceSource; model: string; voice: string };
+type Draft = { source: VoiceSource; model: string; voice: string; transcriptionModel: string };
+
+/** The part that SPEAKS is the same (the sample needs no setting then). */
+const sameVoice = (a: Draft | null, b: VoiceSetting | null): boolean =>
+  a !== null && b !== null && a.source === b.source && a.model === b.model && a.voice === b.voice;
 
 const same = (a: Draft | null, b: VoiceSetting | null): boolean =>
-  a !== null && b !== null && a.source === b.source && a.model === b.model && a.voice === b.voice;
+  sameVoice(a, b) && a !== null && b !== null && a.transcriptionModel === b.transcriptionModel;
 
 export default function VoiceSection() {
   const [state, setState] = useState<VoiceState | null>(null);
@@ -120,16 +126,27 @@ export default function VoiceSection() {
   const choices = source ? state.sources.find((s) => s.source === source) : undefined;
   const models = choices?.state === 'available' ? choices.models : [];
   const model = models.find((m) => m.id === draft?.model);
-  const complete =
+  const voiceComplete =
     draft !== null && model !== undefined && model.voices.some((v) => v.id === draft.voice);
+  // L'oreille (#976) : les modèles de l'endpoint de transcription d'OpenRouter.
+  const ear = state.transcription;
+  const earModels = ear.state === 'available' ? ear.models : [];
+  const earComplete = draft !== null && earModels.some((m) => m.id === draft.transcriptionModel);
+  const complete = voiceComplete && earComplete;
   const dirty = draft !== null && !same(draft, saved);
+  const voiceDirty = draft !== null && !sameVoice(draft, saved);
 
   function pickSource(next: VoiceSource) {
     setSaveError(null);
     setSampleError(null);
     if (draft?.source === next) return;
     // Rien n'est choisi à la place de la personne : le modèle et la voix restent à choisir.
-    setDraft({ source: next, model: '', voice: '' });
+    setDraft({
+      source: next,
+      model: '',
+      voice: '',
+      transcriptionModel: draft?.transcriptionModel ?? '',
+    });
   }
 
   function pickModel(id: string) {
@@ -143,6 +160,11 @@ export default function VoiceSection() {
       model: id,
       voice: offers.some((v) => v.id === draft.voice) ? draft.voice : '',
     });
+  }
+
+  function pickEar(id: string) {
+    setSaveError(null);
+    if (draft) setDraft({ ...draft, transcriptionModel: id });
   }
 
   function pickVoice(id: string) {
@@ -161,7 +183,11 @@ export default function VoiceSection() {
     e.preventDefault();
     if (!draft || !dirty) return;
     if (!complete) {
-      setSaveError('Choose a model and a voice to save.');
+      setSaveError(
+        voiceComplete
+          ? 'Choose a transcription model to save.'
+          : 'Choose a model and a voice to save.',
+      );
       return;
     }
     const setting = draft;
@@ -171,13 +197,13 @@ export default function VoiceSection() {
         setSaveError(refusalText(r.refusal));
         return;
       }
-      setState((s) => (s ? { sources: s.sources, setting } : s));
+      setState((s) => (s ? { ...s, setting, settingProblem: undefined } : s));
       toast.success('Voice saved. The next turn speaks with it.');
     });
   }
 
   async function sample() {
-    if (!draft || !complete) return;
+    if (!draft || !voiceComplete) return;
     stopSample();
     setSampleError(null);
     const ctrl = new AbortController();
@@ -194,7 +220,9 @@ export default function VoiceSection() {
     const r = await playVoiceSample({
       text: SAMPLE_SENTENCE,
       // La voix enregistrée part sans réglage : le runner relit la sienne.
-      ...(dirty ? { setting: draft } : {}),
+      ...(voiceDirty
+        ? { setting: { source: draft.source, model: draft.model, voice: draft.voice } }
+        : {}),
       signal: ctrl.signal,
       onAudio: (chunk) => spoken.push(chunk),
       onAudioEnd: (sentence, complete) => spoken.endSentence(sentence, complete),
@@ -290,6 +318,39 @@ export default function VoiceSection() {
         </>
       )}
 
+      <div className="flex flex-col gap-1.5">
+        {ear.state === 'available' ? (
+          <>
+            <Select
+              label="Transcription"
+              value={draft?.transcriptionModel ?? ''}
+              onChange={(e) => pickEar(e.target.value)}
+              disabled={isSaving || draft === null}
+              required
+              containerClassName="max-w-[420px]"
+              data-testid="voice-transcription"
+            >
+              <option value="">Choose a model</option>
+              {earModels.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.label}
+                </option>
+              ))}
+            </Select>
+            <p className="text-body-13 text-ink-3" data-testid="voice-transcription-listed">
+              {earListedText(ear.cacheSeconds)}
+            </p>
+          </>
+        ) : (
+          <>
+            <FieldLabel>Transcription</FieldLabel>
+            <p className="text-body-13 text-warn" data-testid="voice-transcription-unavailable">
+              {earUnavailableText(ear.code, ear.detail)}
+            </p>
+          </>
+        )}
+      </div>
+
       <div className="flex flex-wrap items-center gap-3">
         {audible ? (
           <PrimaryButton
@@ -307,7 +368,7 @@ export default function VoiceSection() {
             variant="neutral"
             size="sm"
             onClick={() => void sample()}
-            disabled={!complete || isSaving}
+            disabled={!voiceComplete || isSaving}
             data-testid="voice-sample"
           >
             <Play size={14} weight="fill" aria-hidden /> Play a sample

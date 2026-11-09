@@ -142,8 +142,9 @@ export interface JobContext {
   /**
    * Comment la personne recevra la réponse (#941) : lue (`text`, absent) ou
    * entendue (`spoken`). Un fait de la DEMANDE, posé par le runner depuis le
-   * tour vocal ou depuis `agent_jobs.reply_rendering` du job qu'il a lancé —
-   * jamais du canal, que le même fil sert tapé et dit.
+   * tour vocal — jamais du canal, que le même fil sert tapé et dit. Un job,
+   * même lancé par la voix, ne le pose plus (#967) : son résultat se lit, et
+   * ce qui s'entend est son annonce (`buildSpokenAnnouncement`).
    *
    * À côté de `channelDelivery`, et non dedans : `channelDelivery` n'existe
    * que pour un job qui tient un outil d'envoi, alors que toute réponse a une

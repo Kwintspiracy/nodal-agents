@@ -62,7 +62,8 @@ export type VoiceFailure = {
 
 export type VoiceTurnOutcome =
   | { kind: 'replied'; reply: VoiceReply }
-  | { kind: 'nothing_heard' }
+  /** `model` : le modèle qui n'a rien écrit (#976) ; `null` : rien n'est parti. */
+  | { kind: 'nothing_heard'; model: string | null }
   | { kind: 'cancelled' }
   /** La personne a arrêté la réponse : le flux a été abandonné (`abort`). */
   | { kind: 'aborted' }
@@ -250,7 +251,7 @@ async function readEnd(
       const data = JSON.parse(msg.data) as Record<string, unknown>;
       switch (msg.event) {
         case 'nothing_heard':
-          return { kind: 'nothing_heard' };
+          return { kind: 'nothing_heard', model: str(data['model']) };
         case 'transcript':
           transcript = str(data['transcript']) ?? '';
           durationMs = typeof data['durationMs'] === 'number' ? data['durationMs'] : 0;
@@ -313,8 +314,14 @@ async function readEnd(
 /** Le texte de l'écran pour une étape refusée — la phrase de chaque code connu. */
 export function voiceFailureText(f: VoiceFailure): string {
   switch (f.error) {
-    case 'speech_not_configured':
+    // L'oreille de l'espace ne se résout pas (#976) : le code de la résolution.
+    case 'voice_key_missing':
       return 'Voice needs an OpenRouter key. Add one in LLM Providers, then hold the button again.';
+    case 'voice_key_undecryptable':
+      return 'The OpenRouter key could not be read. Enter it again in LLM Providers.';
+    case 'voice_setting_missing':
+    case 'voice_setting_unreadable':
+      return 'No voice is set for this workspace. Choose one in Settings, then hold the button again.';
     case 'audio_too_long':
       return 'That was too long to send. Nothing was sent.';
     case 'transcription_failed':

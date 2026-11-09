@@ -11,11 +11,14 @@
 //
 // LA FIN DU TOUR (#943). Tout ce qui se refuse est refusé AVANT le flux, en
 // JSON avec son statut, comme toute autre route : `turn_not_found` 404,
-// `audio_malformed` 400, `speech_not_configured` 409, `transcription_failed`
-// 502 (avec `detail`, les mots du fournisseur). Rien n'est rangé. Sinon la
+// `audio_malformed` 400, 409 quand l'espace n'a pas d'oreille (le code de la
+// résolution : `voice_key_missing` avec `source`, `voice_setting_missing`,
+// `voice_setting_unreadable`…, #976), `transcription_failed` 502 (avec
+// `detail`, les mots du fournisseur, masqués). Chaque refus est écrit au
+// journal du runner avec son code. Rien n'est rangé. Sinon la
 // réponse est `text/event-stream`, et ses événements sont, dans cet ordre :
 //
-//   event: nothing_heard  data: { durationMs }         SEUL événement du flux : aucun mot
+//   event: nothing_heard  data: { durationMs, model }  SEUL événement du flux : aucun mot
 //                                                      entendu, rien n'est rangé
 //   event: transcript     data: { transcript, durationMs }   le message de la personne,
 //                                                      dès qu'il existe (rangé comme dit)
@@ -64,7 +67,8 @@
 //     if (ev.event === 'done' || ev.event === 'nothing_heard' || ev.event === 'error') break;
 //   }
 //
-// Chaque tour écrit une ligne `[voice-turn] timing {…}` : les millisecondes
+// Chaque tour écrit une ligne `[voice-turn] timing {…}` : la voix et le modèle
+// qui a transcrit (#976), puis les millisecondes
 // depuis la requête de fin jusqu'à la transcription, au premier fragment, à la
 // première phrase complète, au premier octet que le fournisseur de voix rend
 // pour elle et à la fin de sa réponse (proches : il rend un fichier ; écartés :
@@ -87,7 +91,7 @@ import { z } from 'zod';
 import { and, conversations, eq } from '@nodal-agents/db';
 import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
-import { resolveTranscription } from '../job/resolve-speech.ts';
+import { resolveEar } from '../job/resolve-voice.ts';
 import { readBoundedBody } from '../lib/read-bounded-body.ts';
 import { createVoiceTiming, hearVoiceTurn, speakVoiceTurn } from '../chat/run-voice-turn.ts';
 import { sseEvent, SSE_HEADERS } from './sse.ts';
@@ -147,10 +151,12 @@ export async function voiceTurnStartRoute(c: Context, deps: RunnerDeps): Promise
     .limit(1);
   if (!conv?.agentId) return c.json({ error: 'conversation_not_found' }, 404);
 
-  // Dit AVANT que la personne parle : sans clé, rien de ce qu'elle dirait ne
-  // serait entendu.
-  if (!(await resolveTranscription(deps.db, entityId))) {
-    return c.json({ error: 'speech_not_configured' }, 409);
+  // Dit AVANT que la personne parle : sans oreille (pas de clé OpenRouter, un
+  // réglage de voix illisible), rien de ce qu'elle dirait ne serait entendu.
+  // Le code est celui de la résolution (#976), le même qu'à la fin du tour.
+  const ear = await resolveEar(deps.db, entityId);
+  if (!ear.ok) {
+    return c.json({ error: ear.code, ...(ear.source ? { source: ear.source } : {}) }, 409);
   }
 
   const opened = openUtterance({
@@ -214,6 +220,7 @@ export async function voiceTurnEndRoute(
   }
 
   const timing = createVoiceTiming(startedAt);
+  timing.ear(heard.model);
   const readerGone = new AbortController();
   const encoder = new TextEncoder();
   const stream = new ReadableStream<Uint8Array>({
@@ -233,7 +240,9 @@ export async function voiceTurnEndRoute(
       void (async () => {
         try {
           if (heard.outcome === 'nothing_heard') {
-            send('nothing_heard', { durationMs: heard.durationMs });
+            // Le modèle qui n'a rien écrit (#976), pour que l'écran le nomme ;
+            // `null` : aucun échantillon, rien n'est parti au fournisseur.
+            send('nothing_heard', { durationMs: heard.durationMs, model: heard.model });
             return;
           }
           await speakVoiceTurn(deps, runnerEnv, u, heard, send, {

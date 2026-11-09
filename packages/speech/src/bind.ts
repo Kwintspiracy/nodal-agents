@@ -23,6 +23,7 @@ import type {
   TranscribeResult,
   TranscriptionAdapter,
   TranscriptionCapabilities,
+  TranscriptionModelOffer,
   Voice,
 } from './speech-adapter.ts';
 
@@ -39,6 +40,7 @@ export interface BoundTranscription {
   readonly provider: SpeechProvider;
   readonly capabilities: TranscriptionCapabilities;
   transcribe(req: TranscribeRequest): Promise<TranscribeResult>;
+  listModels?(): Promise<readonly TranscriptionModelOffer[]>;
 }
 
 /** An empty key is refused when binding, not on the first call: the caller
@@ -70,9 +72,11 @@ export function bindTranscription(
   connection: SpeechConnection,
 ): BoundTranscription {
   assertKey(adapter.provider, connection);
+  const models = adapter.listModels;
   return {
     provider: adapter.provider,
     capabilities: adapter.capabilities,
     transcribe: (req) => adapter.transcribe(req, connection),
+    ...(models ? { listModels: () => models.call(adapter, connection) } : {}),
   };
 }
