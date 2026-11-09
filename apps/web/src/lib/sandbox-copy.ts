@@ -63,7 +63,12 @@ export function sandboxRegime(state: Pick<SandboxState, 'status' | 'enabled'>): 
   return state.enabled ? 'active' : 'off';
 }
 
-/** Le bac à sable n'existe pas encore sur ce système : les contrôles sont éteints. */
+/**
+ * Le bac à sable n'existe pas encore sur ce système (`SANDBOX_NOT_IMPLEMENTED`).
+ * Ne sert qu'aux MOTS de la carte et du bandeau (un système qui attend sa
+ * version, pas une installation cassée) : ce que les contrôles font ne dépend
+ * jamais du code, seulement du régime (`sandboxRegime`).
+ */
 export function notOnThisSystem(state: Pick<SandboxState, 'status'>): boolean {
   return state.status.state === 'unavailable' && state.status.code === 'SANDBOX_NOT_IMPLEMENTED';
 }
@@ -78,6 +83,13 @@ export interface StateCardWords {
   applies?: string;
   /** RESULTS : le code que chaque résultat de commande porte, quand il ne confine pas. */
   results?: string;
+  /** Indisponible : le choix gardé en base, dit en une ligne (il ne s'applique pas encore). */
+  choice?: string;
+}
+
+/** Le choix de l'espace, gardé tel quel, que le moteur n'applique pas tant que la machine ne confine pas. */
+export function storedChoiceWords(enabled: boolean): string {
+  return `Your choice: ${enabled ? 'on' : 'off'}. It applies once the sandbox works.`;
 }
 
 export function stateCardWords(
@@ -106,6 +118,7 @@ export function stateCardWords(
       body: `Commands run without confinement on this system. The ${os} sandbox comes in a later version.`,
       engine: 'none on this system',
       results: status.code,
+      choice: storedChoiceWords(state.enabled),
     };
   }
   return {
@@ -113,6 +126,7 @@ export function stateCardWords(
     body: `${unavailableWords(status.code)}. Commands run without confinement until it works again.`,
     engine: 'not ready on this machine',
     results: status.code,
+    choice: storedChoiceWords(state.enabled),
   };
 }
 
@@ -214,8 +228,9 @@ export const LIMITS_TITLE = 'What the sandbox does not stop';
 
 // ─── Les dossiers permis ─────────────────────────────────────────────────────
 
-export function allowedFoldersLede(regime: SandboxRegime, unsupported: boolean): string {
-  if (unsupported) return 'You can set them once the sandbox runs on this system.';
+export function allowedFoldersLede(regime: SandboxRegime): string {
+  if (regime === 'unavailable')
+    return 'Not applied while the sandbox is unavailable. Kept for when it works.';
   if (regime === 'off')
     return 'Not applied while the sandbox is off. Kept for when you turn it back on.';
   return 'Every command of this workspace can also write here. Stores Nodal finds appear on their own.';
