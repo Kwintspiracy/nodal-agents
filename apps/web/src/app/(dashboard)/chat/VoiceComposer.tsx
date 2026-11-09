@@ -37,6 +37,7 @@ import {
 } from './voice-turn.ts';
 import { startSpokenStream, stopSpeaking, type SpokenStream } from './voice-playback.ts';
 import { stopChatTurn } from './chat-stream.ts';
+import { armSpokenAnnouncements } from './job-reply-voice.ts';
 
 /** Au-delà de cette distance du point d'appui, relâcher annule. */
 export const SLIDE_CANCEL_PX = 60;
@@ -254,6 +255,9 @@ export function useVoiceTurn(opts: {
     // celle qui joue, ni sur celle d'une réponse qui arrive encore.
     if (replyingTurn.current) replyingTurn.current.silenced = true;
     stopSpeaking();
+    // Le travail que ce tour lancera s'annoncera quand il finit (#967) : le
+    // player de la coquille écoute dès maintenant, avant que le tour parte.
+    armSpokenAnnouncements();
     setNote(null);
     setLevels([]);
     setStartedAt(null);

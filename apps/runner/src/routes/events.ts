@@ -24,6 +24,10 @@
 //                                                        manqué n'est plus en mémoire
 //        event: job.finished | job.failed | question.asked | approval.requested |
 //               approval.resolved                        data: voir `JobEventPayload`
+//        event: reply.audio   data: { jobId, conversationId, audioId }   juste après
+//                             le `job.finished` d'un job lancé par la voix : son
+//                             annonce est dite, sur `GET /api/voice/replies/:audioId`
+//                             (#967, le protocole est dans routes/voice-reply.ts)
 //   Un commentaire `: ping` toutes les 25 s tient la connexion ouverte à
 //   travers les proxys.
 //

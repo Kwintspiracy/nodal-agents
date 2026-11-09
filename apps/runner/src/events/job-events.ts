@@ -106,6 +106,19 @@ export type JobEventPayload =
       status: string;
     }
   | {
+      /**
+       * Un job lancé par la voix a fini : son ANNONCE est dite (#967). Publié
+       * juste après son `job.finished`, et seulement quand quelqu'un écoute.
+       * Un pointeur, pas l'audio : la voix se lit sur
+       * `GET /api/voice/replies/:audioId` (routes/voice-reply.ts). Un onglet
+       * qui ne la joue pas ne reçoit pas un octet de voix.
+       */
+      type: 'reply.audio';
+      jobId: string;
+      conversationId: string | null;
+      audioId: string;
+    }
+  | {
       type: 'resync';
       /** Un code : pourquoi le client doit relire la base. */
       reason: ResyncReason;
@@ -270,6 +283,19 @@ export class JobEventBus {
   /** Le nombre d'auditeurs de cet espace (pour les tests et le diagnostic). */
   subscriberCount(entityId: string): number {
     return this.workspaces.get(entityId)?.subscribers.size ?? 0;
+  }
+
+  /**
+   * Combien d'auditeurs un événement de cette conversation atteindrait à cet
+   * instant : ceux de la conversation, et ceux de tout l'espace — la règle de
+   * la publication (`reaches`).
+   */
+  listenersOf(entityId: string, conversationId: string | null): number {
+    let n = 0;
+    for (const sub of this.workspaces.get(entityId)?.subscribers ?? []) {
+      if (sub.conversationId === null || sub.conversationId === conversationId) n++;
+    }
+    return n;
   }
 }
 

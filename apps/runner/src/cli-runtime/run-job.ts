@@ -182,8 +182,6 @@ export interface CliRuntimeJobRow {
    * qui voit ce qui tourne. Absent ou `null` : une tête d'un fil au repos.
    */
   answersWhileJobId?: string | null;
-  /** `agent_jobs.reply_rendering` (#941) : la réponse se lit ou s'entend. Absent : lue. */
-  replyRendering?: ReplyRendering;
 }
 
 /**
@@ -768,7 +766,9 @@ export async function runCliRuntimeJob(args: {
         workspaceGit,
         workspaces: args.workspaces,
         ...(conversation ? { conversation } : {}),
-        replyRendering: job.replyRendering ?? 'text',
+        // Le résultat d'un job se lit, même lancé par la voix (#967) : ce qui
+        // s'entend est son annonce (chat/job-reply-voice.ts).
+        replyRendering: 'text',
       }),
     );
   } catch (err) {

@@ -124,12 +124,20 @@ export const agentJobs = pgTable(
      */
     handoffNote: text('handoff_note'),
     /**
-     * Comment la personne recevra la réponse de ce job (#941, migration 0157) :
-     * `text`, lue, comme tout job jusqu'ici ; `spoken`, entendue — le job est
-     * né d'un tour vocal, et sa réponse finale sera dite. Le prompt du job le
-     * dit à l'agent (`JobContext.replyRendering`) ; ses mots restent les siens.
+     * Comment la personne a fait la demande de ce job (#941, migration 0157) :
+     * `text`, tapée, comme tout job jusqu'ici ; `spoken`, dite — le job est né
+     * d'un tour vocal. Son résultat se lit dans les deux cas (#967) ; un job
+     * `spoken` sans parent finit en plus par une ANNONCE dite, que l'agent
+     * écrit pour l'oreille (`spokenAnnouncement`).
      */
     replyRendering: text('reply_rendering').$type<ReplyRendering>().notNull().default('text'),
+    /**
+     * Ce que l'agent a DIT quand ce job lancé par la voix a fini (#967,
+     * migration 0161) : l'annonce, écrite par lui pour l'oreille, à partir de
+     * la demande et du résultat. NULL : rien n'a été dit (un job tapé, un
+     * délégué, un échec, personne à l'écoute, ou l'annonce n'a pas pu s'écrire).
+     */
+    spokenAnnouncement: text('spoken_announcement'),
     chatId: text('chat_id'),
     /**
      * Le canal sur lequel `chat_id` a été RÉSOLU (#649, migration 0143), posé
