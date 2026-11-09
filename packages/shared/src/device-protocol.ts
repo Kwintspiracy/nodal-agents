@@ -297,10 +297,9 @@ function namedBy(
   routes: Record<string, readonly { method: string; path: string }[]>,
   method: string,
   path: string,
-  keep: (pattern: string) => boolean = () => true,
 ): boolean {
   return Object.values(routes).some((list) =>
-    list.some((r) => keep(r.path) && r.method === method && matchesRoute(r.path, path)),
+    list.some((r) => r.method === method && matchesRoute(r.path, path)),
   );
 }
 
@@ -310,14 +309,6 @@ function namedBy(
  */
 export function isDeviceTokenRoute(method: string, path: string): boolean {
   return namedBy(DEVICE_GESTURES, method, path);
-}
-
-/**
- * A device's own routes (`/api/devices/:deviceId/...`): they accept a device
- * token and NOTHING ELSE — no worker secret, no session, no local trust.
- */
-export function isDeviceOwnRoute(method: string, path: string): boolean {
-  return namedBy(DEVICE_GESTURES, method, path, (p) => p.startsWith('/api/devices/:deviceId/'));
 }
 
 // ─── The owner's side: Settings → Devices (#946) ─────────────────────────────

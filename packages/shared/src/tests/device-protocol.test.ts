@@ -7,7 +7,6 @@ import {
   DEVICE_CAPABILITIES,
   DeviceEventSchema,
   DeviceStreamResyncSchema,
-  isDeviceOwnRoute,
   isDeviceTokenRoute,
   JOB_CHANNELS,
   JobChannelSchema,
@@ -132,13 +131,5 @@ describe('where a device key is accepted, read from the route table (#946) @cap:
     ]) {
       expect(isDeviceTokenRoute(method!, path!)).toBe(false);
     }
-  });
-
-  it('a device’s own routes are the /api/devices/:deviceId/ ones, and the pairing routes are not', () => {
-    expect(isDeviceOwnRoute('GET', '/api/devices/d1/events')).toBe(true);
-    expect(isDeviceOwnRoute('POST', '/api/devices/d1/conversation')).toBe(true);
-    expect(isDeviceOwnRoute('POST', '/api/devices/pair/poll')).toBe(false);
-    expect(isDeviceOwnRoute('POST', '/api/devices/pair')).toBe(false);
-    expect(isDeviceOwnRoute('POST', '/api/chat/stream')).toBe(false);
   });
 });

@@ -51,6 +51,8 @@ import { hashDeviceSecret } from '../../devices/device-secrets.ts';
 import { isDeviceConnected } from '../../devices/device-streams.ts';
 import { DEVICE_PAIRING_LIMITS } from '../../routes/device-pairing.ts';
 import { readSse } from '../chat/_sse-reader.ts';
+import { openUtterance } from '../../chat/voice-utterances.ts';
+import { speakFinishedJob } from '../../chat/job-reply-voice.ts';
 
 vi.setConfig({ testTimeout: 30_000 });
 
@@ -557,6 +559,84 @@ describe('a device key reaches its own routes and conversations, and nothing els
       .from(approvalRequests)
       .where(eq(approvalRequests.id, notMine));
     expect(still!.status).toBe('pending');
+  });
+});
+
+describe('a device continues only ITS voice turns, and hears only ITS announcements (#946) @cap:parler-par-canal-externe/moteur', () => {
+  it('a turn opened by device A: B cannot send it a chunk nor cancel it; A can', async () => {
+    const app = createApp(makeDeps(), testEnv);
+    const a = await pairedDevice(app, x);
+    const b = await pairedDevice(app, x, '192.168.1.41');
+    const opened = openUtterance({
+      entityId: x.entityId,
+      conversationId: a.conversationId,
+      agentId: x.agentId,
+      deviceId: a.deviceId,
+      format: { kind: 'audio/wav' },
+    });
+    if (!opened.ok) throw new Error('turn not opened');
+    const chunk = async (token: string) => {
+      const res = await app.fetch(
+        new Request(`http://127.0.0.1/api/voice/turns/${opened.id}/chunks/0`, {
+          method: 'POST',
+          headers: { ...key(token), 'Content-Type': 'application/octet-stream' },
+          body: new Uint8Array([1, 2, 3, 4]),
+        }),
+        { incoming: { socket: { remoteAddress: '192.168.1.40' } } },
+      );
+      return { status: res.status, json: (await res.json()) as Record<string, unknown> };
+    };
+    expect(await chunk(b.token)).toEqual({ status: 404, json: { error: 'turn_not_found' } });
+    expect(
+      await call(app, 'DELETE', `/api/voice/turns/${opened.id}`, { headers: key(b.token) }),
+    ).toEqual({ status: 404, json: { error: 'turn_not_found' } });
+    expect(await chunk(a.token)).toEqual({ status: 200, json: { received: 4 } });
+    expect(
+      await call(app, 'DELETE', `/api/voice/turns/${opened.id}`, { headers: key(a.token) }),
+    ).toEqual({ status: 200, json: { cancelled: true } });
+  });
+
+  it('the announcement of a job of A’s conversation: A hears it, B is told it does not exist', async () => {
+    const app = createApp(makeDeps(), testEnv);
+    const a = await pairedDevice(app, x);
+    const b = await pairedDevice(app, x, '192.168.1.41');
+    const ctl = new AbortController();
+    opened.push(ctl);
+    const stream = await app.fetch(
+      new Request(`http://127.0.0.1/api/devices/${a.deviceId}/events`, {
+        headers: key(a.token),
+        signal: ctl.signal,
+      }),
+    );
+    const reader = readSse(stream);
+    await waitFor(() => reader.events.some((e) => e.event === 'ready'));
+    const audioId = speakFinishedJob(db as RunnerDeps['db'], {
+      jobId: '00000000-0000-4000-8000-000000000946',
+      entityId: x.entityId,
+      conversationId: a.conversationId,
+      parentJobId: null,
+      status: 'completed',
+      result: 'Done.',
+      replyRendering: 'spoken',
+      deviceId: a.deviceId,
+    });
+    expect(audioId).not.toBeNull();
+    const hear = async (token: string) => {
+      const c = new AbortController();
+      opened.push(c);
+      const res = await app.fetch(
+        new Request(`http://127.0.0.1/api/voice/replies/${audioId}?entityId=${x.entityId}`, {
+          headers: key(token),
+          signal: c.signal,
+        }),
+      );
+      return res.status === 200 ? { status: 200 } : { status: res.status, json: await res.json() };
+    };
+    expect(await hear(b.token)).toEqual({
+      status: 404,
+      json: { error: 'reply_audio_not_found' },
+    });
+    expect(await hear(a.token)).toEqual({ status: 200 });
   });
 });
 

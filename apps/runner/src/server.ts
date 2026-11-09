@@ -185,8 +185,9 @@ export function createApp(
   //
   // Where a device key is accepted, and where it is not, decided from the
   // protocol's route table (devices/device-auth.ts): verified on the routes of
-  // DEVICE_GESTURES, refused on every other; and on a device's own routes,
-  // nothing else is accepted (no worker secret, no session, no local trust).
+  // DEVICE_GESTURES, refused on every other. A device's own routes then accept
+  // nothing BUT a device key (`authorizeDevice`, devices/device-guard.ts): no
+  // worker secret, no session, no local trust.
   app.use('/api/*', createDeviceGate(deps));
 
   // ── requireRunnerAuth ────────────────────────────────────────────────────────
