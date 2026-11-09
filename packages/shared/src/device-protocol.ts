@@ -45,6 +45,27 @@ export const DeviceCardChoiceSchema = z.object({
 });
 export type DeviceCardChoice = z.infer<typeof DeviceCardChoiceSchema>;
 
+/**
+ * Where a run stands, as a device reads it: `working` (a job of the run is
+ * running), `waiting` (a request waits for a person), then one of the ends.
+ */
+export const DEVICE_RUN_STATES = ['working', 'waiting', 'done', 'cancelled', 'failed'] as const;
+export const DeviceRunStateSchema = z.enum(DEVICE_RUN_STATES);
+export type DeviceRunState = z.infer<typeof DeviceRunStateSchema>;
+
+/** A file a run addressed: the deliverable `get_task` returns, as data. */
+export const DeviceDeliverableSchema = z.object({
+  /** Where it is, as the workspace names it. */
+  path: z.string(),
+  /** `code_project`, `office_file`, `document`, `outbound_action` or `other`. */
+  type: z.string(),
+  /** The agent named it in its result. */
+  declared: z.boolean(),
+  /** The state of its proof: `green`, `red`, `dirty`, … */
+  verification: z.string(),
+});
+export type DeviceDeliverable = z.infer<typeof DeviceDeliverableSchema>;
+
 export const DeviceEventSchema = z.discriminatedUnion('type', [
   /** Something for the person to read or hear: an agent's reply, a message sent to this device. */
   z.object({
@@ -72,12 +93,22 @@ export const DeviceEventSchema = z.discriminatedUnion('type', [
     /** What the card says now, in the same fixed frame. */
     text: z.string(),
   }),
-  /** Where a job launched from this device stands. */
+  /**
+   * Where a job launched from this device stands — the same run state
+   * `get_task` reads (readRunState, @nodal-agents/db), PUSHED at each of its
+   * transitions (claimed, a request asked or settled, ended): a device follows
+   * a job without polling. `jobId` is the job the request launched (the head
+   * of its run), whichever of its delegates moved.
+   */
   z.object({
     type: z.literal('state'),
     jobId: z.string(),
     conversationId: z.string().nullable(),
-    state: z.enum(['waiting', 'done', 'cancelled', 'failed']),
+    state: DeviceRunStateSchema,
+    /** For `waiting`: the cards it waits on (their `cardId`). Empty otherwise. */
+    waitingFor: z.array(z.string()),
+    /** The files the run addressed, the paths `get_task` returns. Complete once it ends. */
+    deliverables: z.array(DeviceDeliverableSchema),
     /** For `failed`: the first line of the job's explanation, as stored. */
     reason: z.string().optional(),
   }),
