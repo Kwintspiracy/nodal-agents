@@ -49,7 +49,7 @@ import type { CallsCost } from './space-cost.ts';
 // La règle « une relecture interdit-elle d'annoncer livré ? » vit dans
 // `@nodal-agents/shared` (#59) : l'orchestration la lit pour poser son champ
 // typé, l'écran pour choisir son mot. Une seule écriture, deux lecteurs.
-import { reviewBlocksDelivery } from '@nodal-agents/shared';
+import { keepsTurnsInChat, reviewBlocksDelivery } from '@nodal-agents/shared';
 import { liveKind } from './job-live.ts';
 
 export type ThreadProject = { id: string; name: string; path: string };
@@ -774,7 +774,9 @@ export function buildConversationThread(input: {
   // lecteur doit savoir d'un fil qui ne commence pas à son début. Ce qu'on
   // COMPTE est ce qui fait un tour à l'écran — les messages sur le dashboard,
   // les jobs sur un canal.
-  const isDashboard = conversation.channel === 'dashboard';
+  // Le tableau de bord et un appareil (#945) rangent leurs tours dans
+  // `chat_messages` ; un fil de messagerie les a en jobs.
+  const isDashboard = keepsTurnsInChat(conversation.channel);
   const cut = isDashboard
     ? truncated?.messages === true || truncated?.jobs === true
     : truncated?.jobs === true;
@@ -786,7 +788,7 @@ export function buildConversationThread(input: {
     });
   }
 
-  if (conversation.channel !== 'dashboard') {
+  if (!isDashboard) {
     // Un fil de canal n'a pas de `chat_messages` : ses tours SONT ses jobs.
     for (const job of jobs) {
       items.push(...jobThreadItems(job, false));
@@ -796,7 +798,12 @@ export function buildConversationThread(input: {
   }
 
   const byJobId = new Map(jobs.map((j) => [j.jobId, j]));
-  const origin: Origin = { channel: 'dashboard', scheduleName: null, chatId: null };
+  // D'où la personne a parlé : le tableau de bord, ou l'appareil du fil (#945).
+  const origin: Origin = {
+    channel: conversation.channel,
+    scheduleName: null,
+    chatId: conversation.chatId,
+  };
   let turnIndex = 0;
 
   for (const message of messages) {

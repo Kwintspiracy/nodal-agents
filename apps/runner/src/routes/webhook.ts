@@ -17,7 +17,8 @@ import type { Context } from 'hono';
 import { eq, sql, resolveOwnerConversation, designateChat } from '@nodal-agents/db';
 import { webhookTriggers, agentJobs, decryptChannelSecret } from '@nodal-agents/db';
 import { resolveTransportChannel, listActiveChannelsForAgent } from '@nodal-agents/delivery';
-import type { ChannelKind } from '@nodal-agents/delivery';
+// A notify channel is a messaging platform: its CHECK leaves `device` out (migration 0163).
+import type { MessagingChannelKind } from '@nodal-agents/delivery';
 import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
 import { isValidWorkerSecret } from '../lib/worker-secret.ts';
@@ -260,10 +261,10 @@ export async function webhookRoute(
   // agent_schedules' 'notify_unreachable'), so the log is the only signal
   // until a caller asks for one.
   let notifyChatId: string | null = null;
-  let notifyChannel: ChannelKind | null = null;
+  let notifyChannel: MessagingChannelKind | null = null;
   if (trigger.notifyOnSuccess) {
     if (trigger.notifyChannel) {
-      notifyChannel = trigger.notifyChannel as ChannelKind;
+      notifyChannel = trigger.notifyChannel as MessagingChannelKind;
     } else {
       // Auto: whatsapp excluded from the candidate set — no outbound send
       // tool is registered for it yet (TOOL_ONLY_DELIVERY_CHANNELS,

@@ -69,7 +69,11 @@ import { loadConversationContext } from '../job/conversation-id.ts';
 import { EDIT_TOOLS, resolveScannedPath, scannedEditPath } from '../job/code-projects.ts';
 import { finalizeJobSuccess } from '../job/finalize.ts';
 import { drainDeliveries, prepareDelivery } from '../delivery/outbox.ts';
-import { isDeliveryRefusal, resolveDeliveryTarget } from '../delivery/resolve-delivery-target.ts';
+import {
+  isDeliveryFault,
+  isDeliveryRefusal,
+  resolveDeliveryTarget,
+} from '../delivery/resolve-delivery-target.ts';
 import { probeWorkspaceGit } from '../lib/workspace-git.ts';
 import {
   snapshot,
@@ -1092,7 +1096,11 @@ export async function runCliRuntimeJob(args: {
       triggerContext: job.triggerContext,
     });
     if (isDeliveryRefusal(target)) {
-      console.error(`[cli-runtime] DELIVERY_TARGET_REFUSED job=${jobId} reason=${target.refused}`);
+      if (isDeliveryFault(target)) {
+        console.error(
+          `[cli-runtime] DELIVERY_TARGET_REFUSED job=${jobId} reason=${target.refused}`,
+        );
+      }
     } else {
       delivery = { channel: target.channel, chatId: target.chatId, payload: turn.finalText };
     }

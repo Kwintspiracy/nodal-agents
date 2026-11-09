@@ -32,6 +32,9 @@ import {
   voiceSettingWriteRoute,
 } from './routes/voice-setting.ts';
 import { eventsRoute } from './routes/events.ts';
+import { deviceConversationRoute, deviceEventsRoute } from './routes/devices.ts';
+import { createDeviceSink } from './devices/device-sink.ts';
+import { bindDeviceSink } from '@nodal-agents/delivery';
 import { transitionListener } from './events/publish.ts';
 import { voiceReplyRoute } from './routes/voice-reply.ts';
 import { speakFinishedJob } from './chat/job-reply-voice.ts';
@@ -116,6 +119,9 @@ export function createApp(
   // expirée), une fois commis, devient le flux de `GET /api/events`. Un job
   // lancé par la voix qui finit avec une réponse la dit (#967).
   listenToTransitions(transitionListener(undefined, (db, job) => speakFinishedJob(db, job)));
+  // #945 — ce que l'adaptateur `device` envoie part sur le flux de l'appareil,
+  // par ce même bus.
+  bindDeviceSink(createDeviceSink(deps.db));
 
   // ── requireTrustedOrigin ─────────────────────────────────────────────────────
   //
@@ -266,6 +272,10 @@ export function createApp(
   // #944 — le flux poussé des événements de job. Même garde que /api/chat* :
   // c'est par elle, et par elle seule, que le jeton d'appareil de #946 entrera.
   app.use('/api/events', requireRunnerAuth);
+  // #945 — les routes d'un appareil : la MÊME garde que /api/events, puis
+  // `authorizeDevice` (devices/device-guard.ts), le seul endroit que #946
+  // remplace par les jetons d'appareil.
+  app.use('/api/devices/*', requireRunnerAuth);
   app.use('/api/approve', requireRunnerAuth);
   app.use('/api/cron', requireRunnerAuth);
   // P11 — le diff d'un fichier écrit par un tour. Même garde que /api/approve :
@@ -290,6 +300,8 @@ export function createApp(
   app.post('/api/chat/stop', (c) => chatStopRoute(c, deps));
   app.post('/api/chat/live', (c) => chatLiveRoute(c, deps));
   app.get('/api/events', (c) => eventsRoute(c, deps));
+  app.get('/api/devices/:deviceId/events', (c) => deviceEventsRoute(c, deps));
+  app.post('/api/devices/:deviceId/conversation', (c) => deviceConversationRoute(c, deps));
 
   app.post('/api/voice/turns', (c) => voiceTurnStartRoute(c, deps));
   app.post('/api/voice/turns/:turnId/chunks/:seq', (c) => voiceTurnChunkRoute(c));

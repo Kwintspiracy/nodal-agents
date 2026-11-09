@@ -28,6 +28,7 @@ import type { Agent, AgentId, EntityId } from '@nodal-agents/orchestration';
 import { resolveAgentLlmClient } from '../job/resolve-llm.ts';
 import { makeLlmCallSink } from '../llm/call-sink.ts';
 import { runCliRuntimeChatTurn } from '../cli-runtime/run-chat.ts';
+import { chatTurnOrigin } from './turn-origin.ts';
 import { getDeploymentContext } from '../job/deployment.ts';
 import {
   BUDGET_CHARS as HISTORY_BUDGET_CHARS,
@@ -483,11 +484,19 @@ export async function runChatTurn(opts: {
       // Le projet courant du fil (P6) : il suit le job qu'une escalade `run_task`
       // crée, pour que le travail naisse déjà dans le bon dossier.
       currentProjectId: conversations.currentProjectId,
+      // Où vit le fil (#945) : le tableau de bord ou un appareil. C'est
+      // l'ORIGINE du tour et du job qu'il lance (chat/turn-origin.ts).
+      channel: conversations.channel,
+      chatId: conversations.chatId,
     })
     .from(conversations)
     .where(and(eq(conversations.id, conversationId), eq(conversations.entityId, entityId)))
     .limit(1);
   if (!conv) return { ok: false, error: 'conversation_not_found' };
+  const origin = chatTurnOrigin(conv);
+  // Un fil de canal de messagerie a ses tours sur la plateforme, en jobs : un
+  // tour de chat n'y est jamais écrit, et AVANT le moindre insert (inv. #4).
+  if (!origin) return { ok: false, error: 'conversation_not_chat' };
 
   // 1a-bis. L'agent demandé DOIT être celui de la conversation.
   //
@@ -549,6 +558,7 @@ export async function runChatTurn(opts: {
       conversationId,
       message,
       replyRendering,
+      origin: origin.channel,
       ...(abortSignal ? { abortSignal } : {}),
     });
   }
@@ -597,14 +607,15 @@ export async function runChatTurn(opts: {
   const llmClient = resolved.client;
 
   // 3. System prompt — memory is AUTO-INJECTED here (recall is free). The
-  //    origin:'dashboard' job-context steers the agent to reply in plain text.
+  //    origin (the dashboard, or a device, #945) job-context steers the agent
+  //    to reply in plain text.
   const deployment = await getDeploymentContext(db, entityId);
   // Le fil et son projet courant (P6). Chargé APRÈS l'insert du tour utilisateur
   // (1b ci-dessus) — d'où le « moins un » dans le compte des tours précédents,
   // qui vit dans `loadConversationContext`.
   const conversation = await loadConversationContext(db, conversationId, { task: message });
   const systemPrompt = await buildSystemPrompt(agent, db, {
-    origin: 'dashboard',
+    origin: origin.channel,
     surface: 'chat',
     task: message,
     deployment,
@@ -951,7 +962,11 @@ export async function runChatTurn(opts: {
         entityId,
         agentId,
         status: 'pending',
-        channel: 'dashboard',
+        // L'origine du tour (#945) : le tableau de bord, ou l'appareil dont
+        // c'est le fil — son chat, pour que les questions, approbations et
+        // l'annonce du job y reviennent.
+        channel: origin.channel,
+        ...origin.chat,
         task: message,
         handoffNote: note,
         // La réponse du travail se reçoit comme celle du tour qui l'a lancé :

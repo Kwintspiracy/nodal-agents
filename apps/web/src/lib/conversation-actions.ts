@@ -47,9 +47,15 @@ import {
   verificationRuns,
   telegramAllowedChats,
   channelAllowedConversations,
+  devices,
   showConversationsTo,
 } from '@nodal-agents/db';
-import { normalizePath, redactSecretsInText, stripGroupPrefix } from '@nodal-agents/shared';
+import {
+  keepsTurnsInChat,
+  normalizePath,
+  redactSecretsInText,
+  stripGroupPrefix,
+} from '@nodal-agents/shared';
 import { folderChatsQuery, folderConversationsQuery } from './folder-threads-sql.ts';
 import { readsOfUser, unreadColumn } from './unread.ts';
 import { plainText } from '@/components/Markdown.tsx';
@@ -507,7 +513,7 @@ export async function listAllConversationsAction(): Promise<ActionResult<Convers
 
     return ok(
       rows.map((r): ConversationListRow => {
-        const stats = r.channel === 'dashboard' ? byMessage.get(r.id) : byJob.get(r.id);
+        const stats = keepsTurnsInChat(r.channel) ? byMessage.get(r.id) : byJob.get(r.id);
         return {
           id: r.id,
           channel: r.channel,
@@ -1471,7 +1477,7 @@ export async function listChatNamesAction(): Promise<ActionResult<ChatIdentities
     if (agentIds.length === 0) return ok({});
     const ids = agentIds.map((a) => a.id);
 
-    const [telegram, others] = await Promise.all([
+    const [telegram, others, workspaceDevices] = await Promise.all([
       db
         .select({
           chatId: telegramAllowedChats.chatId,
@@ -1488,6 +1494,12 @@ export async function listChatNamesAction(): Promise<ActionResult<ChatIdentities
         })
         .from(channelAllowedConversations)
         .where(inArray(channelAllowedConversations.agentId, ids)),
+      // #945 — le chat d'un appareil est l'appareil : il porte le nom que le
+      // propriétaire lui a donné.
+      db
+        .select({ id: devices.id, name: devices.name })
+        .from(devices)
+        .where(eq(devices.entityId, session.entityId)),
     ]);
 
     const names: Record<string, { name: string | null; kind: string | null }> = {};
@@ -1505,6 +1517,7 @@ export async function listChatNamesAction(): Promise<ActionResult<ChatIdentities
       const key = `${r.channel}:${r.chatId}`;
       if (!(key in names)) names[key] = { name: r.name, kind: r.kind };
     }
+    for (const d of workspaceDevices) names[`device:${d.id}`] = { name: d.name, kind: 'private' };
     return ok(names);
   } catch (err) {
     console.error('[listChatNamesAction]', err);
@@ -2112,6 +2125,8 @@ export async function getConversationThreadAction(
         .filter((r) => !TERMINAL_STATUSES.has(r.job.status ?? ''))
         .map((r) => ({ id: r.job.id, status: r.job.status })),
       truncated,
+      // Le fil d'un appareil (#945) se poursuit sur l'appareil, comme celui
+      // d'un chat Telegram sur Telegram : ses tours sont faits là-bas.
       canReply: conv.channel === 'dashboard',
     };
     return ok({

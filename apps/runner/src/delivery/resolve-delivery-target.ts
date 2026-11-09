@@ -26,7 +26,11 @@
 // Le refus est TYPÉ et rendu à l'appelant : pas de `null` muet, pas de
 // livraison fantôme (inv. #4).
 
-import { listActiveChannelsForAgent, resolveTransportChannel } from '@nodal-agents/delivery';
+import {
+  isMessagingChannel,
+  listActiveChannelsForAgent,
+  resolveTransportChannel,
+} from '@nodal-agents/delivery';
 import type { ChannelKind } from '@nodal-agents/delivery';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { designatedChatChannel } from '../job/channel-delivery.ts';
@@ -59,8 +63,12 @@ export type DeliveryTargetRefusal = {
    * porter ce résultat.
    * `channel_unknown` : le chat a été désigné sans que personne n'enregistre
    * sa plateforme (#649) ; le runner ne la devine pas.
+   * `read_from_stream` : le chat est sur un canal qui lit le résultat sur son
+   * flux (`CHANNEL_REACH` `stream` : un appareil, #945), comme le tableau de
+   * bord : son `job.finished` le lui porte, la boîte d'envoi n'a rien à faire.
+   * Ce n'est pas une panne.
    */
-  refused: 'no_chat' | 'channel_inactive' | 'channel_unknown';
+  refused: 'no_chat' | 'channel_inactive' | 'channel_unknown' | 'read_from_stream';
 };
 
 export type DeliveryTargetOutcome = DeliveryTarget | DeliveryTargetRefusal;
@@ -71,6 +79,14 @@ export function isDeliveryRefusal(
   outcome: DeliveryTargetOutcome,
 ): outcome is DeliveryTargetRefusal {
   return 'refused' in outcome;
+}
+
+/**
+ * Un refus qui dit une PANNE, à journaliser comme telle ; `read_from_stream`
+ * n'en est pas une : le résultat part par le flux de l'appareil.
+ */
+export function isDeliveryFault(refusal: DeliveryTargetRefusal): boolean {
+  return refusal.refused !== 'read_from_stream';
 }
 
 /**
@@ -124,5 +140,8 @@ export async function resolveDeliveryTarget(
   }
 
   const channel = notifyChannelOverride ?? (job.channel as ChannelKind);
+  // Un résultat n'est POUSSÉ qu'à une plateforme de messagerie ; un appareil
+  // le lit sur son flux.
+  if (!isMessagingChannel(channel)) return { refused: 'read_from_stream' };
   return { channel, chatId };
 }

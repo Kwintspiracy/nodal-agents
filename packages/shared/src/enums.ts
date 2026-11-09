@@ -15,9 +15,31 @@ export const JOB_CHANNELS = [
   'dashboard',
   'webhook',
   'mcp',
+  // #945 — un module externe (migration 0163).
+  'device',
 ] as const;
 export const JobChannelSchema = z.enum(JOB_CHANNELS);
 export type JobChannel = z.infer<typeof JobChannelSchema>;
+
+/**
+ * Les canaux dont la conversation range ses tours dans `chat_messages` : ils
+ * sont dits ou tapés par les routes du chat et de la voix de Nodal
+ * (`/api/chat/stream`, `/api/voice/turns`), que le tableau de bord et un
+ * appareil (#945) atteignent de la même façon. Les tours d'une conversation
+ * d'un AUTRE canal (Telegram, Slack, Discord, WhatsApp) sont ses jobs de tête :
+ * le fil vit sur la plateforme, Nodal n'en garde que les jobs.
+ *
+ * UNE liste pour toutes les lectures qui choisissent où lire les tours d'un
+ * fil (l'historique d'un job, le nombre de tours, le fil à l'écran), au lieu
+ * d'un `channel === 'dashboard'` recopié à chacune.
+ */
+export const CHAT_STORE_CHANNELS = ['dashboard', 'device'] as const;
+export type ChatStoreChannel = (typeof CHAT_STORE_CHANNELS)[number];
+
+/** Les tours de cette conversation sont-ils dans `chat_messages` ? */
+export function keepsTurnsInChat(channel: string | null | undefined): channel is ChatStoreChannel {
+  return (CHAT_STORE_CHANNELS as readonly string[]).includes(channel ?? '');
+}
 
 // agent_jobs.status CHECK constraint
 export const JOB_STATUSES = [

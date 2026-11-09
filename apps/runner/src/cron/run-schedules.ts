@@ -20,7 +20,8 @@ import {
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { resolveTimezone, LIVE_JOB_STATUSES } from '@nodal-agents/shared';
 import { getAdapter, resolveOwnerNoticeTarget } from '@nodal-agents/delivery';
-import type { ChannelKind } from '@nodal-agents/delivery';
+// A notify channel is a messaging platform: its CHECK leaves `device` out (migration 0163).
+import type { MessagingChannelKind } from '@nodal-agents/delivery';
 import { CronExpressionParser } from 'cron-parser';
 import { executeJob, type ExecuteJobResult } from '../job/execute.ts';
 import type { RunnerDeps } from '../deps.ts';
@@ -318,7 +319,7 @@ export async function runScheduleTick(
           // suppression de l'automatisation, la provenance si (passe 26).
           scheduleId: sched.id,
           prevRunAt: sched.lastRun ? sched.lastRun.toISOString() : null,
-          notifyChannel: (sched.notifyChannel as ChannelKind | null) ?? null,
+          notifyChannel: (sched.notifyChannel as MessagingChannelKind | null) ?? null,
         },
       })
       .returning({ id: agentJobs.id });

@@ -61,6 +61,18 @@ function oneLine(text: string): string {
     : first;
 }
 
+/**
+ * L'appareil d'où vient la demande d'un job (#945) : son chat, quand il a été
+ * résolu sur le canal `device` (`designateChat`). Un délégué hérite du chat de
+ * son parent (router/delegate.ts) : ses demandes reviennent au même appareil.
+ */
+export function originDeviceOf(job: {
+  chatId: string | null;
+  chatChannel: string | null;
+}): string | null {
+  return job.chatChannel === 'device' && job.chatId ? job.chatId : null;
+}
+
 function lost(bus: JobEventBus, what: string, err: unknown): void {
   console.error(
     `[job-events] ${what} could not be published; every workspace is told to re-read: ` +
@@ -82,6 +94,8 @@ export interface FinishedJob {
   /** `agent_jobs.result`, tel qu'en base. */
   result: string | null;
   replyRendering: ReplyRendering;
+  /** L'appareil d'où vient la demande (#945), ou null. */
+  deviceId: string | null;
 }
 
 /**
@@ -107,11 +121,14 @@ export async function publishJobEnded(
         result: agentJobs.result,
         error: agentJobs.error,
         replyRendering: agentJobs.replyRendering,
+        chatId: agentJobs.chatId,
+        chatChannel: agentJobs.chatChannel,
       })
       .from(agentJobs)
       .where(eq(agentJobs.id, jobId))
       .limit(1);
     if (!row) throw new Error(`job ${jobId} not found`);
+    const deviceId = originDeviceOf(row);
     // Un job sans espace n'a aucun client qui puisse l'écouter.
     if (row.entityId === null) {
       console.warn(`[job-events] job ${jobId} ended without a workspace: no client to tell`);
@@ -123,27 +140,38 @@ export async function publishJobEnded(
       parentJobId: row.parentJobId,
     };
     if (row.status === 'completed' || row.status === 'cancelled') {
-      bus.publish(row.entityId, row.conversationId, {
-        type: 'job.finished',
-        ...base,
-        status: row.status,
-        reply: redactSecretsInText(row.result ?? ''),
-      });
+      bus.publish(
+        row.entityId,
+        row.conversationId,
+        {
+          type: 'job.finished',
+          ...base,
+          status: row.status,
+          reply: redactSecretsInText(row.result ?? ''),
+        },
+        deviceId,
+      );
       return {
         ...base,
         entityId: row.entityId,
         status: row.status,
         result: row.result,
         replyRendering: row.replyRendering,
+        deviceId,
       };
     }
     if (row.status === 'failed') {
-      bus.publish(row.entityId, row.conversationId, {
-        type: 'job.failed',
-        ...base,
-        error: row.error ?? '',
-        reason: oneLine(redactSecretsInText(row.result ?? '')),
-      });
+      bus.publish(
+        row.entityId,
+        row.conversationId,
+        {
+          type: 'job.failed',
+          ...base,
+          error: row.error ?? '',
+          reason: oneLine(redactSecretsInText(row.result ?? '')),
+        },
+        deviceId,
+      );
       return null;
     }
     // Une porte terminale qui publie un job encore vivant : une erreur de câblage.
@@ -180,11 +208,16 @@ export async function publishApprovalRequested(
 ): Promise<void> {
   try {
     const [job] = await db
-      .select({ conversationId: agentJobs.conversationId })
+      .select({
+        conversationId: agentJobs.conversationId,
+        chatId: agentJobs.chatId,
+        chatChannel: agentJobs.chatChannel,
+      })
       .from(agentJobs)
       .where(eq(agentJobs.id, req.jobId))
       .limit(1);
     if (!job) throw new Error(`job ${req.jobId} not found`);
+    const deviceId = originDeviceOf(job);
     const words = requestWords(req.kind, req.toolInput);
     const base = {
       approvalId: req.approvalRequestId,
@@ -193,19 +226,24 @@ export async function publishApprovalRequested(
       text: redactSecretsInText(words.text),
     };
     if (req.kind === 'approval') {
-      bus.publish(req.entityId, job.conversationId, {
-        type: 'approval.requested',
-        ...base,
-        kind: 'approval',
-        toolName: req.toolName,
-      });
+      bus.publish(
+        req.entityId,
+        job.conversationId,
+        { type: 'approval.requested', ...base, kind: 'approval', toolName: req.toolName },
+        deviceId,
+      );
     } else {
-      bus.publish(req.entityId, job.conversationId, {
-        type: 'question.asked',
-        ...base,
-        kind: req.kind,
-        options: words.options.map(redactSecretsInText),
-      });
+      bus.publish(
+        req.entityId,
+        job.conversationId,
+        {
+          type: 'question.asked',
+          ...base,
+          kind: req.kind,
+          options: words.options.map(redactSecretsInText),
+        },
+        deviceId,
+      );
     }
   } catch (err) {
     lost(bus, `the request ${req.approvalRequestId}`, err);
@@ -235,6 +273,8 @@ export async function publishApprovalsResolved(
         kind: approvalRequests.kind,
         status: approvalRequests.status,
         conversationId: agentJobs.conversationId,
+        chatId: agentJobs.chatId,
+        chatChannel: agentJobs.chatChannel,
       })
       .from(approvalRequests)
       .leftJoin(agentJobs, eq(agentJobs.id, approvalRequests.jobId))
@@ -245,14 +285,19 @@ export async function publishApprovalsResolved(
         console.warn(`[job-events] request ${row.id} has no workspace: no client to tell`);
         continue;
       }
-      bus.publish(row.entityId, row.conversationId ?? null, {
-        type: 'approval.resolved',
-        approvalId: row.id,
-        jobId: row.jobId,
-        conversationId: row.conversationId ?? null,
-        kind: approvalKind(row.kind),
-        status: row.status ?? '',
-      });
+      bus.publish(
+        row.entityId,
+        row.conversationId ?? null,
+        {
+          type: 'approval.resolved',
+          approvalId: row.id,
+          jobId: row.jobId,
+          conversationId: row.conversationId ?? null,
+          kind: approvalKind(row.kind),
+          status: row.status ?? '',
+        },
+        originDeviceOf({ chatId: row.chatId ?? null, chatChannel: row.chatChannel ?? null }),
+      );
     }
     if (missing.length > 0) throw new Error(`requests not found: ${missing.join(', ')}`);
   } catch (err) {

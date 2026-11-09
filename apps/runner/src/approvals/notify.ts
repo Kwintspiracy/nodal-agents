@@ -22,6 +22,7 @@ import {
   telegramAllowedChats,
   getChannelBinding,
   getBindingCredentials,
+  isConversationAllowed,
   decryptChannelSecret,
   resolveOwnerConversation,
   recordApprovalCardMessage,
@@ -432,6 +433,10 @@ export async function walkJobChainToRoot(
  * (fail loud — dashboard-only), matching Telegram's own fail-loud contract
  * rather than ever falling back to the triggering conversation.
  *
+ * channel=device (#945): the request was made on a device, and it is
+ * answered there — `resolveDeviceDeliveryTarget` below. Never the agent's
+ * messaging channel: that is the owner's DEFAULT, for a request made nowhere.
+ *
  * The root's `channel` column defaults via resolveTransportChannel + the
  * ROOT agent's own active channels (listActiveChannelsForAgent) when it
  * isn't itself a transport (cron, webhook, dashboard, api, …) — an agent
@@ -447,8 +452,16 @@ export async function resolveChannelApprovalDeliveryTarget(
   if (!chain) return null;
 
   const rootHop = chain[chain.length - 1]!;
-  const activeChannels = await listActiveChannelsForAgent(db, rootHop.agentId);
-  const rootChannel = resolveTransportChannel(rootHop.channel, activeChannels);
+  // A request made ON a channel is answered there; only a request made
+  // nowhere (cron, dashboard, api, …) falls back to the agent's channels.
+  const rootChannel: ChannelKind = isTransportChannel(rootHop.channel)
+    ? rootHop.channel
+    : resolveTransportChannel(
+        rootHop.channel,
+        await listActiveChannelsForAgent(db, rootHop.agentId),
+      );
+
+  if (rootChannel === 'device') return resolveDeviceDeliveryTarget(db, chain);
 
   if (rootChannel === 'telegram') {
     const target = await resolveApprovalDeliveryTarget(db, jobId);
@@ -474,6 +487,45 @@ export async function resolveChannelApprovalDeliveryTarget(
     return { channel: rootChannel, agentId: hop.agentId, credentials, conversationId };
   }
   return null;
+}
+
+/**
+ * Where a request made on a DEVICE is answered (#945): that device — the
+ * root's chat, recorded on channel `device` (`designateChat`).
+ *
+ * The same rule as every channel, with the device's own facts. A device
+ * belongs to the WORKSPACE, not to an agent: there is no binding to walk, and
+ * its credential is the workspace (`getBindingCredentials`). There is no owner
+ * conversation to swap to either: a device is paired by the workspace's owner
+ * (#946), so the device the request came from is the owner's. It must still
+ * be a device OF THIS WORKSPACE (`isConversationAllowed`); otherwise — a
+ * removed device, a chat that names another workspace's device — null: the
+ * request stays on the dashboard, and never goes to another channel.
+ */
+async function resolveDeviceDeliveryTarget(
+  db: RunnerDeps['db'],
+  chain: NonNullable<Awaited<ReturnType<typeof walkJobChainToRoot>>>,
+): Promise<ChannelApprovalDeliveryTarget | null> {
+  const root = chain[chain.length - 1]!;
+  const deviceId = jobChatOn({ id: root.chatId, channel: root.chatChannel }, 'device');
+  if (!deviceId) return null;
+  const credentials = await getBindingCredentials(db, root.agentId, 'device');
+  const entityId = credentials?.['entityId'];
+  if (!credentials || !entityId) return null;
+  const allowed = await isConversationAllowed(db, {
+    entityId,
+    agentId: root.agentId,
+    channel: 'device',
+    conversationId: deviceId,
+  });
+  if (!allowed) {
+    console.warn(
+      `[approval-notify] device ${deviceId} is not a device of workspace ${entityId}: ` +
+        'the request stays on the dashboard',
+    );
+    return null;
+  }
+  return { channel: 'device', agentId: root.agentId, credentials, conversationId: deviceId };
 }
 
 /**
@@ -710,6 +762,7 @@ export async function resolveElicitationOriginTarget(
   // d'autre.
   const chatId = jobChatOn({ id: root.chatId, channel: root.chatChannel }, root.channel);
   if (!chatId) return null;
+  if (root.channel === 'device') return resolveDeviceDeliveryTarget(db, chain);
   if (root.channel === 'telegram') {
     const target = await resolveTelegramDeliveryTarget(db, jobId);
     if (!target) return null;

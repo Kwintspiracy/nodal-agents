@@ -95,6 +95,7 @@ import {
   formatLocalTime,
   inboxMessageReceivedAt,
   isInboxMessage,
+  keepsTurnsInChat,
   runnerRecordMessage,
 } from '@nodal-agents/shared';
 import { messageText } from './state.ts';
@@ -214,7 +215,9 @@ export interface LoadThreadHistoryOptions {
  * - All candidate jobs have null/empty `result` (e.g. all soft-skipped).
  */
 export async function loadThreadHistory(opts: LoadThreadHistoryOptions): Promise<ModelMessage[]> {
-  if (opts.channel === 'dashboard') return loadDashboardHistory(opts);
+  // Le tableau de bord et un appareil (#945) rangent leurs tours dans
+  // `chat_messages` : leur histoire se lit là, pas dans les jobs.
+  if (keepsTurnsInChat(opts.channel)) return loadDashboardHistory(opts);
   if (!CONVERSATIONAL_CHANNELS.has(opts.channel)) return [];
   if (!opts.conversationId) return [];
 

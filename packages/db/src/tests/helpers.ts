@@ -192,7 +192,7 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       entity_id uuid REFERENCES entities(id) ON DELETE CASCADE,
       agent_id uuid REFERENCES agents(id) ON DELETE CASCADE,
       status text DEFAULT 'pending' CHECK (status IN ('pending','processing','completed','failed','awaiting_approval','awaiting_delegation','cancelled')),
-      channel text NOT NULL CHECK (channel IN ('telegram','api','whatsapp','internal','cron','task-board','slack','discord','dashboard','webhook','mcp')),
+      channel text NOT NULL CHECK (channel IN ('telegram','api','whatsapp','internal','cron','task-board','slack','discord','dashboard','webhook','mcp','device')),
       task text NOT NULL,
       -- mirrors migration 0151 : la note de qui a remis la demande (handoff.ts).
       handoff_note text,
@@ -486,7 +486,7 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
     CREATE TABLE IF NOT EXISTS approval_card_messages (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       approval_request_id uuid NOT NULL REFERENCES approval_requests(id) ON DELETE CASCADE,
-      channel text NOT NULL CHECK (channel IN ('telegram','discord','slack','whatsapp')),
+      channel text NOT NULL CHECK (channel IN ('telegram','discord','slack','whatsapp','device')),
       agent_id uuid NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
       conversation_id text NOT NULL,
       message_id text NOT NULL,
@@ -839,7 +839,7 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       -- le projet courant du fil. Pas de FK depuis agent_jobs.conversation_id :
       -- voir le commentaire de la colonne dans jobs.ts.
       channel text NOT NULL DEFAULT 'dashboard'
-        CHECK (channel IN ('dashboard','telegram','slack','discord','whatsapp')),
+        CHECK (channel IN ('dashboard','telegram','slack','discord','whatsapp','device')),
       chat_id text,
       current_project_id uuid REFERENCES code_projects(id) ON DELETE SET NULL,
       created_at timestamptz DEFAULT now(),
@@ -1000,6 +1000,18 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
         UNIQUE (entity_id, channel, conversation_id),
       CONSTRAINT conversation_handles_id_check CHECK (id ~ '^conv_[a-z2-7]{10}$')
     );
+
+    -- mirrors migration 0163 (#945) : les modules externes d'un espace
+    CREATE TABLE IF NOT EXISTS devices (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      entity_id uuid NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+      name text NOT NULL CHECK (length(btrim(name)) BETWEEN 1 AND 80),
+      capabilities text[] NOT NULL DEFAULT '{}'::text[]
+        CHECK (capabilities <@ ARRAY['microphone','speaker','screen','buttons']::text[]),
+      created_at timestamptz NOT NULL DEFAULT now(),
+      last_seen_at timestamptz
+    );
+    CREATE INDEX IF NOT EXISTS idx_devices_entity ON devices (entity_id, created_at);
 
     -- ── auth tables (better-auth) ────────────────────────────────────────────
 

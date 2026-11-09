@@ -42,8 +42,22 @@
 // sont nommés, un par un, dans `OUT_OF_PROCESS_WRITERS` du même test (le
 // bouton Stop du tableau de bord, que #955 fait passer par le runner ; le banc
 // d'essai).
+//
+// ─── Les appareils (#945) ────────────────────────────────────────────────────
+//
+// Un appareil écoute le MÊME bus, sur son propre flux
+// (`GET /api/devices/:deviceId/events`). Chaque événement porte, en plus de
+// sa conversation, l'APPAREIL d'où vient la demande de son job
+// (`StoredJobEvent.deviceId` : le chat du job, quand il a été résolu sur le
+// canal `device`). Un auditeur d'appareil n'entend que ce qui vient de SES
+// demandes, plus ce qui lui est adressé (`device.event`, posé par l'adaptateur
+// `device` : une carte, une bulle, une carte fermée) ; un tel événement adressé
+// n'atteint jamais un autre auditeur. L'isolement des espaces ne change pas :
+// l'appareil est inscrit dans l'espace de sa ligne, et un événement n'est rangé
+// que dans l'espace de son job.
 
 import { randomBytes } from 'node:crypto';
+import type { DeviceEvent } from '@nodal-agents/shared';
 
 /** Ce que demande une ligne `approval_requests` (colonne `kind`). */
 export type ApprovalRequestKind = 'approval' | 'question' | 'elicitation';
@@ -119,6 +133,15 @@ export type JobEventPayload =
       audioId: string;
     }
   | {
+      /**
+       * Un geste ADRESSÉ à un appareil (#945) par l'adaptateur `device` : une
+       * carte, une bulle, une carte fermée, déjà dans la forme du protocole.
+       * N'atteint que l'auditeur de cet appareil (`reaches`).
+       */
+      type: 'device.event';
+      event: DeviceEvent;
+    }
+  | {
       type: 'resync';
       /** Un code : pourquoi le client doit relire la base. */
       reason: ResyncReason;
@@ -139,6 +162,11 @@ export interface StoredJobEvent {
   id: string;
   seq: number;
   conversationId: string | null;
+  /**
+   * L'appareil d'où vient la demande du job de cet événement, ou à qui il est
+   * adressé (#945) ; null : ni l'un ni l'autre.
+   */
+  deviceId: string | null;
   payload: JobEventPayload;
 }
 
@@ -150,6 +178,8 @@ export type JobEventOpening =
 
 interface Subscriber {
   conversationId: string | null;
+  /** L'appareil qui écoute (#945), ou null pour un client de l'espace. */
+  deviceId: string | null;
   send: (event: StoredJobEvent) => void;
 }
 
@@ -199,10 +229,17 @@ export class JobEventBus {
     entityId: string,
     conversationId: string | null,
     payload: JobEventPayload,
+    deviceId: string | null = null,
   ): StoredJobEvent {
     const ws = this.workspace(entityId);
     ws.seq += 1;
-    const event: StoredJobEvent = { id: this.idOf(ws.seq), seq: ws.seq, conversationId, payload };
+    const event: StoredJobEvent = {
+      id: this.idOf(ws.seq),
+      seq: ws.seq,
+      conversationId,
+      deviceId,
+      payload,
+    };
     ws.buffer.push(event);
     if (ws.buffer.length > this.capacity) ws.buffer.splice(0, ws.buffer.length - this.capacity);
     for (const sub of ws.subscribers) {
@@ -241,10 +278,11 @@ export class JobEventBus {
     conversationId: string | null,
     lastEventId: string | null,
     send: (event: StoredJobEvent) => void,
+    deviceId: string | null = null,
   ): { opening: JobEventOpening; close: () => void } {
     const ws = this.workspace(entityId);
-    const opening = this.openingFor(ws, conversationId, lastEventId);
-    const sub: Subscriber = { conversationId, send };
+    const opening = this.openingFor(ws, { conversationId, deviceId }, lastEventId);
+    const sub: Subscriber = { conversationId, deviceId, send };
     ws.subscribers.add(sub);
     return {
       opening,
@@ -256,7 +294,7 @@ export class JobEventBus {
 
   private openingFor(
     ws: Workspace,
-    conversationId: string | null,
+    sub: Pick<Subscriber, 'conversationId' | 'deviceId'>,
     lastEventId: string | null,
   ): JobEventOpening {
     const headId = this.idOf(ws.seq);
@@ -270,7 +308,6 @@ export class JobEventBus {
     // doit y être, sinon une partie de ce qu'il a manqué est perdue.
     const oldest = ws.buffer[0]?.seq ?? ws.seq + 1;
     if (cursor.seq < oldest - 1) return { kind: 'resync', headId, reason: 'cursor_too_old' };
-    const sub = { conversationId };
     const missed = ws.buffer.filter((e) => e.seq > cursor.seq && reaches(sub, e));
     // Un `resync` manqué reste un `resync` : relire la base, pas rejouer autour.
     const lost = missed.find((e) => e.payload.type === 'resync');
@@ -286,23 +323,42 @@ export class JobEventBus {
   }
 
   /**
-   * Combien d'auditeurs un événement de cette conversation atteindrait à cet
-   * instant : ceux de la conversation, et ceux de tout l'espace — la règle de
-   * la publication (`reaches`).
+   * Combien d'auditeurs un événement de job de cette conversation (et de cet
+   * appareil d'origine) atteindrait à cet instant — la règle de la
+   * publication (`reaches`), appliquée à un tel événement.
    */
-  listenersOf(entityId: string, conversationId: string | null): number {
+  listenersOf(
+    entityId: string,
+    conversationId: string | null,
+    deviceId: string | null = null,
+  ): number {
+    const probe: Pick<StoredJobEvent, 'conversationId' | 'deviceId' | 'payload'> = {
+      conversationId,
+      deviceId,
+      payload: { type: 'reply.audio', jobId: '', conversationId, audioId: '' },
+    };
     let n = 0;
     for (const sub of this.workspaces.get(entityId)?.subscribers ?? []) {
-      if (sub.conversationId === null || sub.conversationId === conversationId) n++;
+      if (reaches(sub, probe)) n++;
     }
     return n;
   }
 }
 
-/** Un auditeur d'une conversation ne reçoit que la sienne ; un `resync` va à tous. */
-function reaches(sub: Pick<Subscriber, 'conversationId'>, event: StoredJobEvent): boolean {
-  if (sub.conversationId === null) return true;
+/**
+ * Qui entend quoi. Un `resync` va à tous. Un auditeur d'APPAREIL n'entend que
+ * ce qui vient de ses demandes et ce qui lui est adressé ; un geste adressé à
+ * un appareil n'atteint que lui. Un auditeur d'une conversation ne reçoit que
+ * la sienne ; un auditeur de tout l'espace, tout le reste.
+ */
+function reaches(
+  sub: Pick<Subscriber, 'conversationId' | 'deviceId'>,
+  event: Pick<StoredJobEvent, 'conversationId' | 'deviceId' | 'payload'>,
+): boolean {
   if (event.payload.type === 'resync') return true;
+  if (sub.deviceId !== null) return event.deviceId === sub.deviceId;
+  if (event.payload.type === 'device.event') return false;
+  if (sub.conversationId === null) return true;
   return event.conversationId === sub.conversationId;
 }
 

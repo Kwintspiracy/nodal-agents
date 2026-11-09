@@ -58,6 +58,8 @@ export async function runCliRuntimeChatTurn(args: {
   abortSignal?: AbortSignal;
   /** How the person receives the reply (#941): heard after a voice turn. Absent: a typed turn, read. */
   replyRendering?: ReplyRendering;
+  /** Where the turn was made (#945, chat/turn-origin.ts): the dashboard, or a device. */
+  origin?: string;
 }): Promise<
   | { ok: true; reply: string; stopped?: boolean; cutReason?: BrakeStop }
   | { ok: false; error: string }
@@ -233,7 +235,7 @@ export async function runCliRuntimeChatTurn(args: {
       agentRow,
       db,
       buildCliRuntimeJobContext({
-        origin: 'dashboard',
+        origin: args.origin ?? 'dashboard',
         deployment: await getDeploymentContext(db, entityId),
         task: message,
         workspaceGit,

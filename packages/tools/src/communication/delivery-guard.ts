@@ -26,7 +26,7 @@ import {
 import { CONVERSATION_HANDLE_RE, isConversationHandle } from '@nodal-agents/shared';
 import {
   defaultSendChannel,
-  isTransportChannel,
+  isMessagingChannel,
   jobChatOn,
   type ChannelKind,
   type JobChat,
@@ -224,7 +224,9 @@ async function conversationArgument(
     entityId: ctx.entityId,
     handle: chatId,
   });
-  if (conversation === null || !isTransportChannel(conversation.channel)) {
+  // A send tool writes to a messaging platform only: a device's conversation
+  // (#945) reads what Nodal says on its stream, never a send tool's message.
+  if (conversation === null || !isMessagingChannel(conversation.channel)) {
     const err = new Error(
       `conversation_handle_unknown: ${chatId} names no conversation of this workspace. Use a ` +
         'conversation address you were given in this job (Job context, list_conversations), ' +

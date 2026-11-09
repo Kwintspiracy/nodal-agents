@@ -255,7 +255,7 @@ export const approvalCardMessages = pgTable(
     ),
     check(
       'approval_card_messages_channel_check',
-      sql`${table.channel} IN ('telegram','discord','slack','whatsapp')`,
+      sql`${table.channel} IN ('telegram','discord','slack','whatsapp','device')`,
     ),
     check(
       'approval_card_messages_outcome_check',

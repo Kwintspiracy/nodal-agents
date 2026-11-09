@@ -14,6 +14,14 @@
 // dual-write (and a follow-up drops the legacy table), channel='telegram'
 // reads go straight to telegram_allowed_chats — every OTHER channel reads the
 // neutral table, which is its only source of truth for that channel.
+//
+// channel='device' (#945) has neither table: a device belongs to a WORKSPACE,
+// not to an agent, and its `devices` row IS its authorization. Each reader
+// below that a device reaches says what it does for it, in one place: the
+// conversation is allowed when it names a device of the job's workspace; the
+// "credential" is that workspace, the only scope the device adapter publishes
+// into; there is no owner conversation on `device` (several devices, none
+// designated), so `resolveOwnerConversation` finds none.
 
 import { createHash } from 'node:crypto';
 import { eq, and, or } from 'drizzle-orm';
@@ -23,6 +31,7 @@ import { channelBindings, type ChannelBindingRow } from '../schema/channel-bindi
 import { channelAllowedConversations } from '../schema/channel-allowed-conversations.ts';
 import { agents } from '../schema/agents.ts';
 import type { AnyDrizzleDb } from '../client.ts';
+import { findWorkspaceDevice } from './devices.ts';
 
 /**
  * The active OWNER's conversation id for a given (agent, channel), or null
@@ -76,6 +85,15 @@ export async function isConversationAllowed(
   db: AnyDrizzleDb,
   params: { entityId: string; agentId: string; channel: string; conversationId: string },
 ): Promise<boolean> {
+  // A device of THIS workspace, and only of it (file header).
+  if (params.channel === 'device') {
+    return (
+      (await findWorkspaceDevice(db, {
+        entityId: params.entityId,
+        deviceId: params.conversationId,
+      })) !== null
+    );
+  }
   if (params.channel === 'telegram') {
     const [row] = await db
       .select({ id: telegramAllowedChats.id })
@@ -233,6 +251,16 @@ export async function getBindingCredentials(
   agentId: string,
   channel: string,
 ): Promise<Record<string, string> | null> {
+  // A device is reached through the agent's WORKSPACE (file header): the bag
+  // names it, and the device adapter refuses any device outside it.
+  if (channel === 'device') {
+    const [row] = await db
+      .select({ entityId: agents.entityId })
+      .from(agents)
+      .where(eq(agents.id, agentId))
+      .limit(1);
+    return row?.entityId ? { entityId: row.entityId } : null;
+  }
   if (channel === 'telegram') {
     const [row] = await db
       .select({ botToken: agents.telegramBotToken })

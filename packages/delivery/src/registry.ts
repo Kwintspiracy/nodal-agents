@@ -11,14 +11,21 @@ import { telegramAdapter } from './channels/telegram-adapter.ts';
 import { discordAdapter } from './channels/discord-adapter.ts';
 import { slackAdapter } from './channels/slack-adapter.ts';
 import { whatsappAdapter } from './channels/whatsapp-adapter.ts';
+import { deviceAdapter } from './channels/device-adapter.ts';
 import type { ChannelAdapter, ChannelKind, TextDelivery } from './channel-adapter.ts';
 
-const adapters: ReadonlyMap<ChannelKind, ChannelAdapter> = new Map([
-  ['telegram', telegramAdapter],
-  ['discord', discordAdapter],
-  ['slack', slackAdapter],
-  ['whatsapp', whatsappAdapter],
-]);
+// A Record, not a list: a ChannelKind without its adapter does not compile.
+const ADAPTERS: Readonly<Record<ChannelKind, ChannelAdapter>> = {
+  telegram: telegramAdapter,
+  discord: discordAdapter,
+  slack: slackAdapter,
+  whatsapp: whatsappAdapter,
+  device: deviceAdapter,
+};
+
+const adapters: ReadonlyMap<ChannelKind, ChannelAdapter> = new Map(
+  Object.entries(ADAPTERS) as [ChannelKind, ChannelAdapter][],
+);
 
 /** Resolve the ChannelAdapter for `channel`. Throws `channel_adapter_not_found`
  *  (never returns a default/best-guess adapter) when none is registered. */

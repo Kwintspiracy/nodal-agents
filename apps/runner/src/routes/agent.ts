@@ -28,6 +28,10 @@ export const AgentRequestSchema = z.object({
    * name its own.
    */
   entityId: z.string().guid().optional(),
+  // Not `device` (#945): a device's request is a turn of ITS conversation
+  // (`POST /api/devices/:deviceId/conversation`, then the chat or voice
+  // route), which records the device. A bare `channel: 'device'` here would
+  // claim a device origin with no device behind it.
   channel: z
     .enum(['telegram', 'api', 'whatsapp', 'internal', 'cron', 'task-board', 'slack', 'discord'])
     .default('api'),

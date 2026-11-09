@@ -81,7 +81,7 @@ testEnum('McpTransport', MCP_TRANSPORTS, McpTransportSchema);
 // Specific DB constraint cross-checks — these encode the exact values from the CHECK clauses
 
 describe('DB constraint: agent_jobs channel_check', () => {
-  it('matches exactly the 11 DB channels', () => {
+  it('matches exactly the 12 DB channels', () => {
     const dbChannels = [
       'telegram',
       'api',
@@ -98,6 +98,8 @@ describe('DB constraint: agent_jobs channel_check', () => {
       // contrainte SQL — d ou l ecart AgentJobSchema.parse() qui refusait une
       // ligne DB legitime.
       'mcp',
+      // 0163 (#945) : un module externe.
+      'device',
     ];
     expect([...JOB_CHANNELS].sort()).toEqual(dbChannels.sort());
   });

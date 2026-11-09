@@ -48,6 +48,12 @@ export {
   listAllowedConversations,
 } from './queries/channel-identity.ts';
 export type { AllowedConversationSummary } from './queries/channel-identity.ts';
+export {
+  isDeviceId,
+  findWorkspaceDevice,
+  findDeviceForGuard,
+  touchDevice,
+} from './queries/devices.ts';
 
 // ─── Repos ─────────────────────────────────────────────────────────────────────
 export {

@@ -88,7 +88,7 @@ export const MCP_JOB_CHANNELS: readonly string[] = ['api', MCP_FOLDER];
  * alphabétique, ni celui où la base rend ses lignes, qui changerait d'un
  * chargement à l'autre.
  */
-const CHANNEL_ORDER: readonly string[] = ['telegram', 'slack', 'discord', 'whatsapp'];
+const CHANNEL_ORDER: readonly string[] = ['telegram', 'slack', 'discord', 'whatsapp', 'device'];
 
 /**
  * Les statuts qui font TOURNER un run, donc allumer le point vert.

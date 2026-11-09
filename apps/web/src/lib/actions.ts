@@ -215,7 +215,7 @@ import {
   getTelegramUpdates,
   getAdapter,
   listActiveChannelsForAgent,
-  type ChannelKind,
+  type MessagingChannelKind,
   type BotIdentity,
   type WhatsAppStatus,
 } from '@nodal-agents/delivery';
@@ -3025,11 +3025,14 @@ export async function cancelJobAction(id: string): Promise<ActionResult<{ status
 // of /agents/[id]/edit — that route used to be its own page at
 // /agents/[id]/channels, which now just redirects there).
 
-const CHANNEL_ORDER: readonly ChannelKind[] = ['telegram', 'discord', 'slack', 'whatsapp'];
+// Messaging platforms only (`MessagingChannelKind`, @nodal-agents/delivery): a
+// device (#945) belongs to the workspace, not to an agent — it has no binding,
+// no allowlist, and no routine or webhook notifies it (migration 0163).
+const CHANNEL_ORDER: readonly MessagingChannelKind[] = ['telegram', 'discord', 'slack', 'whatsapp'];
 
 /** Channels with a real connect flow (ChannelAdapter + UI card). Everything
  *  else in CHANNEL_ORDER renders "coming soon" until it grows one. */
-const CONNECTABLE_CHANNELS: ReadonlySet<ChannelKind> = new Set([
+const CONNECTABLE_CHANNELS: ReadonlySet<MessagingChannelKind> = new Set([
   'telegram',
   'discord',
   'slack',
@@ -3039,7 +3042,7 @@ const CONNECTABLE_CHANNELS: ReadonlySet<ChannelKind> = new Set([
 export type ChannelUiStatus = 'connected' | 'disconnected' | 'coming_soon';
 
 export interface AgentChannelSummary {
-  channel: ChannelKind;
+  channel: MessagingChannelKind;
   status: ChannelUiStatus;
 }
 
@@ -3145,7 +3148,7 @@ export interface ConfigureChannelResult {
   agentId: string;
   agentSlug: string;
   agentName: string;
-  channel: ChannelKind;
+  channel: MessagingChannelKind;
   status: 'connected';
   /** Channel-specific display identity (Telegram: bot username, without the @). */
   identityLabel: string | null;
@@ -4147,7 +4150,7 @@ export interface ChannelAllowedConversationView {
 /** List the inbound-conversation allowlist for an agent's bot on `channel` (entity-scoped). */
 export async function getChannelAllowedConversationsAction(
   agentId: string,
-  channel: ChannelKind,
+  channel: MessagingChannelKind,
 ): Promise<ActionResult<ChannelAllowedConversationView[]>> {
   try {
     const session = await getSession();
@@ -10895,7 +10898,7 @@ export async function getVersionInfoAction(): Promise<ActionResult<VersionInfo>>
 // to deliver via a tool it was never given, deadlocking the run. Kept in the DB
 // column's check constraint for forward-compat once whatsapp grows send tools,
 // just not offered here.
-const NOTIFY_CHANNEL_OPTIONS: readonly ChannelKind[] = ['telegram', 'discord', 'slack'];
+const NOTIFY_CHANNEL_OPTIONS: readonly MessagingChannelKind[] = ['telegram', 'discord', 'slack'];
 
 export type ScheduleRow = {
   id: string;
@@ -10910,7 +10913,7 @@ export type ScheduleRow = {
   nextRun: Date | null;
   lastStatus: string | null;
   notifyOnSuccess: boolean;
-  notifyChannel: ChannelKind | null;
+  notifyChannel: MessagingChannelKind | null;
   dailyBudgetUsd: number;
   createdAt: Date | null;
   updatedAt: Date | null;
@@ -10924,7 +10927,7 @@ export type ScheduleRow = {
  */
 export async function listAgentNotifyChannelsAction(
   agentId: string,
-): Promise<ActionResult<ChannelKind[]>> {
+): Promise<ActionResult<MessagingChannelKind[]>> {
   try {
     const session = await getSession();
     if (!z.string().guid().safeParse(agentId).success) {
@@ -10978,7 +10981,7 @@ export async function listSchedulesAction(): Promise<ActionResult<ScheduleRow[]>
         ...r,
         active: r.active ?? true,
         notifyOnSuccess: r.notifyOnSuccess ?? false,
-        notifyChannel: (r.notifyChannel as ChannelKind | null) ?? null,
+        notifyChannel: (r.notifyChannel as MessagingChannelKind | null) ?? null,
         dailyBudgetUsd: r.dailyBudgetUsd ?? 5,
       })) as ScheduleRow[],
     );
@@ -10996,7 +10999,7 @@ const CreateScheduleSchema = z.object({
   notifyOnSuccess: z.boolean().optional().default(false),
   // null = auto (first active channel by priority — unchanged behavior).
   notifyChannel: z
-    .enum(NOTIFY_CHANNEL_OPTIONS as [ChannelKind, ...ChannelKind[]])
+    .enum(NOTIFY_CHANNEL_OPTIONS as [MessagingChannelKind, ...MessagingChannelKind[]])
     .nullable()
     .optional()
     .default(null),
@@ -11011,7 +11014,7 @@ const CreateScheduleSchema = z.object({
 async function assertNotifyChannelActive(
   db: ReturnType<typeof getDb>,
   agentId: string,
-  channel: ChannelKind | null,
+  channel: MessagingChannelKind | null,
 ): Promise<string | null> {
   if (!channel) return null;
   const active = await listActiveChannelsForAgent(db, agentId);
@@ -11138,7 +11141,7 @@ const UpdateScheduleSchema = z.object({
   task: z.string().min(1),
   notifyOnSuccess: z.boolean().optional().default(false),
   notifyChannel: z
-    .enum(NOTIFY_CHANNEL_OPTIONS as [ChannelKind, ...ChannelKind[]])
+    .enum(NOTIFY_CHANNEL_OPTIONS as [MessagingChannelKind, ...MessagingChannelKind[]])
     .nullable()
     .optional()
     .default(null),
@@ -11347,7 +11350,7 @@ export async function runScheduleNowAction(
           type: 'cron',
           scheduleName: schedule.name,
           prevRunAt: schedule.lastRun ? schedule.lastRun.toISOString() : null,
-          notifyChannel: (schedule.notifyChannel as ChannelKind | null) ?? null,
+          notifyChannel: (schedule.notifyChannel as MessagingChannelKind | null) ?? null,
         },
       })
       .returning({ id: agentJobs.id });
@@ -11401,7 +11404,7 @@ export type WebhookTriggerRow = {
   lastTriggeredAt: Date | null;
   triggerCount: number;
   notifyOnSuccess: boolean;
-  notifyChannel: ChannelKind | null;
+  notifyChannel: MessagingChannelKind | null;
   createdAt: Date | null;
   updatedAt: Date | null;
 };
@@ -11446,7 +11449,7 @@ export async function listWebhookTriggersAction(): Promise<ActionResult<WebhookT
         active: r.active ?? true,
         triggerCount: r.triggerCount ?? 0,
         notifyOnSuccess: r.notifyOnSuccess ?? false,
-        notifyChannel: (r.notifyChannel as ChannelKind | null) ?? null,
+        notifyChannel: (r.notifyChannel as MessagingChannelKind | null) ?? null,
         hasSecret: secret != null,
       })),
     );
@@ -11668,7 +11671,7 @@ export async function getAutomationAction(id: string): Promise<ActionResult<Auto
           ...scheduleRow,
           active: scheduleRow.active ?? true,
           notifyOnSuccess: scheduleRow.notifyOnSuccess ?? false,
-          notifyChannel: (scheduleRow.notifyChannel as ChannelKind | null) ?? null,
+          notifyChannel: (scheduleRow.notifyChannel as MessagingChannelKind | null) ?? null,
           dailyBudgetUsd: scheduleRow.dailyBudgetUsd ?? 5,
         },
         runs,
@@ -11719,7 +11722,7 @@ export async function getAutomationAction(id: string): Promise<ActionResult<Auto
           active: rest.active ?? true,
           triggerCount: rest.triggerCount ?? 0,
           notifyOnSuccess: rest.notifyOnSuccess ?? false,
-          notifyChannel: (rest.notifyChannel as ChannelKind | null) ?? null,
+          notifyChannel: (rest.notifyChannel as MessagingChannelKind | null) ?? null,
           hasSecret: secret != null,
         },
         runs,
@@ -11742,7 +11745,7 @@ const CreateWebhookTriggerSchema = z.object({
   notifyOnSuccess: z.boolean().optional().default(false),
   // null = auto (first active channel by priority — see routes/webhook.ts).
   notifyChannel: z
-    .enum(NOTIFY_CHANNEL_OPTIONS as [ChannelKind, ...ChannelKind[]])
+    .enum(NOTIFY_CHANNEL_OPTIONS as [MessagingChannelKind, ...MessagingChannelKind[]])
     .nullable()
     .optional()
     .default(null),

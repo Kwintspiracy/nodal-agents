@@ -60,6 +60,7 @@ import {
   workspaceSandboxReader,
 } from '@nodal-agents/db';
 import {
+  keepsTurnsInChat,
   normalizePath,
   projectKey,
   isAbsolutePath,
@@ -743,7 +744,7 @@ export async function getProjectActivityAction(
 
     return ok({
       conversations: convRows.map((c): ProjectActivityConversation => {
-        const stats = c.channel === 'dashboard' ? dernierMessage.get(c.id) : dernierJob.get(c.id);
+        const stats = keepsTurnsInChat(c.channel) ? dernierMessage.get(c.id) : dernierJob.get(c.id);
         const compte = sessionsParConversation.get(c.id);
         return {
           id: c.id,
