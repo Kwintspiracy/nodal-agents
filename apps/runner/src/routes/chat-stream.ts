@@ -33,6 +33,7 @@ import { z } from 'zod';
 import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
 import { playChatTurn } from '../chat/play-turn.ts';
+import { callerReachesConversation } from '../devices/device-scope.ts';
 import { sseEvent, SSE_HEADERS } from './sse.ts';
 
 const ChatStreamRequestSchema = z.object({
@@ -60,6 +61,10 @@ export async function chatStreamRoute(
   // jeton de session ne joue un tour que pour SA propre entité.
   if (!c.get('callerTrusted') && entityId !== c.get('callerEntityId')) {
     return c.json({ error: 'forbidden' }, 403);
+  }
+  // Un appareil (#946) ne parle que dans SES conversations.
+  if (!(await callerReachesConversation(c, deps.db, conversationId))) {
+    return c.json({ error: 'conversation_not_found' }, 404);
   }
 
   // Tout ce qui pouvait être refusé l'a été AVANT d'ouvrir le flux : une fois

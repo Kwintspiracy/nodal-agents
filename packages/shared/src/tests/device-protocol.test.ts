@@ -7,6 +7,8 @@ import {
   DEVICE_CAPABILITIES,
   DeviceEventSchema,
   DeviceStreamResyncSchema,
+  isDeviceOwnRoute,
+  isDeviceTokenRoute,
   JOB_CHANNELS,
   JobChannelSchema,
   keepsTurnsInChat,
@@ -44,7 +46,25 @@ describe('the protocol events a device receives (#945) @cap:parler-par-canal-ext
         choices: [{ label: 'Approve', decision: 'approve' }],
       },
       { type: 'card.closed', cardId: 'c', text: 'done' },
-      { type: 'state', jobId: 'j', conversationId: null, state: 'failed', reason: 'why' },
+      {
+        type: 'state',
+        jobId: 'j',
+        conversationId: null,
+        state: 'failed',
+        waitingFor: [],
+        deliverables: [
+          { path: 'out/a.md', type: 'document', declared: true, verification: 'green' },
+        ],
+        reason: 'why',
+      },
+      {
+        type: 'state',
+        jobId: 'j',
+        conversationId: 'c',
+        state: 'working',
+        waitingFor: [],
+        deliverables: [],
+      },
       { type: 'announce', jobId: 'j', conversationId: 'c', audioId: 'a' },
     ];
     for (const g of gestures) expect(DeviceEventSchema.parse(g)).toEqual(g);
@@ -52,8 +72,24 @@ describe('the protocol events a device receives (#945) @cap:parler-par-canal-ext
       false,
     );
     expect(
-      DeviceEventSchema.safeParse({ type: 'state', jobId: 'j', conversationId: null, state: 'x' })
-        .success,
+      DeviceEventSchema.safeParse({
+        type: 'state',
+        jobId: 'j',
+        conversationId: null,
+        state: 'x',
+        waitingFor: [],
+        deliverables: [],
+      }).success,
+    ).toBe(false);
+    // The end of a run always says its deliverables, even when there are none.
+    expect(
+      DeviceEventSchema.safeParse({
+        type: 'state',
+        jobId: 'j',
+        conversationId: null,
+        state: 'done',
+        waitingFor: [],
+      }).success,
     ).toBe(false);
     expect(DeviceStreamResyncSchema.parse({ type: 'resync', reason: 'runner_restarted' })).toEqual({
       type: 'resync',
@@ -63,5 +99,46 @@ describe('the protocol events a device receives (#945) @cap:parler-par-canal-ext
 
   it('declares the four capabilities the devices table accepts', () => {
     expect([...DEVICE_CAPABILITIES]).toEqual(['microphone', 'speaker', 'screen', 'buttons']);
+  });
+});
+
+describe('where a device key is accepted, read from the route table (#946) @cap:parler-par-canal-externe/moteur', () => {
+  it('every route of DEVICE_GESTURES, with its method, and no other', () => {
+    for (const [method, path] of [
+      ['GET', '/api/devices/0b6f5a4e-1f2a-4c3b-9d8e-7f6a5b4c3d2e/events'],
+      ['POST', '/api/devices/0b6f5a4e-1f2a-4c3b-9d8e-7f6a5b4c3d2e/conversation'],
+      ['POST', '/api/voice/turns'],
+      ['POST', '/api/voice/turns/t1/chunks/0'],
+      ['POST', '/api/voice/turns/t1/end'],
+      ['DELETE', '/api/voice/turns/t1'],
+      ['POST', '/api/chat/stream'],
+      ['POST', '/api/chat/stop'],
+      ['POST', '/api/approve'],
+      ['GET', '/api/voice/replies/a1'],
+    ]) {
+      expect(isDeviceTokenRoute(method!, path!)).toBe(true);
+    }
+    for (const [method, path] of [
+      ['GET', '/api/devices/0b6f5a4e-1f2a-4c3b-9d8e-7f6a5b4c3d2e/conversation'],
+      ['GET', '/api/events'],
+      ['POST', '/api/agent'],
+      ['POST', '/api/chat'],
+      ['POST', '/api/devices/pair'],
+      ['POST', '/api/devices/pair/poll'],
+      ['GET', '/api/workspace-devices'],
+      ['POST', '/api/voice/turns/t1/chunks'],
+      ['POST', '/api/voice/turns//end'],
+      ['GET', '/api/voice/setting'],
+    ]) {
+      expect(isDeviceTokenRoute(method!, path!)).toBe(false);
+    }
+  });
+
+  it('a device’s own routes are the /api/devices/:deviceId/ ones, and the pairing routes are not', () => {
+    expect(isDeviceOwnRoute('GET', '/api/devices/d1/events')).toBe(true);
+    expect(isDeviceOwnRoute('POST', '/api/devices/d1/conversation')).toBe(true);
+    expect(isDeviceOwnRoute('POST', '/api/devices/pair/poll')).toBe(false);
+    expect(isDeviceOwnRoute('POST', '/api/devices/pair')).toBe(false);
+    expect(isDeviceOwnRoute('POST', '/api/chat/stream')).toBe(false);
   });
 });

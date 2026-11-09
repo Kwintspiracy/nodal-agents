@@ -35,9 +35,19 @@
 // publication qui échoue ne se tait pas non plus : elle le dit au journal, et
 // elle le dit aux clients par un `resync` (invariant #4).
 
-import { eq, inArray, agentJobs, approvalRequests } from '@nodal-agents/db';
-import type { AnyDrizzleDb, TransitionListener } from '@nodal-agents/db';
 import {
+  eq,
+  inArray,
+  agentJobs,
+  approvalRequests,
+  readRunState,
+  runHeadOf,
+} from '@nodal-agents/db';
+import type { AnyDrizzleDb, RunState, RunStatus, TransitionListener } from '@nodal-agents/db';
+import {
+  DeviceEventSchema,
+  type DeviceEvent,
+  type DeviceRunState,
   readElicitationToolInput,
   readQuestionToolInput,
   readStatedPurpose,
@@ -79,6 +89,111 @@ function lost(bus: JobEventBus, what: string, err: unknown): void {
       (err instanceof Error ? err.message : String(err)),
   );
   bus.resyncEverywhere('event_lost');
+}
+
+// ─── L'état du run, POUSSÉ à l'appareil d'où vient la demande (#945) ──────────
+//
+// Un client externe qui confie un travail suivait son run en relisant
+// `get_task` en boucle, jusqu'à trente minutes. L'appareil reçoit la MÊME
+// lecture (`readRunState`, @nodal-agents/db — celle de `get_task`), poussée à
+// chaque transition du run : un job pris (`claimJob`, execute.ts), une demande
+// posée ou tranchée, un job fini. Sur la tête du run (`runHeadOf`) : le job que
+// la demande a lancé, quel que soit le délégué qui a bougé. Les livrables sont
+// ceux que `get_task` rend, des chemins — jamais lus dans le texte de l'agent.
+
+const DEVICE_RUN_STATE = {
+  running: 'working',
+  waiting_for_person: 'waiting',
+  completed: 'done',
+  cancelled: 'cancelled',
+  failed: 'failed',
+} as const satisfies Record<RunStatus, DeviceRunState>;
+
+/** Le geste `state` d'un run, tel que sa lecture le dit. */
+export function runStateEvent(
+  conversationId: string | null,
+  state: RunState,
+): Extract<DeviceEvent, { type: 'state' }> {
+  const reason = state.status === 'failed' ? oneLine(redactSecretsInText(state.result ?? '')) : '';
+  return {
+    type: 'state',
+    jobId: state.headJobId,
+    conversationId,
+    state: DEVICE_RUN_STATE[state.status],
+    waitingFor: state.pendingRequests.map((r) => r.requestId),
+    deliverables: state.deliverables.map((d) => ({
+      path: d.path,
+      type: d.type,
+      declared: d.declared,
+      verification: d.verification,
+    })),
+    ...(reason ? { reason } : {}),
+  };
+}
+
+/** Le job, réduit à ce qui dit où pousser l'état de son run. */
+interface DeviceJobRef {
+  jobId: string;
+  entityId: string | null;
+  conversationId: string | null;
+  deviceId: string | null;
+}
+
+async function pushRunState(db: AnyDrizzleDb, job: DeviceJobRef, bus: JobEventBus): Promise<void> {
+  if (!job.deviceId || !job.entityId) return;
+  try {
+    const head = await runHeadOf(db, job.entityId, job.jobId);
+    const state = await readRunState(db, job.entityId, head);
+    if (!state) throw new Error(`run head ${head} not found`);
+    bus.publish(
+      job.entityId,
+      job.conversationId,
+      {
+        type: 'device.event',
+        event: DeviceEventSchema.parse(runStateEvent(job.conversationId, state)),
+      },
+      job.deviceId,
+    );
+  } catch (err) {
+    lost(bus, `the run state of job ${job.jobId}`, err);
+  }
+}
+
+/**
+ * Un job vient d'être PRIS (`claimJob`) : son run travaille. Poussé à
+ * l'appareil d'où vient la demande, et à personne d'autre ; rien pour un job
+ * qui n'en vient pas. Ne fait jamais échouer la prise.
+ */
+export async function publishJobClaimed(
+  db: AnyDrizzleDb,
+  jobId: string,
+  bus: JobEventBus = jobEvents,
+): Promise<void> {
+  try {
+    const [row] = await db
+      .select({
+        entityId: agentJobs.entityId,
+        conversationId: agentJobs.conversationId,
+        chatId: agentJobs.chatId,
+        chatChannel: agentJobs.chatChannel,
+      })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, jobId))
+      .limit(1);
+    if (!row) throw new Error(`job ${jobId} not found`);
+    await pushRunState(
+      db,
+      {
+        jobId,
+        entityId: row.entityId,
+        conversationId: row.conversationId,
+        deviceId: originDeviceOf(row),
+      },
+      bus,
+    );
+  } catch (err) {
+    lost(bus, `the claim of job ${jobId}`, err);
+  }
 }
 
 /**
@@ -151,6 +266,7 @@ export async function publishJobEnded(
         },
         deviceId,
       );
+      await pushRunState(db, { ...base, entityId: row.entityId, deviceId }, bus);
       return {
         ...base,
         entityId: row.entityId,
@@ -172,6 +288,7 @@ export async function publishJobEnded(
         },
         deviceId,
       );
+      await pushRunState(db, { ...base, entityId: row.entityId, deviceId }, bus);
       return null;
     }
     // Une porte terminale qui publie un job encore vivant : une erreur de câblage.
@@ -245,6 +362,11 @@ export async function publishApprovalRequested(
         deviceId,
       );
     }
+    await pushRunState(
+      db,
+      { jobId: req.jobId, entityId: req.entityId, conversationId: job.conversationId, deviceId },
+      bus,
+    );
   } catch (err) {
     lost(bus, `the request ${req.approvalRequestId}`, err);
   }
@@ -285,6 +407,10 @@ export async function publishApprovalsResolved(
         console.warn(`[job-events] request ${row.id} has no workspace: no client to tell`);
         continue;
       }
+      const deviceId = originDeviceOf({
+        chatId: row.chatId ?? null,
+        chatChannel: row.chatChannel ?? null,
+      });
       bus.publish(
         row.entityId,
         row.conversationId ?? null,
@@ -296,7 +422,17 @@ export async function publishApprovalsResolved(
           kind: approvalKind(row.kind),
           status: row.status ?? '',
         },
-        originDeviceOf({ chatId: row.chatId ?? null, chatChannel: row.chatChannel ?? null }),
+        deviceId,
+      );
+      await pushRunState(
+        db,
+        {
+          jobId: row.jobId,
+          entityId: row.entityId,
+          conversationId: row.conversationId ?? null,
+          deviceId,
+        },
+        bus,
       );
     }
     if (missing.length > 0) throw new Error(`requests not found: ${missing.join(', ')}`);

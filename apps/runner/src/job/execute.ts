@@ -240,6 +240,7 @@ import { releaseJobProcessesIfEnded } from './process-scopes.ts';
 import { jobProcessScope } from '@nodal-agents/sandbox';
 import { runnerNotesValue } from './transcript-text.ts';
 import { drainDeliveries, prepareDelivery } from '../delivery/outbox.ts';
+import { publishJobClaimed } from '../events/publish.ts';
 import { loadThreadHistory } from './thread-history.ts';
 import {
   channelDeliveryFacts,
@@ -1762,6 +1763,9 @@ async function runJobTracked(
   // battement compris.
   const prise: number = claimed;
   recordClaim(jobId as string, prise);
+  // #945 — le run travaille : l'appareil d'où vient la demande le sait sans
+  // relire (son `state` est poussé, events/publish.ts).
+  await publishJobClaimed(db, jobId as string);
   // Le job est à nous : il bat, sous cette prise, jusqu'à ce que `runJob` le
   // lâche, quoi qu'il fasse entre les deux — préparation, appel modèle,
   // outils, attente (#565).

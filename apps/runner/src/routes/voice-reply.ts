@@ -62,12 +62,18 @@
 
 import type { Context } from 'hono';
 import { z } from 'zod';
-import { openReplyAudio, type ReplyAudioEvent } from '../chat/job-reply-voice.ts';
+import {
+  openReplyAudio,
+  replyAudioConversation,
+  type ReplyAudioEvent,
+} from '../chat/job-reply-voice.ts';
+import type { RunnerDeps } from '../deps.ts';
+import { callerReachesConversation } from '../devices/device-scope.ts';
 import { sseEvent, SSE_HEADERS } from './sse.ts';
 
 const QuerySchema = z.object({ entityId: z.string().guid() });
 
-export function voiceReplyRoute(c: Context): Response {
+export async function voiceReplyRoute(c: Context, deps: RunnerDeps): Promise<Response> {
   const audioId = c.req.param('audioId') ?? '';
   const parsed = QuerySchema.safeParse(c.req.query());
   if (!parsed.success) {
@@ -76,6 +82,18 @@ export function voiceReplyRoute(c: Context): Response {
   const { entityId } = parsed.data;
   if (!c.get('callerTrusted') && entityId !== c.get('callerEntityId')) {
     return c.json({ error: 'forbidden' }, 403);
+  }
+  // Un appareil (#946) n'entend que les annonces de SES conversations ; une
+  // autre répond comme une voix inexistante.
+  if (c.get('callerDevice')) {
+    const of = replyAudioConversation(audioId, entityId);
+    if (
+      !of ||
+      of.conversationId === null ||
+      !(await callerReachesConversation(c, deps.db, of.conversationId))
+    ) {
+      return c.json({ error: 'reply_audio_not_found' }, 404);
+    }
   }
   const encoder = new TextEncoder();
   let stop: () => void = () => {};

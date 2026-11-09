@@ -8,9 +8,10 @@
 //     adapter (devices/device-sink.ts): a card asked through notify.ts, the
 //     card closed by card-settlement.ts, a message. Already a protocol event;
 //   - what the jobs of ITS requests do — the bus events the dashboard also
-//     reads, for a job whose chat is this device. Each becomes the protocol
-//     gesture that says it: the reply as a `bubble`, where the job stands as a
-//     `state`, the spoken announcement as an `announce` pointer.
+//     reads, for a job whose chat is this device: the reply as a `bubble`,
+//     the spoken announcement as an `announce` pointer. Where the run stands
+//     (`state`, with its deliverables) is addressed to the device by
+//     events/publish.ts, from the run read as `get_task` reads it.
 //
 // Nothing here writes words: a bubble is the job's reply as stored (masked of
 // its secrets by publish.ts), a failure's reason its first line, as stored.
@@ -24,47 +25,25 @@ export function deviceEventsOf(e: StoredJobEvent): DeviceEvent[] {
   switch (p.type) {
     case 'device.event':
       return [p.event];
-    case 'job.finished': {
+    case 'job.finished':
       // A delegated job answers its parent; the request's answer is the root's.
-      if (p.parentJobId !== null) return [];
-      const out: DeviceEvent[] = [];
-      if (p.status === 'completed' && p.reply.trim() !== '') {
-        out.push({
+      // Where the run stands comes on its own (`state`, pushed by publish.ts).
+      if (p.parentJobId !== null || p.status !== 'completed' || p.reply.trim() === '') return [];
+      return [
+        {
           type: 'bubble',
           bubbleId: p.jobId,
           jobId: p.jobId,
           conversationId: p.conversationId,
           text: p.reply,
-        });
-      }
-      out.push({
-        type: 'state',
-        jobId: p.jobId,
-        conversationId: p.conversationId,
-        state: p.status === 'completed' ? 'done' : 'cancelled',
-      });
-      return out;
-    }
-    case 'job.failed':
-      if (p.parentJobId !== null) return [];
-      return [
-        {
-          type: 'state',
-          jobId: p.jobId,
-          conversationId: p.conversationId,
-          state: 'failed',
-          ...(p.reason ? { reason: p.reason } : {}),
         },
       ];
+    case 'job.failed':
     case 'approval.requested':
     case 'question.asked':
-      // The card itself is addressed to the device by the adapter; here, the
-      // job is waiting for the person.
-      return [
-        { type: 'state', jobId: p.jobId, conversationId: p.conversationId, state: 'waiting' },
-      ];
     case 'approval.resolved':
-      // The card says it is closed (`card.closed`, from its own card).
+      // The run's state says it (`state`, pushed with the run read as
+      // `get_task` reads it), and a card closes from its own card.
       return [];
     case 'reply.audio':
       return [

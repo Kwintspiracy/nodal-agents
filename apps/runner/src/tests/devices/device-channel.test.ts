@@ -36,6 +36,7 @@ import { and, eq } from '@nodal-agents/db';
 import {
   agentJobs,
   agents,
+  jobDeliverableVerificationState,
   approvalCardMessages,
   approvalRequests,
   conversations,
@@ -54,9 +55,11 @@ import type { RunnerEnv } from '../../env.ts';
 import { createApp } from '../../server.ts';
 import { executeJob } from '../../job/execute.ts';
 import { notifyApprovalCreated } from '../../approvals/notify.ts';
-import { publishJobEnded } from '../../events/publish.ts';
+import { publishApprovalRequested, publishJobEnded } from '../../events/publish.ts';
 import { speakFinishedJob } from '../../chat/job-reply-voice.ts';
+import { jobEvents } from '../../events/job-events.ts';
 import { readSse, type SseEvent } from '../chat/_sse-reader.ts';
+import { drawDeviceToken } from '../../devices/device-secrets.ts';
 
 vi.setConfig({ testTimeout: 30_000 });
 
@@ -213,6 +216,9 @@ let y: Awaited<ReturnType<typeof seedMinimal>>;
 let deviceA = '';
 let deviceB = '';
 let deviceOfY = '';
+/** Each device's key (#946): what it presents on its routes. */
+const keyOf = new Map<string, string>();
+const as = (id: string): Record<string, string> => ({ Authorization: `Bearer ${keyOf.get(id)}` });
 
 beforeAll(async () => {
   ({ db } = await spinUpTestDb());
@@ -239,6 +245,11 @@ beforeAll(async () => {
     ])
     .returning({ id: devices.id });
   [deviceA, deviceB, deviceOfY] = rows.map((r) => r.id) as [string, string, string];
+  for (const id of [deviceA, deviceB, deviceOfY]) {
+    const { token, tokenHash } = drawDeviceToken();
+    await db.update(devices).set({ tokenHash }).where(eq(devices.id, id));
+    keyOf.set(id, token);
+  }
 });
 
 function makeDeps(
@@ -294,7 +305,14 @@ async function listenTo(
 }
 
 const device = (app: ReturnType<typeof createApp>, id: string) =>
-  listenTo(app, `/api/devices/${id}/events`);
+  listenTo(app, `/api/devices/${id}/events`, as(id));
+
+/** The `state` gestures a device received, checked against the protocol. */
+const statesOf = (l: Listener) =>
+  l
+    .gestures()
+    .filter((e) => e.event === 'state')
+    .map((e) => DeviceEventSchema.parse(e.data));
 
 async function waitFor(check: () => boolean, ms = 3_000): Promise<void> {
   const until = Date.now() + ms;
@@ -311,7 +329,7 @@ async function postConversation(
   app: ReturnType<typeof createApp>,
   id: string,
   body: Record<string, unknown> = {},
-  headers: Record<string, string> = {},
+  headers: Record<string, string> = as(id),
 ): Promise<{ status: number; json: Record<string, unknown> }> {
   const res = await app.fetch(
     new Request(`http://localhost/api/devices/${id}/conversation`, {
@@ -407,7 +425,7 @@ describe('a device gets its conversation with the root (#945) @cap:parler-par-ca
     expect(seen!.lastSeenAt).toBeInstanceOf(Date);
   });
 
-  it('a session acts only as a device of ITS workspace; another workspace’s device is not found', async () => {
+  it('a device acts only as ITSELF, with its own key; the worker secret and a session are refused (#946)', async () => {
     const app = createApp(
       makeDeps(undefined, {
         getSession: async (req: Request) =>
@@ -418,11 +436,17 @@ describe('a device gets its conversation with the root (#945) @cap:parler-par-ca
       { ...testEnv, AUTH_MODE: 'bearer-token', BEARER_TOKEN: 'token' },
     );
     const asX = { Authorization: 'Bearer session-of-x' };
+    const secret = { Authorization: `Bearer ${testEnv.WORKER_SECRET}` };
     expect((await listenTo(app, `/api/devices/${deviceA}/events`)).status).toBe(401);
-    expect((await listenTo(app, `/api/devices/${deviceA}/events`, asX)).status).toBe(200);
-    expect((await listenTo(app, `/api/devices/${deviceOfY}/events`, asX)).status).toBe(404);
-    expect((await postConversation(app, deviceOfY, {}, asX)).status).toBe(404);
-    expect((await listenTo(app, `/api/devices/not-a-device/events`, asX)).status).toBe(404);
+    expect((await listenTo(app, `/api/devices/${deviceA}/events`, asX)).status).toBe(401);
+    expect((await listenTo(app, `/api/devices/${deviceA}/events`, secret)).status).toBe(401);
+    expect((await listenTo(app, `/api/devices/${deviceA}/events`, as(deviceA))).status).toBe(200);
+    // Device A's key on another device: B of its workspace, the device of Y.
+    expect((await listenTo(app, `/api/devices/${deviceB}/events`, as(deviceA))).status).toBe(404);
+    expect((await listenTo(app, `/api/devices/${deviceOfY}/events`, as(deviceA))).status).toBe(404);
+    expect((await postConversation(app, deviceOfY, {}, as(deviceA))).status).toBe(404);
+    expect((await postConversation(app, deviceOfY, {}, secret)).status).toBe(401);
+    expect((await listenTo(app, `/api/devices/not-a-device/events`, as(deviceA))).status).toBe(404);
   });
 });
 
@@ -466,12 +490,26 @@ describe('what a job launched from a device asks comes back to THAT device (#945
     });
     // The agent's question, quoted in the platform's frame.
     expect((card.data as { text: string }).text).toContain(`« ${QUESTION} »`);
-    expect(onA.gestures()).toContainEqual(
-      expect.objectContaining({
-        event: 'state',
-        data: { type: 'state', jobId: job, conversationId: conv, state: 'waiting' },
-      }),
-    );
+    // Followed without polling: the run's state, pushed — working when the
+    // job was claimed, waiting on THIS card once the question was asked.
+    expect(statesOf(onA)).toEqual([
+      {
+        type: 'state',
+        jobId: job,
+        conversationId: conv,
+        state: 'working',
+        waitingFor: [],
+        deliverables: [],
+      },
+      {
+        type: 'state',
+        jobId: job,
+        conversationId: conv,
+        state: 'waiting',
+        waitingFor: [request!.id],
+        deliverables: [],
+      },
+    ]);
     // Nobody else hears it as a card.
     expect(onB.gestures()).toEqual([]);
     expect(telegramSends).toEqual([]);
@@ -503,6 +541,9 @@ describe('what a job launched from a device asks comes back to THAT device (#945
       cardId: request!.id,
       text: `✅ Answered: ${OPTIONS[1]}`,
     });
+    // Answered: the run works again — re-queued, nothing waits.
+    await waitFor(() => statesOf(onA).length >= 3);
+    expect(statesOf(onA)[2]).toMatchObject({ state: 'working', waitingFor: [] });
     await settle();
     expect(onB.gestures()).toEqual([]);
     expect(telegramSends).toEqual([]);
@@ -624,6 +665,16 @@ describe('a job launched by voice from a device ends on that device (#945) @cap:
       replyRendering: 'spoken',
       result: 'The report is in your notes folder.',
     });
+    // What the run produced, as the verification records it.
+    await db.insert(jobDeliverableVerificationState).values({
+      jobId: job,
+      deliverableType: 'document',
+      canonicalKey: 'notes/report.md',
+      displayPathSnapshot: 'notes/report.md',
+      declared: true,
+      decisionStatus: 'green',
+      dirtyGeneration: 1,
+    });
     const onA = await device(app, deviceA);
     const onB = await device(app, deviceB);
 
@@ -641,11 +692,119 @@ describe('a job launched by voice from a device ends on that device (#945) @cap:
         conversationId: conv,
         text: 'The report is in your notes folder.',
       },
-      { type: 'state', jobId: job, conversationId: conv, state: 'done' },
+      // The end carries the deliverables `get_task` returns: a path, never
+      // read in the agent's text.
+      {
+        type: 'state',
+        jobId: job,
+        conversationId: conv,
+        state: 'done',
+        waitingFor: [],
+        deliverables: [
+          { path: 'notes/report.md', type: 'document', declared: true, verification: 'green' },
+        ],
+      },
       { type: 'announce', jobId: job, conversationId: conv, audioId },
     ]);
     await settle();
     expect(onB.gestures()).toEqual([]);
+  });
+
+  it('a delegate that asks: the state is the RUN’s, under the job the request launched', async () => {
+    const app = createApp(makeDeps(), testEnv);
+    const head = await deviceJob({
+      entityId: x.entityId,
+      agentId: x.agentId,
+      deviceId: deviceA,
+      conversationId: null,
+      status: 'awaiting_delegation',
+    });
+    // The delegate inherits the device as its chat (router/delegate.ts).
+    const [child] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: x.entityId,
+        agentId: x.agentId,
+        channel: 'internal',
+        chatId: deviceA,
+        chatChannel: 'device',
+        parentJobId: head,
+        task: 'delegated step',
+        status: 'awaiting_approval',
+        messages: [],
+        chainCount: 0,
+      })
+      .returning({ id: agentJobs.id });
+    const toolInput = { question: QUESTION, options: OPTIONS };
+    const [request] = await db
+      .insert(approvalRequests)
+      .values({
+        entityId: x.entityId,
+        jobId: child!.id,
+        agentId: x.agentId,
+        toolName: 'ask_user',
+        toolInput,
+        kind: 'question',
+      })
+      .returning({ id: approvalRequests.id });
+    const onA = await device(app, deviceA);
+    await publishApprovalRequested(db as RunnerDeps['db'], {
+      approvalRequestId: request!.id,
+      toolName: 'ask_user',
+      toolInput,
+      jobId: child!.id,
+      agentId: x.agentId,
+      entityId: x.entityId,
+      kind: 'question',
+    });
+    await waitFor(() => statesOf(onA).length > 0);
+    expect(statesOf(onA)).toEqual([
+      {
+        type: 'state',
+        jobId: head,
+        conversationId: null,
+        state: 'waiting',
+        waitingFor: [request!.id],
+        deliverables: [],
+      },
+    ]);
+  });
+
+  it('a failed end carries its reason, as stored, and its deliverables', async () => {
+    const app = createApp(makeDeps(), testEnv);
+    const job = await deviceJob({
+      entityId: x.entityId,
+      agentId: x.agentId,
+      deviceId: deviceA,
+      conversationId: null,
+      status: 'failed',
+      result: 'The printer did not answer.\nDetails below.',
+    });
+    await db.insert(jobDeliverableVerificationState).values({
+      jobId: job,
+      deliverableType: 'office_file',
+      canonicalKey: 'out/draft.docx',
+      displayPathSnapshot: 'out/draft.docx',
+      declared: false,
+      decisionStatus: 'red',
+      dirtyGeneration: 1,
+    });
+    const onA = await device(app, deviceA);
+    await publishJobEnded(db as RunnerDeps['db'], job);
+    await waitFor(() => statesOf(onA).length > 0);
+    expect(onA.gestures().map((e) => e.data)).toEqual([
+      {
+        type: 'state',
+        jobId: job,
+        conversationId: null,
+        state: 'failed',
+        waitingFor: [],
+        deliverables: [
+          { path: 'out/draft.docx', type: 'office_file', declared: false, verification: 'red' },
+        ],
+        reason: 'The printer did not answer.',
+      },
+    ]);
   });
 
   it('with only another device listening, nothing is said', async () => {
@@ -660,6 +819,8 @@ describe('a job launched by voice from a device ends on that device (#945) @cap:
       result: 'Done.',
     });
     const onB = await device(app, deviceB);
+    // The streams of the tests before are closed: only device B listens.
+    await waitFor(() => jobEvents.listenersOf(x.entityId, null, deviceA) === 0);
     const finished = await publishJobEnded(db as RunnerDeps['db'], job);
     expect(speakFinishedJob(db as RunnerDeps['db'], finished!)).toBeNull();
     await settle();
