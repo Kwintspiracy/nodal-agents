@@ -40,6 +40,16 @@ export type DeliveryErrorCode =
   /** A card asks for more buttons than the channel can show
    *  (`capabilities.buttonLimits`): refused, never cut. */
   | 'card_too_large'
+  /** #945 — the device adapter: no device stream bound in this process
+   *  (`bindDeviceSink`), no workspace in the credential bag, no device id, a
+   *  chunk that a one-piece device message does not have, a file a device
+   *  cannot receive yet, or a device that is not of the send's workspace. */
+  | 'device_stream_unavailable'
+  | 'device_no_workspace'
+  | 'device_no_device_id'
+  | 'device_no_such_chunk'
+  | 'device_media_unsupported'
+  | 'device_not_in_workspace'
   /** Generic send failure for a channel adapter without a more specific code
    *  of its own — Discord's and Slack's own API/HTTP-level failures land here
    *  (mirrors what telegram_request_failed is for Telegram); a future channel

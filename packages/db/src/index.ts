@@ -48,6 +48,12 @@ export {
   listAllowedConversations,
 } from './queries/channel-identity.ts';
 export type { AllowedConversationSummary } from './queries/channel-identity.ts';
+export {
+  isDeviceId,
+  findWorkspaceDevice,
+  findDeviceForGuard,
+  touchDevice,
+} from './queries/devices.ts';
 
 // ─── Repos ─────────────────────────────────────────────────────────────────────
 export {
@@ -87,7 +93,8 @@ export type {
 export { addAgentWorkspaceRepo } from './repos/agent-workspaces.ts';
 export { readRunCost, runSpentUsd } from './repos/run-cost.ts';
 export type { RunCost } from './repos/run-cost.ts';
-export { descendRunTree, runHeadOf } from './repos/run-tree.ts';
+export { descendRunTree, runHeadOf, runOriginOf } from './repos/run-tree.ts';
+export type { RunOrigin } from './repos/run-tree.ts';
 export { readRunState } from './repos/run-state.ts';
 export type { RunState, RunStatus, RunPendingRequest, RunDeliverable } from './repos/run-state.ts';
 export type { AddAgentWorkspaceInput } from './repos/agent-workspaces.ts';

@@ -7,7 +7,9 @@
 import { z } from 'zod';
 
 // channel_bindings.channel / channel_allowed_conversations.channel CHECK
-// constraint — single source of truth for both S2 entity files.
+// constraint — single source of truth for both S2 entity files. Not `device`
+// (#945, migration 0163): a device belongs to the workspace, not to an agent —
+// it has no binding, and its `devices` row is its authorization.
 export const CHANNELS = ['telegram', 'discord', 'slack', 'whatsapp'] as const;
 export const ChannelSchema = z.enum(CHANNELS);
 export type Channel = z.infer<typeof ChannelSchema>;

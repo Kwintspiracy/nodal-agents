@@ -121,7 +121,7 @@ export function speakFinishedJob(
   const now = opts.now ?? Date.now;
   if (!announcesItsEnd(job)) return null;
   const endedAt = now();
-  if (bus.listenersOf(job.entityId, job.conversationId) === 0) {
+  if (bus.listenersOf(job.entityId, job.conversationId, job.deviceId) === 0) {
     console.warn(
       `[voice-job-reply] job ${job.jobId} ended with a spoken request and no listener: nothing said`,
     );
@@ -136,12 +136,14 @@ export function speakFinishedJob(
     readers: new Set(),
   };
   replies.set(audioId, reply);
-  bus.publish(job.entityId, job.conversationId, {
-    type: 'reply.audio',
-    jobId: job.jobId,
-    conversationId: job.conversationId,
-    audioId,
-  });
+  // L'appareil d'où vient la demande (#945) l'entend sur son flux, comme le
+  // tableau de bord l'entend sur le sien.
+  bus.publish(
+    job.entityId,
+    job.conversationId,
+    { type: 'reply.audio', jobId: job.jobId, conversationId: job.conversationId, audioId },
+    job.deviceId,
+  );
 
   const timing = createVoiceTiming(endedAt, now, 'voice-job-reply', JOB_REPLY_TIMING_MARKS);
   const emit = (event: string, data: unknown): void => {

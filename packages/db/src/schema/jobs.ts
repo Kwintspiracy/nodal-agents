@@ -546,7 +546,7 @@ export const agentJobs = pgTable(
     ),
     check(
       'agent_jobs_channel_check',
-      sql`${table.channel} IN ('telegram','api','whatsapp','internal','cron','task-board','slack','discord','dashboard','webhook','mcp')`,
+      sql`${table.channel} IN ('telegram','api','whatsapp','internal','cron','task-board','slack','discord','dashboard','webhook','mcp','device')`,
     ),
     // La marque de provenance (#154, #210) : les DEUX seules valeurs que le
     // runner pose, ou rien. Une troisième valeur écrite par erreur serait lue

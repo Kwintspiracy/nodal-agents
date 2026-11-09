@@ -65,6 +65,9 @@ export { slackAdapter } from './channels/slack-adapter.ts';
 
 export { whatsappAdapter } from './channels/whatsapp-adapter.ts';
 
+export { deviceAdapter, bindDeviceSink } from './channels/device-adapter.ts';
+export type { DeviceAddress, DeviceOutbound, DeviceSink } from './channels/device-adapter.ts';
+
 export { ensureWhatsAppSocket, closeWhatsAppSocket } from './channels/whatsapp/socket-manager.ts';
 export type {
   WhatsAppHandle,
@@ -80,8 +83,10 @@ export {
   resolveTransportChannel,
   listActiveChannelsForAgent,
   isTransportChannel,
+  isMessagingChannel,
+  CHANNEL_REACH,
   defaultSendChannel,
   jobChatOn,
   resolveOwnerNoticeTarget,
 } from './transport-channel.ts';
-export type { JobChat } from './transport-channel.ts';
+export type { JobChat, MessagingChannelKind } from './transport-channel.ts';

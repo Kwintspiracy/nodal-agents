@@ -31,7 +31,7 @@ import {
   codeProjects,
   listConversationRuns,
 } from '@nodal-agents/db';
-import { stripGroupPrefix } from '@nodal-agents/shared';
+import { keepsTurnsInChat, stripGroupPrefix } from '@nodal-agents/shared';
 import {
   REGISTERED_PROJECTS_IN_PROMPT,
   RUNNING_WORK_MAX_JOBS,
@@ -255,10 +255,9 @@ export async function loadConversationContext(
     .limit(1);
   if (!conv) return null;
 
-  const priorTurns =
-    conv.channel === 'dashboard'
-      ? await countDashboardPriorTurns(db, conversationId)
-      : await countChannelPriorTurns(db, conversationId, opts.excludeJobId);
+  const priorTurns = keepsTurnsInChat(conv.channel)
+    ? await countDashboardPriorTurns(db, conversationId)
+    : await countChannelPriorTurns(db, conversationId, opts.excludeJobId);
 
   const currentProject =
     conv.projectId && conv.projectPath

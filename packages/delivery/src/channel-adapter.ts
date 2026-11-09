@@ -14,9 +14,12 @@
 // validate a bot's credentials). Extending it for a channel-specific feature
 // happens when a real caller needs it, not speculatively.
 
-/** Messaging platforms Nodal can deliver through. Extensible — add a kind here
- *  + a registry entry when its adapter ships; nothing else changes shape. */
-export type ChannelKind = 'telegram' | 'discord' | 'slack' | 'whatsapp';
+/** The channels Nodal can deliver through: the four messaging platforms, and
+ *  `device` (#945), an external module that reads what Nodal says on its own
+ *  event stream. Extensible — add a kind here, a registry entry when its
+ *  adapter ships, and its line in `CHANNEL_REACH` (transport-channel.ts):
+ *  the compiler names every table that must classify it. */
+export type ChannelKind = 'telegram' | 'discord' | 'slack' | 'whatsapp' | 'device';
 
 /**
  * Per-channel credential bag, jsonb-shaped (string values only — matches how

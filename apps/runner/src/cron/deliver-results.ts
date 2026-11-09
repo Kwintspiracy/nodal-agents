@@ -47,7 +47,11 @@ import type { ExecuteJobResult } from '../job/execute.ts';
 import { TERMINAL_STATUSES, cancelRootJob, failJob } from '../job/state.ts';
 import { finalizeJobSuccess, FINALIZING_STALE_MS } from '../job/finalize.ts';
 import { drainDeliveries, prepareDelivery } from '../delivery/outbox.ts';
-import { isDeliveryRefusal, resolveDeliveryTarget } from '../delivery/resolve-delivery-target.ts';
+import {
+  isDeliveryFault,
+  isDeliveryRefusal,
+  resolveDeliveryTarget,
+} from '../delivery/resolve-delivery-target.ts';
 
 /** Le MÊME seuil que la primitive (elle reprend un marqueur périmé de la même façon). */
 export { FINALIZING_STALE_MS };
@@ -253,9 +257,11 @@ export async function deliverCompletedRoots(db: AnyDrizzleDb): Promise<number> {
         triggerContext: rootJob.triggerContext,
       });
       if (isDeliveryRefusal(target)) {
-        console.error(
-          `[deliverCompletedRoots] ${DELIVERY_TARGET_REFUSED} job=${rootJobId} reason=${target.refused}`,
-        );
+        if (isDeliveryFault(target)) {
+          console.error(
+            `[deliverCompletedRoots] ${DELIVERY_TARGET_REFUSED} job=${rootJobId} reason=${target.refused}`,
+          );
+        }
       } else if (rootJob.agentId) {
         const payload = await synthesizePayload(
           db,

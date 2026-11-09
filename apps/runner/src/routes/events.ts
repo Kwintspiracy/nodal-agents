@@ -37,9 +37,12 @@
 //
 // La garde : `requireRunnerAuth` (server.ts), comme `/api/chat*`. Un appelant
 // de confiance (local-trust, WORKER_SECRET) a résolu l'espace lui-même ; un
-// porteur de session ne lit que le SIEN. Le jeton d'appareil de #946 entrera
-// par cette même garde, en posant `callerEntityId` : la route n'a rien à
-// apprendre de plus.
+// porteur de session ne lit que le SIEN.
+//
+// Le flux d'un APPAREIL (#945, `GET /api/devices/:deviceId/events`,
+// routes/devices.ts) est ce même flux, ouvert par `streamJobEvents` : même
+// bus, mêmes identifiants de reprise, même battement. Seuls changent qui est
+// inscrit (l'appareil) et la forme des événements (les gestes du protocole).
 
 import type { Context } from 'hono';
 import { z } from 'zod';
@@ -88,6 +91,36 @@ export async function eventsRoute(
     if (!conv) return c.json({ error: 'conversation_not_found' }, 404);
   }
 
+  return streamJobEvents(c, bus, { entityId, conversationId, deviceId: null }, lastEventId, (e) => [
+    { event: e.payload.type, data: e.payload },
+  ]);
+}
+
+/** Ce qu'un auditeur écoute : un espace, une conversation, ou un appareil (#945). */
+export interface JobEventScope {
+  entityId: string;
+  conversationId: string | null;
+  deviceId: string | null;
+}
+
+/** Un événement du bus tel qu'un client le lit : zéro, un ou plusieurs événements SSE. */
+export type RenderJobEvent = (e: StoredJobEvent) => Array<{ event: string; data: unknown }>;
+
+/**
+ * LE flux poussé : rejoue ce que le client a manqué puis passe en direct, ou
+ * lui dit de relire la base (`resync`), avec un battement. Partagé par le flux
+ * d'un espace (ci-dessus) et celui d'un appareil (routes/devices.ts) : un
+ * seul transport. Chaque événement SSE porte l'identifiant de l'événement du
+ * bus dont il vient — c'est le point de reprise du client.
+ */
+export function streamJobEvents(
+  c: Context,
+  bus: JobEventBus,
+  scope: JobEventScope,
+  lastEventId: string | null,
+  render: RenderJobEvent,
+): Response {
+  const { entityId, conversationId, deviceId } = scope;
   const encoder = new TextEncoder();
   let stop: () => void = () => {};
   const stream = new ReadableStream<Uint8Array>({
@@ -107,11 +140,23 @@ export async function eventsRoute(
           stop();
         }
       };
-      const send = (e: StoredJobEvent): void => write(sseWithId(e.id, e.payload.type, e.payload));
+      // Un événement du bus peut en donner plusieurs : seul le DERNIER porte
+      // l'identifiant, pour qu'un client coupé entre deux reprenne avant
+      // l'événement du bus, jamais après une partie de lui.
+      const send = (e: StoredJobEvent): void => {
+        const outs = render(e);
+        outs.forEach((out, i) =>
+          write(
+            i === outs.length - 1
+              ? sseWithId(e.id, out.event, out.data)
+              : sseEvent(out.event, out.data),
+          ),
+        );
+      };
 
       // L'ouverture et l'inscription sont atomiques (`bus.open`) : rien ne
       // tombe entre ce qui est rejoué et le direct.
-      const sub = bus.open(entityId, conversationId, lastEventId, send);
+      const sub = bus.open(entityId, conversationId, lastEventId, send, deviceId);
       stop = () => {
         if (closed) return;
         closed = true;

@@ -43,6 +43,8 @@ export const CHANNEL_LABELS: Readonly<Record<string, string>> = {
   slack: 'Slack',
   discord: 'Discord',
   whatsapp: 'WhatsApp',
+  // #945 — un module externe (un compagnon, une enceinte, un logiciel).
+  device: 'Device',
   mcp: 'MCP',
   // `api` ne nomme plus qu'UNE chose : une requête à `/api/agent`. La boîte
   // « Send task » du tableau de bord écrivait la même valeur jusqu'au 18/09 ;

@@ -19,12 +19,14 @@
 // l'onglet Code en live ; un cron a déjà sa livraison de fin
 // (deliverCompletedRoots) ; les prévenir ici doublerait le signal.
 
-import { getAdapter } from '@nodal-agents/delivery';
+import { getAdapter, isMessagingChannel } from '@nodal-agents/delivery';
 import { walkJobChainToRoot, resolveChannelApprovalDeliveryTarget } from '../approvals/notify.ts';
 import type { RunnerDeps } from '../deps.ts';
 
-/** Canaux dont l'humain est joignable par message proactif. */
-const MESSAGING_CHANNELS = new Set(['telegram', 'whatsapp', 'slack', 'discord']);
+// Canaux dont l'humain est joignable par message proactif : les plateformes de
+// messagerie (`isMessagingChannel`, @nodal-agents/delivery — la table
+// `CHANNEL_REACH`, qui classe chaque canal une fois). Un appareil (#945) lit
+// l'état de son job sur son flux : il n'est pas prévenu ici.
 
 export type CodeTransitionEvent =
   | { kind: 'code_task_done'; success: boolean; agentName: string | null }
@@ -62,7 +64,7 @@ export async function notifyCodeTransition(
     const chain = await walkJobChainToRoot(db, jobId);
     if (!chain) return;
     const rootChannel = chain[chain.length - 1]?.channel ?? null;
-    if (!rootChannel || !MESSAGING_CHANNELS.has(rootChannel)) return;
+    if (!isMessagingChannel(rootChannel)) return;
 
     const target = await resolveChannelApprovalDeliveryTarget(db, jobId);
     if (!target) return;

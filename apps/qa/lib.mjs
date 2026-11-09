@@ -3318,13 +3318,15 @@ export const DOMAINES = Object.freeze([
   {
     id: 'channels',
     nom: 'Channels',
-    quoi: 'Telegram, Discord, Slack, WhatsApp and email: receiving a message, answering, sending a file.',
+    quoi: 'Telegram, Discord, Slack, WhatsApp, devices and email: receiving a message, answering, sending a file.',
     chemins: ['packages/delivery/'],
     mots: [
       'telegram',
       'discord',
       'slack',
       'whatsapp',
+      // #945 — un module externe branché comme canal.
+      'device',
       'baileys',
       'channel',
       'pairing',

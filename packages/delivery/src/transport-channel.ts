@@ -24,26 +24,77 @@ import { agents, eq, listChannelBindings, resolveOwnerConversation } from '@noda
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import type { ChannelKind } from './channel-adapter.ts';
 
-/** Stable fallback order when more than one channel is active and the
- *  trigger origin gives no signal about which one to prefer. */
-const CHANNEL_PRIORITY: readonly ChannelKind[] = ['telegram', 'discord', 'slack', 'whatsapp'];
+/**
+ * How a person is reached on each channel (#945). ONE table, exhaustive over
+ * `ChannelKind`: a new channel does not compile until it is classified here.
+ *
+ * - `messages` — a messaging platform. Nodal PUSHES messages to it through
+ *   its adapter: a finished job's result (the outbox), a send tool's message,
+ *   a notice the owner did not ask for in a chat. These are also the channels
+ *   a request made elsewhere falls back to (`CHANNEL_PRIORITY`).
+ * - `stream` — a device. It reads what Nodal says on its own event stream,
+ *   like the dashboard does: a finished job's result is its `job.finished`,
+ *   never an outbox message; no send tool writes to it; and it is never the
+ *   fallback of a request made elsewhere — a device is reached because the
+ *   request was made on it, not because it is there.
+ *
+ * Both are places a request made ON is answered on: a question, an approval,
+ * a preview asked during it goes back there (`isTransportChannel`).
+ */
+export const CHANNEL_REACH = {
+  telegram: 'messages',
+  discord: 'messages',
+  slack: 'messages',
+  whatsapp: 'messages',
+  device: 'stream',
+} as const satisfies Record<ChannelKind, 'messages' | 'stream'>;
 
-const TRANSPORT_CHANNELS: ReadonlySet<string> = new Set<ChannelKind>(CHANNEL_PRIORITY);
+/** The messaging platforms, as a type: the kinds `CHANNEL_REACH` classes `messages`. */
+export type MessagingChannelKind = {
+  [K in ChannelKind]: (typeof CHANNEL_REACH)[K] extends 'messages' ? K : never;
+}[ChannelKind];
+
+/** Stable fallback order when more than one channel is active and the
+ *  trigger origin gives no signal about which one to prefer. Messaging
+ *  channels only (`CHANNEL_REACH`). */
+const CHANNEL_PRIORITY: readonly MessagingChannelKind[] = [
+  'telegram',
+  'discord',
+  'slack',
+  'whatsapp',
+];
+
+const TRANSPORT_CHANNELS: ReadonlySet<string> = new Set(Object.keys(CHANNEL_REACH));
+
+const MESSAGING_CHANNELS: ReadonlySet<string> = new Set(
+  (Object.keys(CHANNEL_REACH) as ChannelKind[]).filter((c) => CHANNEL_REACH[c] === 'messages'),
+);
 
 /**
  * Does this `agent_jobs.channel` value name a place a person is reached ON —
- * a message transport — rather than how a job was triggered ('dashboard',
- * 'cron', 'api', 'mcp', …)? What a request made on that channel is answered
- * on: a question asked during it goes back there.
+ * a messaging platform or a device — rather than how a job was triggered
+ * ('dashboard', 'cron', 'api', 'mcp', …)? What a request made on that channel
+ * is answered on: a question asked during it goes back there.
  */
 export function isTransportChannel(channel: string | null | undefined): channel is ChannelKind {
   return typeof channel === 'string' && TRANSPORT_CHANNELS.has(channel);
 }
 
 /**
- * Resolve the transport channel to deliver on for a given job `channel`
- * value. Returns `channel` itself when it already names a registered
- * transport. Otherwise:
+ * Is this a messaging platform, that Nodal pushes messages to (`CHANNEL_REACH`
+ * `messages`)? A job's result, a send tool's message and an owner notice go
+ * only to one of these; a device reads them on its stream.
+ */
+export function isMessagingChannel(
+  channel: string | null | undefined,
+): channel is MessagingChannelKind {
+  return typeof channel === 'string' && MESSAGING_CHANNELS.has(channel);
+}
+
+/**
+ * Resolve the MESSAGING channel to push on for a given job `channel` value.
+ * Returns `channel` itself when it already names a messaging platform.
+ * Otherwise (a trigger origin, or a device, which is never pushed to):
  *   - `activeChannels` non-empty → the first of THOSE channels in
  *     CHANNEL_PRIORITY order (the agent's real bindings, see
  *     `listActiveChannelsForAgent` below);
@@ -57,8 +108,8 @@ export function isTransportChannel(channel: string | null | undefined): channel 
 export function resolveTransportChannel(
   channel: string | null | undefined,
   activeChannels?: readonly ChannelKind[],
-): ChannelKind {
-  if (channel && TRANSPORT_CHANNELS.has(channel)) return channel as ChannelKind;
+): MessagingChannelKind {
+  if (isMessagingChannel(channel)) return channel;
   if (activeChannels && activeChannels.length > 0) {
     const active = new Set(activeChannels);
     const preferred = CHANNEL_PRIORITY.find((c) => active.has(c));
@@ -81,17 +132,21 @@ export interface JobChat {
 
 /**
  * The channel a send tool writes on when the agent names none: the channel
- * the job's chat was recorded on, otherwise `resolveTransportChannel`. ONE
- * rule for the send tools (delivery-guard.ts) and for what the prompt says of
- * them (channel-delivery.ts in the runner).
+ * the job's chat was recorded on when it is a messaging platform, otherwise
+ * `resolveTransportChannel`. ONE rule for the send tools (delivery-guard.ts)
+ * and for what the prompt says of them (channel-delivery.ts in the runner).
+ *
+ * A chat recorded on a device is not a send tool's target (`CHANNEL_REACH`):
+ * a job asked from a device sends a deliberate message where a job asked from
+ * the dashboard does — the agent's first messaging channel.
  */
 export function defaultSendChannel(
   chat: JobChat,
   jobChannel: string | null | undefined,
   activeChannels?: readonly ChannelKind[],
-): ChannelKind {
-  const recorded = chat.id ? chat.channel : null;
-  return (recorded as ChannelKind | null) ?? resolveTransportChannel(jobChannel, activeChannels);
+): MessagingChannelKind {
+  const recorded = chat.id && isMessagingChannel(chat.channel) ? chat.channel : null;
+  return recorded ?? resolveTransportChannel(jobChannel, activeChannels);
 }
 
 /**
@@ -115,7 +170,7 @@ export function jobChatOn(chat: JobChat, channel: ChannelKind): string | null {
 export async function resolveOwnerNoticeTarget(
   db: AnyDrizzleDb,
   agentId: string,
-): Promise<{ channel: ChannelKind; chatId: string | null }> {
+): Promise<{ channel: MessagingChannelKind; chatId: string | null }> {
   const channel = resolveTransportChannel(null, await listActiveChannelsForAgent(db, agentId));
   return { channel, chatId: await resolveOwnerConversation(db, agentId, channel) };
 }
@@ -136,7 +191,7 @@ export async function resolveOwnerNoticeTarget(
 export async function listActiveChannelsForAgent(
   db: AnyDrizzleDb,
   agentId: string,
-): Promise<ChannelKind[]> {
+): Promise<MessagingChannelKind[]> {
   const [agentRow] = await db
     .select({ telegramBotToken: agents.telegramBotToken })
     .from(agents)
@@ -145,7 +200,7 @@ export async function listActiveChannelsForAgent(
   const bindings = await listChannelBindings(db, agentId);
   const enabled = new Set(bindings.filter((b) => b.enabled).map((b) => b.channel));
 
-  const active: ChannelKind[] = [];
+  const active: MessagingChannelKind[] = [];
   if (agentRow?.telegramBotToken) active.push('telegram');
   for (const channel of CHANNEL_PRIORITY) {
     if (channel !== 'telegram' && enabled.has(channel)) active.push(channel);

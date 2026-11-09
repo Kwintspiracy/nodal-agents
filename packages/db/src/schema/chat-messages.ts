@@ -112,7 +112,7 @@ export const conversations = pgTable(
     check('conversations_origin_check', sql`${table.origin} IN ('user','onboarding','project')`),
     check(
       'conversations_channel_check',
-      sql`${table.channel} IN ('dashboard','telegram','slack','discord','whatsapp')`,
+      sql`${table.channel} IN ('dashboard','telegram','slack','discord','whatsapp','device')`,
     ),
   ],
 );

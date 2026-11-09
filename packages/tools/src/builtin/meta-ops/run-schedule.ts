@@ -13,7 +13,8 @@ import {
   resolveScheduleNotifyChat,
 } from '@nodal-agents/db';
 import { LIVE_JOB_STATUSES } from '@nodal-agents/shared';
-import type { ChannelKind } from '@nodal-agents/delivery';
+// A notify channel is a messaging platform: its CHECK leaves `device` out (migration 0163).
+import type { MessagingChannelKind } from '@nodal-agents/delivery';
 import type { ToolDefinition } from '../../types';
 
 const RunScheduleInput = z.object({
@@ -99,7 +100,7 @@ export const runScheduleTool: ToolDefinition<typeof RunScheduleInput, RunSchedul
           type: 'cron',
           scheduleName: input.name,
           prevRunAt: sched.lastRun ? sched.lastRun.toISOString() : null,
-          notifyChannel: (sched.notifyChannel as ChannelKind | null) ?? null,
+          notifyChannel: (sched.notifyChannel as MessagingChannelKind | null) ?? null,
         },
       })
       .returning({ id: agentJobs.id });
