@@ -42,10 +42,12 @@ const turn = await nodal.say(readFileSync(wavPath), 'audio/wav');
 console.log(`Heard: ${turn.transcript}\nReply: ${turn.reply}`);
 writeFileSync(outPath, Buffer.concat(voice));
 
-// A task the agent launched ends on this device: wait for it, then leave.
+// A task the agent launched ends on this device: wait for its end, then leave.
+const ENDS = ['done', 'cancelled', 'failed'];
 if (turn.spawnedJobId) {
-  await new Promise((resolve) =>
-    nodal.on('state', (s) => s.jobId === turn.spawnedJobId && s.state !== 'waiting' && resolve(s)),
-  ).then((s) => console.log(`Job: ${s.state}`));
+  const end = await new Promise((resolve) =>
+    nodal.on('state', (s) => s.jobId === turn.spawnedJobId && ENDS.includes(s.state) && resolve(s)),
+  );
+  console.log(`Job: ${end.state}`);
 }
 nodal.close();

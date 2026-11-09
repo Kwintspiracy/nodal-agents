@@ -339,7 +339,7 @@ describe('connect(): the event stream @cap:parler-par-canal-externe/moteur', () 
     let refuse = false;
     const nodal = fakeNodal({
       'GET /api/devices/:id/events': () => {
-        if (refuse) return Response.json({ error: 'device_token_revoked' }, { status: 401 });
+        if (refuse) return Response.json({ error: 'device_token_invalid' }, { status: 401 });
         const s = liveStream();
         streams.push(s);
         return s.response;
@@ -361,7 +361,7 @@ describe('connect(): the event stream @cap:parler-par-canal-externe/moteur', () 
     expect(closed[0]!.error).toMatchObject({
       code: 'revoked',
       status: 401,
-      serverCode: 'device_token_revoked',
+      serverCode: 'device_token_invalid',
     });
     await expect(device.send('hello')).rejects.toMatchObject({ code: 'revoked' });
   });
@@ -371,7 +371,7 @@ describe('connect(): the event stream @cap:parler-par-canal-externe/moteur', () 
     const nodal = fakeNodal({
       'GET /api/devices/:id/events': () => live.response,
       'POST /api/devices/:id/conversation': () =>
-        Response.json({ error: 'device_token_revoked' }, { status: 401 }),
+        Response.json({ error: 'device_token_invalid' }, { status: 401 }),
     });
     const device = connect(BASE, session, { fetch: nodal.fetch });
     const closed = collect(device, 'closed');

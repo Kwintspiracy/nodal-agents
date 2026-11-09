@@ -119,18 +119,18 @@ example `voice_key_missing` when the workspace has no speech key),
 What Nodal sends to the device. A device only ever hears what its own requests
 produce and what is addressed to it.
 
-| Event          | When                                                                  | What it carries                                                       |
-| -------------- | --------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| `bubble`       | A task launched from the device answered, or a message was sent to it | `text`, `jobId`, `conversationId`                                     |
-| `card`         | A task asks the person: approve an action, or choose an option        | `cardId`, `kind` (`approval` or `question`), `text`, `choices`        |
-| `card.closed`  | The card was settled: here, on the dashboard, or by expiry            | `cardId`, `text` (what the card says now)                             |
-| `state`        | Where a task launched from the device stands                          | `jobId`, `state` (`waiting`, `done`, `cancelled`, `failed`), `reason` |
-| `announce`     | A task launched by voice ended and its announcement is spoken         | `jobId`, `audioId`. Its voice follows as `speech`                     |
-| `speech`       | The agent's voice: the reply to `say`, or an announcement             | `audio` pieces in `seq` order, `sentence.end`, then `end`             |
-| `ready`        | The stream is live, after anything missed was replayed                | `reconnected`                                                         |
-| `resync`       | Nodal could not replay what was missed                                | `reason`                                                              |
-| `disconnected` | The stream dropped; the client retries by itself                      | `error`, `retryInMs`                                                  |
-| `closed`       | The session ended for good                                            | `error` (`revoked`, or `closed` by you)                               |
+| Event          | When                                                                  | What it carries                                                                                                                                                 |
+| -------------- | --------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `bubble`       | A task launched from the device answered, or a message was sent to it | `text`, `jobId`, `conversationId`                                                                                                                               |
+| `card`         | A task asks the person: approve an action, or choose an option        | `cardId`, `kind` (`approval` or `question`), `text`, `choices`                                                                                                  |
+| `card.closed`  | The card was settled: here, on the dashboard, or by expiry            | `cardId`, `text` (what the card says now)                                                                                                                       |
+| `state`        | Where a task launched from the device stands                          | `jobId`, `state` (`working`, `waiting`, `done`, `cancelled`, `failed`), `waitingFor` (the cards it waits on), `deliverables` (the files it addressed), `reason` |
+| `announce`     | A task launched by voice ended and its announcement is spoken         | `jobId`, `audioId`. Its voice follows as `speech`                                                                                                               |
+| `speech`       | The agent's voice: the reply to `say`, or an announcement             | `audio` pieces in `seq` order, `sentence.end`, then `end`                                                                                                       |
+| `ready`        | The stream is live, after anything missed was replayed                | `reconnected`                                                                                                                                                   |
+| `resync`       | Nodal could not replay what was missed                                | `reason`                                                                                                                                                        |
+| `disconnected` | The stream dropped; the client retries by itself                      | `error`, `retryInMs`                                                                                                                                            |
+| `closed`       | The session ended for good                                            | `error` (`revoked`, or `closed` by you)                                                                                                                         |
 
 A card's `text` is the platform's fixed frame with the agent's words quoted in
 it, the same as on Telegram. Play `speech` pieces end to end: `audio/pcm` plays
@@ -146,8 +146,11 @@ device missed, a card included, then says `ready`. An event can arrive twice
 around a reconnect: `cardId` and `bubbleId` identify it.
 
 When Nodal cannot replay (the runner restarted, or the device was away too long)
-it says `resync` instead. What was missed must then be re-read: the cards that
-were still waiting are answered from **Approvals** in the dashboard.
+it says `resync` instead. What was missed must then be re-read. A device cannot
+re-read its waiting cards yet
+([#1012](https://github.com/Kwintspiracy/nodal-agents/issues/1012)): until it
+can, they are answered from **Approvals** in the dashboard, and a device should
+say so when it gets `resync`.
 
 ## The protocol under the client
 

@@ -68,12 +68,42 @@ export const DEVICE_GESTURES = {
   ]
 } as const;
 
+export const DEVICE_PAIRING_GESTURES = {
+  "pair": [
+    {
+      "method": "POST",
+      "path": "/api/devices/pair"
+    },
+    {
+      "method": "POST",
+      "path": "/api/devices/pair/poll"
+    }
+  ]
+} as const;
+
+export const DEVICE_POLL_STATUS = {
+  "pending": 202,
+  "paired": 200,
+  "refused": 403,
+  "expired": 410,
+  "slow_down": 429
+} as const;
+
 export type DeviceCapability = "microphone" | "speaker" | "screen" | "buttons";
 
 export type DeviceCardChoice = {
     label: string;
     decision: "approve" | "reject";
     answer?: string | undefined;
+};
+
+export type DeviceRunState = "working" | "waiting" | "done" | "cancelled" | "failed";
+
+export type DeviceDeliverable = {
+    path: string;
+    type: string;
+    declared: boolean;
+    verification: string;
 };
 
 export type DeviceEvent = {
@@ -100,7 +130,14 @@ export type DeviceEvent = {
     type: "state";
     jobId: string;
     conversationId: string | null;
-    state: "waiting" | "done" | "cancelled" | "failed";
+    state: "working" | "waiting" | "done" | "cancelled" | "failed";
+    waitingFor: string[];
+    deliverables: {
+        path: string;
+        type: string;
+        declared: boolean;
+        verification: string;
+    }[];
     reason?: string | undefined;
 } | {
     type: "announce";

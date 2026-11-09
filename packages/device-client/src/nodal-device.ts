@@ -30,6 +30,8 @@
 
 import {
   DEVICE_GESTURES,
+  DEVICE_PAIRING_GESTURES,
+  DEVICE_POLL_STATUS,
   DEVICE_PROTOCOL_VERSION,
   type DeviceCapability,
   type DeviceCardChoice,
@@ -39,18 +41,15 @@ import {
 export {
   DEVICE_CAPABILITIES,
   DEVICE_GESTURES,
+  DEVICE_PAIRING_GESTURES,
   DEVICE_PROTOCOL_VERSION,
   type DeviceCapability,
   type DeviceCardChoice,
+  type DeviceDeliverable,
   type DeviceEvent,
   type DeviceEventType,
+  type DeviceRunState,
 } from './protocol.generated.ts';
-
-// TEMPORARY until #946's route table is in the protocol module (then generated).
-const DEVICE_PAIRING_ROUTES = {
-  request: { method: 'POST', path: '/api/devices/pair' },
-  poll: { method: 'POST', path: '/api/devices/pair/poll' },
-} as const;
 
 // ─── Errors ──────────────────────────────────────────────────────────────────
 
@@ -193,8 +192,8 @@ export interface Pairing {
 /** Ask Nodal to pair this device. Nothing is granted until the owner confirms. */
 export async function pair(baseUrl: string, options: PairOptions): Promise<Pairing> {
   const f = fetchOf(options);
-  const res = await f(urlOf(baseUrl, DEVICE_PAIRING_ROUTES.request.path), {
-    method: DEVICE_PAIRING_ROUTES.request.method,
+  const res = await f(urlOf(baseUrl, DEVICE_PAIRING_GESTURES.pair[0].path), {
+    method: DEVICE_PAIRING_GESTURES.pair[0].method,
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
       name: options.name,
@@ -236,22 +235,22 @@ export async function pair(baseUrl: string, options: PairOptions): Promise<Pairi
       if (options.signal?.aborted) {
         throw new NodalDeviceError('closed', 'pairing abandoned by the device');
       }
-      const r = await f(urlOf(baseUrl, DEVICE_PAIRING_ROUTES.poll.path), {
-        method: DEVICE_PAIRING_ROUTES.poll.method,
+      const r = await f(urlOf(baseUrl, DEVICE_PAIRING_GESTURES.pair[1].path), {
+        method: DEVICE_PAIRING_GESTURES.pair[1].method,
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ deviceCode }),
         ...(options.signal ? { signal: options.signal } : {}),
       });
       const b = await readJson(r);
       const status = str(b['status']);
-      if (r.status === 202 && status === 'pending') continue;
-      if (r.status === 429 && status === 'slow_down') {
+      if (r.status === DEVICE_POLL_STATUS.pending && status === 'pending') continue;
+      if (r.status === DEVICE_POLL_STATUS.slow_down && status === 'slow_down') {
         // Polled too fast (a clock that jumped, a shared IP): wait longer, as
         // the OAuth device flow does.
         interval += 5;
         continue;
       }
-      if (r.status === 200 && status === 'paired') {
+      if (r.status === DEVICE_POLL_STATUS.paired && status === 'paired') {
         const deviceId = str(b['deviceId']);
         const token = str(b['token']);
         const conversationId = str(b['conversationId']);
@@ -262,13 +261,13 @@ export async function pair(baseUrl: string, options: PairOptions): Promise<Pairi
         }
         return { deviceId, token, conversationId };
       }
-      if (r.status === 403 && status === 'refused') {
+      if (r.status === DEVICE_POLL_STATUS.refused && status === 'refused') {
         throw new NodalDeviceError('refused', 'refused: the owner refused this device', {
           status: r.status,
           serverCode: 'refused',
         });
       }
-      if (r.status === 410 && status === 'expired') {
+      if (r.status === DEVICE_POLL_STATUS.expired && status === 'expired') {
         throw new NodalDeviceError('expired', 'expired: the pairing code expired, pair again', {
           status: r.status,
           serverCode: 'expired',

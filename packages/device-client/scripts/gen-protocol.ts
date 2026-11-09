@@ -26,6 +26,8 @@ export const GENERATED_FILE = fileURLToPath(
 export const PROTOCOL_TYPES = [
   'DeviceCapability',
   'DeviceCardChoice',
+  'DeviceRunState',
+  'DeviceDeliverable',
   'DeviceEvent',
   'DeviceEventType',
 ] as const;
@@ -35,6 +37,8 @@ export const PROTOCOL_CONSTANTS = [
   'DEVICE_PROTOCOL_VERSION',
   'DEVICE_CAPABILITIES',
   'DEVICE_GESTURES',
+  'DEVICE_PAIRING_GESTURES',
+  'DEVICE_POLL_STATUS',
 ] as const;
 
 function printTypes(): string[] {

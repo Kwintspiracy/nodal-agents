@@ -22,11 +22,13 @@ const sameTypes: [
   Same<generated.DeviceCardChoice, shared.DeviceCardChoice>,
   Same<generated.DeviceCapability, shared.DeviceCapability>,
   Same<generated.DeviceEventType, shared.DeviceEventType>,
-] = [true, true, true, true];
+  Same<generated.DeviceRunState, shared.DeviceRunState>,
+  Same<generated.DeviceDeliverable, shared.DeviceDeliverable>,
+] = [true, true, true, true, true, true];
 
 describe('the generated protocol @cap:parler-par-canal-externe/moteur', () => {
   it('is the protocol module, as generated now (run `pnpm --filter @nodal-agents/device-client gen`)', () => {
     expect(readFileSync(GENERATED_FILE, 'utf8')).toBe(renderProtocol());
-    expect(sameTypes).toEqual([true, true, true, true]);
+    expect(sameTypes).toEqual([true, true, true, true, true, true]);
   }, 60_000);
 });

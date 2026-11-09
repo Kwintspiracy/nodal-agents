@@ -9,7 +9,13 @@
 
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { DEVICE_CAPABILITIES, DEVICE_GESTURES, DeviceEventSchema } from '@nodal-agents/shared';
+import {
+  DEVICE_CAPABILITIES,
+  DEVICE_GESTURES,
+  DEVICE_PAIRING_GESTURES,
+  DEVICE_RUN_STATES,
+  DeviceEventSchema,
+} from '@nodal-agents/shared';
 import { connectSnippet } from '@nodal-agents/device-client/snippet';
 
 const page = readFileSync(
@@ -34,12 +40,17 @@ describe('the Connect a device page @cap:parler-par-canal-externe/moteur', () =>
     for (const option of DeviceEventSchema.options) {
       expect(firstCells).toContain(`\`${option.shape.type.value}\``);
     }
+    const stateRow = tableUnder('Events').find((r) => r.startsWith('| `state`'))!;
+    for (const s of DEVICE_RUN_STATES) expect(stateRow).toContain(`\`${s}\``);
   });
 
   it('documents every gesture and every route of the protocol', () => {
     const rows = tableUnder('The protocol under the client');
     const byGesture = new Map(rows.map((r) => [r.split('|')[1]!.trim(), r]));
-    for (const [gesture, routes] of Object.entries(DEVICE_GESTURES)) {
+    for (const [gesture, routes] of Object.entries({
+      ...DEVICE_PAIRING_GESTURES,
+      ...DEVICE_GESTURES,
+    })) {
       const row = byGesture.get(gesture);
       expect(row, `gesture ${gesture}`).toBeDefined();
       for (const r of routes) expect(row).toContain(`${r.method} ${r.path}`);
