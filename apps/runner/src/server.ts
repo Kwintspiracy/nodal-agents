@@ -33,6 +33,8 @@ import {
 } from './routes/voice-setting.ts';
 import { eventsRoute } from './routes/events.ts';
 import { transitionListener } from './events/publish.ts';
+import { voiceReplyRoute } from './routes/voice-reply.ts';
+import { speakFinishedJob } from './chat/job-reply-voice.ts';
 import { listenToTransitions, writeFirstSpokenReasoningAtBoot } from '@nodal-agents/db';
 import { webhookRoute } from './routes/webhook.ts';
 import { codeTaskDoctorRoute } from './routes/code-task-doctor.ts';
@@ -111,8 +113,9 @@ export function createApp(
   const app = new Hono();
 
   // #944 — ce que les portes annoncent (un job fini, une demande tranchée ou
-  // expirée), une fois commis, devient le flux de `GET /api/events`.
-  listenToTransitions(transitionListener());
+  // expirée), une fois commis, devient le flux de `GET /api/events`. Un job
+  // lancé par la voix qui finit avec une réponse la dit (#967).
+  listenToTransitions(transitionListener(undefined, (db, job) => speakFinishedJob(db, job)));
 
   // ── requireTrustedOrigin ─────────────────────────────────────────────────────
   //
@@ -258,6 +261,8 @@ export function createApp(
   // raison — un module les appelle comme le tableau de bord.
   app.use('/api/voice/setting', requireRunnerAuth);
   app.use('/api/voice/sample', requireRunnerAuth);
+  // La voix de la réponse d'un job lancé par la voix (#967) : la même garde.
+  app.use('/api/voice/replies/*', requireRunnerAuth);
   // #944 — le flux poussé des événements de job. Même garde que /api/chat* :
   // c'est par elle, et par elle seule, que le jeton d'appareil de #946 entrera.
   app.use('/api/events', requireRunnerAuth);
@@ -293,6 +298,7 @@ export function createApp(
   app.get('/api/voice/setting', (c) => voiceSettingReadRoute(c, deps));
   app.put('/api/voice/setting', (c) => voiceSettingWriteRoute(c, deps));
   app.post('/api/voice/sample', (c) => voiceSampleRoute(c, deps));
+  app.get('/api/voice/replies/:audioId', (c) => voiceReplyRoute(c));
 
   app.post('/api/approve', (c) => approveRoute(c, deps, runnerEnv));
 

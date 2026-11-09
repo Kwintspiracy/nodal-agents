@@ -45,6 +45,11 @@ import {
   and,
   eq,
   asc,
+  cancelJobs,
+  channelBindings,
+  inTransaction,
+  llmCalls,
+  telegramAllowedChats,
   readVoiceSetting,
   writeVoiceSetting,
 } from '@nodal-agents/db';
@@ -61,6 +66,9 @@ import { TITLE_SYSTEM_PROMPT } from '../../chat/conversation-title.ts';
 import { ACTION_RECHECK } from '../../llm/action-recheck.ts';
 import { REDACTED_TEXT } from '@nodal-agents/shared';
 import { openUtterances, VOICE_LIMITS } from '../../chat/voice-utterances.ts';
+import { finalizeJobFailure, finalizeJobSuccess } from '../../job/finalize.ts';
+import { publishJobEnded } from '../../events/publish.ts';
+import { speakFinishedJob } from '../../chat/job-reply-voice.ts';
 
 // Provider calls leave through packages/llm's own transport (#608): routed back
 // to the global fetch, so the stub below is the network boundary — for the
@@ -231,6 +239,10 @@ function network(opts: {
   google?: (input: string) => Response | Promise<Response>;
   /** The tool calls the worker makes, one per request, before it answers 'Done.'. */
   worker?: Array<{ name: string; args: Record<string, unknown> }>;
+  /** #967 — what the worker answers instead of 'Done.'. */
+  workerReply?: string;
+  /** #967 — the agent's announcement of a finished voice job: its text, or a refusal. */
+  announcement?: { text?: string; status?: number };
 }) {
   const workerCalls = [...(opts.worker ?? [])];
   const sent = {
@@ -239,6 +251,7 @@ function network(opts: {
     worker: [] as ChatBody[],
     speech: [] as Array<Record<string, unknown>>,
     google: [] as Array<{ url: string; key: string | null; body: Record<string, unknown> }>,
+    announcement: [] as ChatBody[],
     log: [] as string[],
   };
   vi.stubGlobal(
@@ -329,7 +342,16 @@ function network(opts: {
       let parts: string[] | null = null;
       let toolCall: { name: string; args: Record<string, unknown> } | null = null;
       if (system.startsWith(TITLE_SYSTEM_PROMPT.slice(0, 40))) text = 'Tokyo time';
-      else if (last.endsWith(ACTION_RECHECK)) {
+      else if (system.includes('\n## Announcement\n')) {
+        sent.announcement.push(body);
+        if (opts.announcement?.status && opts.announcement.status !== 200) {
+          return new Response(JSON.stringify({ error: { message: 'upstream refused' } }), {
+            status: opts.announcement.status,
+            headers: { 'content-type': 'application/json' },
+          });
+        }
+        text = opts.announcement?.text ?? 'It is done.';
+      } else if (last.endsWith(ACTION_RECHECK)) {
         sent.log.push('recheck:start');
         if (opts.recheck?.hold) await opts.recheck.hold;
         text = 'ok';
@@ -351,7 +373,7 @@ function network(opts: {
         if (next) {
           text = '';
           toolCall = next;
-        } else text = 'Done.';
+        } else text = opts.workerReply ?? 'Done.';
       }
       const usage = { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 };
       const finish = toolCall ? 'tool_calls' : 'stop';
@@ -712,7 +734,9 @@ describe('the voice turn route @cap:parler-a-un-agent/moteur', () => {
     });
   });
 
-  it('a task request: run_task launches a job that inherits the spoken rendering, and its prompt says so', async () => {
+  // #967 — the job's result is read: its prompt no longer says "your reply is
+  // heard". What is heard is its announcement (see the #967 describe below).
+  it('a task request: run_task launches a job that inherits the spoken rendering; its own prompt writes to be read', async () => {
     const app = createApp(makeDeps(), testEnv);
     const conv = await conversation();
     const sent = network({ front: { text: 'On it, I am checking.', instruction: '' } });
@@ -732,10 +756,10 @@ describe('the voice turn route @cap:parler-a-un-agent/moteur', () => {
     await settled(jobId);
     const [job] = await jobsOf(conv);
     expect(job).toMatchObject({ id: jobId, task: TRANSCRIPT, replyRendering: 'spoken' });
-    expect(job!.systemPrompt).toContain(SPOKEN_LINE);
-    // The worker's request, as the provider received it, carries the fact.
+    expect(job!.systemPrompt).not.toContain(SPOKEN_LINE);
+    // The worker's request, as the provider received it, carries no "heard" fact.
     expect(sent.worker.length).toBeGreaterThan(0);
-    expect(systemOf(sent.worker[0]!)).toContain(SPOKEN_LINE);
+    expect(systemOf(sent.worker[0]!)).not.toContain('- rendering:');
   });
 
   it('the job a voice turn launches writes its autonomy rows at start, so its tool calls run (#917)', async () => {
@@ -1945,6 +1969,518 @@ describe('the voice turn speaks with the workspace voice (#969) @cap:parler-a-un
     });
     expect(refused.status).toBe(409);
     expect(((await refused.json()) as { error: string }).error).toBe('voice_not_offered');
+  });
+});
+
+// ─── #967 — a voice-launched job announces its end, out loud ─────────────────
+//
+// The owner's rule (2026-11-04): a job launched by voice ends with TWO things,
+// both the agent's: its RESULT, written for reading and unchanged everywhere,
+// and a short ANNOUNCEMENT written for the ear, generated after the job by the
+// same agent from the request and the result. What is proven, on the real
+// runner (the real voice turn, the real job, the real gates, the real
+// /api/events and /api/voice/replies routes; only the network is a stub): a
+// voice job that finishes yields ONE `reply.audio`, right after its
+// `job.finished`; the announcement request carries the agent's personality,
+// the "heard" line and the quoted result; what is spoken is the announcement
+// (never the result), stored on the row; the voice read from the pointer is
+// the bytes the fake voice returned. Jobs that do not speak (typed,
+// delegated, failed, stopped, empty) change nothing: their `job.finished` is
+// the same object as before #967, no announcement is asked, no voice either.
+//
+// Mutations verified (each turns a case red): see the PR body, "Mutations".
+
+describe('a voice-launched job announces its end, out loud (#967) @cap:parler-a-un-agent/moteur', () => {
+  /** `/api/events`, read as it arrives; the reader stays open for the test. */
+  async function listenEvents(
+    app: ReturnType<typeof createApp>,
+    conversationId?: string,
+  ): Promise<{ events: VoiceEvent[]; close: () => void }> {
+    const ctl = new AbortController();
+    const query = new URLSearchParams({ entityId: seed.entityId });
+    if (conversationId) query.set('conversationId', conversationId);
+    const res = await app.fetch(
+      new Request(`http://localhost/api/events?${query.toString()}`, {
+        headers: AUTH,
+        signal: ctl.signal,
+      }),
+    );
+    expect(res.status).toBe(200);
+    const evs: VoiceEvent[] = [];
+    void (async () => {
+      try {
+        for await (const e of events(res)) evs.push(e);
+      } catch {
+        // closed by the test
+      }
+    })();
+    await waitUntil(() => evs.some((e) => e.event === 'ready'));
+    return { events: evs, close: () => ctl.abort() };
+  }
+
+  async function waitUntil(check: () => boolean, ms = 4000): Promise<void> {
+    const until = Date.now() + ms;
+    while (!check()) {
+      if (Date.now() > until) throw new Error('waitUntil: condition never met');
+      await new Promise((r) => setTimeout(r, 5));
+    }
+  }
+
+  /** Time for an event that should not come to come anyway. */
+  const quiet = (): Promise<void> => new Promise((r) => setTimeout(r, 150));
+
+  const ofJob = (evs: VoiceEvent[], jobId: string): VoiceEvent[] =>
+    evs.filter((e) => e.data['jobId'] === jobId);
+
+  /** The voice the pointer leads to, read to its `done`. */
+  async function readReply(
+    app: ReturnType<typeof createApp>,
+    audioId: string,
+  ): Promise<{ status: number; events: VoiceEvent[]; body?: unknown }> {
+    const res = await call(app, 'GET', `/api/voice/replies/${audioId}?entityId=${seed.entityId}`);
+    if (!(res.headers.get('content-type') ?? '').includes('text/event-stream')) {
+      return { status: res.status, events: [], body: await res.json() };
+    }
+    const evs: VoiceEvent[] = [];
+    await drain(events(res), evs);
+    return { status: res.status, events: evs };
+  }
+
+  /** A row the gates can finish, as a job of the conversation. */
+  async function jobRow(opts: {
+    conversationId: string;
+    replyRendering: 'text' | 'spoken';
+    parentJobId?: string;
+  }): Promise<string> {
+    const [job] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId,
+        channel: 'dashboard',
+        task: 'Search the web for the latest news about Microsoft layoffs.',
+        status: 'processing',
+        messages: [],
+        chainCount: 0,
+        conversationId: opts.conversationId,
+        replyRendering: opts.replyRendering,
+        ...(opts.parentJobId ? { parentJobId: opts.parentJobId, delegationDepth: 1 } : {}),
+      })
+      .returning({ id: agentJobs.id });
+    return job!.id;
+  }
+
+  const finish = (jobId: string, result: string) =>
+    finalizeJobSuccess(db as never, {
+      jobId,
+      result,
+      resultKind: 'prose',
+      repairTurn: 'unsupported',
+    });
+
+  const rowOf = async (jobId: string) =>
+    (
+      await db
+        .select({
+          status: agentJobs.status,
+          result: agentJobs.result,
+          replyRendering: agentJobs.replyRendering,
+          spokenAnnouncement: agentJobs.spokenAnnouncement,
+        })
+        .from(agentJobs)
+        .where(eq(agentJobs.id, jobId))
+    )[0]!;
+
+  /** A result made for reading: headings, a list, a URL. It is never read aloud. */
+  const RESULT =
+    '**Microsoft layoffs: latest news (as of 4 Nov 2026)**\n\n' +
+    '1. Voluntary Exit Offer to about 60,000 employees (26 Oct 2026). ' +
+    'Sources: NYT (https://www.nytimes.com/2026/10/26/technology/microsoft-buyouts-ai-spending.html)';
+  const ANNOUNCEMENT = 'Done, the Microsoft research is finished. It took a little over a minute.';
+
+  it('a voice-launched job yields one announcement, after its job.finished: the result stays written, the announcement is said', async () => {
+    const app = createApp(makeDeps(), testEnv);
+    const conv = await conversation();
+    const stream = await listenEvents(app, conv);
+    const sent = network({
+      front: { text: 'On it.', instruction: '' },
+      workerReply: RESULT,
+      announcement: { text: ANNOUNCEMENT },
+    });
+
+    const { body } = await say(app, conv, FIXTURE, { format: 'audio/wav' });
+    const jobId = body['spawnedJobId'] as string;
+    await settled(jobId);
+
+    await waitUntil(() => ofJob(stream.events, jobId).length >= 2);
+    await quiet();
+    const mine = ofJob(stream.events, jobId);
+    expect(mine.map((e) => e.event)).toEqual(['job.finished', 'reply.audio']);
+    // job.finished is the object it was before #967, to the key: the result.
+    expect(mine[0]!.data).toEqual({
+      type: 'job.finished',
+      jobId,
+      conversationId: conv,
+      parentJobId: null,
+      status: 'completed',
+      reply: RESULT,
+    });
+    const audioId = mine[1]!.data['audioId'] as string;
+    expect(mine[1]!.data).toEqual({ type: 'reply.audio', jobId, conversationId: conv, audioId });
+
+    const voice = await readReply(app, audioId);
+    expect(voice.status).toBe(200);
+
+    // The announcement request, as the provider received it: the agent's own
+    // personality, the fact that it is heard, the result quoted whole, and the
+    // rule after it (the prompt itself: spoken-announcement.test.ts).
+    expect(sent.announcement).toHaveLength(1);
+    const system = systemOf(sent.announcement[0]!);
+    expect(system.startsWith('You are a test agent.\n\n## Announcement\n')).toBe(true);
+    expect(system).toContain('what you write is turned into speech and heard, not read.');
+    const asked = textOf(sent.announcement[0]!.messages.at(-1)!.content);
+    expect(asked.startsWith(`The person asked:\n${TRANSCRIPT}\n\n`)).toBe(true);
+    expect(asked).toContain(`<<<\n${RESULT}\n>>>`);
+    expect(asked).toContain(
+      'Tell them, in your own words, that what they asked for is done. Speak the language of their request above, even when the result is written in another language.',
+    );
+    expect(asked).toContain('say only that it is done, in one short sentence.');
+    expect(asked).toContain('never offer to send it anywhere: they know.');
+    // Its tokens are traced, on the job, under their own source.
+    const traced = await db
+      .select({ source: llmCalls.source })
+      .from(llmCalls)
+      .where(and(eq(llmCalls.jobId, jobId), eq(llmCalls.source, 'announcement')));
+    expect(traced).toHaveLength(1);
+
+    // What is SPOKEN: the acknowledgement, then the announcement, never the result.
+    expect(sent.speech.map((s) => s['input'])).toEqual([
+      'On it.',
+      'Done, the Microsoft research is finished.',
+      'It took a little over a minute.',
+    ]);
+    expect(voice.events.map((e) => e.event)).toEqual([
+      'audio',
+      'audio_end',
+      'audio',
+      'audio_end',
+      'done',
+    ]);
+    expect(heardAudio(voice.events)).toEqual(Buffer.concat([VOICE_PCM, VOICE_PCM]));
+    expect(voice.events.filter((e) => e.event === 'audio').map((e) => e.data['seq'])).toEqual([
+      0, 1,
+    ]);
+    expect(voice.events.at(-1)!.data).toEqual({ text: ANNOUNCEMENT, speechError: null });
+
+    // The row: the result unchanged, the announcement beside it.
+    expect(await rowOf(jobId)).toEqual({
+      status: 'completed',
+      result: RESULT,
+      replyRendering: 'spoken',
+      spokenAnnouncement: ANNOUNCEMENT,
+    });
+
+    // A second reader, late, gets the same voice from seq 0; nothing is asked again.
+    const again = await readReply(app, audioId);
+    expect(heardAudio(again.events)).toEqual(Buffer.concat([VOICE_PCM, VOICE_PCM]));
+    expect(sent.speech).toHaveLength(3);
+    expect(sent.announcement).toHaveLength(1);
+    stream.close();
+  });
+
+  // The owner, 2026-11-04: "Je sais où je peux les lire." The offer of a
+  // channel sounded scripted; it is gone, and the channels with it.
+  it('no channel is offered: even with a reachable Telegram, the announcement request names none', async () => {
+    const app = createApp(makeDeps(), testEnv);
+    const conv = await conversation();
+    const stream = await listenEvents(app, conv);
+    const sent = network({ announcement: { text: ANNOUNCEMENT } });
+    await db.insert(channelBindings).values({
+      entityId: seed.entityId,
+      agentId,
+      channel: 'telegram',
+      credentials: JSON.stringify({ botToken: 'fake' }),
+      enabled: true,
+    });
+    await db.insert(telegramAllowedChats).values({
+      entityId: seed.entityId,
+      agentId,
+      chatId: 'owner-chat',
+      role: 'owner',
+      status: 'active',
+    });
+    try {
+      const job = await jobRow({ conversationId: conv, replyRendering: 'spoken' });
+      await finish(job, RESULT);
+      await waitUntil(() => ofJob(stream.events, job).length >= 2);
+      await readReply(app, ofJob(stream.events, job)[1]!.data['audioId'] as string);
+      const rule = textOf(sent.announcement[0]!.messages.at(-1)!.content).split('>>>')[1]!;
+      expect(`${systemOf(sent.announcement[0]!)}\n${rule}`).not.toMatch(
+        /telegram|slack|discord|whatsapp/i,
+      );
+    } finally {
+      await db.delete(telegramAllowedChats).where(eq(telegramAllowedChats.agentId, agentId));
+      await db.delete(channelBindings).where(eq(channelBindings.agentId, agentId));
+      stream.close();
+    }
+  });
+
+  it('a typed-chat job yields none: its job.finished is unchanged, no announcement, no voice', async () => {
+    const app = createApp(makeDeps(), testEnv);
+    const conv = await conversation();
+    const stream = await listenEvents(app, conv);
+    const sent = network({ front: { text: 'Launching.', instruction: '' }, workerReply: RESULT });
+
+    const res = await call(app, 'POST', '/api/chat', {
+      entityId: seed.entityId,
+      agentId,
+      conversationId: conv,
+      message: TRANSCRIPT,
+    });
+    expect(res.status).toBe(200);
+    const [job] = await jobsOf(conv);
+    await settled(job!.id);
+
+    await waitUntil(() => ofJob(stream.events, job!.id).length >= 1);
+    await quiet();
+    expect(ofJob(stream.events, job!.id)).toEqual([
+      {
+        event: 'job.finished',
+        data: {
+          type: 'job.finished',
+          jobId: job!.id,
+          conversationId: conv,
+          parentJobId: null,
+          status: 'completed',
+          reply: RESULT,
+        },
+      },
+    ]);
+    expect(stream.events.filter((e) => e.event === 'reply.audio')).toEqual([]);
+    expect(sent.announcement).toEqual([]);
+    expect(sent.speech).toEqual([]);
+    expect((await rowOf(job!.id)).spokenAnnouncement).toBeNull();
+    stream.close();
+  });
+
+  it('a delegated job yields none, even when it carries the spoken rendering', async () => {
+    const app = createApp(makeDeps(), testEnv);
+    const conv = await conversation();
+    const stream = await listenEvents(app, conv);
+    const sent = network({});
+    const parent = await jobRow({ conversationId: conv, replyRendering: 'spoken' });
+    const child = await jobRow({
+      conversationId: conv,
+      replyRendering: 'spoken',
+      parentJobId: parent,
+    });
+
+    await finish(child, 'The full report, with its sources.');
+    await waitUntil(() => ofJob(stream.events, child).length >= 1);
+    await quiet();
+    expect(ofJob(stream.events, child).map((e) => e.event)).toEqual(['job.finished']);
+    expect(stream.events.filter((e) => e.event === 'reply.audio')).toEqual([]);
+    expect(sent.announcement).toEqual([]);
+    expect(sent.speech).toEqual([]);
+    stream.close();
+  });
+
+  it('a spoken job that fails, is stopped, or ends with no result says nothing: the runner writes no words', async () => {
+    const app = createApp(makeDeps(), testEnv);
+    const conv = await conversation();
+    const stream = await listenEvents(app, conv);
+    const sent = network({});
+
+    const failed = await jobRow({ conversationId: conv, replyRendering: 'spoken' });
+    await finalizeJobFailure(db as never, {
+      jobId: failed,
+      errorCode: 'llm_error',
+      userMessage: 'The model did not answer.',
+    });
+    // Stopped with half a result written: the person asked for the stop.
+    const stopped = await jobRow({ conversationId: conv, replyRendering: 'spoken' });
+    await db.update(agentJobs).set({ result: 'Half of it.' }).where(eq(agentJobs.id, stopped));
+    await inTransaction(db as never, (tx) => cancelJobs(tx as never, { ids: [stopped] }));
+    const empty = await jobRow({ conversationId: conv, replyRendering: 'spoken' });
+    await db
+      .update(agentJobs)
+      .set({ status: 'completed', result: '   ' })
+      .where(eq(agentJobs.id, empty));
+    // The gate the row skipped, called as it would be: what it publishes is what speaks.
+    const finished = await publishJobEnded(db as never, empty);
+    expect(finished).not.toBeNull();
+    expect(speakFinishedJob(db as never, finished!)).toBeNull();
+
+    await waitUntil(
+      () =>
+        ofJob(stream.events, failed).length >= 1 &&
+        ofJob(stream.events, stopped).length >= 1 &&
+        ofJob(stream.events, empty).length >= 1,
+    );
+    await quiet();
+    expect(ofJob(stream.events, failed).map((e) => e.event)).toEqual(['job.failed']);
+    expect(ofJob(stream.events, stopped).map((e) => e.event)).toEqual(['job.finished']);
+    expect(ofJob(stream.events, stopped)[0]!.data['status']).toBe('cancelled');
+    expect(ofJob(stream.events, empty).map((e) => e.event)).toEqual(['job.finished']);
+    expect(stream.events.filter((e) => e.event === 'reply.audio')).toEqual([]);
+    expect(sent.announcement).toEqual([]);
+    expect(sent.speech).toEqual([]);
+    stream.close();
+  });
+
+  // The owner's test of 2026-11-04: he left the conversation page while the
+  // job ran. The dashboard shell listens to the WHOLE workspace: that is a
+  // listener, and the announcement is written and offered to it.
+  it('a workspace-wide listener (the dashboard shell, on any page) hears it: no conversation filter needed', async () => {
+    const app = createApp(makeDeps(), testEnv);
+    const conv = await conversation();
+    const shell = await listenEvents(app);
+    const sent = network({ announcement: { text: ANNOUNCEMENT } });
+    const job = await jobRow({ conversationId: conv, replyRendering: 'spoken' });
+    await finish(job, RESULT);
+    await waitUntil(() => ofJob(shell.events, job).length >= 2);
+    expect(ofJob(shell.events, job).map((e) => e.event)).toEqual(['job.finished', 'reply.audio']);
+    const voice = await readReply(app, ofJob(shell.events, job)[1]!.data['audioId'] as string);
+    expect(voice.events.at(-1)!.data).toEqual({ text: ANNOUNCEMENT, speechError: null });
+    expect(sent.announcement).toHaveLength(1);
+    expect((await rowOf(job)).spokenAnnouncement).toBe(ANNOUNCEMENT);
+    shell.close();
+  });
+
+  it('nobody listening when the job finishes: nothing is written or synthesised, nothing is offered later', async () => {
+    const app = createApp(makeDeps(), testEnv);
+    const conv = await conversation();
+    const sent = network({});
+    const warn = vi.spyOn(console, 'warn');
+    const job = await jobRow({ conversationId: conv, replyRendering: 'spoken' });
+    await finish(job, RESULT);
+    await quiet();
+    expect(sent.announcement).toEqual([]);
+    expect(sent.speech).toEqual([]);
+    expect(warn.mock.calls.map((c) => String(c[0]))).toContain(
+      `[voice-job-reply] job ${job} ended with a spoken request and no listener: nothing said`,
+    );
+    warn.mockRestore();
+    expect((await rowOf(job)).spokenAnnouncement).toBeNull();
+    // A client that comes afterwards is offered nothing: no event, no voice.
+    const late = await listenEvents(app, conv);
+    await quiet();
+    expect(late.events.filter((e) => e.event === 'reply.audio')).toEqual([]);
+    late.close();
+  });
+
+  it('an announcement the model cannot write is said as such; nothing is spoken, the result stays', async () => {
+    const app = createApp(makeDeps(), testEnv);
+    const conv = await conversation();
+    const stream = await listenEvents(app, conv);
+    const sent = network({ announcement: { status: 500 } });
+    const job = await jobRow({ conversationId: conv, replyRendering: 'spoken' });
+    await finish(job, RESULT);
+    await waitUntil(() => ofJob(stream.events, job).length >= 2);
+    const voice = await readReply(app, ofJob(stream.events, job)[1]!.data['audioId'] as string);
+    expect(voice.events.map((e) => e.event)).toEqual(['done']);
+    expect(voice.events[0]!.data).toMatchObject({
+      text: null,
+      speechError: { code: 'announcement_failed' },
+    });
+    expect(sent.speech).toEqual([]);
+    expect(await rowOf(job)).toMatchObject({ result: RESULT, spokenAnnouncement: null });
+    stream.close();
+  });
+
+  it('a secret in the announcement is masked in what the voice says; the row keeps it', async () => {
+    const app = createApp(makeDeps(), testEnv);
+    const conv = await conversation();
+    const stream = await listenEvents(app, conv);
+    const secret = `sk-or-v1-${'a'.repeat(64)}`;
+    const sent = network({ announcement: { text: `Your key is ${secret} and it works.` } });
+    const job = await jobRow({ conversationId: conv, replyRendering: 'spoken' });
+    await finish(job, RESULT);
+    await waitUntil(() => ofJob(stream.events, job).length >= 2);
+    const voice = await readReply(app, ofJob(stream.events, job)[1]!.data['audioId'] as string);
+    const said = sent.speech.map((s) => String(s['input'])).join(' ');
+    expect(said).not.toContain(secret);
+    expect(said).toContain(REDACTED_TEXT);
+    expect(JSON.stringify(voice.events)).not.toContain(secret);
+    expect((await rowOf(job)).spokenAnnouncement).toContain(secret);
+    stream.close();
+  });
+
+  it('the voice is read in its own workspace only, and an unknown one is refused, never guessed', async () => {
+    const app = createApp(makeDeps(), testEnv);
+    const unknown = await readReply(app, randomUUID());
+    expect(unknown).toMatchObject({ status: 404, body: { error: 'reply_audio_not_found' } });
+
+    const conv = await conversation();
+    const stream = await listenEvents(app, conv);
+    network({});
+    const job = await jobRow({ conversationId: conv, replyRendering: 'spoken' });
+    await finish(job, RESULT);
+    await waitUntil(() => ofJob(stream.events, job).length >= 2);
+    const audioId = ofJob(stream.events, job)[1]!.data['audioId'] as string;
+    const res = await call(app, 'GET', `/api/voice/replies/${audioId}?entityId=${randomUUID()}`);
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ error: 'reply_audio_not_found' });
+    const noEntity = await call(app, 'GET', `/api/voice/replies/${audioId}`);
+    expect(noEntity.status).toBe(400);
+    stream.close();
+  });
+
+  it('one timing line per announcement, numbers and voice ids only, never the words', async () => {
+    const app = createApp(makeDeps(), testEnv);
+    const conv = await conversation();
+    const stream = await listenEvents(app, conv);
+    network({ announcement: { text: ANNOUNCEMENT } });
+    const warn = vi.spyOn(console, 'warn');
+    const job = await jobRow({ conversationId: conv, replyRendering: 'spoken' });
+    await finish(job, RESULT);
+    await waitUntil(() => ofJob(stream.events, job).length >= 2);
+    await readReply(app, ofJob(stream.events, job)[1]!.data['audioId'] as string);
+    await waitUntil(() =>
+      warn.mock.calls.some((c) => String(c[0]).startsWith('[voice-job-reply] timing')),
+    );
+    const lines = warn.mock.calls
+      .map((c) => String(c[0]))
+      .filter((l) => l.startsWith('[voice-job-reply] timing'));
+    warn.mockRestore();
+    expect(lines).toHaveLength(1);
+    const fields = JSON.parse(lines[0]!.slice('[voice-job-reply] timing '.length)) as Record<
+      string,
+      unknown
+    >;
+    expect(Object.keys(fields)).toEqual([
+      'source',
+      'model',
+      'voice',
+      'transcriptionModel',
+      'announcementMs',
+      'firstSentenceVendorByteMs',
+      'firstSentenceVendorDoneMs',
+      'firstAudioMs',
+      'lastAudioMs',
+    ]);
+    expect(fields).toMatchObject({
+      source: 'openrouter',
+      model: 'google/gemini-3.8-flash-tts',
+      voice: 'Kore',
+      transcriptionModel: null,
+    });
+    for (const k of [
+      'announcementMs',
+      'firstSentenceVendorByteMs',
+      'firstSentenceVendorDoneMs',
+      'firstAudioMs',
+    ]) {
+      expect(typeof fields[k]).toBe('number');
+    }
+    expect(fields['firstAudioMs'] as number).toBeGreaterThanOrEqual(
+      fields['announcementMs'] as number,
+    );
+    expect(fields['lastAudioMs'] as number).toBeGreaterThanOrEqual(
+      fields['firstAudioMs'] as number,
+    );
+    for (const word of ['Microsoft', 'research', 'Nodal']) expect(lines[0]).not.toContain(word);
+    stream.close();
   });
 });
 
