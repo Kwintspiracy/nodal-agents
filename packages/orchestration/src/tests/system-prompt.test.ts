@@ -2013,15 +2013,24 @@ ${sentence}`).length > 0,
     expect(typed).not.toContain('Open with one short sentence');
   });
 
-  // #977 — with reasoning off, Alfred's reply opened with "This is a general
-  // knowledge question, so I can answer it directly": the reply-or-escalate
-  // split of the chat surface line, said aloud. The line states the choice as
-  // silent, for every chat turn, typed or spoken, worker or orchestrator. A job
-  // has no such split (it holds its tools), so its prompt does not carry it.
-  // Mutation verified: the sentence removed from the surface line → red.
-  it('the reply-or-run_task choice is stated as silent on every chat turn, typed and spoken (#977)', async () => {
-    const SILENT =
-      'The choice between the two is silent: your reply never says which path you took or why.';
+  // #995 — A CHANGE DETECTOR, not a proof of behaviour. The proof is the measure.
+  //
+  // The chat surface line decides, among other things, whether the model narrates
+  // its routing decision ("This is a general knowledge question I can answer
+  // directly…", "Je transmets à Researcher, qui gère…"). Four wordings were
+  // measured (#977's, the current one, and three more); none was the lever, and a
+  // regex guard over the wording was tried twice and produced a P2 each time:
+  // a regex cannot enumerate every paraphrase. So the line is PINNED, whole, as
+  // the real built prompt emits it. Any edit of it fails here, on purpose.
+  //
+  // Before changing this line: re-measure with `spoken-reasoning-cli` (both
+  // narration columns, reasoning off, at least 5 runs per request), put the
+  // figures in the PR body, and update the pinned text in the SAME PR.
+  // Mutation verified: one word of the surface line changed → red; restored → green.
+  const SURFACE_LINE =
+    '- surface: in-app dashboard chat — you are talking directly with the user; reply in plain text. For conversation or recalling facts, just reply (your durable facts are loaded above). For ANY action — using a connector or skill, delegating to your team, sending/fetching/creating/publishing, or (as the workspace ROOT) creating agents, skills, MCP servers, connectors or automations — the `run_task` tool is the only way it happens. The user’s own messages reach the job as they wrote them; what you write in it is your note beside them, read as yours. CRITICAL: writing in text that you will do something (e.g. "I\'m starting X…") does NOT start anything — ONLY an actual `run_task` tool call performs the action. If you intend to act, the `run_task` tool call is mandatory; a text-only reply about an action accomplishes nothing. `run_task` is your gateway to everything you can do — NEVER tell the user you cannot do something that an action could accomplish; escalate it via `run_task` instead. You may add a one-line acknowledgment in your own voice alongside the call, but the `run_task` call is what actually does the work. Do not call any other named tool on this surface.';
+
+  it('the chat surface line is exactly the measured one (#995 tripwire: re-measure before editing it)', async () => {
     const { entityId, root, worker } = await seedTeam();
     const agentsUnderTest = [
       makeAgent(root.id, entityId, root.personality, 'orchestrator'),
@@ -2035,19 +2044,32 @@ ${sentence}`).length > 0,
           replyRendering,
         });
         const surfaceLine = chat.split('\n').find((l) => l.startsWith('- surface: in-app'));
-        expect({ role: agent.role, replyRendering, said: surfaceLine?.includes(SILENT) }).toEqual({
-          role: agent.role,
-          replyRendering,
-          said: true,
-        });
-        expect(chat.split(SILENT)).toHaveLength(2);
+        expect(
+          surfaceLine,
+          'The chat surface line changed. It drives routing narration (#995): re-measure with ' +
+            'spoken-reasoning-cli (both narration columns, reasoning off, >= 5 runs per request), ' +
+            'put the figures in the PR body, and update SURFACE_LINE in the same PR.',
+        ).toBe(SURFACE_LINE);
       }
-      const job = await buildSystemPrompt(agent, db, {
-        origin: 'dashboard',
-        replyRendering: 'spoken',
-        availableToolNames: [...ALWAYS_ON_TOOLS],
-      });
-      expect(job).not.toContain(SILENT);
+    }
+  });
+
+  // History, cheap to keep: the sentence #977 added, and the reason it left.
+  it('the sentence #977 added to the surface line is not in any chat prompt (#995)', async () => {
+    const { entityId, root, worker } = await seedTeam();
+    for (const agent of [
+      makeAgent(root.id, entityId, root.personality, 'orchestrator'),
+      makeAgent(worker.id, entityId, worker.personality),
+    ]) {
+      for (const replyRendering of ['text', 'spoken'] as const) {
+        const chat = await buildSystemPrompt(agent, db, {
+          origin: 'dashboard',
+          surface: 'chat',
+          replyRendering,
+        });
+        expect(chat).not.toContain('The choice between the two is silent');
+        expect(chat).not.toContain('which path you took');
+      }
     }
   });
 
