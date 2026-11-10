@@ -13,7 +13,15 @@
 
 import { readFileSync, writeFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
-import { agents, and, createClient, entityLlmKeys, eq, type AnyDrizzleDb } from '@nodal-agents/db';
+import {
+  agents,
+  and,
+  createClient,
+  entityLlmKeys,
+  eq,
+  ne,
+  type AnyDrizzleDb,
+} from '@nodal-agents/db';
 import { findModelCatalogEntry } from '@nodal-agents/shared';
 import { masterKeyFileMissing, masterKeyPath } from '@nodal-agents/secrets';
 import {
@@ -141,6 +149,17 @@ try {
       `${efforts.length * requests.length * runs} turns`,
   );
 
+  // The workspace's teammates, read from the database: a launch line that names
+  // one narrates the routing (#995). Never a list written here.
+  const mates = await db
+    .select({ name: agents.name, slug: agents.slug })
+    .from(agents)
+    .where(and(eq(agents.entityId, agent.entityId), ne(agents.id, agent.id)));
+  const teammateNames = [...new Set(mates.flatMap((m) => [m.name, m.slug]))].filter(
+    (n) => n.trim() !== '',
+  );
+  say(`${teammateNames.length} teammate names read from the workspace`);
+
   const startedAt = new Date().toISOString();
   const records = await measureSpokenReasoning(db, {
     entityId: agent.entityId,
@@ -148,13 +167,14 @@ try {
     efforts,
     runs,
     requests,
+    teammateNames,
     onTurn: (r) =>
       say(
         `run ${r.run} ${r.effort.padEnd(6)} ${r.requestId.padEnd(14)} ` +
           `${r.calledRunTask ? 'run_task' : 'reply   '} ${r.rightDecision ? 'right' : 'WRONG'} ` +
           `first ${r.firstDeltaMs ?? '-'} ms, ${r.replyOutputTokens ?? '-'} tok, ` +
           `${r.replyWords} words, ${r.replySentences} sentences` +
-          `${r.routingNarration ? ' NARRATES ROUTING' : ''}${r.error ? ` error ${r.error}` : ''} | ${r.opening}`,
+          `${r.routingNarration ? ' NARRATES ROUTING' : ''}${r.launchNarration ? ' NARRATES LAUNCH' : ''}${r.error ? ` error ${r.error}` : ''} | ${r.opening}`,
       ),
   });
   const summary = summarize(records);

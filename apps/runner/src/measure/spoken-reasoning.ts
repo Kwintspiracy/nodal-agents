@@ -127,6 +127,23 @@ export const SPOKEN_REASONING_REQUESTS: readonly MeasureRequest[] = [
     text: 'Search the web for the latest news about Microsoft layoffs.',
     needsTask: true,
   },
+  // #995, round 2: three requests the owner spoke to the robot, word for word
+  // ("euh" included), where the routing was narrated for real.
+  {
+    id: 'weather-beijing-robot',
+    text: 'Quelle est la météo à Pékin euh au mois de décembre en général ?',
+    needsTask: false,
+  },
+  {
+    id: 'magazine-robot',
+    text: "Est-ce que tu peux me préparer une page format magazine euh au sujet euh de l'espionne en relation avec le PDG de Nvidia ?",
+    needsTask: true,
+  },
+  {
+    id: 'print-robot',
+    text: "Du coup, est-ce que tu peux me l'imprimer maintenant ?",
+    needsTask: true,
+  },
 ];
 
 /**
@@ -146,9 +163,54 @@ const ROUTING_NARRATION: readonly RegExp[] = [
   /\bquestion\s+(de culture g[ée]n[ée]rale|g[ée]n[ée]rale|simple|factuelle)\b/i,
   /\bje (peux|vais) (y )?r[ée]pondre (directement|moi-m[êe]me|tout de suite|sans)\b/i,
   /\br[ée]pondre directement\b/i,
+  // Conjugated forms, every person (#995, round 2): "Je réponds directement :",
+  // "Je te réponds directement", "je répondrai moi-même".
+  /\br[ée]pond\w*\s+(?:(?:te|vous|y|lui|cela|ça)\s+)?(?:directement|moi-m[êe]me|tout de suite|sans)\b/i,
+  /\bje (peux|vais) (le |la |ça |cela )?(faire|traiter|g[ée]rer|[ée]crire) (directement|moi-m[êe]me)\b/i,
+  // "answering directly", "I'll answer directly", "I replied myself".
+  /\b(?:answer|reply|respond)\w*\s+(?:to\s+)?(?:(?:it|this|that|you)\s+)?(?:directly|right away|myself|without)\b/i,
+  // "Creative writing is something I can do directly / myself".
+  /\b(?:i can|i'll|i will|i'm able to|i could)\s+(?:just\s+)?(?:do|handle|write|take care of|answer)\b[^.!?]{0,30}\b(?:directly|myself|on my own)\b/i,
+  /\b(?:do|handle|write)\s+(?:it|this|that)\s+(?:directly|myself)\b/i,
   /\bpas besoin de\b.*\b(t[âa]che|job|outil|d[ée]l[ée]gu\w*|lancer)\b/i,
   /\b(ne (n[ée]cessite|demande|requiert) pas)\b.*\b(t[âa]che|job|outil)\b/i,
 ];
+
+/**
+ * Does the line that goes with a `run_task` call narrate the routing (#995,
+ * round 2)? It names a teammate (names come from the database, never from a
+ * list written here), or says who it hands over to and why ("je délègue",
+ * "je transmets à", "via X", "qui gère…", "team routing"). "Je lance la
+ * recherche." says WHAT is being done: not routing. Read on the whole text, not
+ * the first sentence: the line is short and the teammate often comes last.
+ */
+const LAUNCH_NARRATION: readonly RegExp[] = [
+  /\b(?:d[ée]l[èe]gu\w*|delegat\w*|transmets|transmett\w*|transmis\w*|transf[èe]re\w*|confie\w*|confier)\b/i,
+  /\bpass(?:e|er|erai|es|ing|ed)\s+(?:la main|le relais|la demande|cela|ça|ce|it|this|that|the \w+)?\s*(?:à|au|aux|(?:on |along )?to\b)/i,
+  /\bhand(?:s|ing|ed)?\s+(?:it |this |that |the \w+ )?(?:off|over)\b/i,
+  /\b(?:forward|route)(?:s|d|ing)?\s+(?:it |this |that |the \w+ )?to\b/i,
+  /(?<![\p{L}\p{N}])(?:via|auprès d(?:e|u|es)|through)\s+(?:l['’]agent\s+|the agent\s+)?\p{Lu}/u,
+  /\bqui\s+(?:g[èe]re|a\s|s['’]occupe|sait|fera|orchestre|ma[iî]trise|dispose|poss[èe]de|est charg[ée])/i,
+  /\b(?:which|who)\s+(?:handles|has|manages|specializes|owns|is in charge|runs|orchestrates)\b/i,
+  /\bteam routing\b/i,
+];
+
+const escapeRegExp = (v: string): string => v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+export function launchNarratesRouting(
+  text: string,
+  teammateNames: readonly string[] = [],
+): boolean {
+  const trimmed = text.trim();
+  if (trimmed === '') return false;
+  if (LAUNCH_NARRATION.some((re) => re.test(trimmed))) return true;
+  return teammateNames
+    .map((n) => n.trim())
+    .filter((n) => n !== '')
+    .some((n) =>
+      new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegExp(n)}(?![\\p{L}\\p{N}])`, 'iu').test(trimmed),
+    );
+}
 
 /** La première phrase d'une réponse, bornée. */
 export function openingOf(reply: string): string {
@@ -240,7 +302,10 @@ export interface TurnRecord {
   /** Les appels du tour, dans l'ordre, et l'effort que chacun a demandé. */
   calls: Array<{ reasoningEffort: string | null; outputTokens: number | null; ms: number | null }>;
   opening: string;
+  /** Turn WITHOUT a job: the reply opens by narrating the routing. */
   routingNarration: boolean;
+  /** Turn WITH a job: the line that goes with `run_task` narrates the routing (#995). */
+  launchNarration: boolean;
   /** La longueur de la réponse écrite (#987) : ses mots et ses phrases. */
   replyWords: number;
   replySentences: number;
@@ -291,6 +356,8 @@ export async function playMeasuredTurn(
     effort: MeasuredEffort;
     request: MeasureRequest;
     run: number;
+    /** The workspace's teammate names, read from the database (a launch line that names one narrates the routing). */
+    teammateNames?: readonly string[];
     /** La durée « dite » du message, rangée sur la ligne comme un vrai tour vocal. */
     spokenMs?: number;
   },
@@ -382,7 +449,8 @@ export async function playMeasuredTurn(
         turnOutputTokens: sum,
         calls,
         opening: openingOf(reply),
-        routingNarration: opensWithRoutingNarration(reply),
+        routingNarration: !calledRunTask && opensWithRoutingNarration(reply),
+        launchNarration: calledRunTask && launchNarratesRouting(reply, opts.teammateNames ?? []),
         replyWords: wordCount(reply),
         replySentences: sentenceCount(reply),
         ...(result.ok ? {} : { error: result.error }),
@@ -409,6 +477,7 @@ export async function measureSpokenReasoning(
     efforts: readonly MeasuredEffort[];
     runs: number;
     requests?: readonly MeasureRequest[];
+    teammateNames?: readonly string[];
     onTurn?: (record: TurnRecord) => void;
   },
 ): Promise<TurnRecord[]> {
@@ -423,6 +492,7 @@ export async function measureSpokenReasoning(
           effort,
           request,
           run,
+          ...(opts.teammateNames ? { teammateNames: opts.teammateNames } : {}),
         });
         records.push(record);
         opts.onTurn?.(record);
@@ -449,7 +519,10 @@ export interface EffortSummary {
   firstDeltaMedianMs: number | null;
   firstDeltaP90Ms: number | null;
   replyOutputTokensMedian: number | null;
+  /** Turns without a job whose reply narrates the routing. */
   routingNarrations: number;
+  /** Turns with a job whose launch line narrates the routing (#995). */
+  launchNarrations: number;
   /**
    * Les mots des réponses directes (#987) : celles des demandes sans travail
    * qui ont répondu sans erreur et sans lancer de job — les mêmes que
@@ -492,6 +565,7 @@ export function summarize(records: readonly TurnRecord[]): EffortSummary[] {
       firstDeltaP90Ms: percentile(deltas, 90),
       replyOutputTokensMedian: percentile(tokens, 50),
       routingNarrations: rows.filter((r) => r.routingNarration).length,
+      launchNarrations: rows.filter((r) => r.launchNarration).length,
       noTaskWordsMedian: percentile(answeredWords, 50),
       noTaskWordsMax: answeredWords.length === 0 ? null : Math.max(...answeredWords),
     };
@@ -502,15 +576,15 @@ export function summarize(records: readonly TurnRecord[]): EffortSummary[] {
 export function summaryTable(rows: readonly EffortSummary[]): string {
   const ms = (v: number | null): string => (v === null ? 'n/a' : `${(v / 1000).toFixed(2)} s`);
   const lines = [
-    '| Effort | Right decisions | Task launched | No-task answered | First text (median / p90) | Reply output tokens (median) | Routing narrations | No-task words (median / max) | Errors |',
-    '|---|---|---|---|---|---|---|---|---|',
+    '| Effort | Right decisions | Task launched | No-task answered | First text (median / p90) | Reply output tokens (median) | Routing narrations (reply) | Routing narrations (launch) | No-task words (median / max) | Errors |',
+    '|---|---|---|---|---|---|---|---|---|---|',
   ];
   for (const r of rows) {
     lines.push(
       `| ${r.effort} | ${r.rightDecisions}/${r.turns} | ${r.taskLaunched}/${r.taskTurns} | ` +
         `${r.noTaskAnswered}/${r.noTaskTurns} | ${ms(r.firstDeltaMedianMs)} / ${ms(r.firstDeltaP90Ms)} ` +
         `(${r.withText} turns with text) | ${r.replyOutputTokensMedian ?? 'n/a'} | ` +
-        `${r.routingNarrations} | ${r.noTaskWordsMedian ?? 'n/a'} / ${r.noTaskWordsMax ?? 'n/a'} | ` +
+        `${r.routingNarrations}/${r.noTaskTurns} | ${r.launchNarrations}/${r.taskTurns} | ${r.noTaskWordsMedian ?? 'n/a'} / ${r.noTaskWordsMax ?? 'n/a'} | ` +
         `${r.errors} |`,
     );
   }

@@ -24,6 +24,7 @@ import {
 } from '@nodal-agents/db';
 import {
   measureSpokenReasoning,
+  launchNarratesRouting,
   opensWithRoutingNarration,
   sentenceCount,
   summarize,
@@ -40,6 +41,8 @@ vi.mock('../../../../../packages/llm/src/transport.ts', () => ({
 
 const MODEL = 'anthropic/claude-haiku-5.5';
 const NARRATED = 'This is a general knowledge question, so I can answer it directly. Canberra.';
+
+const LAUNCH_LINE = 'Je transmets la demande à Researcher, qui gère la recherche web.';
 
 const REQUESTS: MeasureRequest[] = [
   { id: 'file', text: 'Write a file called notes.txt with three lines.', needsTask: true },
@@ -71,7 +74,8 @@ function scriptedProvider(): Wire[] {
         completion_tokens: completion,
         total_tokens: 100 + completion,
       };
-      const escalate = isTurn && asked.includes('notes.txt');
+      const escalate = isTurn && (asked.includes('notes.txt') || asked.includes('magazine'));
+      const launchLine = asked.includes('magazine') ? LAUNCH_LINE : null;
       const text = !isTurn
         ? 'No action.'
         : asked.includes('capital')
@@ -80,6 +84,7 @@ function scriptedProvider(): Wire[] {
       const delta = escalate
         ? {
             role: 'assistant',
+            ...(launchLine ? { content: launchLine } : {}),
             tool_calls: [
               {
                 index: 0,
@@ -103,7 +108,7 @@ function scriptedProvider(): Wire[] {
       }
       const { index: _i, ...call } = escalate ? delta.tool_calls![0]! : { index: 0 };
       const message = escalate
-        ? { role: 'assistant', content: null, tool_calls: [call] }
+        ? { role: 'assistant', content: launchLine, tool_calls: [call] }
         : { role: 'assistant', content: text };
       return new Response(
         JSON.stringify({ id: 'c', choices: [{ message, finish_reason: finish }], usage }),
@@ -275,10 +280,10 @@ describe('the #977 measurement tool', () => {
     expect((columns as unknown as { rows: unknown[] }).rows).toEqual([]);
   });
 
-  it('the default requests are 7 that need a task and 10 that do not, with the five English ones of #987', () => {
-    expect(SPOKEN_REASONING_REQUESTS).toHaveLength(17);
-    expect(SPOKEN_REASONING_REQUESTS.filter((r) => r.needsTask)).toHaveLength(7);
-    expect(new Set(SPOKEN_REASONING_REQUESTS.map((r) => r.id)).size).toBe(17);
+  it('the default requests are 9 that need a task and 11 that do not, with the five English ones of #987 and the three robot ones of #995', () => {
+    expect(SPOKEN_REASONING_REQUESTS).toHaveLength(20);
+    expect(SPOKEN_REASONING_REQUESTS.filter((r) => r.needsTask)).toHaveLength(9);
+    expect(new Set(SPOKEN_REASONING_REQUESTS.map((r) => r.id)).size).toBe(20);
     const english = SPOKEN_REASONING_REQUESTS.filter((r) => r.id.endsWith('-en')).map((r) => [
       r.text,
       r.needsTask,
@@ -359,6 +364,7 @@ describe('the #977 measurement tool', () => {
     calls: [],
     opening: '',
     routingNarration: false,
+    launchNarration: false,
     replyWords: 0,
     replySentences: 0,
     ...over,
@@ -409,5 +415,125 @@ describe('the #977 measurement tool', () => {
     ['Canberra. If you want, I can start a task that needs no tool.', false],
   ])('opensWithRoutingNarration(%j) = %s', (reply, expected) => {
     expect(opensWithRoutingNarration(reply)).toBe(expected);
+  });
+
+  // #995, round 2: the three requests the owner spoke, verbatim.
+  it('the robot requests of #995 are in the default list, verbatim', () => {
+    expect(
+      SPOKEN_REASONING_REQUESTS.filter((r) => r.id.endsWith('-robot')).map((r) => [
+        r.id,
+        r.text,
+        r.needsTask,
+      ]),
+    ).toEqual([
+      [
+        'weather-beijing-robot',
+        'Quelle est la météo à Pékin euh au mois de décembre en général ?',
+        false,
+      ],
+      [
+        'magazine-robot',
+        "Est-ce que tu peux me préparer une page format magazine euh au sujet euh de l'espionne en relation avec le PDG de Nvidia ?",
+        true,
+      ],
+      ['print-robot', "Du coup, est-ce que tu peux me l'imprimer maintenant ?", true],
+    ]);
+  });
+
+  // Conjugated forms of "I answer directly", every person and tense, FR and EN.
+  // Mutation verified: the conjugated-forms patterns removed -> the first rows red.
+  it.each([
+    ['Je réponds directement : à Pékin, décembre est généralement froid.', true],
+    ['Je te réponds directement : il fait froid.', true],
+    ['Je répondrai moi-même, pas besoin de tâche.', true],
+    ['Creative writing is something I can do directly. Once upon a time.', true],
+    ["I'll answer directly. Boil it six minutes.", true],
+    ['I can handle this myself: nine minutes.', true],
+    ["I'm answering directly: Canberra.", true],
+    ['Je peux le faire directement : voici une histoire.', true],
+    ['À Pékin, décembre est généralement froid, autour de -3 °C.', false],
+    ['Bien sûr. Un œuf mollet cuit en six minutes.', false],
+    ['Directement au sud de Pékin, la plaine est plate.', false],
+    ['I can do that for you: nine minutes in boiling water.', false],
+  ])('opensWithRoutingNarration(%j) = %s (conjugated forms)', (reply, expected) => {
+    expect(opensWithRoutingNarration(reply)).toBe(expected);
+  });
+
+  // The line that goes with run_task. Positives: the owner's openings, the
+  // measured ones, every verb of the family. Teammate names come from the DB.
+  // Mutation verified: the LAUNCH_NARRATION checks and the names check removed ->
+  // every positive red.
+  const MATES = ['Researcher', 'Lead-Dev'];
+  it.each([
+    [
+      'Je lance la préparation de la page magazine via Researcher, qui fera la recherche sur ce sujet avant la mise en page.',
+      true,
+    ],
+    ["Je lance l'impression de la page via Researcher, qui a la compétence d'impression.", true],
+    ['Je délègue cette recherche à Researcher, qui gère la recherche web approfondie.', true],
+    ['Je transmets la demande à Lead-Dev, qui orchestre le codage.', true],
+    [
+      'This is a single news lookup, but the team routing says substantive web research goes to Researcher, which has premium search access.',
+      true,
+    ],
+    ["Je confie ça à l'équipe.", true],
+    ["Je passe la demande à l'équipe.", true],
+    ["I'll hand this off to the team.", true],
+    ["I'm passing it to the research agent.", true],
+    ['Je lance la recherche avec Researcher.', true],
+    ['Delegating the search now.', true],
+    ['Je lance la recherche.', false],
+    ['Je prépare la page.', false],
+    ["Je lance l'impression de la page.", false],
+    ['On y va, je cherche ça.', false],
+    ["I'm starting the search now.", false],
+    ['Je m’en occupe.', false],
+    ['Writing the file now.', false],
+    ['', false],
+  ])('launchNarratesRouting(%j) = %s', (line, expected) => {
+    expect(launchNarratesRouting(line, MATES)).toBe(expected);
+  });
+
+  it('a teammate name matches whole words only, and only names given by the caller', () => {
+    expect(launchNarratesRouting('Je lance la recherche pour Bob.', ['Bob'])).toBe(true);
+    expect(launchNarratesRouting('Je lance la recherche pour Bobby.', ['Bob'])).toBe(false);
+    expect(launchNarratesRouting('Je lance la recherche pour Bob.', [])).toBe(false);
+    expect(launchNarratesRouting('Je lance (a+b) maintenant.', ['(a+b)'])).toBe(true);
+  });
+
+  it('the two narration counts are separate, per turn kind (#995)', () => {
+    const rows = summarize([
+      turn({ routingNarration: true }),
+      turn({ routingNarration: false }),
+      turn({ needsTask: true, calledRunTask: true, launchNarration: true }),
+      turn({ needsTask: true, calledRunTask: true, launchNarration: true }),
+      turn({ needsTask: true, calledRunTask: true, launchNarration: false }),
+    ]);
+    expect([rows[0]?.routingNarrations, rows[0]?.launchNarrations]).toEqual([1, 2]);
+  });
+
+  it('records the launch line narration on a real turn, naming the teammates read from the workspace', async () => {
+    const { entityId, agentId } = await seedJob(db, { model: MODEL, role: 'orchestrator' });
+    scriptedProvider();
+    const records = await measureSpokenReasoning(db as unknown as AnyDrizzleDb, {
+      entityId,
+      agentId,
+      efforts: ['off'],
+      runs: 1,
+      requests: [
+        { id: 'magazine', text: 'Prépare une page magazine.', needsTask: true },
+        { id: 'file', text: 'Write a file called notes.txt with three lines.', needsTask: true },
+      ],
+      teammateNames: ['Researcher'],
+    });
+    vi.unstubAllGlobals();
+    expect(
+      records.map((r) => [r.requestId, r.calledRunTask, r.launchNarration, r.routingNarration]),
+    ).toEqual([
+      ['magazine', true, true, false],
+      ['file', true, false, false],
+    ]);
+    const [off] = summarize(records);
+    expect([off?.launchNarrations, off?.routingNarrations]).toEqual([1, 0]);
   });
 });
