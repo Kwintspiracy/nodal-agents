@@ -49,7 +49,7 @@ import { z } from 'zod';
 import { and, eq, conversations } from '@nodal-agents/db';
 import type { RunnerDeps } from '../deps.ts';
 import { jobEvents, type JobEventBus, type StoredJobEvent } from '../events/job-events.ts';
-import { sseEvent, SSE_HEADERS } from './sse.ts';
+import { sseEvent, SSE_HEADERS, subscriptionStream } from './sse.ts';
 
 const EventsQuerySchema = z.object({
   entityId: z.string().guid(),
@@ -121,71 +121,46 @@ export function streamJobEvents(
   render: RenderJobEvent,
 ): Response {
   const { entityId, conversationId, deviceId } = scope;
-  const encoder = new TextEncoder();
-  let stop: () => void = () => {};
-  const stream = new ReadableStream<Uint8Array>({
-    start(controller) {
-      let closed = false;
-      // Le battement est armé AVANT tout envoi : un lecteur parti dès la reprise
-      // l'arrête par `stop`, au lieu de le laisser battre pour personne.
-      const ping = setInterval(() => write(': ping\n\n'), EVENTS_PING_MS);
-      // Un battement ne garde pas le processus en vie à lui seul.
-      ping.unref?.();
-      const write = (chunk: string): void => {
-        if (closed) return;
-        try {
-          controller.enqueue(encoder.encode(chunk));
-        } catch {
-          // Le lecteur est parti : on se désinscrit.
-          stop();
-        }
-      };
-      // Un événement du bus peut en donner plusieurs : seul le DERNIER porte
-      // l'identifiant, pour qu'un client coupé entre deux reprenne avant
-      // l'événement du bus, jamais après une partie de lui.
-      const send = (e: StoredJobEvent): void => {
-        const outs = render(e);
-        outs.forEach((out, i) =>
-          write(
-            i === outs.length - 1
-              ? sseWithId(e.id, out.event, out.data)
-              : sseEvent(out.event, out.data),
-          ),
-        );
-      };
+  // La fin du flux, quoi qui la cause (requête abandonnée, même avant cet
+  // instant ; corps annulé ; lecteur parti), passe par `subscriptionStream` :
+  // l'abonné quitte le bus et le corps se ferme, une fois (#1033).
+  const stream = subscriptionStream(c.req.raw, ({ write }) => {
+    // Un événement du bus peut en donner plusieurs : seul le DERNIER porte
+    // l'identifiant, pour qu'un client coupé entre deux reprenne avant
+    // l'événement du bus, jamais après une partie de lui.
+    const send = (e: StoredJobEvent): void => {
+      const outs = render(e);
+      outs.forEach((out, i) =>
+        write(
+          i === outs.length - 1
+            ? sseWithId(e.id, out.event, out.data)
+            : sseEvent(out.event, out.data),
+        ),
+      );
+    };
 
-      // L'ouverture et l'inscription sont atomiques (`bus.open`) : rien ne
-      // tombe entre ce qui est rejoué et le direct.
-      const sub = bus.open(entityId, conversationId, lastEventId, send, deviceId);
-      stop = () => {
-        if (closed) return;
-        closed = true;
-        sub.close();
-        clearInterval(ping);
-        try {
-          controller.close();
-        } catch {
-          // Déjà fermé par le lecteur.
-        }
-      };
+    // L'ouverture et l'inscription sont atomiques (`bus.open`) : rien ne
+    // tombe entre ce qui est rejoué et le direct.
+    const sub = bus.open(entityId, conversationId, lastEventId, send, deviceId);
+    const ping = setInterval(() => write(': ping\n\n'), EVENTS_PING_MS);
+    // Un battement ne garde pas le processus en vie à lui seul.
+    ping.unref?.();
 
-      // Ce qui a été manqué d'abord, puis `ready` : le client est en direct, et
-      // son point de reprise est le dernier événement de l'espace. Ou bien un
-      // `resync` à la place des deux.
-      const { opening } = sub;
-      if (opening.kind === 'resync') {
-        write(sseWithId(opening.headId, 'resync', { type: 'resync', reason: opening.reason }));
-      } else {
-        if (opening.kind === 'replay') for (const e of opening.events) send(e);
-        write(sseWithId(opening.headId, 'ready', {}));
-      }
-    },
-    cancel() {
-      stop();
-    },
+    // Ce qui a été manqué d'abord, puis `ready` : le client est en direct, et
+    // son point de reprise est le dernier événement de l'espace. Ou bien un
+    // `resync` à la place des deux.
+    const { opening } = sub;
+    if (opening.kind === 'resync') {
+      write(sseWithId(opening.headId, 'resync', { type: 'resync', reason: opening.reason }));
+    } else {
+      if (opening.kind === 'replay') for (const e of opening.events) send(e);
+      write(sseWithId(opening.headId, 'ready', {}));
+    }
+    return () => {
+      sub.close();
+      clearInterval(ping);
+    };
   });
-  // La requête abandonnée (onglet fermé, client coupé) libère son abonnement.
-  c.req.raw.signal.addEventListener('abort', () => stop(), { once: true });
 
   return new Response(stream, { headers: { ...SSE_HEADERS } });
 }
