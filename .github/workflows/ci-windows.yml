@@ -47,7 +47,12 @@ jobs:
   # n'empêche pas les six tranches de rendre leur verdict.
   checks:
     runs-on: windows-2025-vs2026
-    timeout-minutes: 35
+    # Typecheck à froid, runner rapide : 322 s (run 42876715906) ; installation
+    # 20 à 31 s ; signatures VC++ 3 à 6 s. Au pire d'un runner lent (×1,78) le
+    # typecheck prend 573 s : sa borne passe de 10 à 15 min (+160 %), car 10
+    # n'aurait laissé que 4 % de marge. Job : 10 + 15 + 6 + 5 de mise en place
+    # = 36, arrondi à 40 (ci-budgets.mjs).
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v5
 
@@ -84,7 +89,7 @@ jobs:
       # Typecheck et tests seulement : lint et format ne dépendent pas de l'OS,
       # les refaire ici doublerait le coût sans rien apprendre.
       - name: Typecheck
-        timeout-minutes: 10
+        timeout-minutes: 15
         run: pnpm typecheck
 
       # Signatures Authenticode des DLL du runtime VC++ : seul Windows sait les
@@ -116,10 +121,21 @@ jobs:
   # l'écart Windows/Linux est un facteur quasi uniforme sur tous les paquets d'un
   # même run : une tranche équilibrée sur l'un l'est sur l'autre.
   #
-  # LIMITES A MESURER
+  # LIMITE, une seule pour les six tranches (la garde scripts/lib/ci-budgets.mjs
+  # veut un nombre écrit, pas une valeur de matrice) : 30 min sur l'étape « Unit
+  # tests », 50 sur le job (installation 10 + étape 30 + 5 de mise en place, plus
+  # une marge pour l'envoi des rapports). Elle se règle sur la tranche la plus
+  # LONGUE, packages-2 (le paquet `apps/cli` y tient 6 à 10 min à lui seul).
+  # Mesures sur ce fichier, le 10/11/2026, runner rapide (runs 42876715906 et
+  # 42879270803) : packages-2 757 s et 554 s, runner-1 479 s et 491 s, runner-2
+  # 424 s et 533 s, web-1 394 s et 308 s, web-2 295 s et 227 s, packages-1 226 s
+  # et 218 s. Sur un runner lent, tout est ~1,65× plus long en moyenne et au pire
+  # 1,78× (orchestration, issue #1044) : 757 s × 1,78 = 22,5 min. 30 min laissent
+  # ~33 % de marge sur ce pire cas, et sont 15 min sous la borne de l'ancienne
+  # étape unique (45), que ce changement ne relève pas.
   test:
     runs-on: windows-2025-vs2026
-    timeout-minutes: 60
+    timeout-minutes: 50
     strategy:
       fail-fast: false
       matrix:
@@ -171,7 +187,7 @@ jobs:
       # code de sortie, son signal et ses fichiers (`<paquet>.worker-exits.log`).
       # Le dossier part en artefact même quand l'étape est rouge, un par tranche.
       - name: Unit tests (${{ matrix.shard }})
-        timeout-minutes: 35
+        timeout-minutes: 30
         env:
           NODAL_VITEST_REPORT_DIR: ${{ runner.temp }}/vitest-reports
         run: ${{ matrix.run }}
