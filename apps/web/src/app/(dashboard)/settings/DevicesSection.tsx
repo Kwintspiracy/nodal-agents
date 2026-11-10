@@ -395,6 +395,11 @@ export default function DevicesSection({
       {readError !== null && (
         <p className="text-body-13 text-warn">Could not read the devices again. {readError}</p>
       )}
+      {view.pairingsRefused !== null && (
+        <Banner variant="info" role="status">
+          {view.pairingsRefused}
+        </Banner>
+      )}
       {!canAct && (
         <p className="text-body-13 text-ink-3">
           Only the workspace owner can pair or remove a device.

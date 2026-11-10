@@ -32,6 +32,7 @@ import {
   devices,
   entities,
   isConversationAllowed,
+  users,
 } from '@nodal-agents/db';
 import { createToolRegistry } from '@nodal-agents/tools';
 import { createEmbeddingClient } from '@nodal-agents/llm';
@@ -101,6 +102,13 @@ beforeAll(async () => {
   for (const s of [x, y]) {
     await db.update(entities).set({ rootAgentId: s.agentId }).where(eq(entities.id, s.entityId));
   }
+  // A SINGLE-USER install with two workspaces: Y is the same person's second
+  // workspace. Pairing requests are the install's (they belong to no
+  // workspace), and only a single-user install's owner acts on them; the
+  // multi-user case is its own test below.
+  await db.update(entities).set({ userId: x.userId }).where(eq(entities.id, y.entityId));
+  await db.delete(users).where(eq(users.id, y.userId));
+  y = { ...y, userId: x.userId };
 });
 
 // Each test starts with no request waiting: the limits count them all.
@@ -723,6 +731,91 @@ describe('a removed device is cut at once (#946) @cap:parler-par-canal-externe/m
         })
       ).status,
     ).toBe(200);
+  });
+});
+
+describe('pairing requests are the install’s: only a single-user install acts on them (#946) @cap:parler-par-canal-externe/moteur', () => {
+  it('one account: its session sees the request and confirms it; a second account: nobody sees, confirms, refuses or dismisses one', async () => {
+    const app = createApp(
+      makeDeps({
+        getSession: async (req: Request) => {
+          const auth = req.headers.get('authorization');
+          if (auth === 'Bearer session-of-x') return { userId: x.userId, entityId: x.entityId };
+          if (auth === 'Bearer session-of-other') return { userId: other, entityId: x.entityId };
+          return null;
+        },
+      }),
+      { ...testEnv, AUTH_MODE: 'bearer-token', BEARER_TOKEN: 'token' },
+    );
+    const asX = { Authorization: 'Bearer session-of-x' };
+    const other = '7b0b5d6e-3c2a-4f1e-9d8c-946946946946';
+
+    // One account: the owner sees the request and confirms it.
+    const seen = await pair(app);
+    const listed = await call(app, 'GET', `/api/device-pairings?entityId=${x.entityId}`, {
+      headers: asX,
+    });
+    expect(
+      (listed.json['pairings'] as Array<{ pairingId: string }>).map((p) => p.pairingId),
+    ).toEqual([seen.pairingId]);
+    expect(
+      (
+        await call(app, 'POST', `/api/device-pairings/${seen.pairingId}/confirm`, {
+          headers: asX,
+          body: { entityId: x.entityId },
+        })
+      ).status,
+    ).toBe(200);
+
+    // A second account joins the install.
+    await db.insert(users).values({ id: other, email: 'second-account@example.com' });
+    try {
+      const waiting = await pair(app, { from: '192.168.1.77' });
+      const expiredOne = await pair(app, { from: '192.168.1.78' });
+      await db
+        .update(devicePairings)
+        .set({ expiresAt: new Date(Date.now() - 1_000) })
+        .where(eq(devicePairings.id, expiredOne.pairingId));
+      const refused = { status: 403, json: { error: 'multi_user_host' } };
+      for (const headers of [asX, { Authorization: 'Bearer session-of-other' }, SECRET]) {
+        expect(
+          await call(app, 'GET', `/api/device-pairings?entityId=${x.entityId}`, { headers }),
+        ).toEqual(refused);
+        expect(
+          await call(app, 'POST', `/api/device-pairings/${waiting.pairingId}/confirm`, {
+            headers,
+            body: { entityId: x.entityId },
+          }),
+        ).toEqual(refused);
+        expect(
+          await call(app, 'POST', `/api/device-pairings/${waiting.pairingId}/refuse`, {
+            headers,
+            body: { entityId: x.entityId },
+          }),
+        ).toEqual(refused);
+        expect(
+          await call(
+            app,
+            'DELETE',
+            `/api/device-pairings/${expiredOne.pairingId}?entityId=${x.entityId}`,
+            { headers },
+          ),
+        ).toEqual(refused);
+      }
+      // Nothing was decided: the request still waits, and no device was made of it.
+      const [row] = await db
+        .select()
+        .from(devicePairings)
+        .where(eq(devicePairings.id, waiting.pairingId));
+      expect(row).toMatchObject({ status: 'pending', entityId: null, deviceId: null });
+      // A workspace's own devices stay its owner's to see.
+      expect(
+        (await call(app, 'GET', `/api/workspace-devices?entityId=${x.entityId}`, { headers: asX }))
+          .status,
+      ).toBe(200);
+    } finally {
+      await db.delete(users).where(eq(users.id, other));
+    }
   });
 });
 

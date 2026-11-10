@@ -78,6 +78,8 @@ const REFUSALS: Record<string, string> = {
   no_root_agent: 'Set a root agent first. A device talks with it.',
   device_not_found: 'This device is no longer paired.',
   forbidden: 'This workspace is not yours.',
+  multi_user_host:
+    'Only a single-user install can pair a device, and this one has several accounts.',
 };
 
 /** One call to an owner route of the runner, its answer checked by `schema`. */
@@ -134,6 +136,12 @@ const Id = z.string().guid();
 
 export interface DevicesView {
   pairings: DevicePairingView[];
+  /**
+   * Why the requests are not shown, when the install refuses them: they belong
+   * to no workspace, and only a single-user install acts on them
+   * (`multi_user_host`). Null: they are shown.
+   */
+  pairingsRefused: string | null;
   devices: PairedDeviceView[];
   isOwner: boolean;
 }
@@ -162,10 +170,11 @@ export async function getDevicesAction(): Promise<ActionResult<DevicesView>> {
     ),
     ownerRefusal(session),
   ]);
-  if (!pairings.ok) return pairings;
+  if (!pairings.ok && pairings.code !== 'multi_user_host') return pairings;
   if (!devices.ok) return devices;
   return ok({
-    pairings: pairings.data.pairings,
+    pairings: pairings.ok ? pairings.data.pairings : [],
+    pairingsRefused: pairings.ok ? null : pairings.message,
     devices: devices.data.devices,
     isOwner: refusal === null,
   });
@@ -185,7 +194,9 @@ export async function countPendingPairingsAction(): Promise<ActionResult<number>
     `/api/device-pairings?${q(session.entityId)}`,
     z.object({ pairings: z.array(DevicePairingViewSchema) }),
   );
-  if (!res.ok) return res;
+  // A multi-user install acts on no request (`multi_user_host`): none waits
+  // for this person, and the pill says 0 rather than a count it last saw.
+  if (!res.ok) return res.code === 'multi_user_host' ? ok(0) : res;
   return ok(res.data.pairings.filter((p) => p.state === 'pending').length);
 }
 

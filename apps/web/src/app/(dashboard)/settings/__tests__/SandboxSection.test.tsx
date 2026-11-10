@@ -9,6 +9,7 @@ import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import type { BroadFolder } from '@nodal-agents/shared';
+import type { SandboxUnavailableCode } from '@nodal-agents/sandbox';
 import type { SandboxView } from '@/lib/sandbox-actions.ts';
 
 type AddResult =
@@ -55,6 +56,8 @@ vi.mock('@/app/(dashboard)/agents/[id]/edit/FolderPickerModal.tsx', async () => 
 });
 
 const { default: SandboxSection } = await import('../SandboxSection.tsx');
+const { buildSettingRows } = await import('../settings-rows.ts');
+const { sandboxBannerWords } = await import('@/lib/sandbox-copy.ts');
 
 const alfred = { id: 'a1', name: 'Alfred', runtime: 'nodal', commands: 'sandbox' as const };
 const lead = { id: 'a2', name: 'Lead-Dev', runtime: 'nodal', commands: 'sandbox' as const };
@@ -326,9 +329,98 @@ describe('SandboxSection, off and unavailable @cap:executer-une-commande/ecran',
     expect(switchButton().getAttribute('aria-checked')).toBe('false');
     expect(buttonNamed('Add folder').disabled).toBe(true);
     expect(text(byTestId('sandbox-allowed-folders'))).toContain(
-      'You can set them once the sandbox runs on this system.',
+      'Not applied while the sandbox is unavailable. Kept for when it works.',
     );
-    expect(all('sandbox-allowed-folder')).toHaveLength(0);
     expect(byTestId('sandbox-agent-folders')).toBeNull();
+  });
+});
+
+/**
+ * Every code the engine can give for "the machine does not confine", taken from
+ * the type: a `Record` over `SandboxUnavailableCode` stops compiling when a code
+ * is added without a line here, so this list cannot go stale.
+ */
+const UNAVAILABLE_CODES: Record<SandboxUnavailableCode, true> = {
+  SANDBOX_NOT_IMPLEMENTED: true,
+  SANDBOX_BACKEND_MISSING: true,
+  SANDBOX_PLATFORM_UNSUPPORTED: true,
+  SANDBOX_SELF_TEST_FAILED: true,
+  SANDBOX_BROKER_START_FAILED: true,
+  SANDBOX_BROKER_NODE_UNAVAILABLE: true,
+  SANDBOX_PROXY_UNREACHABLE: true,
+  SANDBOX_NODAL_PORTS_UNKNOWN: true,
+};
+const CODES = Object.keys(UNAVAILABLE_CODES) as SandboxUnavailableCode[];
+
+function unavailable(code: SandboxUnavailableCode, enabled: boolean): SandboxView {
+  return { ...ACTIVE, enabled, status: { state: 'unavailable', code, reason: 'diagnostic' } };
+}
+
+describe('SandboxSection, the switch says what the engine applies @cap:executer-une-commande/ecran', () => {
+  it('knows every unavailable code the engine can give', () => {
+    expect(CODES).toHaveLength(8);
+  });
+
+  describe.each(CODES)('when the sandbox is unavailable with %s', (code) => {
+    it.each([true, false])(
+      'stored choice %s: the switch is OFF and locked, the choice is kept and said, no owner-only tag',
+      async (stored) => {
+        await render(unavailable(code, stored));
+        expect(byTestId('sandbox-state-card')?.getAttribute('data-regime')).toBe('unavailable');
+        expect(switchButton().getAttribute('aria-checked')).toBe('false');
+        expect(switchButton().disabled).toBe(true);
+        expect(text(byTestId('sandbox-stored-choice'))).toBe(
+          `Your choice: ${stored ? 'on' : 'off'}. It applies once the sandbox works.`,
+        );
+        expect(text(container)).not.toContain('owner only');
+        expect(buttonNamed('Add folder').disabled).toBe(true);
+        expect(byTestId('sandbox-agent-folders')).toBeNull();
+        expect(byTestId('sandbox-limits-toggle')).toBeNull();
+        // The stored choice is read, never written: a click does nothing.
+        await act(async () => switchButton().click());
+        expect(setSandboxEnabledAction).not.toHaveBeenCalled();
+        expect(text(document.body)).not.toContain('Turn off the sandbox?');
+      },
+    );
+
+    it('the banner and the Settings row say the same as the card', () => {
+      const view = unavailable(code, true);
+      expect(sandboxBannerWords(view)).toContain('Commands run without confinement.');
+      const row = buildSettingRows({
+        authMode: 'local-trust',
+        workerSecretConfigured: true,
+        security: null,
+        network: null,
+        sandbox: view,
+        autoRunPause: null,
+        verification: null,
+        proofRepair: null,
+        runBudget: null,
+        mcpServer: null,
+        timezone: null,
+        installNotes: null,
+        workspaces: [],
+        agents: [],
+        rootAgentId: null,
+        rootAutonomy: 'destructive_gate',
+        autostart: null,
+      }).find((r) => r.id === 'sandbox')!;
+      expect(row.toggle).toBe(false);
+    });
+  });
+
+  it('available and on: the switch is on and clickable, with the owner-only tag and no stored-choice line', async () => {
+    await render(ACTIVE);
+    expect(switchButton().getAttribute('aria-checked')).toBe('true');
+    expect(switchButton().disabled).toBe(false);
+    expect(text(container)).toContain('owner only');
+    expect(byTestId('sandbox-stored-choice')).toBeNull();
+  });
+
+  it('available and off by the owner: the switch is off but clickable, and no stored-choice line', async () => {
+    await render({ ...ACTIVE, enabled: false });
+    expect(switchButton().getAttribute('aria-checked')).toBe('false');
+    expect(switchButton().disabled).toBe(false);
+    expect(byTestId('sandbox-stored-choice')).toBeNull();
   });
 });
