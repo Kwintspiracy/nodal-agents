@@ -9,8 +9,16 @@
 // Une seule date mentirait : elle vieillirait la moitié fraîche, ou
 // rajeunirait la moitié mesurée. D'où deux horodatages, et ces tests.
 
-import { readFileSync, writeFileSync, mkdtempSync, mkdirSync, cpSync, rmSync } from 'node:fs';
-import { join, delimiter } from 'node:path';
+import {
+  readFileSync,
+  writeFileSync,
+  mkdtempSync,
+  mkdirSync,
+  cpSync,
+  rmSync,
+  existsSync,
+} from 'node:fs';
+import { join, delimiter, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execSync } from 'node:child_process';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
@@ -121,6 +129,19 @@ describe('le bac à sable du collecteur porte tout ce que le collecteur importe'
   });
 });
 
+/**
+ * L'environnement du processus avec `dossier` en tête du PATH. Sous Windows la
+ * variable s'appelle `Path` : écrire `PATH` à côté en ajoutait une SECONDE clé,
+ * et le système pouvait lire l'ancienne, donc ignorer les commandes factices.
+ * On remplace la clé qui existe, quelle que soit sa casse.
+ */
+function avecEnTete(dossier) {
+  const env = { ...process.env };
+  const cle = Object.keys(env).find((k) => k.toUpperCase() === 'PATH') ?? 'PATH';
+  env[cle] = `${dossier}${delimiter}${env[cle] ?? ''}`;
+  return env;
+}
+
 describe('le collecteur sait ne rafraîchir que GitHub', () => {
   // Le mode est joué POUR DE VRAI, dans une copie jetable, avec un `gh` qui
   // refuse de répondre. C'est le chemin le plus dur : GitHub muet. Il prouve
@@ -128,6 +149,7 @@ describe('le collecteur sait ne rafraîchir que GitHub', () => {
   // rien n'est écrasé, et ni l'historique ni la mémoire des tests ne bougent.
   const MEMOIRE = `{"titre":"un test"}\n`;
   let sortie = '';
+  let marqueNpm = '';
   const bac = mkdtempSync(join(tmpdir(), 'qa-live-'));
   const app = join(bac, 'apps', 'qa');
   const data = join(app, 'data');
@@ -146,9 +168,21 @@ describe('le collecteur sait ne rafraîchir que GitHub', () => {
     mkdirSync(bin);
     writeFileSync(join(bin, 'gh'), `#!/bin/sh\nexit 1\n`, { mode: 0o755 });
     writeFileSync(join(bin, 'gh.cmd'), `@exit /b 1\r\n`);
+    // Le collecteur interroge aussi le registre npm (`npm view`, état de la
+    // release). Sans un `npm` factice il appelait le VRAI réseau : un registre
+    // lent ou un coureur chargé suffisait à dépasser le délai du hook. Le
+    // factice laisse une trace, pour que le test PROUVE que c'est lui qui a
+    // répondu.
+    marqueNpm = join(bac, 'npm-appele');
+    writeFileSync(
+      join(bin, 'npm'),
+      `#!/bin/sh\necho appele > "${marqueNpm.split(sep).join('/')}"\nexit 1\n`,
+      { mode: 0o755 },
+    );
+    writeFileSync(join(bin, 'npm.cmd'), `@echo appele> "${marqueNpm}"\r\n@exit /b 1\r\n`);
     sortie = execSync(`node "${join(app, 'collect.mjs')}" --github-only`, {
       encoding: 'utf8',
-      env: { ...process.env, PATH: `${bin}${delimiter}${process.env.PATH}` },
+      env: avecEnTete(bin),
     });
   });
 
@@ -157,6 +191,10 @@ describe('le collecteur sait ne rafraîchir que GitHub', () => {
   it('il n’ajoute AUCUNE ligne d’historique', () => {
     const lignes = readFileSync(join(data, 'history.ndjson'), 'utf8').trim().split(`\n`);
     expect(lignes).toHaveLength(1);
+  });
+
+  it('il ne sort jamais sur le vrai réseau : le registre npm interrogé est le factice', () => {
+    expect(existsSync(marqueNpm)).toBe(true);
   });
 
   it('il ne touche pas à la mémoire des tests', () => {
