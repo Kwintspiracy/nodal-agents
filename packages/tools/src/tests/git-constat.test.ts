@@ -34,9 +34,11 @@ import {
   resolveGitBinary,
   snapshotGitAvant,
   snapshotRepo,
+  MAX_STATUS_ENTRIES,
   _resetGitBinaryCache,
 } from '../verification/git-constat';
 import { noWorkspaceSandbox } from '@nodal-agents/sandbox';
+import { writeManyFiles } from '@nodal-agents/test-kit';
 
 const run = promisify(execFile);
 
@@ -474,36 +476,53 @@ describe('quel git est lancé @cap:travailler-sur-des-fichiers/moteur', () => {
 });
 
 describe('les bornes du constat @cap:travailler-sur-des-fichiers/moteur', () => {
-  // MESURE TEMPORAIRE (issue #1034) : 5 passes de l'ancien motif, durée par phase.
-  for (let essai = 0; essai < 5; essai += 1) {
-    it(`MESURE ${essai} un arbre plus sale que la borne`, async () => {
-      const t: Record<string, number> = {};
-      let t0 = performance.now();
-      const lap = (nom: string): void => {
-        const now = performance.now();
-        t[nom] = Math.round(now - t0);
-        t0 = now;
-      };
-      const sale = join(racine, `tres-sale-${essai}`);
-      await mkdir(sale, { recursive: true });
-      await run('git', ['init', '--initial-branch=main'], { cwd: sale, windowsHide: true });
-      lap('init');
-      await Promise.all(
-        Array.from({ length: 1001 }, (_, i) =>
-          writeFile(
-            join(sale, `f${i}.txt`),
-            `${i}
-`,
-          ),
-        ),
-      );
-      lap('writes');
-      const snap = await snapshotRepo(sale);
-      lap('snapshot');
-      await rm(sale, { recursive: true, force: true });
-      lap('rm');
-      console.info(`[MESURE-1034] essai=${essai} ${JSON.stringify(t)}`);
-      expect(snap).toBeNull();
-    }, 180_000);
+  // Un dépôt vierge de `n` fichiers non suivis, rendu avec la durée de chaque
+  // phase. Les durées sont DITES (une ligne par phase, au moment où elle
+  // finit) : le jour où ce cas ralentit sur un runner chargé, le journal
+  // montre quelle phase a pris le temps, y compris quand c'est la dernière
+  // qui n'a jamais fini (issue #1034 : 60 s, et rien pour dire où).
+  async function mesure<T>(
+    nom: string,
+    n: number,
+    quoi: (dossier: string) => Promise<T>,
+  ): Promise<T> {
+    let t0 = performance.now();
+    const phase = (p: string): void => {
+      const now = performance.now();
+      process.stdout.write(`[git-constat-bound] ${nom} ${p} ${Math.round(now - t0)} ms
+`);
+      t0 = now;
+    };
+    const dossier = join(racine, nom);
+    try {
+      await mkdir(dossier, { recursive: true });
+      await run('git', ['init', '--initial-branch=main'], { cwd: dossier, windowsHide: true });
+      phase('init');
+      // Une file BORNÉE : 1001 écritures lancées d'un coup dépendent de
+      // l'équité de l'ordonnanceur d'un runner Windows chargé (60 s, #1034).
+      await writeManyFiles(dossier, n, { nameOf: (i) => `f${i}.txt` });
+      phase('écritures');
+      const rendu = await quoi(dossier);
+      phase('constat');
+      return rendu;
+    } finally {
+      // Les antivirus tiennent parfois un fichier neuf un instant (EBUSY / EPERM).
+      await rm(dossier, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+      phase('rm');
+    }
   }
+
+  it('un arbre plus sale que la borne fait DÉCLINER le constat, il ne l’approxime pas', async () => {
+    // Une ligne de plus que la borne, lue DANS le code qui la fait respecter.
+    const snap = await mesure('tres-sale', MAX_STATUS_ENTRIES + 1, (d) => snapshotRepo(d));
+    expect(snap).toBeNull();
+  });
+
+  it('un arbre pile à la borne est encore constaté, fichier par fichier', async () => {
+    // L'autre côté de la borne : sans lui, un `>=` à la place du `>` (une
+    // borne qui décline un cran trop tôt) laisserait le cas ci-dessus vert.
+    const snap = await mesure('pile-a-la-borne', MAX_STATUS_ENTRIES, (d) => snapshotRepo(d));
+    expect(snap).not.toBeNull();
+    expect(snap?.entries.size).toBe(MAX_STATUS_ENTRIES);
+  });
 });

@@ -80,7 +80,7 @@ import {
   handleDiscordMessage,
 } from '../../channels/discord/handler.ts';
 import type { DiscordInboundAttachment } from '../../channels/discord/types.ts';
-import { buildTestPdf } from '@nodal-agents/test-kit';
+import { buildTestPdf, mapBounded } from '@nodal-agents/test-kit';
 
 const CHAT = 4242;
 let db: TestDb;
@@ -825,15 +825,14 @@ describe('the inbound folder of a channel, keyed by job, and the layout before i
         })),
       )
       .returning({ id: agentJobs.id });
-    // En parallèle : 600 opérations de disque à la suite dépassaient la minute
-    // sur le runner Windows de la CI.
-    await Promise.all(
-      bJobs.map(async ({ id }) => {
-        await mkdir(join(folder, id));
-        await writeFile(join(folder, id, 'scan.pdf'), 'B');
-        await utimes(join(folder, id), yesterday, yesterday);
-      }),
-    );
+    // En parallèle mais BORNÉ : 600 opérations de disque à la suite dépassaient
+    // la minute sur le runner Windows de la CI, et 600 dossiers d'un coup
+    // dépendent de l'équité de son ordonnanceur (#1034).
+    await mapBounded(bJobs, async ({ id }) => {
+      await mkdir(join(folder, id));
+      await writeFile(join(folder, id, 'scan.pdf'), 'B');
+      await utimes(join(folder, id), yesterday, yesterday);
+    });
 
     telegramFiles.set('b-201', INVOICE);
     const inB = await deliver(
