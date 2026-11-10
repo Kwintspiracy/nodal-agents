@@ -84,7 +84,7 @@ function scriptedProvider(): Wire[] {
       const delta = escalate
         ? {
             role: 'assistant',
-            ...(launchLine ? { content: launchLine } : {}),
+            content: launchLine ?? undefined,
             tool_calls: [
               {
                 index: 0,
