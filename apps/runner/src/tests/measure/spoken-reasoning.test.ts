@@ -10,6 +10,9 @@
 //     the agent's stored efforts untouched.
 
 import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { spinUpTestDb } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import {
@@ -38,6 +41,7 @@ import {
   type MeasureRequest,
   type TurnRecord,
 } from '../../measure/spoken-reasoning.ts';
+import { loadPersonaFile, personaFingerprint } from '../../measure/persona.ts';
 import { seedJob, type Body } from '../job/tool-loading-harness.ts';
 
 vi.mock('../../../../../packages/llm/src/transport.ts', () => ({
@@ -694,5 +698,183 @@ describe('the #977 measurement tool', () => {
     ]);
     const { reply: _r, ...noReply } = rows[0]!;
     expect(() => rescoreRecords([noReply as TurnRecord], [])).toThrow(/full reply/);
+  });
+});
+
+// #995 — a sheet variant played on the turn's copy of the agents (--persona-file).
+// The proof that it REACHED THE MODEL is read in the request body the provider
+// receives (the system message), on every turn; the stored sheet's distinctive
+// lines must be absent from it.
+describe('the sheet variant of a measure (#995)', () => {
+  const STORED = [
+    'You are Alfred, the owner root agent.',
+    'STORED-LINE-ALPHA: Team routing, code goes to Lead-Dev because it handles code.',
+    'STORED-LINE-BETA: research goes to Researcher because it has premium search.',
+  ].join('\n');
+  const VARIANT = [
+    'You are Alfred, the owner root agent.',
+    'VARIANT-LINE-OMEGA: route silently, never say why.',
+  ].join('\n');
+
+  const systemsOf = (bodies: Wire[]): string[] =>
+    bodies
+      .map((b) => b.messages.find((m) => m.role === 'system'))
+      .filter((m): m is NonNullable<typeof m> => m !== undefined)
+      .map((m) => JSON.stringify(m.content));
+
+  const withTmpFile = (
+    content: string,
+    name = 'variant.md',
+  ): { path: string; done: () => void } => {
+    const dir = mkdtempSync(join(tmpdir(), 'persona-measure-turn-'));
+    const path = join(dir, name);
+    writeFileSync(path, content, 'utf8');
+    return { path, done: () => rmSync(dir, { recursive: true, force: true }) };
+  };
+
+  // The whole `public.agents` table, as text, in a fixed order.
+  const publicAgents = async (): Promise<string> => {
+    const res = await db.execute(
+      sql`SELECT COALESCE(string_agg(row_to_json(a)::text, ' | ' ORDER BY a.id), '') AS dump FROM public.agents a`,
+    );
+    return (res as unknown as { rows: Array<{ dump: string }> }).rows[0]!.dump;
+  };
+
+  const seedWithStored = async () => {
+    const seeded = await seedJob(db, { model: MODEL, role: 'orchestrator' });
+    await db.update(agents).set({ personality: STORED }).where(eq(agents.id, seeded.agentId));
+    return seeded;
+  };
+
+  it('plays the variant on every turn, and leaves public.agents byte-identical', async () => {
+    const { entityId, agentId } = await seedWithStored();
+    const file = withTmpFile(VARIANT, 'no-narration.md');
+    const persona = loadPersonaFile(file.path);
+    const before = await publicAgents();
+
+    const bodies = scriptedProvider();
+    const records = await measureSpokenReasoning(db as unknown as AnyDrizzleDb, {
+      entityId,
+      agentId,
+      efforts: ['off', 'low'],
+      runs: 2,
+      requests: REQUESTS,
+      persona,
+    });
+    vi.unstubAllGlobals();
+    file.done();
+
+    // 2 efforts × 3 requests × 2 runs; every request that reached the model carried the variant.
+    expect(records).toHaveLength(12);
+    const systems = systemsOf(bodies);
+    expect(systems.length).toBeGreaterThanOrEqual(12);
+    for (const system of systems) {
+      expect(system).toContain('VARIANT-LINE-OMEGA: route silently, never say why.');
+      expect(system).not.toContain('STORED-LINE-ALPHA');
+      expect(system).not.toContain('STORED-LINE-BETA');
+      expect(system).not.toContain('Team routing, code goes to Lead-Dev');
+    }
+
+    // Every record says which sheet it played.
+    const { sha256, length } = personaFingerprint(VARIANT);
+    for (const r of records) {
+      expect(r.persona).toEqual({ source: 'file', file: 'no-narration.md', sha256, length });
+    }
+
+    // Nothing written to public.agents: the table is the same text, byte for byte.
+    expect(await publicAgents()).toBe(before);
+    const [row] = await db
+      .select({ personality: agents.personality })
+      .from(agents)
+      .where(eq(agents.id, agentId));
+    expect(row?.personality).toBe(STORED);
+  });
+
+  it('without a variant, plays the stored sheet and each record says so, with its sha256', async () => {
+    const { entityId, agentId } = await seedWithStored();
+    const bodies = scriptedProvider();
+    const records = await measureSpokenReasoning(db as unknown as AnyDrizzleDb, {
+      entityId,
+      agentId,
+      efforts: ['off'],
+      runs: 1,
+      requests: [REQUESTS[1]!],
+    });
+    vi.unstubAllGlobals();
+    const systems = systemsOf(bodies);
+    expect(systems.length).toBeGreaterThanOrEqual(1);
+    for (const system of systems) {
+      expect(system).toContain('STORED-LINE-ALPHA');
+      expect(system).not.toContain('VARIANT-LINE-OMEGA');
+    }
+    expect(records[0]?.persona).toEqual({ source: 'stored', ...personaFingerprint(STORED) });
+  });
+
+  it('works for any agent of the workspace, not one slug', async () => {
+    const { entityId, agentId } = await seedWithStored();
+    const bodies = scriptedProvider();
+    const records = await measureSpokenReasoning(db as unknown as AnyDrizzleDb, {
+      entityId,
+      agentId,
+      efforts: ['auto'],
+      runs: 1,
+      requests: [REQUESTS[2]!],
+      persona: { text: 'Another agent sheet: ZETA-LINE.', file: 'zeta.md' },
+    });
+    vi.unstubAllGlobals();
+    const systems = systemsOf(bodies);
+    expect(systems.length).toBeGreaterThanOrEqual(1);
+    expect(systems.every((s) => s.includes('ZETA-LINE'))).toBe(true);
+    expect(records[0]?.persona?.file).toBe('zeta.md');
+  });
+
+  // The check itself, apart from the UPDATE: a copy that does NOT hold the variant
+  // (the statement that sets it is swallowed on the way to the database) stops the
+  // measure BEFORE the model is called. No record, no paid turn.
+  // Mutation verified: the read-back comparison removed -> this test is red (the
+  // turn plays the stored sheet and is recorded as the variant).
+  it('refuses a turn whose copy does not hold the variant: an error, never a record, no model call', async () => {
+    const { entityId, agentId } = await seedWithStored();
+    const chunkText = (c: unknown): string => {
+      const value = (c as { value?: unknown } | null)?.value;
+      return Array.isArray(value) ? value.join('') : '';
+    };
+    const swallowSheet = (tx: object): object =>
+      new Proxy(tx, {
+        get(target, prop, receiver) {
+          const value = Reflect.get(target, prop, receiver) as unknown;
+          if (prop !== 'execute' || typeof value !== 'function') return value;
+          return (query: { queryChunks?: unknown[] }) => {
+            const text = (query.queryChunks ?? []).map(chunkText).join('');
+            if (text.includes('SET personality')) return Promise.resolve([]);
+            return (value as (q: unknown) => unknown).call(target, query);
+          };
+        },
+      });
+    const faulty = new Proxy(db, {
+      get(target, prop, receiver) {
+        const value = Reflect.get(target, prop, receiver) as unknown;
+        if (prop !== 'transaction') return typeof value === 'function' ? value.bind(target) : value;
+        return (cb: (tx: object) => Promise<unknown>) =>
+          (value as (cb: (tx: object) => Promise<unknown>) => Promise<unknown>).call(
+            target,
+            (tx: object) => cb(swallowSheet(tx)),
+          );
+      },
+    }) as unknown as AnyDrizzleDb;
+
+    const bodies = scriptedProvider();
+    await expect(
+      measureSpokenReasoning(faulty, {
+        entityId,
+        agentId,
+        efforts: ['off'],
+        runs: 1,
+        requests: [REQUESTS[1]!],
+        persona: { text: VARIANT, file: 'variant.md' },
+      }),
+    ).rejects.toThrow(/would play another sheet than variant\.md/);
+    vi.unstubAllGlobals();
+    expect(bodies).toEqual([]);
   });
 });

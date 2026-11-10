@@ -2,7 +2,8 @@
 //
 //   pnpm --filter @nodal-agents/runner exec tsx src/measure/spoken-reasoning-cli.ts \
 //     --database-url <postgres://…> --agent <slug ou id> --out <relevé.json> \
-//     [--entity <id>] [--efforts off,low,auto] [--runs 3] [--requests <demandes.json>]
+//     [--entity <id>] [--efforts off,low,auto] [--runs 3] [--requests <demandes.json>] \
+//     [--persona-file <fiche.md>]
 //
 // Aucune stack n'a besoin de tourner : la base suffit, et la clé du modèle est
 // celle de l'agent, déchiffrée dans ce processus comme le runner le fait
@@ -10,12 +11,24 @@
 // (NODALAI_HOME, sinon ~/.nodalai). Ni la clé du modèle ni la clé maîtresse ne
 // sont jamais affichées. Ce que la mesure écrit dans la base : rien (voir
 // spoken-reasoning.ts) ; ce qu'elle écrit ailleurs : le fichier `--out`.
+//
+// `--persona-file` (#995) joue la fiche (`personality`) de l'agent mesuré avec
+// le texte du fichier, sur la copie annulée de chaque tour : `public.agents` ne
+// change pas. Chaque relevé et l'en-tête disent quelle fiche a été jouée.
 
 import { readFileSync, writeFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
 import { agents, and, createClient, entityLlmKeys, eq, type AnyDrizzleDb } from '@nodal-agents/db';
 import { findModelCatalogEntry } from '@nodal-agents/shared';
 import { masterKeyFileMissing, masterKeyPath } from '@nodal-agents/secrets';
+import {
+  describePersona,
+  describeStoredPersona,
+  loadPersonaFile,
+  personaInfo,
+  type PersonaInfo,
+  type PersonaVariant,
+} from './persona.ts';
 import {
   measureSpokenReasoning,
   parseMeasuredEffort,
@@ -49,6 +62,7 @@ const { values } = parseArgs({
     out: { type: 'string' },
     rescore: { type: 'string' },
     teammates: { type: 'string' },
+    'persona-file': { type: 'string' },
   },
 });
 
@@ -60,6 +74,7 @@ if (values.rescore) {
   const stored = JSON.parse(readFileSync(values.rescore, 'utf-8')) as {
     records?: TurnRecord[];
     teammateNames?: string[];
+    persona?: PersonaInfo;
   };
   if (!Array.isArray(stored.records)) fail(`${values.rescore}: no "records" array`);
   const names = values.teammates
@@ -73,6 +88,7 @@ if (values.rescore) {
   }
   const summary = summarize(records);
   say(`rescored ${records.length} turns with ${names.length} teammate names`);
+  say(describeStoredPersona(stored.persona, records));
   say(summaryTable(summary));
   if (values.out) {
     writeFileSync(
@@ -113,6 +129,16 @@ if (values.requests) {
   if (!ok) fail(`${values.requests}: expected [{ id, text, needsTask }]`);
   requests = parsed as MeasureRequest[];
 }
+// The sheet variant is read BEFORE anything else is touched: a missing, empty
+// or non-UTF-8 file stops the measure here, not after the first paid turn (#4).
+let persona: PersonaVariant | undefined;
+if (values['persona-file'] !== undefined) {
+  try {
+    persona = loadPersonaFile(values['persona-file']);
+  } catch (err) {
+    fail((err as Error).message);
+  }
+}
 // Une clé maîtresse absente serait CRÉÉE au premier déchiffrement
 // (loadOrCreateMasterKey) : la mesure refuse plutôt que d'en poser une.
 if (masterKeyFileMissing()) {
@@ -131,6 +157,7 @@ try {
       model: agents.model,
       llmKeyId: agents.llmKeyId,
       reasoningEffort: agents.reasoningEffort,
+      personality: agents.personality,
       // Pas `spokenReasoningEffort` : la base mesurée peut ne pas avoir encore
       // la migration 0159 (spoken-reasoning.ts, la copie de chaque tour).
     })
@@ -178,6 +205,10 @@ try {
       `${efforts.length * requests.length * runs} turns`,
   );
 
+  // Which sheet this run plays: the file's, or the stored one with its sha256.
+  const runPersona: PersonaInfo = personaInfo(persona ? persona.text : agent.personality, persona);
+  say(describePersona(runPersona));
+
   // The teammates this agent can hand a task to (active, on its own team, never
   // itself), read from the database: a launch line that names one narrates the
   // routing (#995). Never a list written here.
@@ -192,6 +223,7 @@ try {
     runs,
     requests,
     teammateNames,
+    ...(persona ? { persona } : {}),
     onTurn: (r) =>
       say(
         `run ${r.run} ${r.effort.padEnd(6)} ${r.requestId.padEnd(14)} ` +
@@ -215,6 +247,7 @@ try {
           model: agent.model,
           reasoningControl: control,
         },
+        persona: runPersona,
         efforts,
         runs,
         requests,
@@ -226,7 +259,7 @@ try {
       2,
     ),
   );
-  say(`\n${summaryTable(summary)}\n\nwritten: ${values.out}`);
+  say(`\n${describePersona(runPersona)}\n\n${summaryTable(summary)}\n\nwritten: ${values.out}`);
 } finally {
   await client.close();
 }
