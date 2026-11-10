@@ -78,6 +78,7 @@ describe('les pages de /settings @cap:installer-et-demarrer/ecran', () => {
       'Access',
       'Safety',
       'Workspace',
+      'Devices',
       'Install',
     ]);
   });
@@ -87,6 +88,7 @@ describe('les pages de /settings @cap:installer-et-demarrer/ecran', () => {
     // Un lien d'avant le 20/09 : le réglage dit sa page.
     expect(resolveSettingsPage({ open: 'timezone' }).key).toBe('workspace');
     expect(resolveSettingsPage({ open: 'install-notes' }).key).toBe('install');
+    expect(resolveSettingsPage({ page: 'devices' }).key).toBe('devices');
     expect(resolveSettingsPage({ page: 'nope', open: 'nope' }).key).toBe('access');
     expect(resolveSettingsPage({}).key).toBe('access');
   });

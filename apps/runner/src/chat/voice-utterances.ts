@@ -54,6 +54,8 @@ export interface VoiceUtterance {
   readonly entityId: string;
   readonly conversationId: string;
   readonly agentId: string;
+  /** L'appareil qui a ouvert le tour avec sa clé (#946), seul à pouvoir le poursuivre ; null sinon. */
+  readonly deviceId: string | null;
   readonly format: VoiceFormat;
   readonly chunks: Uint8Array[];
   bytes: number;
@@ -74,6 +76,7 @@ export function openUtterance(input: {
   entityId: string;
   conversationId: string;
   agentId: string;
+  deviceId: string | null;
   format: VoiceFormat;
 }): { ok: true; id: string } | { ok: false; error: 'too_many_open_turns' } {
   if (open.size >= VOICE_LIMITS.maxOpen) return { ok: false, error: 'too_many_open_turns' };

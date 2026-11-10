@@ -42,9 +42,12 @@ import {
   isPanelItemActive,
   type Destination,
   type PanelAdd,
+  type PanelCounter,
   type PanelDialog,
   type PanelDynamic,
+  type PanelItem,
 } from './sidebar-nav.ts';
+import { useDevicePairingsCount } from './sidebar/use-device-pairings-count.ts';
 import type { WorkspaceRow } from '@/lib/actions';
 
 /**
@@ -87,6 +90,37 @@ const DIALOGS: Record<PanelDialog, (onClose: () => void) => ReactElement> = {
   'new-project': (onClose) => <NewProjectModal open onClose={onClose} />,
 };
 
+/**
+ * Le nom d'un compte, et le crochet qui le lit. Même principe que `DYNAMIC` :
+ * TypeScript refuse qu'un nom de `PanelCounter` y manque.
+ */
+const COUNTERS: Record<PanelCounter, () => number> = {
+  'device-pairings': useDevicePairingsCount,
+};
+
+/** Une ligne qui porte un compte : le crochet est appelé par CE composant, toujours. */
+function CountedLink({
+  item,
+  counter,
+  isActive,
+}: {
+  item: PanelItem;
+  counter: PanelCounter;
+  isActive: boolean;
+}) {
+  const n = COUNTERS[counter]();
+  return (
+    <SidebarLink
+      href={item.href}
+      label={item.label}
+      icon={<item.icon size={20} className="h-5 w-5 lg:h-3.5 lg:w-3.5" />}
+      tone={item.tone}
+      pill={n > 0 ? n : undefined}
+      isActive={isActive}
+    />
+  );
+}
+
 /** Un « + » de la table, tel que le titre de section le dessine. */
 function addFor(add: PanelAdd | undefined, open: (d: PanelDialog) => void) {
   if (add === undefined) return undefined;
@@ -116,16 +150,25 @@ function PanelItems({
 }) {
   return (
     <>
-      {group.items.map((it) => (
-        <SidebarLink
-          key={it.href}
-          href={it.href}
-          label={it.label}
-          icon={<it.icon size={20} className="h-5 w-5 lg:h-3.5 lg:w-3.5" />}
-          tone={it.tone}
-          isActive={isPanelItemActive(it.href, pathname, search)}
-        />
-      ))}
+      {group.items.map((it) =>
+        it.counter !== undefined ? (
+          <CountedLink
+            key={it.href}
+            item={it}
+            counter={it.counter}
+            isActive={isPanelItemActive(it.href, pathname, search)}
+          />
+        ) : (
+          <SidebarLink
+            key={it.href}
+            href={it.href}
+            label={it.label}
+            icon={<it.icon size={20} className="h-5 w-5 lg:h-3.5 lg:w-3.5" />}
+            tone={it.tone}
+            isActive={isPanelItemActive(it.href, pathname, search)}
+          />
+        ),
+      )}
     </>
   );
 }

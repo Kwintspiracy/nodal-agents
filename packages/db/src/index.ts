@@ -51,9 +51,28 @@ export type { AllowedConversationSummary } from './queries/channel-identity.ts';
 export {
   isDeviceId,
   findWorkspaceDevice,
-  findDeviceForGuard,
+  findDeviceByTokenHash,
   touchDevice,
+  listWorkspaceDevices,
+  renameWorkspaceDevice,
+  revokeWorkspaceDevice,
 } from './queries/devices.ts';
+export { isSingleUserInstall } from './queries/install.ts';
+export {
+  createDevicePairing,
+  pollDevicePairing,
+  listDevicePairings,
+  lockPendingDevicePairing,
+  createPairedDevice,
+  markDevicePairingConfirmed,
+  refuseDevicePairing,
+  dismissDevicePairing,
+} from './queries/device-pairings.ts';
+export type {
+  DevicePairingLimits,
+  CreateDevicePairingResult,
+  DevicePollOutcome,
+} from './queries/device-pairings.ts';
 
 // ─── Repos ─────────────────────────────────────────────────────────────────────
 export {

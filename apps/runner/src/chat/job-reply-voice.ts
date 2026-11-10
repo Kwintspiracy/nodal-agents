@@ -73,6 +73,8 @@ export interface ReplyAudioEvent {
 
 interface ReplyAudio {
   entityId: string;
+  /** La conversation du job dont c'est l'annonce : un appareil n'entend que les siennes (#946). */
+  conversationId: string | null;
   /** Tout ce qui est sorti, dans l'ordre : un lecteur en retard le reçoit en entier. */
   events: ReplyAudioEvent[];
   /** `done` est sorti. */
@@ -131,6 +133,7 @@ export function speakFinishedJob(
   const audioId = randomUUID();
   const reply: ReplyAudio = {
     entityId: job.entityId,
+    conversationId: job.conversationId,
     events: [],
     ended: false,
     readers: new Set(),
@@ -206,6 +209,20 @@ export function speakFinishedJob(
  * `null` : elle n'existe pas, plus, ou pas dans cet espace — les trois
  * répondent pareil, l'existence d'une voix d'un autre espace ne se devine pas.
  */
+/**
+ * La conversation de la voix `audioId` de l'espace `entityId`, sans l'ouvrir :
+ * la route vérifie qu'un appareil l'atteint avant de l'inscrire comme lecteur.
+ * `undefined` : pas de telle voix dans cet espace.
+ */
+export function replyAudioConversation(
+  audioId: string,
+  entityId: string,
+): { conversationId: string | null } | undefined {
+  const reply = replies.get(audioId);
+  if (!reply || reply.entityId !== entityId) return undefined;
+  return { conversationId: reply.conversationId };
+}
+
 export function openReplyAudio(
   audioId: string,
   entityId: string,

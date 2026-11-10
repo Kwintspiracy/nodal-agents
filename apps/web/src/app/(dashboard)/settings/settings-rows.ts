@@ -55,6 +55,7 @@ export type SettingId =
   | 'mcp-server'
   | 'timezone'
   | 'voice'
+  | 'devices'
   | 'autostart'
   | 'install-notes'
   | 'workspaces'
@@ -80,6 +81,12 @@ export type SettingRow = {
    * #876) sit directly under the heading, without a box around the boxes.
    */
   panelFrame?: 'card' | 'none';
+  /**
+   * `hidden`: the setting's heading is read by a screen reader only. For a
+   * page made of this one setting, whose panel carries its own headings
+   * (Devices, #946), where a second title would repeat the page's.
+   */
+  heading?: 'shown' | 'hidden';
 };
 
 /** Everything the list needs, gathered by the page from its actions. */
@@ -340,6 +347,17 @@ export function buildSettingRows(src: SettingsSource): SettingRow[] {
     lede: 'The voice Nodal speaks with, and the model that writes down what you say to it.',
     // La section lit la voix elle-même, par la route du runner (#969).
     value: 'Source, model and voice',
+  });
+
+  rows.push({
+    id: 'devices',
+    group: 'workspace',
+    name: 'Devices',
+    lede: 'A device pairs from its own side. You confirm it here.',
+    // La section lit les appareils elle-même, par les routes du runner (#946).
+    value: 'Devices and pairing requests',
+    panelFrame: 'none',
+    heading: 'hidden',
   });
 
   rows.push({

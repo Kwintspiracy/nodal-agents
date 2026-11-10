@@ -68,6 +68,8 @@ vi.mock('@/lib/sidebar-actions.ts', () => ({
   listSidebarWebhooksAction: vi.fn(),
   listSidebarRecentApprovalsAction: vi.fn(),
 }));
+// #946 : la pastille de « Devices » lit les demandes d'appairage qui attendent.
+vi.mock('@/lib/device-actions.ts', () => ({ countPendingPairingsAction: vi.fn() }));
 vi.mock('../VersionBadge', () => ({ default: () => null }));
 vi.mock('../WorkspaceSwitcher', () => ({ default: () => null }));
 vi.mock('../NotificationsBell', () => ({ default: () => null }));
@@ -77,6 +79,7 @@ import Sidebar from '../Sidebar.tsx';
 import { ApprovalsProvider, type PendingApproval } from '../ApprovalsProvider';
 import { ChatFoldersProvider } from '../ChatFoldersProvider';
 import { listApprovalsAction } from '@/lib/actions';
+import { countPendingPairingsAction } from '@/lib/device-actions.ts';
 import { getChatFoldersAction } from '@/lib/conversation-actions.ts';
 import { listFolderThreadsAction } from '@/lib/folder-threads-actions.ts';
 import {
@@ -242,6 +245,7 @@ beforeEach(() => {
   // rattrapée qui fait rougir la suite ENTIÈRE sans qu'aucun test n'échoue
   // (le piège que la CI de la PR #223 a déjà attrapé une fois).
   vi.mocked(listApprovalsAction).mockResolvedValue({ ok: true, data: [] });
+  vi.mocked(countPendingPairingsAction).mockResolvedValue({ ok: true, data: 0 });
   vi.mocked(getChatFoldersAction).mockResolvedValue({
     ok: true,
     data: {
@@ -598,6 +602,7 @@ describe('chaque panneau porte les sections de SA planche @cap:installer-et-dema
       'Access',
       'Safety',
       'Workspace',
+      'Devices',
       'LLM Providers',
       'Install',
     ]);
@@ -608,6 +613,28 @@ describe('chaque panneau porte les sections de SA planche @cap:installer-et-dema
     expect(navLink('Safety').getAttribute('href')).toBe('/settings?page=safety');
     expect(navLink('Workspace').getAttribute('href')).toBe('/settings?page=workspace');
     expect(navLink('Install').getAttribute('href')).toBe('/settings?page=install');
+    expect(navLink('Devices').getAttribute('href')).toBe('/settings?page=devices');
+  });
+
+  it('« Devices » porte la pastille corail tant qu’une demande d’appairage attend (#946)', async () => {
+    pathname = '/settings';
+    vi.mocked(countPendingPairingsAction).mockResolvedValue({ ok: true, data: 2 });
+    await renderSidebar();
+    await act(async () => {
+      await Promise.resolve();
+    });
+    const devices = container.querySelector<HTMLAnchorElement>('a[href="/settings?page=devices"]');
+    expect(devices?.textContent?.trim()).toBe('Devices2');
+    // Les autres lignes n'en portent aucune.
+    expect(navLink('Workspace').textContent?.trim()).toBe('Workspace');
+
+    await remonter();
+    vi.mocked(countPendingPairingsAction).mockResolvedValue({ ok: true, data: 0 });
+    await renderSidebar();
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(navLink('Devices').textContent?.trim()).toBe('Devices');
   });
 
   it('n’allume QUE le réglage ouvert, et aucun sur /settings nu', async () => {

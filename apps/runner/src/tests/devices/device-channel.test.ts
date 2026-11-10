@@ -59,6 +59,7 @@ import { publishApprovalRequested, publishJobEnded } from '../../events/publish.
 import { speakFinishedJob } from '../../chat/job-reply-voice.ts';
 import { jobEvents } from '../../events/job-events.ts';
 import { readSse, type SseEvent } from '../chat/_sse-reader.ts';
+import { drawDeviceToken } from '../../devices/device-secrets.ts';
 
 vi.setConfig({ testTimeout: 30_000 });
 
@@ -215,6 +216,9 @@ let y: Awaited<ReturnType<typeof seedMinimal>>;
 let deviceA = '';
 let deviceB = '';
 let deviceOfY = '';
+/** Each device's key (#946): what it presents on its routes. */
+const keyOf = new Map<string, string>();
+const as = (id: string): Record<string, string> => ({ Authorization: `Bearer ${keyOf.get(id)}` });
 
 beforeAll(async () => {
   ({ db } = await spinUpTestDb());
@@ -241,6 +245,11 @@ beforeAll(async () => {
     ])
     .returning({ id: devices.id });
   [deviceA, deviceB, deviceOfY] = rows.map((r) => r.id) as [string, string, string];
+  for (const id of [deviceA, deviceB, deviceOfY]) {
+    const { token, tokenHash } = drawDeviceToken();
+    await db.update(devices).set({ tokenHash }).where(eq(devices.id, id));
+    keyOf.set(id, token);
+  }
 });
 
 function makeDeps(
@@ -304,7 +313,7 @@ async function listenTo(
 }
 
 const device = (app: ReturnType<typeof createApp>, id: string) =>
-  listenTo(app, `/api/devices/${id}/events`);
+  listenTo(app, `/api/devices/${id}/events`, as(id));
 
 /**
  * A gesture as the protocol parses it, the `seq` of a `state` set aside: the
@@ -343,7 +352,7 @@ async function waitFor(check: () => boolean, ms = 3_000): Promise<void> {
 async function getCards(
   app: ReturnType<typeof createApp>,
   id: string,
-  headers: Record<string, string> = {},
+  headers: Record<string, string> = as(id),
 ): Promise<{ status: number; cards: unknown[] }> {
   const res = await app.fetch(new Request(`http://localhost/api/devices/${id}/cards`, { headers }));
   if (res.status !== 200) return { status: res.status, cards: [] };
@@ -358,7 +367,7 @@ async function postConversation(
   app: ReturnType<typeof createApp>,
   id: string,
   body: Record<string, unknown> = {},
-  headers: Record<string, string> = {},
+  headers: Record<string, string> = as(id),
 ): Promise<{ status: number; json: Record<string, unknown> }> {
   const res = await app.fetch(
     new Request(`http://localhost/api/devices/${id}/conversation`, {
@@ -454,7 +463,7 @@ describe('a device gets its conversation with the root (#945) @cap:parler-par-ca
     expect(seen!.lastSeenAt).toBeInstanceOf(Date);
   });
 
-  it('a session acts only as a device of ITS workspace; another workspace’s device is not found', async () => {
+  it('a device acts only as ITSELF, with its own key; the worker secret and a session are refused (#946)', async () => {
     const app = createApp(
       makeDeps(undefined, {
         getSession: async (req: Request) =>
@@ -465,12 +474,22 @@ describe('a device gets its conversation with the root (#945) @cap:parler-par-ca
       { ...testEnv, AUTH_MODE: 'bearer-token', BEARER_TOKEN: 'token' },
     );
     const asX = { Authorization: 'Bearer session-of-x' };
+    const secret = { Authorization: `Bearer ${testEnv.WORKER_SECRET}` };
     expect((await listenTo(app, `/api/devices/${deviceA}/events`)).status).toBe(401);
-    expect((await listenTo(app, `/api/devices/${deviceA}/events`, asX)).status).toBe(200);
-    expect((await listenTo(app, `/api/devices/${deviceOfY}/events`, asX)).status).toBe(404);
-    expect((await postConversation(app, deviceOfY, {}, asX)).status).toBe(404);
-    expect((await getCards(app, deviceOfY, asX)).status).toBe(404);
-    expect((await listenTo(app, `/api/devices/not-a-device/events`, asX)).status).toBe(404);
+    expect((await listenTo(app, `/api/devices/${deviceA}/events`, asX)).status).toBe(401);
+    expect((await listenTo(app, `/api/devices/${deviceA}/events`, secret)).status).toBe(401);
+    expect((await listenTo(app, `/api/devices/${deviceA}/events`, as(deviceA))).status).toBe(200);
+    // Device A's key on another device: B of its workspace, the device of Y.
+    expect((await listenTo(app, `/api/devices/${deviceB}/events`, as(deviceA))).status).toBe(404);
+    expect((await listenTo(app, `/api/devices/${deviceOfY}/events`, as(deviceA))).status).toBe(404);
+    expect((await postConversation(app, deviceOfY, {}, as(deviceA))).status).toBe(404);
+    expect((await postConversation(app, deviceOfY, {}, secret)).status).toBe(401);
+    expect((await getCards(app, deviceOfY, as(deviceA))).status).toBe(404);
+    expect((await getCards(app, deviceB, as(deviceA))).status).toBe(404);
+    expect((await getCards(app, deviceA, as(deviceA))).status).toBe(200);
+    expect((await getCards(app, deviceA, secret)).status).toBe(401);
+    expect((await getCards(app, deviceA, asX)).status).toBe(401);
+    expect((await listenTo(app, `/api/devices/not-a-device/events`, as(deviceA))).status).toBe(404);
   });
 });
 
@@ -680,12 +699,16 @@ describe('what a job launched from a device asks comes back to THAT device (#945
 // ─── 3b. What the stream lost, the cards route gives back ───────────────────
 
 describe('after a resync, a device re-reads its pending cards (#945) @cap:approuver-une-action/moteur', () => {
-  /** A device of X of its own: its list holds only what this test asks. */
+  /** A device of X of its own, with its key: its list holds only what this test asks. */
   async function newDevice(name: string): Promise<string> {
     const [d] = await db
       .insert(devices)
       .values({ entityId: x.entityId, name, capabilities: ['speaker', 'buttons'] })
       .returning({ id: devices.id });
+    // Its key (#946): what it presents on its routes.
+    const { token, tokenHash } = drawDeviceToken();
+    await db.update(devices).set({ tokenHash }).where(eq(devices.id, d!.id));
+    keyOf.set(d!.id, token);
     return d!.id;
   }
 
@@ -726,6 +749,7 @@ describe('after a resync, a device re-reads its pending cards (#945) @cap:approu
     // The runner restarts: the device comes back with the id of an event of
     // a runner that is gone. Its memory went with it — `resync`, nothing replayed.
     const after = await listenTo(app, `/api/devices/${deviceA}/events`, {
+      ...as(deviceA),
       'Last-Event-ID': 'a-runner-that-is-gone:7',
     });
     expect(after.events.map((e) => e.event)).toEqual(['resync']);
@@ -833,6 +857,10 @@ describe('a job of a device’s run answers on that device, however it was born 
       .insert(devices)
       .values({ entityId: x.entityId, name, capabilities: ['speaker', 'buttons'] })
       .returning({ id: devices.id });
+    // Its key (#946): what it presents on its routes.
+    const { token, tokenHash } = drawDeviceToken();
+    await db.update(devices).set({ tokenHash }).where(eq(devices.id, d!.id));
+    keyOf.set(d!.id, token);
     return d!.id;
   }
 
@@ -936,6 +964,7 @@ describe('a job of a device’s run answers on that device, however it was born 
 
     // A restart later, the device re-reads its cards: the child's is there.
     const after = await listenTo(app, `/api/devices/${dev}/events`, {
+      ...as(dev),
       'Last-Event-ID': 'a-runner-that-is-gone:3',
     });
     expect(after.events.map((e) => e.event)).toEqual(['resync']);

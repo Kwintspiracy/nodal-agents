@@ -1009,9 +1009,40 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       capabilities text[] NOT NULL DEFAULT '{}'::text[]
         CHECK (capabilities <@ ARRAY['microphone','speaker','screen','buttons']::text[]),
       created_at timestamptz NOT NULL DEFAULT now(),
-      last_seen_at timestamptz
+      last_seen_at timestamptz,
+      token_hash text,
+      revoked_at timestamptz,
+      paired_from text
     );
     CREATE INDEX IF NOT EXISTS idx_devices_entity ON devices (entity_id, created_at);
+    CREATE UNIQUE INDEX IF NOT EXISTS devices_token_hash_unique
+      ON devices (token_hash) WHERE token_hash IS NOT NULL;
+
+    CREATE TABLE IF NOT EXISTS device_pairings (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      device_code_hash text NOT NULL UNIQUE,
+      user_code text NOT NULL CHECK (user_code ~ '^[0-9]{6}$'),
+      name text NOT NULL CHECK (length(btrim(name)) BETWEEN 1 AND 60),
+      capabilities text[] NOT NULL DEFAULT '{}'::text[]
+        CHECK (capabilities <@ ARRAY['microphone','speaker','screen','buttons']::text[]),
+      protocol_version integer NOT NULL CHECK (protocol_version >= 1),
+      requested_from text NOT NULL,
+      status text NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending','confirmed','refused','delivered')),
+      created_at timestamptz NOT NULL DEFAULT now(),
+      expires_at timestamptz NOT NULL,
+      last_polled_at timestamptz,
+      decided_at timestamptz,
+      entity_id uuid REFERENCES entities(id) ON DELETE CASCADE,
+      device_id uuid REFERENCES devices(id) ON DELETE CASCADE,
+      conversation_id uuid,
+      CONSTRAINT device_pairings_confirmed_check CHECK (
+        (status IN ('confirmed','delivered'))
+          = (entity_id IS NOT NULL AND device_id IS NOT NULL AND conversation_id IS NOT NULL)
+      )
+    );
+    CREATE INDEX IF NOT EXISTS idx_device_pairings_status ON device_pairings (status, expires_at);
+    CREATE INDEX IF NOT EXISTS idx_device_pairings_from ON device_pairings (requested_from, created_at);
 
     -- ── auth tables (better-auth) ────────────────────────────────────────────
 
