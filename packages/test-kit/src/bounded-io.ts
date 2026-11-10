@@ -80,9 +80,12 @@ export async function writeManyFiles(
   return mapBounded(
     Array.from({ length: count }, (_, i) => i),
     async (i) => {
-      const path = join(dir, nameOf(i));
+      const name = nameOf(i);
+      const path = join(dir, name);
       // Un nom à sous-dossier (`a/b.txt`) : le dossier est créé, pas supposé.
-      if (dirname(path) !== dir) await mkdir(dirname(path), { recursive: true });
+      // Un nom plat n'ajoute AUCUN appel système : un fichier = une écriture.
+      if (name.includes('/') || name.includes('\\'))
+        await mkdir(dirname(path), { recursive: true });
       await writeFile(path, contentOf(i));
       return path;
     },
