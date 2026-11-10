@@ -2020,19 +2020,27 @@ ${sentence}`).length > 0,
   // turn, typed and spoken, orchestrator and worker, the built prompt never
   // describes the routing choice to the reply. A job prompt is unchanged by it.
   // Mutation verified: the #977 sentence put back in the surface line → red.
-  // The CONCEPT, in any wording (review of #1000, P2-7): the reply-or-escalate
-  // choice described as silent, invisible or hidden, whichever side of the
-  // sentence names it. The exact words of #977 are the cheap case; a close
-  // paraphrase must not slip through.
-  const QUIET =
-    '(?:silent\\w*|invisible|invisibly|hidden|unspoken|unsaid|undisclosed|private|secret|quiet\\w*|unmentioned|behind the scenes)';
-  const CHOICE =
-    '(?:choice|decision|path|routing|route|escalat\\w*|between (?:the two|answering|replying)|answer(?:ing)? directly|delegat\\w*)';
-  const QUIET_CHOICE = [
-    new RegExp(`\\b${QUIET}\\b[^.\\n]{0,80}\\b${CHOICE}`, 'i'),
-    new RegExp(`\\b${CHOICE}[^.\\n]{0,80}\\b${QUIET}\\b`, 'i'),
-    /\b(?:say|mention|state|announce|explain|name|narrate)\b[^.;\n]{0,40}\b(?:which path|why you|answer(?:ing)? directly|escalat\w*|routing|teammate)/i,
+  // The guard keys on the OBJECT, not the verb (review of #1000, passes 1-2):
+  // a sentence of the surface line that talks about the reply-or-escalate
+  // choice itself (its choice, decision, routing, path, route, or the two options
+  // set side by side) is refused, whatever verb introduces it (say, tell,
+  // reveal, disclose, share, hide, keep silent...) and whatever adjective
+  // follows. The one legitimate use of the word "escalate" is the instruction to
+  // do it ("escalate it via `run_task` instead"); it is removed before reading.
+  const LEGIT = 'escalate it via `run_task` instead';
+  const ROUTING_TOPIC = [
+    /\b(?:choice|choices|decision|decisions|routing|route|routes|path|paths)\b/i,
+    /\bbetween (?:the two|answering|replying|a reply)\b/i,
+    /\banswer(?:ing)?[- ]or[- ]\w+|\breply[- ]or[- ]\w+|\bescalate[- ]or[- ]\w+/i,
+    /\b(?:answer|repl|respond)\w*\s+(?:directly\s+)?(?:or|instead of|rather than)\s+(?:delegat|escalat|run_task)/i,
+    /\b(?:delegat|escalat)\w*\s+(?:or|instead of|rather than)\s+(?:answer|repl|respond)/i,
+    /\banswer(?:ing)? directly\b/i,
+    /\bescalat\w*/i,
   ];
+  const mentionsRoutingChoice = (sentence: string): boolean => {
+    const text = sentence.split(LEGIT).join('');
+    return ROUTING_TOPIC.some((re) => re.test(text));
+  };
   const FORBIDDEN = [/which path you took/i, /choice between the two/i, /never says which/i];
 
   it.each([
@@ -2042,8 +2050,15 @@ ${sentence}`).length > 0,
     'Your routing stays unspoken; do not mention it.',
     'Whether you answer directly or delegate is a private matter: never say it.',
     'Say nothing about why you chose to answer directly.',
+    // Other verbs, same object (review of #1000, pass 2): the guard keys on what
+    // the sentence talks about, not on the verb that introduces it.
+    'Never reveal your answer-or-escalate decision to the user.',
+    'Do not tell the user your routing decision.',
+    'Disclose which route you took.',
+    'Share why you chose to answer instead of delegating.',
+    'Reveal whether you replied or delegated.',
   ])('the guard refuses the paraphrase %j (#995)', (sentence) => {
-    expect(QUIET_CHOICE.some((re) => re.test(sentence))).toBe(true);
+    expect(mentionsRoutingChoice(sentence)).toBe(true);
   });
 
   it.each([
@@ -2051,7 +2066,7 @@ ${sentence}`).length > 0,
     'For conversation or recalling facts, just reply (your durable facts are loaded above).',
     'You are talking with the user; reply in plain text.',
   ])('the guard lets %j through (#995)', (sentence) => {
-    expect(QUIET_CHOICE.some((re) => re.test(sentence))).toBe(false);
+    expect(mentionsRoutingChoice(sentence)).toBe(false);
   });
 
   it('no chat prompt tells the reply anything about the routing choice (#995)', async () => {
@@ -2081,19 +2096,15 @@ ${sentence}`).length > 0,
         }
         // The concept is read on the surface line only: the rest of the prompt
         // carries dynamic content (memory facts, file names) that is not ours.
-        for (const re of QUIET_CHOICE) {
-          expect({
-            role: agent.role,
-            replyRendering,
-            re: String(re),
-            hit: re.test(surfaceLine!),
-          }).toEqual({
-            role: agent.role,
-            replyRendering,
-            re: String(re),
-            hit: false,
-          });
-        }
+        expect({
+          role: agent.role,
+          replyRendering,
+          mentions: mentionsRoutingChoice(surfaceLine!),
+        }).toEqual({
+          role: agent.role,
+          replyRendering,
+          mentions: false,
+        });
       }
       const job = await buildSystemPrompt(agent, db, {
         origin: 'dashboard',
