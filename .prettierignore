@@ -28,3 +28,4 @@ apps/qa/data/
 # de travail avant une demande (une page à modifier, un projet à corriger).
 # Un juge compare ce qui reste à la fixture ; la reformater changerait l'essai.
 packages/bench/fixtures/
+packages/device-client/src/protocol.generated.ts
