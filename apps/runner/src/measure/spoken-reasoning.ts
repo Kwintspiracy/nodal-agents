@@ -25,6 +25,13 @@
 // rien ne reste après le ROLLBACK. Chaque tour vérifie que l'effort rangé dans
 // sa trace est bien celui qu'il mesure, sinon la mesure s'arrête (invariant #4).
 //
+// La FICHE de l'agent se varie de la même façon (#995, `--persona-file`) : la
+// copie temporaire reçoit le texte du fichier à la place de `personality`, et
+// rien d'autre ne bouge. Avant chaque tour, la mesure RELIT la fiche que la
+// transaction donnera à `runChatTurn` (la même requête que lui, sur le même nom
+// de table) et refuse le tour si ce n'est pas le texte demandé ; chaque tour
+// rangé dit quelle fiche il a jouée (fichier, sha256, longueur).
+//
 // Ce que la base ne voit jamais, en revanche : les appels au modèle sont
 // réels, et facturés sur la clé de l'agent.
 
@@ -43,6 +50,7 @@ import { REASONING_EFFORT_LEVELS, type ReasoningEffort } from '@nodal-agents/sha
 import type { RunnerDeps } from '../deps.ts';
 import { runChatTurn } from '../chat/run-chat-turn.ts';
 import { runInLane } from '../chat/turn-lane.ts';
+import { personaInfo, type PersonaInfo, type PersonaVariant } from './persona.ts';
 
 /** Un effort mesuré : un palier de l'échelle, ou `auto` (NULL rangé). */
 export type MeasuredEffort = ReasoningEffort | 'auto';
@@ -374,6 +382,11 @@ export interface TurnRecord {
   /** La longueur de la réponse écrite (#987) : ses mots et ses phrases. */
   replyWords: number;
   replySentences: number;
+  /**
+   * La fiche que ce tour a jouée, relue dans la transaction juste avant lui
+   * (#995). Absente d'un relevé fait avant `--persona-file` : on ne la devine pas.
+   */
+  persona?: PersonaInfo;
   /** Le tour a échoué : le code rendu par `runChatTurn`. */
   error?: string;
 }
@@ -425,6 +438,8 @@ export async function playMeasuredTurn(
     teammateNames?: readonly string[];
     /** La durée « dite » du message, rangée sur la ligne comme un vrai tour vocal. */
     spokenMs?: number;
+    /** Une variante de la fiche (`personality`), posée sur la copie du tour seulement. */
+    persona?: PersonaVariant;
   },
 ): Promise<TurnRecord> {
   const stored = opts.effort === 'auto' ? null : opts.effort;
@@ -455,6 +470,29 @@ export async function playMeasuredTurn(
       await tx.execute(
         sql`UPDATE pg_temp.agents SET spoken_reasoning_effort = ${stored} WHERE id = ${opts.agentId}`,
       );
+      if (opts.persona) {
+        await tx.execute(
+          sql`UPDATE pg_temp.agents SET personality = ${opts.persona.text} WHERE id = ${opts.agentId}`,
+        );
+      }
+      // La fiche que `runChatTurn` va lire, relue par la MÊME requête que la
+      // sienne (même table non qualifiée, donc la copie), dans la même
+      // transaction : il n'y a pas de couture pour lire le prompt lui-même, et
+      // `personality` est le seul texte de la fiche qu'il y met.
+      const [seen] = await tx
+        .select({ personality: agents.personality })
+        .from(agents)
+        .where(and(eq(agents.id, opts.agentId), eq(agents.entityId, opts.entityId)))
+        .limit(1);
+      if (!seen) throw new Error('measure: the agent is not in the turn copy of the agents');
+      if (opts.persona && seen.personality !== opts.persona.text) {
+        throw new Error(
+          `measure: the turn would play another sheet than ${opts.persona.file} ` +
+            `(the copy holds ${personaInfo(seen.personality, undefined).sha256}, ` +
+            `the file ${personaInfo(opts.persona.text, opts.persona).sha256})`,
+        );
+      }
+      const persona = personaInfo(seen.personality, opts.persona);
       const [conv] = await tx
         .insert(conversations)
         // Un titre déjà donné : le tour ne paie pas l'appel qui nomme le fil.
@@ -519,6 +557,7 @@ export async function playMeasuredTurn(
         launchNarration: calledRunTask && launchNarratesRouting(reply, opts.teammateNames ?? []),
         replyWords: wordCount(reply),
         replySentences: sentenceCount(reply),
+        persona,
         ...(result.ok ? {} : { error: result.error }),
       };
       throw new RollbackTurn();
@@ -544,6 +583,8 @@ export async function measureSpokenReasoning(
     runs: number;
     requests?: readonly MeasureRequest[];
     teammateNames?: readonly string[];
+    /** A sheet variant to play instead of the stored one (#995). */
+    persona?: PersonaVariant;
     onTurn?: (record: TurnRecord) => void;
   },
 ): Promise<TurnRecord[]> {
@@ -559,6 +600,7 @@ export async function measureSpokenReasoning(
           request,
           run,
           ...(opts.teammateNames ? { teammateNames: opts.teammateNames } : {}),
+          ...(opts.persona ? { persona: opts.persona } : {}),
         });
         records.push(record);
         opts.onTurn?.(record);
