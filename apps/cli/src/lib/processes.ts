@@ -69,7 +69,9 @@ export async function killProcessTree(child: ResultPromise): Promise<void> {
  * Not cached across calls on purpose. A snapshot reused after the first kill can
  * name a PID Windows has already recycled, and killing a recycled PID means
  * killing a stranger's process — the exact failure the ownership guard in `up`
- * was just written to prevent.
+ * was just written to prevent. A shutdown that DOES hold one reading across
+ * several kills goes through `ProcessReading`, which strikes every pid it
+ * signals from that reading for exactly this reason (#1046).
  */
 export async function descendantPidsWin(root: number, timeoutMs?: number): Promise<number[]> {
   const snapshot = await processSnapshotWin(timeoutMs);
@@ -97,8 +99,99 @@ const SNAPSHOT_BUDGET_MS = 20_000;
  * hurried walk misses is caught by `sweepRecordedChildren`, working from the
  * tree recorded at startup. Before that record existed, cutting this short
  * meant losing the process for good.
+ *
+ * Used ONLY for a reading whose failure refuses nothing (#1046): the tree walk
+ * of a live handle, which proceeds unconfirmed when the table is silent, and
+ * the members' second look, which falls back on the reading already held. A
+ * reading that a refusal depends on is taken once, with `SNAPSHOT_BUDGET_MS`,
+ * by the caller — see `ProcessReading`. Until #1046 `killPidTree` took its own
+ * reading at this budget for a RECORDED pid too, and on a machine where the
+ * table needs 11 s to answer, a pid that `down` had just identified was refused
+ * because the second, shorter look timed out.
  */
 const SHUTDOWN_SNAPSHOT_BUDGET_MS = 6_000;
+
+/**
+ * The process table as ONE shutdown knows it (#1046).
+ *
+ * `down` and `up`'s orphan cleanup read the table once, confirm their recorded
+ * pids on that reading, and then hand the pids to `killPidTree`. The kill used
+ * to read the table again, with a shorter budget; when that second look timed
+ * out, the identification the first one had just made was thrown away and the
+ * pid was refused (`TABLE_UNREADABLE`). One shutdown now holds one reading, and
+ * three rules decide what it may vouch for:
+ *
+ *   1. It is taken ONCE, with the full budget, before anything is signalled —
+ *      so every root still has its whole tree in it, as `killPidTree` needs to
+ *      catch the workers `/T` misses (CLI-03).
+ *   2. A later reading that ANSWERS replaces it: fresher is never worse. A later
+ *      reading that does NOT answer changes nothing: a look that failed proves
+ *      nothing, and certainly does not unprove what an earlier one saw.
+ *   3. Every pid this shutdown signals, or finds already dead, is struck from
+ *      it. A number that is free is never vouched for by a reading taken before
+ *      it was freed: Windows hands a freed number to the next process that asks,
+ *      and a later lookup must find nothing (`PID_GONE`), not the old row.
+ *
+ * What the held reading still does not cover, said rather than implied: a
+ * process this shutdown never touched exiting ON ITS OWN after the reading and
+ * its number being reused before the kill. That window existed before, between
+ * `killPidTree`'s own reading and its `taskkill`; holding one reading lengthens
+ * it by the earlier kills of the same shutdown, and rule 2 shortens it again
+ * whenever one of their second looks answers. A pid is not a handle; on
+ * Windows this is the floor.
+ *
+ * `answered` is kept apart from the table's size on purpose: rule 3 removes
+ * rows, and a reading emptied by its own strikes is still a reading that
+ * answered, not a table that never did.
+ */
+export class ProcessReading {
+  private constructor(
+    private table: Map<number, ProcessRecord>,
+    private everAnswered: boolean,
+  ) {}
+
+  /** The one reading a shutdown takes, with the full budget. */
+  static async take(): Promise<ProcessReading> {
+    return ProcessReading.of(await processSnapshotWin(SNAPSHOT_BUDGET_MS));
+  }
+
+  /** A reading made of rows already in hand. Empty means the table did not answer. */
+  static of(table: Map<number, ProcessRecord>): ProcessReading {
+    return new ProcessReading(new Map(table), table.size > 0);
+  }
+
+  /** Whether any reading of this shutdown answered. */
+  get answered(): boolean {
+    return this.everAnswered;
+  }
+
+  /** The row for `pid`, or undefined when the reading does not list it (any longer). */
+  get(pid: number): ProcessRecord | undefined {
+    return this.table.get(pid);
+  }
+
+  /** Every descendant of `root` in this reading, `root` excluded. */
+  descendantsOf(root: number): ProcessRecord[] {
+    return walkDescendants(this.table, root);
+  }
+
+  /**
+   * A later look (rule 2). True when it answered and now stands in for the
+   * reading held; false when it did not, and nothing was changed.
+   */
+  async refresh(timeoutMs: number): Promise<boolean> {
+    const fresh = await processSnapshotWin(timeoutMs);
+    if (fresh.size === 0) return false;
+    this.table = fresh;
+    this.everAnswered = true;
+    return true;
+  }
+
+  /** Rule 3: these pids were signalled, or found dead, by this shutdown; vouch for them no more. */
+  forget(pids: Iterable<number>): void {
+    for (const pid of pids) this.table.delete(pid);
+  }
+}
 
 /** One process as WMI reports it. `startedAt` is CreationDate in .NET ticks. */
 export interface ProcessRecord {
@@ -144,7 +237,9 @@ export async function processSnapshotWin(
   // Not a cache — the promise is released the moment it settles, so a later
   // call always takes a fresh reading. That distinction is the whole safety
   // argument: a stored snapshot could name a pid Windows has since recycled,
-  // whereas callers joined to the SAME in-flight call all see one instant.
+  // whereas callers joined to the SAME in-flight call all see one instant. The
+  // one reading a shutdown keeps on purpose is `ProcessReading`, and its rules
+  // say what it may vouch for once kills have begun.
   //
   // It exists because the enumeration is expensive and does not parallelise:
   // several at once on a two-core machine throttle each other until they all
@@ -403,14 +498,18 @@ function vetoesRoot(code: string, fromRecord: boolean): boolean {
  * these pids were descendants of a process we had proved ours. Refusing on the
  * failure of a second look would throw that fact away and leave the workers
  * this sweep exists to catch — the ones `/T` missed — running for good.
+ *
+ * The second look goes through the shutdown's held reading (`refresh`): when
+ * it answers, the NEXT root of the same shutdown is judged on it too, which is
+ * fresher than the one the shutdown started with (rule 2 of `ProcessReading`).
  */
 async function reconfirmMembers(
   members: readonly LiveProcess[],
   rootPid: number,
   ownedPostgresPids: ReadonlySet<number>,
+  reading: ProcessReading,
 ): Promise<LiveProcess[]> {
-  const fresh = await processSnapshotWin(SHUTDOWN_SNAPSHOT_BUDGET_MS);
-  if (fresh.size === 0) {
+  if (!(await reading.refresh(SHUTDOWN_SNAPSHOT_BUDGET_MS))) {
     process.stderr.write(
       `KILL_UNCONFIRMED code=TABLE_UNREADABLE pid=${rootPid} the tree members are swept on the ` +
         `earlier reading: the table would not answer a second time\n`,
@@ -428,7 +527,7 @@ async function reconfirmMembers(
         startedAt: member.startedAt,
         ...(member.name === '' ? {} : { name: member.name }),
       },
-      live: asLive(fresh.get(member.pid)),
+      live: asLive(reading.get(member.pid)),
       tableRead: true,
       ownedPostgresPids,
     });
@@ -444,10 +543,22 @@ async function reconfirmMembers(
   return out;
 }
 
+/**
+ * What a caller holding a RECORD hands to `killPidTree`: the record, and the
+ * reading it was confirmed on. The two travel together by type, so a recorded
+ * pid can no longer reach the kill without the reading that identified it —
+ * which is what let a second, shorter look throw that identification away
+ * (#1046).
+ */
+export interface KillProof {
+  recorded: RecordedProcess;
+  reading: ProcessReading;
+}
+
 export async function killPidTree(
   pid: number,
   ownedPostgresPids?: ReadonlySet<number>,
-  recorded?: RecordedProcess,
+  proof?: KillProof,
 ): Promise<void> {
   if (process.platform === 'win32') {
     // Snapshot the descendants BEFORE killing anything.
@@ -460,9 +571,17 @@ export async function killPidTree(
     // health wait (Codex, case CLI-03).
     //
     // Once the parent is dead the parent/child link is gone with it, so the list
-    // has to be taken first. Cheap: one WMI call, and only on the shutdown path.
-    const snapshot = await processSnapshotWin(SHUTDOWN_SNAPSHOT_BUDGET_MS);
-    const descendants = walkDescendants(snapshot, pid);
+    // has to be taken first. A caller with a record already holds that reading,
+    // taken before it signalled anything (`ProcessReading`, rule 1), and it is
+    // the one used: reading again here, with a shorter budget, is what refused
+    // a pid the caller had just identified (#1046). A live handle has no reading
+    // to hand over and takes its own, at the short budget, because its kill does
+    // not depend on it.
+    const reading =
+      proof?.reading ?? ProcessReading.of(await processSnapshotWin(SHUTDOWN_SNAPSHOT_BUDGET_MS));
+    const recorded = proof?.recorded;
+    const descendants = reading.descendantsOf(pid);
+    const rootRow = reading.get(pid);
 
     // WHAT IS IN THE TREE, before `/T` empties it without saying (issue #100).
     //
@@ -474,8 +593,7 @@ export async function killPidTree(
     // in this tree that our data dir does not claim vetoes `/T` entirely, and
     // the rest of the tree is then killed one pid at a time, around it.
     const owned =
-      ownedPostgresPids ??
-      (await ownedPostgresIfAnyInvolved([...descendants, snapshot.get(pid) ?? {}]));
+      ownedPostgresPids ?? (await ownedPostgresIfAnyInvolved([...descendants, rootRow ?? {}]));
     // WHO ASKED — a record, or a handle. The two are not the same claim, and
     // `vetoesRoot` is where the difference is spent. `{ pid }` stands in below
     // only so `confirmRecordedPid` has a row to read; it is never mistaken for
@@ -484,8 +602,8 @@ export async function killPidTree(
     const { treeKillAllowed, root, foreign, killable } = confirmTree(
       {
         recorded: recorded ?? { pid },
-        live: asLive(snapshot.get(pid)),
-        tableRead: snapshot.size > 0,
+        live: asLive(rootRow),
+        tableRead: reading.answered,
         ownedPostgresPids: owned,
       },
       descendants.map(asLiveRecord),
@@ -538,7 +656,13 @@ export async function killPidTree(
       );
     }
 
+    // What this call signals — or finds already dead — struck from the held
+    // reading at the end (rule 3 of `ProcessReading`): the next root of the
+    // same shutdown is judged on that reading, and it must not vouch for a
+    // number that is free to be handed to somebody else.
+    const spent: number[] = [];
     if (treeKillAllowed) {
+      spent.push(pid, ...descendants.map((d) => d.pid));
       try {
         // /T = kill children too. /F = force. We don't care if it failed (the
         // process may already be gone); the next call site already handles
@@ -548,6 +672,7 @@ export async function killPidTree(
         /* best-effort */
       }
     } else if (!rootVetoed && !rootGone) {
+      spent.push(pid);
       // No `/T`: the root alone, then the members we vouched for below.
       try {
         await execa('taskkill', ['/F', '/PID', String(pid)], { reject: false });
@@ -581,8 +706,10 @@ export async function killPidTree(
     //     below. It is smaller — no root kill sits in it — but it is not zero,
     //     and no reading can close it. A pid is not a handle; on Windows this
     //     is the floor.
-    const vouched = killable.length > 0 ? await reconfirmMembers(killable, pid, owned) : [];
+    const vouched =
+      killable.length > 0 ? await reconfirmMembers(killable, pid, owned, reading) : [];
     for (const child of vouched) {
+      spent.push(child.pid);
       if (!isPidAlive(child.pid)) continue;
       try {
         await execa('taskkill', ['/F', '/PID', String(child.pid)], { reject: false });
@@ -590,6 +717,7 @@ export async function killPidTree(
         /* best-effort */
       }
     }
+    reading.forget(spent);
     return;
   }
 

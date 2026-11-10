@@ -11,7 +11,7 @@ import {
   killPidTree,
   waitForPidDead,
   sweepRecordedChildren,
-  processSnapshotWin,
+  ProcessReading,
   recordedRoot,
   type PidFile,
   type ProcessRecord,
@@ -34,7 +34,12 @@ import {
 /** Everything a kill decision needs, read ONCE and shared by the whole run. */
 export interface KillContext {
   pids: PidFile | null;
-  snapshot: Map<number, ProcessRecord>;
+  /**
+   * The one reading of the process table this `down` takes, handed to every
+   * kill it makes (#1046): see `ProcessReading` for what it may vouch for, and
+   * for how long.
+   */
+  reading: ProcessReading;
   ownedPostgresPids: ReadonlySet<number>;
   /**
    * Whether this platform can produce a process table AT ALL.
@@ -57,9 +62,9 @@ export interface KillContext {
   postgresClaim: ClaimVerdict;
 }
 
-/** A snapshot row in the shape `pid-confirm` reads, or undefined. */
-function liveOf(snapshot: Map<number, ProcessRecord>, pid: number): LiveProcess | undefined {
-  const rec = snapshot.get(pid);
+/** A reading's row in the shape `pid-confirm` reads, or undefined. */
+function liveOf(reading: ProcessReading, pid: number): LiveProcess | undefined {
+  const rec: ProcessRecord | undefined = reading.get(pid);
   return rec === undefined
     ? undefined
     : { pid: rec.pid, startedAt: rec.startedAt, name: rec.name ?? '' };
@@ -105,8 +110,8 @@ async function killPid(pid: number, label: string, ctx: KillContext): Promise<Ki
   // executable name next to it, and this is where they are spent.
   const verdict = confirmRecordedPid({
     recorded: recordedRoot(ctx.pids, pid),
-    live: liveOf(ctx.snapshot, pid),
-    tableRead: ctx.snapshot.size > 0,
+    live: liveOf(ctx.reading, pid),
+    tableRead: ctx.reading.answered,
     ownedPostgresPids: ctx.ownedPostgresPids,
   });
   if (!verdict.killable) {
@@ -133,9 +138,16 @@ async function killPid(pid: number, label: string, ctx: KillContext): Promise<Ki
     }
     return 'refused';
   }
-  // The record travels WITH the kill: `killPidTree` takes its own fresh reading
-  // of the table, later than this one, and a pid can be recycled in between.
-  await killPidTree(pid, ctx.ownedPostgresPids, recordedRoot(ctx.pids, pid));
+  // The record travels WITH the kill, and so does the reading that just
+  // confirmed it (#1046). `killPidTree` used to take a reading of its own, with
+  // a shorter budget; on a machine where the table needed 11 s to answer, that
+  // second look timed out and this pid, identified a moment earlier, was
+  // refused. The kill judges the root again on the same reading — it also
+  // walks the tree there, and vetoes `/T` over a Postgres we cannot claim.
+  await killPidTree(pid, ctx.ownedPostgresPids, {
+    recorded: recordedRoot(ctx.pids, pid),
+    reading: ctx.reading,
+  });
   if (isPidAlive(pid)) {
     console.log(chalk.red(`  ${label} (pid ${pid}) is STILL RUNNING after SIGTERM then SIGKILL`));
     return 'alive';
@@ -455,13 +467,15 @@ export async function runDown(): Promise<DownResult> {
   const pids = readPids();
 
   // ONE reading of the process table and ONE of postgres ownership, shared by
-  // every decision below. Two readings would let a pid be refused by the first
-  // and accepted by the second — the shape of the pass-4 finding on #98.
+  // every decision below — the kills included (#1046). Two readings would let a
+  // pid be refused by the first and accepted by the second — the shape of the
+  // pass-4 finding on #98 — or, the other way round, accepted by the first and
+  // refused because the second did not answer in time.
   const pgReading = await postgresProcessesForDataDir();
   const ctx: KillContext = {
     pids,
     tableAvailable: process.platform === 'win32',
-    snapshot: await processSnapshotWin(),
+    reading: await ProcessReading.take(),
     ownedPostgresPids: new Set(pgReading.owned),
     postgresClaim: pgReading.claim,
   };

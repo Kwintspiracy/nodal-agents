@@ -68,7 +68,7 @@ import {
   killPidTree,
   recordedRoot,
   processSnapshotWin,
-  type ProcessRecord,
+  ProcessReading,
   walkDescendants,
   isPidAlive,
   waitForPidDead,
@@ -597,11 +597,17 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
     // never going to answer would break `up`'s own recovery to close a hole
     // that only bites where pids are recycled aggressively. The kill there is
     // the same one as before, with the same reach as before.
+    //
+    // ONE reading, the one each orphan is confirmed on AND killed on (#1046):
+    // `killPidTree` used to read the table again with a shorter budget, and a
+    // second look that timed out refused a pid this one had just identified.
+    // An earlier kill strikes the pids it signalled from it, so a later orphan
+    // is never confirmed on a row whose number may have been freed since.
     const tableAvailable = process.platform === 'win32';
-    const table = tableAvailable ? await processSnapshotWin() : new Map<number, ProcessRecord>();
+    const reading = tableAvailable ? await ProcessReading.take() : ProcessReading.of(new Map());
     for (const o of orphans) {
       if (o.name === 'postgres') continue; // already handled above
-      const live = table.get(o.pid);
+      const live = reading.get(o.pid);
       const verdict = !tableAvailable
         ? ({ killable: true } as const)
         : confirmRecordedPid({
@@ -610,7 +616,7 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
               live === undefined
                 ? undefined
                 : { pid: live.pid, startedAt: live.startedAt, name: live.name ?? '' },
-            tableRead: table.size > 0,
+            tableRead: reading.answered,
             ownedPostgresPids: ownedPgPids,
           });
       if (!verdict.killable) {
@@ -625,8 +631,8 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
         if (process.platform === 'win32') {
           // The tree, but a JUDGED tree: `killPidTree` drops `/T` when it finds
           // a postgres in there that our data dir does not claim, and refuses
-          // the root outright when the fresh reading disowns it.
-          await killPidTree(o.pid, ownedPgPids, recordedRoot(known, o.pid));
+          // the root outright when the reading disowns it.
+          await killPidTree(o.pid, ownedPgPids, { recorded: recordedRoot(known, o.pid), reading });
         } else {
           // SAID, not implied: nothing here confirmed what this pid now is, and
           // it is about to be killed anyway. Same sentence as `down` prints in

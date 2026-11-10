@@ -28,7 +28,17 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 vi.mock('execa', () => ({ execa: vi.fn() }));
 
 import { execa } from 'execa';
-import { killPidTree } from '../lib/processes.ts';
+import { killPidTree, ProcessReading } from '../lib/processes.ts';
+import type { RecordedProcess } from '../lib/pid-confirm.ts';
+
+/**
+ * What a caller holding a record hands over: the record, and the reading it
+ * was confirmed on — taken here exactly as `down` takes it, through the mocked
+ * table, so the FIRST table of a sequence is the caller's reading (#1046).
+ */
+async function proofOf(recorded: RecordedProcess) {
+  return { recorded, reading: await ProcessReading.take() };
+}
 
 const mockExeca = vi.mocked(execa);
 
@@ -130,11 +140,11 @@ describe('killPidTree — the root is not signalled unproven @cap:installer-et-d
     tableReturns([]);
 
     // kill-by-pid: execa is mocked in this file, nothing is signalled.
-    await killPidTree(ROOT, new Set(), {
-      pid: ROOT,
-      name: 'node.exe',
-      startedAt: TICK_RECORDED,
-    });
+    await killPidTree(
+      ROOT,
+      new Set(),
+      await proofOf({ pid: ROOT, name: 'node.exe', startedAt: TICK_RECORDED }),
+    );
 
     expect(taskkills()).toEqual([]);
     const said = stderrLines.join('');
@@ -167,11 +177,11 @@ describe('killPidTree — the root is not signalled unproven @cap:installer-et-d
     ]);
 
     // kill-by-pid: execa is mocked in this file, nothing is signalled.
-    await killPidTree(ROOT, new Set(), {
-      pid: ROOT,
-      name: 'node.exe',
-      startedAt: TICK_RECORDED,
-    });
+    await killPidTree(
+      ROOT,
+      new Set(),
+      await proofOf({ pid: ROOT, name: 'node.exe', startedAt: TICK_RECORDED }),
+    );
 
     // The root: never, under any form — neither `/T` nor alone.
     expect(taskkills().some((args) => args.includes(String(ROOT)))).toBe(false);
@@ -184,11 +194,11 @@ describe('killPidTree — the root is not signalled unproven @cap:installer-et-d
     tableReturns([{ pid: ROOT, ppid: 4, ticks: TICK_OTHER, name: 'node.exe' }]);
 
     // kill-by-pid: execa is mocked in this file, nothing is signalled.
-    await killPidTree(ROOT, new Set(), {
-      pid: ROOT,
-      name: 'node.exe',
-      startedAt: TICK_RECORDED,
-    });
+    await killPidTree(
+      ROOT,
+      new Set(),
+      await proofOf({ pid: ROOT, name: 'node.exe', startedAt: TICK_RECORDED }),
+    );
 
     expect(taskkills()).toEqual([]);
     expect(stderrLines.join('')).toContain('KILL_REFUSED code=PID_RECYCLED');
@@ -201,11 +211,11 @@ describe('killPidTree — the root is not signalled unproven @cap:installer-et-d
     ]);
 
     // kill-by-pid: execa is mocked in this file, nothing is signalled.
-    await killPidTree(ROOT, new Set(), {
-      pid: ROOT,
-      name: 'node.exe',
-      startedAt: TICK_RECORDED,
-    });
+    await killPidTree(
+      ROOT,
+      new Set(),
+      await proofOf({ pid: ROOT, name: 'node.exe', startedAt: TICK_RECORDED }),
+    );
 
     expect(taskkills()[0]).toEqual(['/T', '/F', '/PID', String(ROOT)]);
     expect(stderrLines.join('')).not.toContain('KILL_REFUSED');
@@ -222,7 +232,7 @@ describe('killPidTree — the root is not signalled unproven @cap:installer-et-d
     ]);
 
     // kill-by-pid: execa is mocked in this file, nothing is signalled.
-    await killPidTree(ROOT, new Set(), { pid: ROOT });
+    await killPidTree(ROOT, new Set(), await proofOf({ pid: ROOT }));
 
     expect(taskkills().some((args) => args.includes(String(ROOT)))).toBe(false);
     expect(taskkills()).toEqual([['/F', '/PID', String(LIVE_MEMBER)]]);
@@ -259,7 +269,7 @@ describe('killPidTree — the members are re-read before they are signalled @cap
     tableSequence([[ROOT_ROW, MEMBER_ROW], [{ ...MEMBER_ROW, name: 'chrome.exe' }]]);
 
     // kill-by-pid: execa is mocked in this file, nothing is signalled.
-    await killPidTree(ROOT, new Set(), RECORD);
+    await killPidTree(ROOT, new Set(), await proofOf(RECORD));
 
     expect(taskkills()).toEqual([['/T', '/F', '/PID', String(ROOT)]]);
     expect(stderrLines.join('')).toContain('KILL_REFUSED code=BINARY_CHANGED');
@@ -269,7 +279,7 @@ describe('killPidTree — the members are re-read before they are signalled @cap
     tableSequence([[ROOT_ROW, MEMBER_ROW], [{ ...MEMBER_ROW, ticks: TICK_OTHER }]]);
 
     // kill-by-pid: execa is mocked in this file, nothing is signalled.
-    await killPidTree(ROOT, new Set(), RECORD);
+    await killPidTree(ROOT, new Set(), await proofOf(RECORD));
 
     expect(taskkills().some((args) => args.includes(String(LIVE_MEMBER)))).toBe(false);
     expect(stderrLines.join('')).toContain('KILL_REFUSED code=PID_RECYCLED');
@@ -281,7 +291,7 @@ describe('killPidTree — the members are re-read before they are signalled @cap
     tableSequence([[ROOT_ROW, MEMBER_ROW], [ROOT_ROW]]);
 
     // kill-by-pid: execa is mocked in this file, nothing is signalled.
-    await killPidTree(ROOT, new Set(), RECORD);
+    await killPidTree(ROOT, new Set(), await proofOf(RECORD));
 
     expect(taskkills().some((args) => args.includes(String(LIVE_MEMBER)))).toBe(false);
     expect(stderrLines.join('')).not.toContain('KILL_REFUSED');
@@ -295,7 +305,7 @@ describe('killPidTree — the members are re-read before they are signalled @cap
     tableSequence([[ROOT_ROW, MEMBER_ROW], [], []]);
 
     // kill-by-pid: execa is mocked in this file, nothing is signalled.
-    await killPidTree(ROOT, new Set(), RECORD);
+    await killPidTree(ROOT, new Set(), await proofOf(RECORD));
 
     expect(taskkills()).toContainEqual(['/F', '/PID', String(LIVE_MEMBER)]);
     expect(stderrLines.join('')).toContain('KILL_UNCONFIRMED code=TABLE_UNREADABLE');
@@ -308,9 +318,77 @@ describe('killPidTree — the members are re-read before they are signalled @cap
     ]);
 
     // kill-by-pid: execa is mocked in this file, nothing is signalled.
-    await killPidTree(ROOT, new Set(), RECORD);
+    await killPidTree(ROOT, new Set(), await proofOf(RECORD));
 
     expect(taskkills()).toContainEqual(['/F', '/PID', String(LIVE_MEMBER)]);
     expect(stderrLines.join('')).not.toContain('KILL_REFUSED');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('killPidTree — one reading held across a shutdown (#1046) @cap:installer-et-demarrer/moteur', () => {
+  // `down` and `up`'s orphan cleanup now hand the SAME reading to each kill they
+  // make. These cases are about what that reading may still vouch for after an
+  // earlier kill of the same shutdown: see the three rules of `ProcessReading`.
+  const ROOT_ROW: Row = { pid: ROOT, ppid: 4, ticks: TICK_RECORDED, name: 'node.exe' };
+  const MEMBER_ROW: Row = { pid: LIVE_MEMBER, ppid: ROOT, ticks: TICK_RECORDED, name: 'node.exe' };
+  const RECORD = { pid: ROOT, name: 'node.exe', startedAt: TICK_RECORDED };
+  const SECOND = 999_002;
+  const SECOND_ROW: Row = { pid: SECOND, ppid: 4, ticks: TICK_RECORDED, name: 'node.exe' };
+  const SECOND_RECORD = { pid: SECOND, name: 'node.exe', startedAt: TICK_RECORDED };
+
+  it('never vouches for a pid an earlier kill of the same shutdown signalled', async () => {
+    // The member was killed with the first tree. Its number is free; the held
+    // reading still lists the old row, and every later look times out. A later
+    // kill aimed at that number must find nothing, not the old row.
+    tableSequence([[ROOT_ROW, MEMBER_ROW], []]);
+    const { reading } = await proofOf(RECORD);
+
+    // kill-by-pid: execa is mocked in this file, nothing is signalled.
+    await killPidTree(ROOT, new Set(), { recorded: RECORD, reading });
+    const before = taskkills().length;
+    await killPidTree(LIVE_MEMBER, new Set(), {
+      recorded: { pid: LIVE_MEMBER, name: 'node.exe', startedAt: TICK_RECORDED },
+      reading,
+    });
+
+    expect(taskkills().slice(before)).toEqual([]);
+    // Gone, not unreadable: the reading answered, it just no longer lists it.
+    expect(stderrLines.join('')).not.toContain('KILL_REFUSED code=TABLE_UNREADABLE');
+  });
+
+  it('judges the next root on a later reading that answered, not on the first', async () => {
+    // The first kill's second look answers, and in it the SECOND root's number
+    // now carries another generation: recycled meanwhile. The held reading is
+    // that later one, so the second root is refused on it.
+    tableSequence([
+      [ROOT_ROW, MEMBER_ROW, SECOND_ROW],
+      [MEMBER_ROW, { ...SECOND_ROW, ticks: TICK_OTHER }],
+    ]);
+    const { reading } = await proofOf(RECORD);
+
+    // kill-by-pid: execa is mocked in this file, nothing is signalled.
+    await killPidTree(ROOT, new Set(), { recorded: RECORD, reading });
+    await killPidTree(SECOND, new Set(), { recorded: SECOND_RECORD, reading });
+
+    expect(taskkills().some((args) => args.includes(String(SECOND)))).toBe(false);
+    expect(stderrLines.join('')).toContain(`KILL_REFUSED code=PID_RECYCLED pid ${SECOND}`);
+  });
+
+  it('a reading emptied by its own strikes is still a reading that answered', async () => {
+    // Every row it had was spent. That is "gone", never "the table did not
+    // answer": the second would read as a refusal of a pid nothing refused.
+    tableSequence([[ROOT_ROW], []]);
+    const { reading } = await proofOf(RECORD);
+
+    // kill-by-pid: execa is mocked in this file, nothing is signalled.
+    await killPidTree(ROOT, new Set(), { recorded: RECORD, reading });
+    const before = taskkills().length;
+    await killPidTree(ROOT, new Set(), { recorded: RECORD, reading });
+
+    expect(reading.answered).toBe(true);
+    expect(taskkills().slice(before)).toEqual([]);
+    expect(stderrLines.join('')).not.toContain('TABLE_UNREADABLE');
   });
 });
