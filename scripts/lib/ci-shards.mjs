@@ -15,6 +15,11 @@
 //      toutes leurs moitiés : 1/2 et 2/2, jamais deux fois la même ;
 //   3. un filtre que le lecteur ne comprend pas est un CONSTAT (jamais un vert).
 //
+// Et pour les DEUX workflows qui lancent la suite (ci.yml sous Linux,
+// ci-windows.yml sous Windows) : `divergences` exige les mêmes tranches, les
+// mêmes commandes. Les limites de temps, propres à chaque OS, ne sont pas
+// comparées (elles sont tenues par scripts/lib/ci-budgets.mjs).
+//
 // Sémantique turbo lue ici : les filtres positifs s'additionnent ; s'il n'y en
 // a aucun, on part de tous les paquets ; les filtres `!x` retirent ensuite.
 
@@ -147,6 +152,47 @@ export function constats(yml, tous, coupes = COUPES_PAR_FICHIER) {
       }
     } else if (par.length > 1) {
       out.push(`${nom}: lancé par ${par.length} tranches (${noms})`);
+    }
+  }
+  return out;
+}
+
+/**
+ * Les écarts entre les tranches de deux workflows qui doivent lancer la MÊME
+ * suite (ci.yml sous Linux, ci-windows.yml sous Windows) : une tranche absente
+ * d'un côté, en trop, ou nommée pareil mais qui ne lance pas la même commande.
+ * `[]` : les deux définissent exactement les mêmes tranches. Seule la commande
+ * compte ; les limites de temps, propres à chaque OS, ne sont pas comparées.
+ *
+ * Pourquoi comparer, et ne pas se contenter de `constats` sur chaque fichier :
+ * deux fichiers peuvent chacun couvrir tous les paquets et pourtant couper
+ * autrement. Le jour où l'un est rééquilibré, l'autre doit l'être, ou la
+ * mesure qui a justifié la coupe ne vaut plus pour lui.
+ */
+export function divergences(nomReference, ymlReference, nom, yml) {
+  let ref;
+  let autre;
+  try {
+    ref = lireTranches(ymlReference);
+    autre = lireTranches(yml);
+  } catch (e) {
+    return [e.message];
+  }
+  const out = [];
+  const parNom = new Map(autre.map((t) => [t.tranche, t.run]));
+  for (const t of ref) {
+    if (!parNom.has(t.tranche)) {
+      out.push(`${t.tranche}: définie dans ${nomReference}, absente de ${nom}`);
+    } else if (parNom.get(t.tranche) !== t.run) {
+      out.push(
+        `${t.tranche}: ${nomReference} lance « ${t.run} », ${nom} lance « ${parNom.get(t.tranche)} »`,
+      );
+    }
+  }
+  const connues = new Set(ref.map((t) => t.tranche));
+  for (const t of autre) {
+    if (!connues.has(t.tranche)) {
+      out.push(`${t.tranche}: définie dans ${nom}, absente de ${nomReference}`);
     }
   }
   return out;
