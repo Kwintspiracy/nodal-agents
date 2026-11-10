@@ -108,6 +108,6 @@ describe('writeManyFiles', () => {
 
   it('la concurrence par défaut est bornée (jamais « tout à la fois »)', () => {
     expect(BOUNDED_IO_CONCURRENCY).toBeGreaterThan(0);
-    expect(BOUNDED_IO_CONCURRENCY).toBeLessThan(100);
+    expect(BOUNDED_IO_CONCURRENCY).toBeLessThan(1001);
   });
 });

@@ -15,8 +15,15 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
-/** Opérations en vol en même temps. Assez pour occuper le disque, pas pour l'affamer. */
-export const BOUNDED_IO_CONCURRENCY = 32;
+/**
+ * Opérations en vol en même temps. 100 et non 32 : mesuré sur CI Windows, une
+ * fenêtre de 32 écrit 1001 fichiers en 1,3 à 2,1 s là où l'ancien motif (des
+ * paquets de 100) tenait tout le cas `constat-fallback` en 1,5 à 2,4 s, car
+ * chaque `writeFile` est trois sauts de boucle d'événements (open, write,
+ * close) et une fenêtre étroite les attend un à un sur un runner chargé. Assez
+ * pour garder le disque occupé, assez peu pour ne pas empiler 1001 demandes.
+ */
+export const BOUNDED_IO_CONCURRENCY = 100;
 
 function checkConcurrency(concurrency: number): void {
   if (!Number.isInteger(concurrency) || concurrency < 1) {
