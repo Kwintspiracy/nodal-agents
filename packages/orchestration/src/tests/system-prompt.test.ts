@@ -2020,13 +2020,41 @@ ${sentence}`).length > 0,
   // turn, typed and spoken, orchestrator and worker, the built prompt never
   // describes the routing choice to the reply. A job prompt is unchanged by it.
   // Mutation verified: the #977 sentence put back in the surface line → red.
+  // The CONCEPT, in any wording (review of #1000, P2-7): the reply-or-escalate
+  // choice described as silent, invisible or hidden, whichever side of the
+  // sentence names it. The exact words of #977 are the cheap case; a close
+  // paraphrase must not slip through.
+  const QUIET =
+    '(?:silent\\w*|invisible|invisibly|hidden|unspoken|unsaid|undisclosed|private|secret|quiet\\w*|unmentioned|behind the scenes)';
+  const CHOICE =
+    '(?:choice|decision|path|routing|route|escalat\\w*|between (?:the two|answering|replying)|answer(?:ing)? directly|delegat\\w*)';
+  const QUIET_CHOICE = [
+    new RegExp(`\\b${QUIET}\\b[^.\\n]{0,80}\\b${CHOICE}`, 'i'),
+    new RegExp(`\\b${CHOICE}[^.\\n]{0,80}\\b${QUIET}\\b`, 'i'),
+    /\b(?:say|mention|state|announce|explain|name|narrate)\b[^.;\n]{0,40}\b(?:which path|why you|answer(?:ing)? directly|escalat\w*|routing|teammate)/i,
+  ];
+  const FORBIDDEN = [/which path you took/i, /choice between the two/i, /never says which/i];
+
+  it.each([
+    'The choice between the two is silent: your reply never says which path you took or why.',
+    'The choice between answering and escalating is silent: keep it invisible.',
+    'Keep the decision to escalate hidden from the user.',
+    'Your routing stays unspoken; do not mention it.',
+    'Whether you answer directly or delegate is a private matter: never say it.',
+    'Say nothing about why you chose to answer directly.',
+  ])('the guard refuses the paraphrase %j (#995)', (sentence) => {
+    expect(QUIET_CHOICE.some((re) => re.test(sentence))).toBe(true);
+  });
+
+  it.each([
+    'Alongside the call you may add one line in your own voice that says what is being done, in a few words; the `run_task` call is what actually does the work.',
+    'For conversation or recalling facts, just reply (your durable facts are loaded above).',
+    'You are talking with the user; reply in plain text.',
+  ])('the guard lets %j through (#995)', (sentence) => {
+    expect(QUIET_CHOICE.some((re) => re.test(sentence))).toBe(false);
+  });
+
   it('no chat prompt tells the reply anything about the routing choice (#995)', async () => {
-    const FORBIDDEN = [
-      /which path you took/i,
-      /choice between the two/i,
-      /never says which/i,
-      /\b(?:say|mention|state|announce|explain|name|narrate)\b[^.;\n]{0,40}\b(?:which path|why you|answer(?:ing)? directly|escalat\w*|routing|teammate)/i,
-    ];
     const { entityId, root, worker } = await seedTeam();
     const agentsUnderTest = [
       makeAgent(root.id, entityId, root.personality, 'orchestrator'),
@@ -2045,6 +2073,21 @@ ${sentence}`).length > 0,
         expect(surfaceLine).toContain('run_task');
         for (const re of FORBIDDEN) {
           expect({ role: agent.role, replyRendering, re: String(re), hit: re.test(chat) }).toEqual({
+            role: agent.role,
+            replyRendering,
+            re: String(re),
+            hit: false,
+          });
+        }
+        // The concept is read on the surface line only: the rest of the prompt
+        // carries dynamic content (memory facts, file names) that is not ours.
+        for (const re of QUIET_CHOICE) {
+          expect({
+            role: agent.role,
+            replyRendering,
+            re: String(re),
+            hit: re.test(surfaceLine!),
+          }).toEqual({
             role: agent.role,
             replyRendering,
             re: String(re),

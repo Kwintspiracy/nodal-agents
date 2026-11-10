@@ -28,7 +28,17 @@
 // Ce que la base ne voit jamais, en revanche : les appels au modèle sont
 // réels, et facturés sur la clé de l'agent.
 
-import { asc, conversations, eq, llmCalls, sql, type AnyDrizzleDb } from '@nodal-agents/db';
+import {
+  agentAssignments,
+  agents,
+  and,
+  asc,
+  conversations,
+  eq,
+  llmCalls,
+  sql,
+  type AnyDrizzleDb,
+} from '@nodal-agents/db';
 import { REASONING_EFFORT_LEVELS, type ReasoningEffort } from '@nodal-agents/shared';
 import type { RunnerDeps } from '../deps.ts';
 import { runChatTurn } from '../chat/run-chat-turn.ts';
@@ -158,44 +168,97 @@ const ROUTING_NARRATION: readonly RegExp[] = [
   /\b(general[- ]knowledge|simple|quick|factual|straightforward|conversational|casual|creative(?: writing)?|writing|trivia)\s+(question|request|query|task)\b/i,
   /\b(answer|reply|respond)\s+(to\s+)?(it|this|that)?\s*(directly|right away|myself|without)\b/i,
   /\bno need (to|for)\b.*\b(task|job|tool|delegat\w*)\b/i,
-  /\b(without|with no|no)\s+(any\s+)?(action|delegation|delegating)\b/i,
+  /\b(?:without|with no)\s+(?:any\s+)?(?:action|delegation|delegating)\b/i,
+  /\bno\s+(?:action|delegation)\s+(?:is\s+)?(?:needed|required|necessary)\b/i,
   /\b(doesn'?t|does not|won'?t|will not)\s+(need|require)\b.*\b(task|job|tool|delegat\w*)\b/i,
   /\bquestion\s+(de culture g[ée]n[ée]rale|g[ée]n[ée]rale|simple|factuelle)\b/i,
   /\bje (peux|vais) (y )?r[ée]pondre (directement|moi-m[êe]me|tout de suite|sans)\b/i,
   /\br[ée]pondre directement\b/i,
-  // Conjugated forms, every person (#995, round 2): "Je réponds directement :",
-  // "Je te réponds directement", "je répondrai moi-même".
-  /\br[ée]pond\w*\s+(?:(?:te|vous|y|lui|cela|ça)\s+)?(?:directement|moi-m[êe]me|tout de suite|sans)\b/i,
+  // Conjugated forms (#995, round 2), FIRST PERSON only: "Je réponds
+  // directement :", "Je te réponds directement", "j'y réponds moi-même". The same
+  // words in someone else's sentence ("La loi répond directement à…") are content.
+  /\b(?:je|j['’])\s*(?:(?:te|vous|y)\s+)*r[ée]pond(?:s|rai|rais|ons)?\s+(?:(?:te|vous|y|cela|ça)\s+)?(?:directement|moi-m[êe]me|tout de suite|sans)\b/i,
   /\bje (peux|vais) (le |la |ça |cela )?(faire|traiter|g[ée]rer|[ée]crire) (directement|moi-m[êe]me)\b/i,
-  // "answering directly", "I'll answer directly", "I replied myself".
-  /\b(?:answer|reply|respond)\w*\s+(?:to\s+)?(?:(?:it|this|that|you)\s+)?(?:directly|right away|myself|without)\b/i,
+  // "I'll answer directly", "I'm answering directly", "let me reply myself".
+  /\b(?:i|i'll|i will|i'm|i am|i can|i could|i'd|let me|we'll)\s+(?:just\s+)?(?:answer|reply|respond)\w*\s+(?:to\s+)?(?:(?:it|this|that|you)\s+)?(?:directly|right away|myself|without)\b/i,
   // "Creative writing is something I can do directly / myself".
-  /\b(?:i can|i'll|i will|i'm able to|i could)\s+(?:just\s+)?(?:do|handle|write|take care of|answer)\b[^.!?]{0,30}\b(?:directly|myself|on my own)\b/i,
-  /\b(?:do|handle|write)\s+(?:it|this|that)\s+(?:directly|myself)\b/i,
+  /\b(?:i can|i'll|i will|i'm able to|i could|let me)\s+(?:just\s+)?(?:do|handle|write|take care of|answer)\b[^.!?]{0,30}\b(?:directly|myself|on my own)\b/i,
   /\bpas besoin de\b.*\b(t[âa]che|job|outil|d[ée]l[ée]gu\w*|lancer)\b/i,
   /\b(ne (n[ée]cessite|demande|requiert) pas)\b.*\b(t[âa]che|job|outil)\b/i,
 ];
 
 /**
  * Does the line that goes with a `run_task` call narrate the routing (#995,
- * round 2)? It names a teammate (names come from the database, never from a
- * list written here), or says who it hands over to and why ("je délègue",
- * "je transmets à", "via X", "qui gère…", "team routing"). "Je lance la
- * recherche." says WHAT is being done: not routing. Read on the whole text, not
- * the first sentence: the line is short and the teammate often comes last.
+ * round 2)? Two things count, and nothing else:
+ *  - a FIRST-PERSON hand-over ("je délègue", "je transmets la demande à",
+ *    "je confie … à", "je passe la demande à", "I'll hand this over to",
+ *    "let me pass this to", "I'm delegating"), or the platform's own words
+ *    ("team routing");
+ *  - a teammate's name, written as the database writes it. "via X", "X, qui
+ *    gère…" and "X, which has…" are caught by the NAME, never by "via" or
+ *    "qui" alone: a capitalised word after "via" is a proper noun far more
+ *    often than a teammate (review of #1000, P1-4).
+ * "Je lance la recherche." says WHAT is being done: not routing. The same
+ * stems in a sentence about someone else ("transmission", "the page delegates
+ * its layout") are content. Read on the whole text: the line is short and the
+ * teammate often comes last.
  */
+const FR_SUBJECT = String.raw`(?:je|j['’])\s*(?:vais\s+|dois\s+|peux\s+)?(?:(?:te|vous|le|la|les|l['’]|y)\s*)*`;
+const EN_SUBJECT = String.raw`(?:i|i'll|i will|i'm|i am|i'd|i can|i could|we'll|let me)\s+(?:just\s+)?`;
+// « à » is not a word character for `\b`: the preposition is matched on its blanks.
+const FR_TO = String.raw`(?:\s|^)(?:à|au|aux)(?=[\s'’])`;
 const LAUNCH_NARRATION: readonly RegExp[] = [
-  /\b(?:d[ée]l[èe]gu\w*|delegat\w*|transmets|transmett\w*|transmis\w*|transf[èe]re\w*|confie\w*|confier)\b/i,
-  /\bpass(?:e|er|erai|es|ing|ed)\s+(?:la main|le relais|la demande|cela|ça|ce|it|this|that|the \w+)?\s*(?:à|au|aux|(?:on |along )?to\b)/i,
-  /\bhand(?:s|ing|ed)?\s+(?:it |this |that |the \w+ )?(?:off|over)\b/i,
-  /\b(?:forward|route)(?:s|d|ing)?\s+(?:it |this |that |the \w+ )?to\b/i,
-  /(?<![\p{L}\p{N}])(?:via|auprès d(?:e|u|es)|through)\s+(?:l['’]agent\s+|the agent\s+)?\p{Lu}/u,
-  /\bqui\s+(?:g[èe]re|a\s|s['’]occupe|sait|fera|orchestre|ma[iî]trise|dispose|poss[èe]de|est charg[ée])/i,
-  /\b(?:which|who)\s+(?:handles|has|manages|specializes|owns|is in charge|runs|orchestrates)\b/i,
+  new RegExp(String.raw`\b${FR_SUBJECT}d[ée]l[éèe]gu(?:e|es|er|ons)\b`, 'iu'),
+  new RegExp(
+    String.raw`\b${FR_SUBJECT}(?:transmets?|transmettre|transf[èe]re|transf[ée]rer|confie|confier)\b[^.!?]{0,40}${FR_TO}`,
+    'iu',
+  ),
+  new RegExp(
+    String.raw`\b${FR_SUBJECT}pass(?:e|er)\s+(?:la main|le relais|la demande|cela|ça|ce|tout ça)\s*${FR_TO}`,
+    'iu',
+  ),
+  new RegExp(
+    String.raw`\b${EN_SUBJECT}(?:delegat(?:e|ing)|hand(?:ing)?\s+(?:it |this |that |the \w+ )?(?:off|over))\b`,
+    'i',
+  ),
+  new RegExp(
+    String.raw`\b${EN_SUBJECT}(?:pass|passing|forward|forwarding)\s+(?:it |this |that |the \w+ )?(?:on |along )?to\b`,
+    'i',
+  ),
+  /^\s*(?:delegating|handing off)\b/i,
   /\bteam routing\b/i,
 ];
 
 const escapeRegExp = (v: string): string => v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/**
+ * The names the launch check matches, from the workspace's agent rows: the
+ * display name, and the slug when it cannot be an ordinary word (it holds a
+ * hyphen, an underscore or a digit). A one-word slug like "java" or "montage"
+ * is matched through its display name or not at all.
+ */
+export function teammateMatchNames(rows: ReadonlyArray<{ name: string; slug: string }>): string[] {
+  const names = new Set<string>();
+  for (const r of rows) {
+    if (r.name.trim() !== '') names.add(r.name.trim());
+    if (/[-_\d]/.test(r.slug)) names.add(r.slug.trim());
+  }
+  return [...names];
+}
+
+/**
+ * The teammates a measured agent can actually hand a task to: the ACTIVE agents
+ * of its own team (agent_assignments), the ones its `## Your team` block lists
+ * (team-block.ts). Never the agent itself, never an inactive or unassigned one.
+ */
+export async function readDelegableTeammates(db: AnyDrizzleDb, agentId: string): Promise<string[]> {
+  const rows = await db
+    .select({ name: agents.name, slug: agents.slug })
+    .from(agentAssignments)
+    .innerJoin(agents, eq(agentAssignments.subAgentId, agents.id))
+    .where(and(eq(agentAssignments.orchestratorId, agentId), eq(agents.active, true)));
+  return teammateMatchNames(rows);
+}
 
 export function launchNarratesRouting(
   text: string,
@@ -208,7 +271,7 @@ export function launchNarratesRouting(
     .map((n) => n.trim())
     .filter((n) => n !== '')
     .some((n) =>
-      new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegExp(n)}(?![\\p{L}\\p{N}])`, 'iu').test(trimmed),
+      new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegExp(n)}(?![\\p{L}\\p{N}])`, 'u').test(trimmed),
     );
 }
 
@@ -302,6 +365,8 @@ export interface TurnRecord {
   /** Les appels du tour, dans l'ordre, et l'effort que chacun a demandé. */
   calls: Array<{ reasoningEffort: string | null; outputTokens: number | null; ms: number | null }>;
   opening: string;
+  /** The full reply text (or the line that goes with `run_task`), so a later detector can re-score the run for free. */
+  reply: string;
   /** Turn WITHOUT a job: the reply opens by narrating the routing. */
   routingNarration: boolean;
   /** Turn WITH a job: the line that goes with `run_task` narrates the routing (#995). */
@@ -449,6 +514,7 @@ export async function playMeasuredTurn(
         turnOutputTokens: sum,
         calls,
         opening: openingOf(reply),
+        reply,
         routingNarration: !calledRunTask && opensWithRoutingNarration(reply),
         launchNarration: calledRunTask && launchNarratesRouting(reply, opts.teammateNames ?? []),
         replyWords: wordCount(reply),
@@ -519,9 +585,13 @@ export interface EffortSummary {
   firstDeltaMedianMs: number | null;
   firstDeltaP90Ms: number | null;
   replyOutputTokensMedian: number | null;
-  /** Turns without a job whose reply narrates the routing. */
+  /** Turns that ANSWERED (no job, no error), whatever the request asked for. */
+  answeredTurns: number;
+  /** Of those, the replies that narrate the routing. */
   routingNarrations: number;
-  /** Turns with a job whose launch line narrates the routing (#995). */
+  /** Turns that LAUNCHED a job (no error), whatever the request asked for. */
+  launchedTurns: number;
+  /** Of those, the launch lines that narrate the routing (#995). */
   launchNarrations: number;
   /**
    * Les mots des réponses directes (#987) : celles des demandes sans travail
@@ -564,7 +634,9 @@ export function summarize(records: readonly TurnRecord[]): EffortSummary[] {
       firstDeltaMedianMs: percentile(deltas, 50),
       firstDeltaP90Ms: percentile(deltas, 90),
       replyOutputTokensMedian: percentile(tokens, 50),
+      answeredTurns: rows.filter((r) => r.error === undefined && !r.calledRunTask).length,
       routingNarrations: rows.filter((r) => r.routingNarration).length,
+      launchedTurns: rows.filter((r) => r.error === undefined && r.calledRunTask).length,
       launchNarrations: rows.filter((r) => r.launchNarration).length,
       noTaskWordsMedian: percentile(answeredWords, 50),
       noTaskWordsMax: answeredWords.length === 0 ? null : Math.max(...answeredWords),
@@ -584,9 +656,35 @@ export function summaryTable(rows: readonly EffortSummary[]): string {
       `| ${r.effort} | ${r.rightDecisions}/${r.turns} | ${r.taskLaunched}/${r.taskTurns} | ` +
         `${r.noTaskAnswered}/${r.noTaskTurns} | ${ms(r.firstDeltaMedianMs)} / ${ms(r.firstDeltaP90Ms)} ` +
         `(${r.withText} turns with text) | ${r.replyOutputTokensMedian ?? 'n/a'} | ` +
-        `${r.routingNarrations}/${r.noTaskTurns} | ${r.launchNarrations}/${r.taskTurns} | ${r.noTaskWordsMedian ?? 'n/a'} / ${r.noTaskWordsMax ?? 'n/a'} | ` +
+        `${r.routingNarrations}/${r.answeredTurns} | ${r.launchNarrations}/${r.launchedTurns} | ${r.noTaskWordsMedian ?? 'n/a'} / ${r.noTaskWordsMax ?? 'n/a'} | ` +
         `${r.errors} |`,
     );
   }
   return lines.join('\n');
+}
+
+/**
+ * Re-applies the CURRENT detectors to stored records, from their full reply: no
+ * model call, no database. A record from a run that did not store the reply
+ * cannot be re-scored, and says so (invariant #4).
+ */
+export function rescoreRecords(
+  records: readonly TurnRecord[],
+  teammateNames: readonly string[],
+): TurnRecord[] {
+  return records.map((r) => {
+    if (typeof r.reply !== 'string') {
+      throw new Error(
+        `rescore: record run ${r.run} / ${r.requestId} has no full reply (it was measured before replies were stored)`,
+      );
+    }
+    return {
+      ...r,
+      opening: openingOf(r.reply),
+      routingNarration: !r.calledRunTask && opensWithRoutingNarration(r.reply),
+      launchNarration: r.calledRunTask && launchNarratesRouting(r.reply, teammateNames),
+      replyWords: wordCount(r.reply),
+      replySentences: sentenceCount(r.reply),
+    };
+  });
 }

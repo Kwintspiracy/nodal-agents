@@ -13,24 +13,19 @@
 
 import { readFileSync, writeFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
-import {
-  agents,
-  and,
-  createClient,
-  entityLlmKeys,
-  eq,
-  ne,
-  type AnyDrizzleDb,
-} from '@nodal-agents/db';
+import { agents, and, createClient, entityLlmKeys, eq, type AnyDrizzleDb } from '@nodal-agents/db';
 import { findModelCatalogEntry } from '@nodal-agents/shared';
 import { masterKeyFileMissing, masterKeyPath } from '@nodal-agents/secrets';
 import {
   measureSpokenReasoning,
   parseMeasuredEffort,
+  readDelegableTeammates,
+  rescoreRecords,
   summarize,
   summaryTable,
   SPOKEN_REASONING_REQUESTS,
   type MeasureRequest,
+  type TurnRecord,
 } from './spoken-reasoning.ts';
 
 /** Le relevé de la mesure, sur la sortie standard : un outil de mesure, pas le runner. */
@@ -52,8 +47,42 @@ const { values } = parseArgs({
     runs: { type: 'string', default: '3' },
     requests: { type: 'string' },
     out: { type: 'string' },
+    rescore: { type: 'string' },
+    teammates: { type: 'string' },
   },
 });
+
+// --rescore <in.json>: re-applies the CURRENT detectors to a stored run, from
+// the full replies it holds. No model call, no database, no key: it reads a file
+// and prints the table (and writes --out when given). Teammate names are the ones
+// the run stored, or --teammates a,b.
+if (values.rescore) {
+  const stored = JSON.parse(readFileSync(values.rescore, 'utf-8')) as {
+    records?: TurnRecord[];
+    teammateNames?: string[];
+  };
+  if (!Array.isArray(stored.records)) fail(`${values.rescore}: no "records" array`);
+  const names = values.teammates
+    ? values.teammates.split(',').map((n) => n.trim())
+    : (stored.teammateNames ?? []);
+  let records;
+  try {
+    records = rescoreRecords(stored.records, names);
+  } catch (err) {
+    fail((err as Error).message);
+  }
+  const summary = summarize(records);
+  say(`rescored ${records.length} turns with ${names.length} teammate names`);
+  say(summaryTable(summary));
+  if (values.out) {
+    writeFileSync(
+      values.out,
+      JSON.stringify({ ...stored, teammateNames: names, summary, records }, null, 2),
+    );
+    say(`written: ${values.out}`);
+  }
+  process.exit(0);
+}
 
 const databaseUrl = values['database-url'] ?? process.env['DATABASE_URL'];
 if (!databaseUrl) fail('--database-url (or DATABASE_URL) is required');
@@ -149,15 +178,10 @@ try {
       `${efforts.length * requests.length * runs} turns`,
   );
 
-  // The workspace's teammates, read from the database: a launch line that names
-  // one narrates the routing (#995). Never a list written here.
-  const mates = await db
-    .select({ name: agents.name, slug: agents.slug })
-    .from(agents)
-    .where(and(eq(agents.entityId, agent.entityId), ne(agents.id, agent.id)));
-  const teammateNames = [...new Set(mates.flatMap((m) => [m.name, m.slug]))].filter(
-    (n) => n.trim() !== '',
-  );
+  // The teammates this agent can hand a task to (active, on its own team, never
+  // itself), read from the database: a launch line that names one narrates the
+  // routing (#995). Never a list written here.
+  const teammateNames = await readDelegableTeammates(db, agent.id);
   say(`${teammateNames.length} teammate names read from the workspace`);
 
   const startedAt = new Date().toISOString();
@@ -194,6 +218,7 @@ try {
         efforts,
         runs,
         requests,
+        teammateNames,
         summary,
         records,
       },

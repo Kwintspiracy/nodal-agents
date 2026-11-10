@@ -13,6 +13,7 @@ import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
 import { spinUpTestDb } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import {
+  agentAssignments,
   agentJobs,
   agents,
   chatMessages,
@@ -25,9 +26,13 @@ import {
 import {
   measureSpokenReasoning,
   launchNarratesRouting,
+  readDelegableTeammates,
+  rescoreRecords,
+  teammateMatchNames,
   opensWithRoutingNarration,
   sentenceCount,
   summarize,
+  summaryTable,
   wordCount,
   SPOKEN_REASONING_REQUESTS,
   type MeasureRequest,
@@ -42,7 +47,8 @@ vi.mock('../../../../../packages/llm/src/transport.ts', () => ({
 const MODEL = 'anthropic/claude-haiku-5.5';
 const NARRATED = 'This is a general knowledge question, so I can answer it directly. Canberra.';
 
-const LAUNCH_LINE = 'Je transmets la demande à Researcher, qui gère la recherche web.';
+// Narrates only because it NAMES a teammate: no verb of hand-over in it.
+const LAUNCH_LINE = 'Je lance la recherche avec Researcher.';
 
 const REQUESTS: MeasureRequest[] = [
   { id: 'file', text: 'Write a file called notes.txt with three lines.', needsTask: true },
@@ -363,6 +369,7 @@ describe('the #977 measurement tool', () => {
     turnOutputTokens: 10,
     calls: [],
     opening: '',
+    reply: '',
     routingNarration: false,
     launchNarration: false,
     replyWords: 0,
@@ -482,6 +489,7 @@ describe('the #977 measurement tool', () => {
     ["I'm passing it to the research agent.", true],
     ['Je lance la recherche avec Researcher.', true],
     ['Delegating the search now.', true],
+    ["Je prépare la page sur l'espionne qui a renseigné les services chinois.", false],
     ['Je lance la recherche.', false],
     ['Je prépare la page.', false],
     ["Je lance l'impression de la page.", false],
@@ -535,5 +543,156 @@ describe('the #977 measurement tool', () => {
     ]);
     const [off] = summarize(records);
     expect([off?.launchNarrations, off?.routingNarrations]).toEqual([1, 0]);
+    // The full reply is stored, so a later detector can re-score it for free.
+    expect(records[0]?.reply).toBe(LAUNCH_LINE);
+
+    // Without the names the same line is plain: the names plumbing is what flags it.
+    scriptedProvider();
+    const bare = await measureSpokenReasoning(db as unknown as AnyDrizzleDb, {
+      entityId,
+      agentId,
+      efforts: ['off'],
+      runs: 1,
+      requests: [{ id: 'magazine', text: 'Prépare une page magazine.', needsTask: true }],
+    });
+    vi.unstubAllGlobals();
+    expect(bare[0]?.launchNarration).toBe(false);
+  });
+
+  // Review of #1000, P1 1-5: the detector over-counted. First-person routing
+  // constructions only; the same words in someone else's sentence are content.
+  // Mutation verified: the first-person subject removed from the patterns -> red.
+  it.each([
+    'La loi répond directement à cette préoccupation.',
+    'The minister responded directly to reporters.',
+    "No action was taken at Tuesday's council.",
+    'Write it directly on the dotted line.',
+    'Il répond directement à la question du juge.',
+  ])('opensWithRoutingNarration(%j) = false (someone else is answering)', (reply) => {
+    expect(opensWithRoutingNarration(reply)).toBe(false);
+  });
+
+  it.each([
+    "Je prépare la page sur l'espionne qui a renseigné les services chinois.",
+    'Je lance le script via Google Apps Script.',
+    "I'll check the weather through January.",
+    'Je lance la transmission des fichiers.',
+    'The page delegates its layout to CSS.',
+    'Je passe au format A4.',
+    "I'll route to the museum.",
+    'Je prépare le script Java.',
+    'Je lance le montage photo.',
+    'Je cherche des infos sur Alfred Hitchcock, qui a tourné Psychose.',
+    'Je lance la recherche, qui prendra une minute.',
+  ])('launchNarratesRouting(%j) = false (content, not routing)', (line) => {
+    expect(launchNarratesRouting(line, ['Researcher', 'Lead-Dev'])).toBe(false);
+  });
+
+  it('first-person hand-over forms are narration, imperative-to-self included', () => {
+    for (const line of [
+      'Je délègue la recherche.',
+      'Je vais déléguer ça.',
+      'Je transmets la demande à mon équipe.',
+      "Je confie la rédaction à l'équipe.",
+      'Je passe la demande à un collègue.',
+      "I'll hand this over to the team.",
+      'Let me pass this to a colleague.',
+      "I'm delegating this.",
+    ]) {
+      expect({ line, hit: launchNarratesRouting(line, []) }).toEqual({ line, hit: true });
+    }
+  });
+
+  it('a teammate name matches as written (case-sensitive), whole word only', () => {
+    expect(launchNarratesRouting('Je lance la recherche pour Bob.', ['Bob'])).toBe(true);
+    expect(launchNarratesRouting('Je lance la recherche pour bob.', ['Bob'])).toBe(false);
+    expect(launchNarratesRouting('Je lance la recherche pour Bobby.', ['Bob'])).toBe(false);
+    expect(launchNarratesRouting('Je cherche un researcher.', ['Researcher'])).toBe(false);
+  });
+
+  it('only display names and slugs that cannot be common words are matched', () => {
+    expect(
+      teammateMatchNames([
+        { name: 'Researcher', slug: 'researcher' },
+        { name: 'Lead Dev', slug: 'lead-dev' },
+        { name: 'Java', slug: 'java' },
+        { name: 'Montage', slug: 'montage' },
+        { name: 'Agent 2', slug: 'agent_2' },
+      ]),
+    ).toEqual(['Researcher', 'Lead Dev', 'lead-dev', 'Java', 'Montage', 'Agent 2', 'agent_2']);
+  });
+
+  it('reads as teammates only the ACTIVE agents the measured agent can delegate to', async () => {
+    const { entityId, agentId } = await seedJob(db, { model: MODEL, role: 'orchestrator' });
+    const mk = async (name: string, slug: string, active: boolean) =>
+      (
+        await db
+          .insert(agents)
+          .values({ entityId, name, slug, personality: 'x', role: 'agent', active })
+          .returning({ id: agents.id })
+      )[0]!.id;
+    const child = await mk('Mate One', 'mate-one', true);
+    const inactive = await mk('Mate Off', 'mate-off', false);
+    await mk('Stranger', 'stranger-x', true);
+    for (const subAgentId of [child, inactive]) {
+      await db.insert(agentAssignments).values({ orchestratorId: agentId, subAgentId, entityId });
+    }
+    const [self] = await db
+      .select({ name: agents.name })
+      .from(agents)
+      .where(eq(agents.id, agentId));
+    const names = await readDelegableTeammates(db as unknown as AnyDrizzleDb, agentId);
+    expect(names).toEqual(['Mate One', 'mate-one']);
+    expect(names).not.toContain(self!.name);
+  });
+
+  // Review of #1000, P2-8: each column is counted over the turns it is measured
+  // on, what the model DID, with its own denominator.
+  it('counts each narration over the turns where the model did that thing', () => {
+    const answered = (over: Partial<TurnRecord>) => turn({ calledRunTask: false, ...over });
+    const launched = (over: Partial<TurnRecord>) => turn({ calledRunTask: true, ...over });
+    const [row] = summarize([
+      // 10 no-task requests, answered, none narrating
+      ...Array.from({ length: 10 }, () => answered({})),
+      // 3 TASK requests that answered instead of launching, all narrating
+      ...Array.from({ length: 3 }, () => answered({ needsTask: true, routingNarration: true })),
+      // 2 no-task requests escalated by mistake, one narrating its launch
+      launched({ rightDecision: false, launchNarration: true }),
+      launched({ rightDecision: false }),
+      // an error turn counts in neither
+      turn({ error: 'llm_error' }),
+    ]);
+    expect({
+      reply: [row?.routingNarrations, row?.answeredTurns],
+      launch: [row?.launchNarrations, row?.launchedTurns],
+    }).toEqual({ reply: [3, 13], launch: [1, 2] });
+    expect(summaryTable([row!])).toContain('| 3/13 | 1/2 |');
+  });
+
+  // Stored replies let a later detector re-score old runs with no model call.
+  it('re-scores stored records from their full reply, and refuses records without one', () => {
+    const rows = [
+      turn({
+        reply: 'Je réponds directement : il fait froid. Très froid, vraiment.',
+        routingNarration: false,
+      }),
+      turn({
+        calledRunTask: true,
+        needsTask: true,
+        reply: 'Je lance la recherche avec Researcher.',
+        launchNarration: false,
+      }),
+      turn({ calledRunTask: true, needsTask: true, reply: 'Je lance la recherche.' }),
+    ];
+    const rescored = rescoreRecords(rows, ['Researcher']);
+    expect(
+      rescored.map((r) => [r.routingNarration, r.launchNarration, r.opening, r.replyWords]),
+    ).toEqual([
+      [true, false, 'Je réponds directement : il fait froid.', 9],
+      [false, true, 'Je lance la recherche avec Researcher.', 6],
+      [false, false, 'Je lance la recherche.', 4],
+    ]);
+    const { reply: _r, ...noReply } = rows[0]!;
+    expect(() => rescoreRecords([noReply as TurnRecord], [])).toThrow(/full reply/);
   });
 });
