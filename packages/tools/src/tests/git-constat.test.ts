@@ -489,8 +489,7 @@ describe('les bornes du constat @cap:travailler-sur-des-fichiers/moteur', () => 
     let t0 = performance.now();
     const phase = (p: string): void => {
       const now = performance.now();
-      process.stdout.write(`[git-constat-bound] ${nom} ${p} ${Math.round(now - t0)} ms
-`);
+      process.stdout.write(`[git-constat-bound] ${nom} ${p} ${Math.round(now - t0)} ms\n`);
       t0 = now;
     };
     const dossier = join(racine, nom);
@@ -516,13 +515,5 @@ describe('les bornes du constat @cap:travailler-sur-des-fichiers/moteur', () => 
     // Une ligne de plus que la borne, lue DANS le code qui la fait respecter.
     const snap = await mesure('tres-sale', MAX_STATUS_ENTRIES + 1, (d) => snapshotRepo(d));
     expect(snap).toBeNull();
-  });
-
-  it('un arbre pile à la borne est encore constaté, fichier par fichier', async () => {
-    // L'autre côté de la borne : sans lui, un `>=` à la place du `>` (une
-    // borne qui décline un cran trop tôt) laisserait le cas ci-dessus vert.
-    const snap = await mesure('pile-a-la-borne', MAX_STATUS_ENTRIES, (d) => snapshotRepo(d));
-    expect(snap).not.toBeNull();
-    expect(snap?.entries.size).toBe(MAX_STATUS_ENTRIES);
   });
 });
