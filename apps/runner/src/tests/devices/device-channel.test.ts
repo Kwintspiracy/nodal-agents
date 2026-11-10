@@ -271,9 +271,17 @@ function makeDeps(
 
 // ─── The streams ─────────────────────────────────────────────────────────────
 
-const opened: AbortController[] = [];
-afterEach(() => {
-  for (const ctl of opened.splice(0)) ctl.abort();
+/**
+ * Every stream a test opens, with the promise of its end. The teardown below
+ * closes each one and AWAITS that end (the server's `stop` closes the body, so
+ * the reader's `done` settles only once the subscriber is gone from the bus).
+ * No test then depends on when the streams of the tests before it close.
+ */
+const opened: { ctl: AbortController; done: Promise<void> }[] = [];
+afterEach(async () => {
+  const streams = opened.splice(0);
+  for (const { ctl } of streams) ctl.abort();
+  await Promise.all(streams.map((s) => s.done));
   telegramSends.length = 0;
 });
 
@@ -290,12 +298,12 @@ async function listenTo(
   headers: Record<string, string> = {},
 ): Promise<Listener> {
   const ctl = new AbortController();
-  opened.push(ctl);
   const res = await app.fetch(
     new Request(`http://localhost${path}`, { headers, signal: ctl.signal }),
   );
   if (res.status !== 200) return { status: res.status, events: [], gestures: () => [] };
   const reader = readSse(res);
+  opened.push({ ctl, done: reader.done });
   await waitFor(() => reader.events.length > 0);
   return {
     status: 200,
@@ -1169,8 +1177,9 @@ describe('a job launched by voice from a device ends on that device (#945) @cap:
       result: 'Done.',
     });
     const onB = await device(app, deviceB);
-    // The streams of the tests before are closed: only device B listens.
-    await waitFor(() => jobEvents.listenersOf(x.entityId, null, deviceA) === 0);
+    // The tests before closed and awaited their own streams (afterEach):
+    // only device B listens, and that is checked, not waited for.
+    expect(jobEvents.listenersOf(x.entityId, null, deviceA)).toBe(0);
     const finished = await publishJobEnded(db as RunnerDeps['db'], job);
     expect(speakFinishedJob(db as RunnerDeps['db'], finished!)).toBeNull();
     await settle();
