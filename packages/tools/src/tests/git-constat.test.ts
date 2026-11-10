@@ -474,15 +474,36 @@ describe('quel git est lancé @cap:travailler-sur-des-fichiers/moteur', () => {
 });
 
 describe('les bornes du constat @cap:travailler-sur-des-fichiers/moteur', () => {
-  it('un arbre plus sale que la borne fait DÉCLINER le constat, il ne l’approxime pas', async () => {
-    const sale = join(racine, 'tres-sale');
-    await mkdir(sale, { recursive: true });
-    await run('git', ['init', '--initial-branch=main'], { cwd: sale, windowsHide: true });
-    // Une ligne de plus que la borne : mille et un fichiers non suivis.
-    await Promise.all(
-      Array.from({ length: 1001 }, (_, i) => writeFile(join(sale, `f${i}.txt`), `${i}\n`)),
-    );
-    expect(await snapshotRepo(sale)).toBeNull();
-    await rm(sale, { recursive: true, force: true });
-  });
+  // MESURE TEMPORAIRE (issue #1034) : 5 passes de l'ancien motif, durée par phase.
+  for (let essai = 0; essai < 5; essai += 1) {
+    it(`MESURE ${essai} un arbre plus sale que la borne`, async () => {
+      const t: Record<string, number> = {};
+      let t0 = performance.now();
+      const lap = (nom: string): void => {
+        const now = performance.now();
+        t[nom] = Math.round(now - t0);
+        t0 = now;
+      };
+      const sale = join(racine, `tres-sale-${essai}`);
+      await mkdir(sale, { recursive: true });
+      await run('git', ['init', '--initial-branch=main'], { cwd: sale, windowsHide: true });
+      lap('init');
+      await Promise.all(
+        Array.from({ length: 1001 }, (_, i) =>
+          writeFile(
+            join(sale, `f${i}.txt`),
+            `${i}
+`,
+          ),
+        ),
+      );
+      lap('writes');
+      const snap = await snapshotRepo(sale);
+      lap('snapshot');
+      await rm(sale, { recursive: true, force: true });
+      lap('rm');
+      console.info(`[MESURE-1034] essai=${essai} ${JSON.stringify(t)}`);
+      expect(snap).toBeNull();
+    }, 180_000);
+  }
 });
