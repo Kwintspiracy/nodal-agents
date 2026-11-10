@@ -31,7 +31,7 @@ import { constatedGitWrites, snapshotGitAvant } from '../verification/git-consta
 import { snapshot } from '@nodal-agents/checkpoints';
 import type { ApprovalRule, ExecuteOptions, ToolContext } from '../types';
 import { noWorkspaceSandbox } from '@nodal-agents/sandbox';
-import { writeManyFiles } from '@nodal-agents/test-kit';
+import { mapBounded, writeManyFiles } from '@nodal-agents/test-kit';
 import { autonomousRows } from './autonomy-rows-fixture';
 
 const run = promisify(execFile);
@@ -242,7 +242,8 @@ describe('a shell write is constated without a git root at the workspace (#590) 
 async function photographie(nom: string, fichiers: Record<string, string>, timeoutMs?: number) {
   const ws = join(racine, nom);
   await mkdir(ws, { recursive: true });
-  for (const [f, contenu] of Object.entries(fichiers)) await writeFile(join(ws, f), contenu);
+  // `gros` en passe 1100 : une file bornée, pas 1100 écritures l'une après l'autre.
+  await mapBounded(Object.entries(fichiers), ([f, contenu]) => writeFile(join(ws, f), contenu));
   const store = join(racine, `store-${nom}`);
   await snapshot(store, ws, 'le tour', timeoutMs === undefined ? {} : { timeoutMs });
   return { ws, store, reel: normalizePath(await realpath(ws)) };

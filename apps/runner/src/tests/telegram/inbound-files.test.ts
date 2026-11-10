@@ -846,7 +846,7 @@ describe('the inbound folder of a channel, keyed by job, and the layout before i
     );
     // Rien de promis n'est effacé, ni chez A, ni chez B…
     expect(await readFile(join(folder, aJob, 'facture.pdf'), 'utf8')).toBe('A');
-    const bLeft = await Promise.all(bJobs.map(({ id }) => readdir(join(folder, id))));
+    const bLeft = await mapBounded(bJobs, ({ id }) => readdir(join(folder, id)));
     expect(bLeft).toEqual(bJobs.map(() => ['scan.pdf']));
     // … et le fichier de trop est dit au modèle, avec sa raison.
     expect(inB.parts[1]!.text).toContain('NOT received');
@@ -862,10 +862,8 @@ describe('the inbound folder of a channel, keyed by job, and the layout before i
     expect(inA.parts[1]!.text).toContain(`Saved at shared/telegram/${inA.jobId}/a2.pdf`);
     expect(await readFile(join(folder, inA.jobId, 'a2.pdf'))).toEqual(INVOICE);
 
-    await Promise.all(
-      [{ id: aJob }, ...bJobs].map(({ id }) =>
-        rm(join(folder, id), { recursive: true, force: true }),
-      ),
+    await mapBounded([{ id: aJob }, ...bJobs], ({ id }) =>
+      rm(join(folder, id), { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }),
     );
   }, 180_000);
 
@@ -1408,13 +1406,11 @@ describe('a received file opens at the path the model is given (#910) @cap:parle
           )
           .returning({ id: agentJobs.id });
         await mkdir(discord, { recursive: true });
-        await Promise.all(
-          rows.map(async ({ id }) => {
-            filled.push(id);
-            await mkdir(join(discord, id));
-            await writeFile(join(discord, id, 'x.png'), 'x');
-          }),
-        );
+        await mapBounded(rows, async ({ id }) => {
+          filled.push(id);
+          await mkdir(join(discord, id));
+          await writeFile(join(discord, id, 'x.png'), 'x');
+        });
       }
 
       const { job } = await deliverDiscord(
@@ -1451,8 +1447,8 @@ describe('a received file opens at the path the model is given (#910) @cap:parle
         },
       ]);
       expect(request.text).toContain(reason);
-      await Promise.all(
-        filled.map((id) => rm(join(discord, id), { recursive: true, force: true })),
+      await mapBounded(filled, (id) =>
+        rm(join(discord, id), { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }),
       );
     },
     180_000,
