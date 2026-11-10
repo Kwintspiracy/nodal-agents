@@ -2025,7 +2025,7 @@ ${sentence}`).length > 0,
       /which path you took/i,
       /choice between the two/i,
       /never says which/i,
-      /(?:say|mention|state|announce|explain)[^.\n]{0,60}(?:answer(?:ing)? directly|escalat|run_task)/i,
+      /\b(?:say|mention|state|announce|explain|name|narrate)\b[^.;\n]{0,40}\b(?:which path|why you|answer(?:ing)? directly|escalat\w*|routing|teammate)/i,
     ];
     const { entityId, root, worker } = await seedTeam();
     const agentsUnderTest = [
