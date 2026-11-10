@@ -25,6 +25,7 @@ import {
   verificationRuns,
 } from '@nodal-agents/db';
 import { projectKey } from '@nodal-agents/shared';
+import { writeManyFiles } from '@nodal-agents/test-kit';
 import { randomUUID } from 'node:crypto';
 import { mkdtemp, mkdir, readFile, rm, readdir, symlink, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
@@ -650,9 +651,10 @@ describe('getProjectPageAction', () => {
     const chemin = `${racine.replace(/\\/g, '/')}/plein`;
     await mkdir(chemin, { recursive: true });
     // 205 entrées : 200 montrées, 5 dites.
-    for (let i = 0; i < 205; i += 1) {
-      await writeFile(join(chemin, `f${String(i).padStart(3, '0')}.txt`), 'x');
-    }
+    await writeManyFiles(chemin, 205, {
+      nameOf: (i) => `f${String(i).padStart(3, '0')}.txt`,
+      contentOf: () => 'x',
+    });
     const id = await enregistre({ path: chemin, name: 'Plein' });
 
     const result = await getProjectPageAction(id);
