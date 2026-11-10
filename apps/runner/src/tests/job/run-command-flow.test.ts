@@ -17,7 +17,6 @@ import { mkdtemp, rm, realpath, readFile, writeFile } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
-import { existsSync } from 'node:fs';
 import {
   createSandbox,
   defaultSandbox,
@@ -42,7 +41,7 @@ import { join } from 'node:path';
 import { MockLanguageModelV3 } from 'ai/test';
 import { generateText } from 'ai';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
-import { readCounter, watchProcess, type ProcessWatch } from '@nodal-agents/test-kit';
+import { readCounter, waitForFile, watchProcess, type ProcessWatch } from '@nodal-agents/test-kit';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { cancelJobTree, eq } from '@nodal-agents/db';
 import {
@@ -268,7 +267,9 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await rm(workspaceDir, { recursive: true, force: true });
+  // Sous Windows un enfant (le serveur de #628) tient le dossier un instant après
+  // la fin du job : `EBUSY … rmdir` (run 42847750320). On réessaie, comme #1034.
+  await rm(workspaceDir, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
 });
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -1286,12 +1287,38 @@ describe('run_command — what reaches a printer or the screen asks, and a decli
 describe('run_command — what a command starts lives for the JOB, and Stop kills the running command (#628, #750) @cap:executer-une-commande/moteur', () => {
   let ruleId: string;
   const node = process.execPath;
-  const waitFor = (path: string): Promise<void> =>
-    (async () => {
-      for (let i = 0; i < 400 && !existsSync(path); i++) {
-        await new Promise((r) => setTimeout(r, 50));
+  // Attendre qu'un fichier apparaisse, et le DIRE quand il ne vient pas (#1042).
+  // Avant : 400 relectures de 50 ms puis un retour SILENCIEUX, et le test lisait
+  // un fichier absent (`ENOENT … server-<job>.pid`), ce qui cachait que la
+  // commande 1 n'avait pas démarré son serveur. La borne (45 s) reste sous le
+  // délai du test (60 s) pour que ce message arrive avant celui de vitest ; ce
+  // n'est pas un délai relevé, car l'attente s'arrête dès que le job a fini
+  // sans écrire le fichier : il ne viendra plus, et l'attente ne dépend alors
+  // d'aucune horloge. L'erreur porte ce que le job a vu : le résultat de chaque
+  // run_command, lu dans `agent_jobs.messages`.
+  const WAIT_FOR_FILE_MS = 45_000;
+  const waitFor = (path: string, jobId: string, running: Promise<unknown>): Promise<number> =>
+    waitForFile(path, {
+      timeoutMs: WAIT_FOR_FILE_MS,
+      settled: running,
+      explain: async () =>
+        `what the job saw, run_command results: ${await runCommandResults(jobId)}`,
+    });
+  const runCommandResults = async (jobId: string): Promise<string> => {
+    const [row] = await db
+      .select({ messages: agentJobs.messages })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, jobId));
+    const results: string[] = [];
+    for (const msg of (row?.messages ?? []) as Array<{ role: string; content: unknown }>) {
+      if (msg.role !== 'tool' || !Array.isArray(msg.content)) continue;
+      for (const block of msg.content as Array<Record<string, unknown>>) {
+        if (block['type'] === 'tool-result' && block['toolName'] === 'run_command')
+          results.push(JSON.stringify(block['output']));
       }
-    })();
+    }
+    return results.length === 0 ? 'none recorded yet' : results.join(' | ');
+  };
   // Chaque pid est SURVEILLÉ dès que le test le lit (test-kit process-watch.ts) :
   // sous Windows, le pid d'une commande morte peut déjà servir à un inconnu, et
   // `process.kill(pid, 0)` la dirait vivante (« expected true to be false »).
@@ -1361,7 +1388,7 @@ describe('run_command — what a command starts lives for the JOB, and Stop kill
     ]);
     const started = Date.now();
     const running = executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
-    await waitFor(pidFile);
+    await waitFor(pidFile, job.id, running);
     // Relu jusqu'à un entier : le fichier existe avant que son pid y soit écrit.
     const watch = await watched(readCounter(pidFile));
     expect(watch.alive()).toBe(true);
@@ -1422,7 +1449,7 @@ describe('run_command — what a command starts lives for the JOB, and Stop kill
     const running = executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
     // Surveillé pendant que le job tourne, le serveur vivant : lu après la fin
     // du job, son pid aurait déjà pu être redonné.
-    await waitFor(info);
+    await waitFor(info, job.id, running);
     const pid = readCounter(info);
     const watch = await watched(pid);
     const result = await running;
