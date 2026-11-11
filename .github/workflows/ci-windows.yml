@@ -32,6 +32,9 @@ jobs:
       - name: Measure reads (idle, before)
         timeout-minutes: 5
         run: node scripts/exp-measure-process-table.mjs before 3 env
+      - name: Which dropped variable does the read need
+        timeout-minutes: 10
+        run: node scripts/exp-measure-process-table.mjs bisect 1 bisect
       - name: Measure reads inside a turbo task
         timeout-minutes: 5
         run: pnpm exec turbo run exp-measure --filter=nodal-agents
@@ -40,15 +43,6 @@ jobs:
         working-directory: apps/cli
         run: >-
           pnpm exec vitest run
-          src/tests/down-fresh-record.test.ts
-          src/tests/process-tree.test.ts
-          src/tests/recorded-tree.test.ts
-      - name: Real-table tests of apps/cli, alone
-        timeout-minutes: 20
-        env:
-          NODAL_VITEST_REPORT_DIR: ${{ runner.temp }}/vitest-reports
-        run: >-
-          pnpm exec turbo run test --filter=nodal-agents --
           src/tests/down-fresh-record.test.ts
           src/tests/process-tree.test.ts
           src/tests/recorded-tree.test.ts
