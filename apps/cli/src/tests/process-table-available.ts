@@ -39,7 +39,7 @@
 // The skip announces itself in the run output. A silent skip would be the thing
 // to fear here; this one says what it could not do and why.
 
-import { processSnapshotWin, lastSnapshotFailure } from '../lib/processes.ts';
+import { ProcessReading, lastSnapshotFailure } from '../lib/processes.ts';
 
 export interface ProcessTableProbe {
   /** True when the OS answered with a usable process table. */
@@ -52,8 +52,13 @@ async function probe(): Promise<ProcessTableProbe> {
   if (process.platform !== 'win32') {
     return { available: false, reason: 'not Windows — these cases are Windows-only' };
   }
-  const snapshot = await processSnapshotWin();
-  if (snapshot.size > 0) return { available: true, reason: '' };
+  // The very reading `down` and `up` take before they signal anything — same
+  // function, same budget (#1046). Since that one reading is all a shutdown
+  // needs from the machine, a probe asking anything else would guard on the
+  // wrong question: until #1046, `down` also needed every later 6 s look to
+  // answer, this probe did not ask that, and the cases it let through failed.
+  const reading = await ProcessReading.take();
+  if (reading.answered) return { available: true, reason: '' };
   return {
     available: false,
     reason: lastSnapshotFailure ?? 'the process table came back empty, with no reason reported',
