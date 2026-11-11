@@ -392,3 +392,92 @@ describe('killPidTree — one reading held across a shutdown (#1046) @cap:instal
     expect(stderrLines.join('')).not.toContain('TABLE_UNREADABLE');
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('killPidTree — the table is read again only when a member is still alive (#1046) @cap:installer-et-demarrer/moteur', () => {
+  // The root kill usually takes the whole tree with it, and a dead member has
+  // nothing left to confirm. Liveness is asked without the table (signal 0); an
+  // alive member still gets the full re-read and the identity check.
+  const ROOT_ROW: Row = { pid: ROOT, ppid: 4, ticks: TICK_RECORDED, name: 'node.exe' };
+  const MEMBER_ROW: Row = { pid: LIVE_MEMBER, ppid: ROOT, ticks: TICK_RECORDED, name: 'node.exe' };
+  /** A number no process carries: past every pid range Windows or Linux hands out. */
+  const DEAD_MEMBER = 2_147_483_632;
+  const DEAD_ROW: Row = { pid: DEAD_MEMBER, ppid: ROOT, ticks: TICK_RECORDED, name: 'conhost.exe' };
+  const RECORD = { pid: ROOT, name: 'node.exe', startedAt: TICK_RECORDED };
+
+  /** Process-table queries made AFTER the caller's own reading. */
+  function rereads(callsBefore: number): number {
+    return mockExeca.mock.calls.slice(callsBefore).filter((c) => c[0] === 'powershell').length;
+  }
+
+  it('reads nothing more when every member died with the root, and signals only the root', async () => {
+    // Every later look would fail: a re-read would print KILL_UNCONFIRMED.
+    tableSequence([[ROOT_ROW, DEAD_ROW], []]);
+    const proof = await proofOf(RECORD);
+    const before = mockExeca.mock.calls.length;
+
+    // kill-by-pid: execa is mocked in this file, nothing is signalled.
+    await killPidTree(ROOT, new Set(), proof);
+
+    expect(rereads(before)).toBe(0);
+    expect(taskkills()).toEqual([['/T', '/F', '/PID', String(ROOT)]]);
+    expect(stderrLines.join('')).not.toContain('KILL_');
+  });
+
+  it('re-reads and kills a member still alive that the second reading vouches for', async () => {
+    tableSequence([
+      [ROOT_ROW, MEMBER_ROW, DEAD_ROW],
+      [ROOT_ROW, MEMBER_ROW],
+    ]);
+    const proof = await proofOf(RECORD);
+    const before = mockExeca.mock.calls.length;
+
+    // kill-by-pid: execa is mocked in this file, nothing is signalled.
+    await killPidTree(ROOT, new Set(), proof);
+
+    expect(rereads(before)).toBe(1);
+    expect(taskkills()).toEqual([
+      ['/T', '/F', '/PID', String(ROOT)],
+      ['/F', '/PID', String(LIVE_MEMBER)],
+    ]);
+    expect(stderrLines.join('')).not.toContain('KILL_');
+  });
+
+  it('refuses a member that is alive only because a stranger took its number', async () => {
+    // Signal 0 says the number is alive; it does not say whose it is. The
+    // re-read says: another executable, another generation. Refused.
+    tableSequence([
+      [ROOT_ROW, MEMBER_ROW],
+      [{ ...MEMBER_ROW, ppid: 4, ticks: TICK_OTHER, name: 'chrome.exe' }],
+    ]);
+    const proof = await proofOf(RECORD);
+    const before = mockExeca.mock.calls.length;
+
+    // kill-by-pid: execa is mocked in this file, nothing is signalled.
+    await killPidTree(ROOT, new Set(), proof);
+
+    expect(rereads(before)).toBe(1);
+    expect(taskkills()).toEqual([['/T', '/F', '/PID', String(ROOT)]]);
+    expect(stderrLines.join('')).toContain(`KILL_REFUSED code=BINARY_CHANGED pid ${LIVE_MEMBER}`);
+  });
+
+  it('sweeps an alive member on the earlier reading when the table will not answer, word for word', async () => {
+    tableSequence([[ROOT_ROW, MEMBER_ROW, DEAD_ROW], [], []]);
+    const proof = await proofOf(RECORD);
+
+    // kill-by-pid: execa is mocked in this file, nothing is signalled.
+    await killPidTree(ROOT, new Set(), proof);
+
+    expect(taskkills()).toEqual([
+      ['/T', '/F', '/PID', String(ROOT)],
+      ['/F', '/PID', String(LIVE_MEMBER)],
+    ]);
+    // Only the kill lines: the reading's own warning about the timeout is
+    // printed too, by `readProcessTableWin`, and is not this rule's.
+    expect(stderrLines.filter((l) => l.startsWith('KILL_'))).toEqual([
+      `KILL_UNCONFIRMED code=TABLE_UNREADABLE pid=${ROOT} the tree members are swept on the ` +
+        'earlier reading: the table would not answer a second time\n',
+    ]);
+  });
+});

@@ -108,6 +108,14 @@ async function runDownCaptured(
     err.mockRestore();
     out.mockRestore();
   }
+  const tookMs = Date.now() - started;
+  // The readings of the table that did NOT answer during this `down`, by the
+  // budget they were given: `readProcessTableWin` says so once per reading.
+  const failedReadings = said
+    .join('')
+    .split('\n')
+    .filter((line) => line.includes('Could not read the process table ('))
+    .map((line) => /timed out after (\d+)ms/.exec(line)?.[1] ?? 'other');
   // `down`'s own reading did not answer: it refused every pid BEFORE any kill,
   // with this exact line. A refusal from anywhere else does not match it.
   const text = printed.join('\n');
@@ -118,7 +126,10 @@ async function runDownCaptured(
   );
   if (unanswered) skipUnanswered(ctx, "down's own reading of the process table did not answer");
   // A measurement, not a verdict: #1046 was a `down` that took 56.9 s to fail.
-  process.stderr.write(`[tests] down-fresh-record: runDown took ${Date.now() - started} ms\n`);
+  process.stderr.write(
+    `[tests] down-fresh-record: runDown took ${tookMs} ms; ` +
+      `readings that did not answer: ${failedReadings.length} [${failedReadings.join(', ')}]\n`,
+  );
   return { stderr: said.join('') };
 }
 

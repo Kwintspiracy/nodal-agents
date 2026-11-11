@@ -509,15 +509,33 @@ async function reconfirmMembers(
   ownedPostgresPids: ReadonlySet<number>,
   reading: ProcessReading,
 ): Promise<LiveProcess[]> {
+  // ONLY WHAT IS STILL ALIVE IS RE-READ FOR (#1046). The root kill usually
+  // takes the whole tree with it — `/T` does by design, and every console
+  // process Windows starts has at least a `conhost.exe` under it — and a member
+  // that is dead has nothing left to confirm: it is not signalled, here or
+  // below. Re-reading the table for it cost two timed-out PowerShell calls per
+  // root on a machine whose table needs 11 s to answer, and could change
+  // nothing.
+  //
+  // Asked WITHOUT the table (`isPidAlive`, signal 0), and that is safe against
+  // pid reuse because the answer can only take a member OUT of consideration,
+  // never let one through. "Dead" is the OS saying no process carries the
+  // number now, so nothing can be killed under it. "Alive" says nothing about
+  // WHO carries it — ours, or a stranger that took the freed number — and that
+  // is exactly why an alive member still goes through the full re-read and the
+  // identity check below, and is refused when the row is not the one the first
+  // reading recorded.
+  const alive = members.filter((m) => isPidAlive(m.pid));
+  if (alive.length === 0) return [];
   if (!(await reading.refresh(SHUTDOWN_SNAPSHOT_BUDGET_MS))) {
     process.stderr.write(
       `KILL_UNCONFIRMED code=TABLE_UNREADABLE pid=${rootPid} the tree members are swept on the ` +
         `earlier reading: the table would not answer a second time\n`,
     );
-    return [...members];
+    return alive;
   }
   const out: LiveProcess[] = [];
-  for (const member of members) {
+  for (const member of alive) {
     const verdict = confirmRecordedPid({
       // An empty name is a row WMI gave us without one; offering it as a
       // recorded name would read as "it changed" the moment the second reading
@@ -708,8 +726,10 @@ export async function killPidTree(
     //     is the floor.
     const vouched =
       killable.length > 0 ? await reconfirmMembers(killable, pid, owned, reading) : [];
+    // Every member judged here is struck, killed or not: a dead one's number is
+    // free, and striking can only ever take a row away from the reading.
+    spent.push(...killable.map((m) => m.pid));
     for (const child of vouched) {
-      spent.push(child.pid);
       if (!isPidAlive(child.pid)) continue;
       try {
         await execa('taskkill', ['/F', '/PID', String(child.pid)], { reject: false });
