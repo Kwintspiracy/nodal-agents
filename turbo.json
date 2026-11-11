@@ -31,7 +31,6 @@
         "OS",
         "NUMBER_OF_PROCESSORS",
         "PROCESSOR_ARCHITECTURE",
-        "PSModulePath",
         "PSModuleAnalysisCachePath"
       ]
     },
