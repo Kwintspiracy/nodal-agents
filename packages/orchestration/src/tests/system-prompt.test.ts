@@ -1937,7 +1937,9 @@ ${sentence}`).length > 0,
     'offer to do more, because the person asks again if they want more. ' +
     'A warning they need in order not to be misled stays. ' +
     'A reply the person asked to be long, a story, an email or a list, keeps the length asked. ' +
-    'Open with one short sentence: it is spoken while the rest is still being written.';
+    'Open with one short sentence: it is spoken while the rest is still being written. ' +
+    // #1049 — chosen word for word by the owner, measured 15/40 -> 1/40.
+    'When you start a task or hand it to a teammate, do not say who it goes to or why: say only what is being done.';
 
   it('a spoken reply is stated once in Job context, on every surface that carries it (#941)', async () => {
     const { entityId, root } = await seedTeam();
@@ -2013,20 +2015,24 @@ ${sentence}`).length > 0,
     expect(typed).not.toContain('Open with one short sentence');
   });
 
-  // #995 (replaces #977's test) — #977 added a sentence telling the reply to keep
-  // the reply-or-run_task choice silent; naming the choice made the model narrate
-  // it ("This is a general knowledge question I can answer directly…"), measured
-  // 16/130 with the sentence, 4/130 without. The general guard: on every chat
-  // turn, typed and spoken, orchestrator and worker, the built prompt never
-  // describes the routing choice to the reply. A job prompt is unchanged by it.
-  // Mutation verified: the #977 sentence put back in the surface line → red.
-  it('no chat prompt tells the reply anything about the routing choice (#995)', async () => {
-    const FORBIDDEN = [
-      /which path you took/i,
-      /choice between the two/i,
-      /never says which/i,
-      /(?:say|mention|state|announce|explain)[^.\n]{0,60}(?:answer(?:ing)? directly|escalat|run_task)/i,
-    ];
+  // #995 — A CHANGE DETECTOR, not a proof of behaviour. The proof is the measure.
+  //
+  // The chat surface line decides, among other things, whether the model narrates
+  // its routing decision ("This is a general knowledge question I can answer
+  // directly…", "Je transmets à Researcher, qui gère…"). Four wordings were
+  // measured (#977's, the current one, and three more); none was the lever, and a
+  // regex guard over the wording was tried twice and produced a P2 each time:
+  // a regex cannot enumerate every paraphrase. So the line is PINNED, whole, as
+  // the real built prompt emits it. Any edit of it fails here, on purpose.
+  //
+  // Before changing this line: re-measure with `spoken-reasoning-cli` (both
+  // narration columns, reasoning off, at least 5 runs per request), put the
+  // figures in the PR body, and update the pinned text in the SAME PR.
+  // Mutation verified: one word of the surface line changed → red; restored → green.
+  const SURFACE_LINE =
+    '- surface: in-app dashboard chat — you are talking directly with the user; reply in plain text. For conversation or recalling facts, just reply (your durable facts are loaded above). For ANY action — using a connector or skill, delegating to your team, sending/fetching/creating/publishing, or (as the workspace ROOT) creating agents, skills, MCP servers, connectors or automations — the `run_task` tool is the only way it happens. The user’s own messages reach the job as they wrote them; what you write in it is your note beside them, read as yours. CRITICAL: writing in text that you will do something (e.g. "I\'m starting X…") does NOT start anything — ONLY an actual `run_task` tool call performs the action. If you intend to act, the `run_task` tool call is mandatory; a text-only reply about an action accomplishes nothing. `run_task` is your gateway to everything you can do — NEVER tell the user you cannot do something that an action could accomplish; escalate it via `run_task` instead. You may add a one-line acknowledgment in your own voice alongside the call, but the `run_task` call is what actually does the work. Do not call any other named tool on this surface.';
+
+  it('the chat surface line is exactly the measured one (#995 tripwire: re-measure before editing it)', async () => {
     const { entityId, root, worker } = await seedTeam();
     const agentsUnderTest = [
       makeAgent(root.id, entityId, root.personality, 'orchestrator'),
@@ -2040,24 +2046,32 @@ ${sentence}`).length > 0,
           replyRendering,
         });
         const surfaceLine = chat.split('\n').find((l) => l.startsWith('- surface: in-app'));
-        // The surface line is really there, and still states the two paths as facts.
-        expect(surfaceLine).toContain('For conversation or recalling facts, just reply');
-        expect(surfaceLine).toContain('run_task');
-        for (const re of FORBIDDEN) {
-          expect({ role: agent.role, replyRendering, re: String(re), hit: re.test(chat) }).toEqual({
-            role: agent.role,
-            replyRendering,
-            re: String(re),
-            hit: false,
-          });
-        }
+        expect(
+          surfaceLine,
+          'The chat surface line changed. It drives routing narration (#995): re-measure with ' +
+            'spoken-reasoning-cli (both narration columns, reasoning off, >= 5 runs per request), ' +
+            'put the figures in the PR body, and update SURFACE_LINE in the same PR.',
+        ).toBe(SURFACE_LINE);
       }
-      const job = await buildSystemPrompt(agent, db, {
-        origin: 'dashboard',
-        replyRendering: 'spoken',
-        availableToolNames: [...ALWAYS_ON_TOOLS],
-      });
-      for (const re of FORBIDDEN) expect(re.test(job)).toBe(false);
+    }
+  });
+
+  // History, cheap to keep: the sentence #977 added, and the reason it left.
+  it('the sentence #977 added to the surface line is not in any chat prompt (#995)', async () => {
+    const { entityId, root, worker } = await seedTeam();
+    for (const agent of [
+      makeAgent(root.id, entityId, root.personality, 'orchestrator'),
+      makeAgent(worker.id, entityId, worker.personality),
+    ]) {
+      for (const replyRendering of ['text', 'spoken'] as const) {
+        const chat = await buildSystemPrompt(agent, db, {
+          origin: 'dashboard',
+          surface: 'chat',
+          replyRendering,
+        });
+        expect(chat).not.toContain('The choice between the two is silent');
+        expect(chat).not.toContain('which path you took');
+      }
     }
   });
 
@@ -2127,6 +2141,90 @@ ${sentence}`).length > 0,
       expect(prompt).not.toContain(BREVITY_KEEPS_WARNING);
       expect(prompt).not.toContain(BREVITY_KEEPS_LENGTH_ASKED);
       for (const never of BREVITY_NEVER) expect(prompt).not.toContain(never);
+    }
+  });
+
+  // #1049 — the acknowledgement of a launched task says what is being done, not
+  // who on the team gets it nor why. The sentence is the owner's, word for word
+  // (measured 15/40 -> 1/40 launches naming the teammate or the reason): a
+  // tripwire on the text, plus where it lives. Mutation verified: the sentence
+  // removed from `replyRenderingLine` -> red (first test); the sentence moved to
+  // the surface line / the personality-independent job block so a read reply or
+  // a delegated job carries it, or the `isDelegated` guard removed -> red (second).
+  const HANDOFF =
+    'When you start a task or hand it to a teammate, do not say who it goes to or why: say only what is being done.';
+
+  it('every surface that carries the spoken line ends it with the hand-off sentence, once (#1049)', async () => {
+    const { entityId, root, worker } = await seedTeam();
+    const surfaces: JobContext[] = [
+      { origin: 'dashboard', surface: 'chat', replyRendering: 'spoken' },
+      { origin: 'dashboard', replyRendering: 'spoken', availableToolNames: [...ALWAYS_ON_TOOLS] },
+      {
+        origin: 'telegram',
+        telegramChatId: '199791464',
+        channelDelivery: TELEGRAM_FACTS,
+        availableToolNames: withSend,
+        replyRendering: 'spoken',
+      },
+      { origin: 'dashboard', surface: 'cli-runtime', replyRendering: 'spoken' },
+    ];
+    // Any agent whose reply is spoken, not only the root.
+    for (const agent of [
+      makeAgent(root.id, entityId, root.personality, 'orchestrator'),
+      makeAgent(worker.id, entityId, worker.personality),
+    ]) {
+      for (const ctx of surfaces) {
+        const prompt = await buildSystemPrompt(agent, db, ctx);
+        const [line, ...extra] = renderingLines(prompt);
+        expect({ role: agent.role, origin: ctx.origin, surface: ctx.surface, extra }).toEqual({
+          role: agent.role,
+          origin: ctx.origin,
+          surface: ctx.surface,
+          extra: [],
+        });
+        // The last words of the line, and the only place the sentence is.
+        expect(line?.endsWith(` ${HANDOFF}`)).toBe(true);
+        expect(prompt.split(HANDOFF)).toHaveLength(2);
+      }
+    }
+  });
+
+  it('a read reply and a delegated job carry neither the spoken line nor the hand-off sentence (#1049)', async () => {
+    const { entityId, root, worker } = await seedTeam();
+    const rootAgent = makeAgent(root.id, entityId, root.personality, 'orchestrator');
+    const workerAgent = makeAgent(worker.id, entityId, worker.personality);
+    const prompts = [
+      await buildSystemPrompt(rootAgent, db, { origin: 'dashboard', surface: 'chat' }),
+      await buildSystemPrompt(rootAgent, db, {
+        origin: 'dashboard',
+        surface: 'chat',
+        replyRendering: 'text',
+      }),
+      await buildSystemPrompt(rootAgent, db, {
+        origin: 'telegram',
+        channelDelivery: TELEGRAM_FACTS,
+        availableToolNames: withSend,
+      }),
+      await buildSystemPrompt(rootAgent, db, {
+        origin: 'telegram',
+        channelDelivery: TELEGRAM_FACTS,
+        availableToolNames: withSend,
+        replyRendering: 'text',
+      }),
+      await buildSystemPrompt(rootAgent, db, { origin: 'api' }),
+      // A delegate answers its parent, even under a spoken root.
+      await buildSystemPrompt(workerAgent, db, {
+        origin: 'internal',
+        isDelegated: true,
+        delegationDepth: 1,
+        replyRendering: 'spoken',
+        availableToolNames: ALWAYS_ON_TOOLS.filter((t) => t !== 'dashboard_publish'),
+      }),
+    ];
+    for (const prompt of prompts) {
+      expect(renderingLines(prompt)).toEqual([]);
+      expect(prompt).not.toContain(HANDOFF);
+      expect(prompt).not.toContain('do not say who it goes to');
     }
   });
 

@@ -10,9 +10,13 @@
 //     the agent's stored efforts untouched.
 
 import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { spinUpTestDb } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import {
+  agentAssignments,
   agentJobs,
   agents,
   chatMessages,
@@ -24,14 +28,20 @@ import {
 } from '@nodal-agents/db';
 import {
   measureSpokenReasoning,
+  launchNarratesRouting,
+  readDelegableTeammates,
+  rescoreRecords,
+  teammateMatchNames,
   opensWithRoutingNarration,
   sentenceCount,
   summarize,
+  summaryTable,
   wordCount,
   SPOKEN_REASONING_REQUESTS,
   type MeasureRequest,
   type TurnRecord,
 } from '../../measure/spoken-reasoning.ts';
+import { loadPersonaFile, personaFingerprint } from '../../measure/persona.ts';
 import { seedJob, type Body } from '../job/tool-loading-harness.ts';
 
 vi.mock('../../../../../packages/llm/src/transport.ts', () => ({
@@ -40,6 +50,9 @@ vi.mock('../../../../../packages/llm/src/transport.ts', () => ({
 
 const MODEL = 'anthropic/claude-haiku-5.5';
 const NARRATED = 'This is a general knowledge question, so I can answer it directly. Canberra.';
+
+// Narrates only because it NAMES a teammate: no verb of hand-over in it.
+const LAUNCH_LINE = 'Je lance la recherche avec Researcher.';
 
 const REQUESTS: MeasureRequest[] = [
   { id: 'file', text: 'Write a file called notes.txt with three lines.', needsTask: true },
@@ -71,7 +84,8 @@ function scriptedProvider(): Wire[] {
         completion_tokens: completion,
         total_tokens: 100 + completion,
       };
-      const escalate = isTurn && asked.includes('notes.txt');
+      const escalate = isTurn && (asked.includes('notes.txt') || asked.includes('magazine'));
+      const launchLine = asked.includes('magazine') ? LAUNCH_LINE : null;
       const text = !isTurn
         ? 'No action.'
         : asked.includes('capital')
@@ -80,6 +94,7 @@ function scriptedProvider(): Wire[] {
       const delta = escalate
         ? {
             role: 'assistant',
+            content: launchLine ?? undefined,
             tool_calls: [
               {
                 index: 0,
@@ -103,7 +118,7 @@ function scriptedProvider(): Wire[] {
       }
       const { index: _i, ...call } = escalate ? delta.tool_calls![0]! : { index: 0 };
       const message = escalate
-        ? { role: 'assistant', content: null, tool_calls: [call] }
+        ? { role: 'assistant', content: launchLine, tool_calls: [call] }
         : { role: 'assistant', content: text };
       return new Response(
         JSON.stringify({ id: 'c', choices: [{ message, finish_reason: finish }], usage }),
@@ -275,10 +290,10 @@ describe('the #977 measurement tool', () => {
     expect((columns as unknown as { rows: unknown[] }).rows).toEqual([]);
   });
 
-  it('the default requests are 7 that need a task and 10 that do not, with the five English ones of #987', () => {
-    expect(SPOKEN_REASONING_REQUESTS).toHaveLength(17);
-    expect(SPOKEN_REASONING_REQUESTS.filter((r) => r.needsTask)).toHaveLength(7);
-    expect(new Set(SPOKEN_REASONING_REQUESTS.map((r) => r.id)).size).toBe(17);
+  it('the default requests are 9 that need a task and 11 that do not, with the five English ones of #987 and the three robot ones of #995', () => {
+    expect(SPOKEN_REASONING_REQUESTS).toHaveLength(20);
+    expect(SPOKEN_REASONING_REQUESTS.filter((r) => r.needsTask)).toHaveLength(9);
+    expect(new Set(SPOKEN_REASONING_REQUESTS.map((r) => r.id)).size).toBe(20);
     const english = SPOKEN_REASONING_REQUESTS.filter((r) => r.id.endsWith('-en')).map((r) => [
       r.text,
       r.needsTask,
@@ -358,7 +373,9 @@ describe('the #977 measurement tool', () => {
     turnOutputTokens: 10,
     calls: [],
     opening: '',
+    reply: '',
     routingNarration: false,
+    launchNarration: false,
     replyWords: 0,
     replySentences: 0,
     ...over,
@@ -409,5 +426,455 @@ describe('the #977 measurement tool', () => {
     ['Canberra. If you want, I can start a task that needs no tool.', false],
   ])('opensWithRoutingNarration(%j) = %s', (reply, expected) => {
     expect(opensWithRoutingNarration(reply)).toBe(expected);
+  });
+
+  // #995, round 2: the three requests the owner spoke, verbatim.
+  it('the robot requests of #995 are in the default list, verbatim', () => {
+    expect(
+      SPOKEN_REASONING_REQUESTS.filter((r) => r.id.endsWith('-robot')).map((r) => [
+        r.id,
+        r.text,
+        r.needsTask,
+      ]),
+    ).toEqual([
+      [
+        'weather-beijing-robot',
+        'Quelle est la météo à Pékin euh au mois de décembre en général ?',
+        false,
+      ],
+      [
+        'magazine-robot',
+        "Est-ce que tu peux me préparer une page format magazine euh au sujet euh de l'espionne en relation avec le PDG de Nvidia ?",
+        true,
+      ],
+      ['print-robot', "Du coup, est-ce que tu peux me l'imprimer maintenant ?", true],
+    ]);
+  });
+
+  // Conjugated forms of "I answer directly", every person and tense, FR and EN.
+  // Mutation verified: the conjugated-forms patterns removed -> the first rows red.
+  it.each([
+    ['Je réponds directement : à Pékin, décembre est généralement froid.', true],
+    ['Je te réponds directement : il fait froid.', true],
+    ['Je répondrai moi-même, pas besoin de tâche.', true],
+    ['Creative writing is something I can do directly. Once upon a time.', true],
+    ["I'll answer directly. Boil it six minutes.", true],
+    ['I can handle this myself: nine minutes.', true],
+    ["I'm answering directly: Canberra.", true],
+    ['Je peux le faire directement : voici une histoire.', true],
+    ['À Pékin, décembre est généralement froid, autour de -3 °C.', false],
+    ['Bien sûr. Un œuf mollet cuit en six minutes.', false],
+    ['Directement au sud de Pékin, la plaine est plate.', false],
+    ['I can do that for you: nine minutes in boiling water.', false],
+  ])('opensWithRoutingNarration(%j) = %s (conjugated forms)', (reply, expected) => {
+    expect(opensWithRoutingNarration(reply)).toBe(expected);
+  });
+
+  // The line that goes with run_task. Positives: the owner's openings, the
+  // measured ones, every verb of the family. Teammate names come from the DB.
+  // Mutation verified: the LAUNCH_NARRATION checks and the names check removed ->
+  // every positive red.
+  const MATES = ['Researcher', 'Lead-Dev'];
+  it.each([
+    [
+      'Je lance la préparation de la page magazine via Researcher, qui fera la recherche sur ce sujet avant la mise en page.',
+      true,
+    ],
+    ["Je lance l'impression de la page via Researcher, qui a la compétence d'impression.", true],
+    ['Je délègue cette recherche à Researcher, qui gère la recherche web approfondie.', true],
+    ['Je transmets la demande à Lead-Dev, qui orchestre le codage.', true],
+    [
+      'This is a single news lookup, but the team routing says substantive web research goes to Researcher, which has premium search access.',
+      true,
+    ],
+    ["Je confie ça à l'équipe.", true],
+    ["Je passe la demande à l'équipe.", true],
+    ["I'll hand this off to the team.", true],
+    ["I'm passing it to the research agent.", true],
+    ['Je lance la recherche avec Researcher.', true],
+    ['Delegating the search now.', true],
+    ["Je prépare la page sur l'espionne qui a renseigné les services chinois.", false],
+    ['Je lance la recherche.', false],
+    ['Je prépare la page.', false],
+    ["Je lance l'impression de la page.", false],
+    ['On y va, je cherche ça.', false],
+    ["I'm starting the search now.", false],
+    ['Je m’en occupe.', false],
+    ['Writing the file now.', false],
+    ['', false],
+  ])('launchNarratesRouting(%j) = %s', (line, expected) => {
+    expect(launchNarratesRouting(line, MATES)).toBe(expected);
+  });
+
+  it('a teammate name matches whole words only, and only names given by the caller', () => {
+    expect(launchNarratesRouting('Je lance la recherche pour Bob.', ['Bob'])).toBe(true);
+    expect(launchNarratesRouting('Je lance la recherche pour Bobby.', ['Bob'])).toBe(false);
+    expect(launchNarratesRouting('Je lance la recherche pour Bob.', [])).toBe(false);
+    expect(launchNarratesRouting('Je lance (a+b) maintenant.', ['(a+b)'])).toBe(true);
+  });
+
+  it('the two narration counts are separate, per turn kind (#995)', () => {
+    const rows = summarize([
+      turn({ routingNarration: true }),
+      turn({ routingNarration: false }),
+      turn({ needsTask: true, calledRunTask: true, launchNarration: true }),
+      turn({ needsTask: true, calledRunTask: true, launchNarration: true }),
+      turn({ needsTask: true, calledRunTask: true, launchNarration: false }),
+    ]);
+    expect([rows[0]?.routingNarrations, rows[0]?.launchNarrations]).toEqual([1, 2]);
+  });
+
+  it('records the launch line narration on a real turn, naming the teammates read from the workspace', async () => {
+    const { entityId, agentId } = await seedJob(db, { model: MODEL, role: 'orchestrator' });
+    scriptedProvider();
+    const records = await measureSpokenReasoning(db as unknown as AnyDrizzleDb, {
+      entityId,
+      agentId,
+      efforts: ['off'],
+      runs: 1,
+      requests: [
+        { id: 'magazine', text: 'Prépare une page magazine.', needsTask: true },
+        { id: 'file', text: 'Write a file called notes.txt with three lines.', needsTask: true },
+      ],
+      teammateNames: ['Researcher'],
+    });
+    vi.unstubAllGlobals();
+    expect(
+      records.map((r) => [r.requestId, r.calledRunTask, r.launchNarration, r.routingNarration]),
+    ).toEqual([
+      ['magazine', true, true, false],
+      ['file', true, false, false],
+    ]);
+    const [off] = summarize(records);
+    expect([off?.launchNarrations, off?.routingNarrations]).toEqual([1, 0]);
+    // The full reply is stored, so a later detector can re-score it for free.
+    expect(records[0]?.reply).toBe(LAUNCH_LINE);
+
+    // Without the names the same line is plain: the names plumbing is what flags it.
+    scriptedProvider();
+    const bare = await measureSpokenReasoning(db as unknown as AnyDrizzleDb, {
+      entityId,
+      agentId,
+      efforts: ['off'],
+      runs: 1,
+      requests: [{ id: 'magazine', text: 'Prépare une page magazine.', needsTask: true }],
+    });
+    vi.unstubAllGlobals();
+    expect(bare[0]?.launchNarration).toBe(false);
+  });
+
+  // Review of #1000, P1 1-5: the detector over-counted. First-person routing
+  // constructions only; the same words in someone else's sentence are content.
+  // Mutation verified: the first-person subject removed from the patterns -> red.
+  it.each([
+    'La loi répond directement à cette préoccupation.',
+    'The minister responded directly to reporters.',
+    "No action was taken at Tuesday's council.",
+    'Write it directly on the dotted line.',
+    'Il répond directement à la question du juge.',
+  ])('opensWithRoutingNarration(%j) = false (someone else is answering)', (reply) => {
+    expect(opensWithRoutingNarration(reply)).toBe(false);
+  });
+
+  it.each([
+    "Je prépare la page sur l'espionne qui a renseigné les services chinois.",
+    'Je lance le script via Google Apps Script.',
+    "I'll check the weather through January.",
+    'Je lance la transmission des fichiers.',
+    'The page delegates its layout to CSS.',
+    'Je passe au format A4.',
+    "I'll route to the museum.",
+    'Je prépare le script Java.',
+    'Je lance le montage photo.',
+    'Je cherche des infos sur Alfred Hitchcock, qui a tourné Psychose.',
+    'Je lance la recherche, qui prendra une minute.',
+  ])('launchNarratesRouting(%j) = false (content, not routing)', (line) => {
+    expect(launchNarratesRouting(line, ['Researcher', 'Lead-Dev'])).toBe(false);
+  });
+
+  it('first-person hand-over forms are narration, imperative-to-self included', () => {
+    for (const line of [
+      'Je délègue la recherche.',
+      'Je vais déléguer ça.',
+      'Je transmets la demande à mon équipe.',
+      "Je confie la rédaction à l'équipe.",
+      'Je passe la demande à un collègue.',
+      "I'll hand this over to the team.",
+      'Let me pass this to a colleague.',
+      "I'm delegating this.",
+    ]) {
+      expect({ line, hit: launchNarratesRouting(line, []) }).toEqual({ line, hit: true });
+    }
+  });
+
+  it('a teammate name matches as written (case-sensitive), whole word only', () => {
+    expect(launchNarratesRouting('Je lance la recherche pour Bob.', ['Bob'])).toBe(true);
+    expect(launchNarratesRouting('Je lance la recherche pour bob.', ['Bob'])).toBe(false);
+    expect(launchNarratesRouting('Je lance la recherche pour Bobby.', ['Bob'])).toBe(false);
+    expect(launchNarratesRouting('Je cherche un researcher.', ['Researcher'])).toBe(false);
+  });
+
+  it('only display names and slugs that cannot be common words are matched', () => {
+    expect(
+      teammateMatchNames([
+        { name: 'Researcher', slug: 'researcher' },
+        { name: 'Lead Dev', slug: 'lead-dev' },
+        { name: 'Java', slug: 'java' },
+        { name: 'Montage', slug: 'montage' },
+        { name: 'Agent 2', slug: 'agent_2' },
+      ]),
+    ).toEqual(['Researcher', 'Lead Dev', 'lead-dev', 'Java', 'Montage', 'Agent 2', 'agent_2']);
+  });
+
+  it('reads as teammates only the ACTIVE agents the measured agent can delegate to', async () => {
+    const { entityId, agentId } = await seedJob(db, { model: MODEL, role: 'orchestrator' });
+    const mk = async (name: string, slug: string, active: boolean) =>
+      (
+        await db
+          .insert(agents)
+          .values({ entityId, name, slug, personality: 'x', role: 'agent', active })
+          .returning({ id: agents.id })
+      )[0]!.id;
+    const child = await mk('Mate One', 'mate-one', true);
+    const inactive = await mk('Mate Off', 'mate-off', false);
+    await mk('Stranger', 'stranger-x', true);
+    for (const subAgentId of [child, inactive]) {
+      await db.insert(agentAssignments).values({ orchestratorId: agentId, subAgentId, entityId });
+    }
+    const [self] = await db
+      .select({ name: agents.name })
+      .from(agents)
+      .where(eq(agents.id, agentId));
+    const names = await readDelegableTeammates(db as unknown as AnyDrizzleDb, agentId);
+    expect(names).toEqual(['Mate One', 'mate-one']);
+    expect(names).not.toContain(self!.name);
+  });
+
+  // Review of #1000, P2-8: each column is counted over the turns it is measured
+  // on, what the model DID, with its own denominator.
+  it('counts each narration over the turns where the model did that thing', () => {
+    const answered = (over: Partial<TurnRecord>) => turn({ calledRunTask: false, ...over });
+    const launched = (over: Partial<TurnRecord>) => turn({ calledRunTask: true, ...over });
+    const [row] = summarize([
+      // 10 no-task requests, answered, none narrating
+      ...Array.from({ length: 10 }, () => answered({})),
+      // 3 TASK requests that answered instead of launching, all narrating
+      ...Array.from({ length: 3 }, () => answered({ needsTask: true, routingNarration: true })),
+      // 2 no-task requests escalated by mistake, one narrating its launch
+      launched({ rightDecision: false, launchNarration: true }),
+      launched({ rightDecision: false }),
+      // an error turn counts in neither
+      turn({ error: 'llm_error' }),
+    ]);
+    expect({
+      reply: [row?.routingNarrations, row?.answeredTurns],
+      launch: [row?.launchNarrations, row?.launchedTurns],
+    }).toEqual({ reply: [3, 13], launch: [1, 2] });
+    expect(summaryTable([row!])).toContain('| 3/13 | 1/2 |');
+  });
+
+  // Stored replies let a later detector re-score old runs with no model call.
+  it('re-scores stored records from their full reply, and refuses records without one', () => {
+    const rows = [
+      turn({
+        reply: 'Je réponds directement : il fait froid. Très froid, vraiment.',
+        routingNarration: false,
+      }),
+      turn({
+        calledRunTask: true,
+        needsTask: true,
+        reply: 'Je lance la recherche avec Researcher.',
+        launchNarration: false,
+      }),
+      turn({ calledRunTask: true, needsTask: true, reply: 'Je lance la recherche.' }),
+    ];
+    const rescored = rescoreRecords(rows, ['Researcher']);
+    expect(
+      rescored.map((r) => [r.routingNarration, r.launchNarration, r.opening, r.replyWords]),
+    ).toEqual([
+      [true, false, 'Je réponds directement : il fait froid.', 9],
+      [false, true, 'Je lance la recherche avec Researcher.', 6],
+      [false, false, 'Je lance la recherche.', 4],
+    ]);
+    const { reply: _r, ...noReply } = rows[0]!;
+    expect(() => rescoreRecords([noReply as TurnRecord], [])).toThrow(/full reply/);
+  });
+});
+
+// #995 — a sheet variant played on the turn's copy of the agents (--persona-file).
+// The proof that it REACHED THE MODEL is read in the request body the provider
+// receives (the system message), on every turn; the stored sheet's distinctive
+// lines must be absent from it.
+describe('the sheet variant of a measure (#995)', () => {
+  const STORED = [
+    'You are Alfred, the owner root agent.',
+    'STORED-LINE-ALPHA: Team routing, code goes to Lead-Dev because it handles code.',
+    'STORED-LINE-BETA: research goes to Researcher because it has premium search.',
+  ].join('\n');
+  const VARIANT = [
+    'You are Alfred, the owner root agent.',
+    'VARIANT-LINE-OMEGA: route silently, never say why.',
+  ].join('\n');
+
+  const systemsOf = (bodies: Wire[]): string[] =>
+    bodies
+      .map((b) => b.messages.find((m) => m.role === 'system'))
+      .filter((m): m is NonNullable<typeof m> => m !== undefined)
+      .map((m) => JSON.stringify(m.content));
+
+  const withTmpFile = (
+    content: string,
+    name = 'variant.md',
+  ): { path: string; done: () => void } => {
+    const dir = mkdtempSync(join(tmpdir(), 'persona-measure-turn-'));
+    const path = join(dir, name);
+    writeFileSync(path, content, 'utf8');
+    return { path, done: () => rmSync(dir, { recursive: true, force: true }) };
+  };
+
+  // The whole `public.agents` table, as text, in a fixed order.
+  const publicAgents = async (): Promise<string> => {
+    const res = await db.execute(
+      sql`SELECT COALESCE(string_agg(row_to_json(a)::text, ' | ' ORDER BY a.id), '') AS dump FROM public.agents a`,
+    );
+    return (res as unknown as { rows: Array<{ dump: string }> }).rows[0]!.dump;
+  };
+
+  const seedWithStored = async () => {
+    const seeded = await seedJob(db, { model: MODEL, role: 'orchestrator' });
+    await db.update(agents).set({ personality: STORED }).where(eq(agents.id, seeded.agentId));
+    return seeded;
+  };
+
+  it('plays the variant on every turn, and leaves public.agents byte-identical', async () => {
+    const { entityId, agentId } = await seedWithStored();
+    const file = withTmpFile(VARIANT, 'no-narration.md');
+    const persona = loadPersonaFile(file.path);
+    const before = await publicAgents();
+
+    const bodies = scriptedProvider();
+    const records = await measureSpokenReasoning(db as unknown as AnyDrizzleDb, {
+      entityId,
+      agentId,
+      efforts: ['off', 'low'],
+      runs: 2,
+      requests: REQUESTS,
+      persona,
+    });
+    vi.unstubAllGlobals();
+    file.done();
+
+    // 2 efforts × 3 requests × 2 runs; every request that reached the model carried the variant.
+    expect(records).toHaveLength(12);
+    const systems = systemsOf(bodies);
+    expect(systems.length).toBeGreaterThanOrEqual(12);
+    for (const system of systems) {
+      expect(system).toContain('VARIANT-LINE-OMEGA: route silently, never say why.');
+      expect(system).not.toContain('STORED-LINE-ALPHA');
+      expect(system).not.toContain('STORED-LINE-BETA');
+      expect(system).not.toContain('Team routing, code goes to Lead-Dev');
+    }
+
+    // Every record says which sheet it played.
+    const { sha256, length } = personaFingerprint(VARIANT);
+    for (const r of records) {
+      expect(r.persona).toEqual({ source: 'file', file: 'no-narration.md', sha256, length });
+    }
+
+    // Nothing written to public.agents: the table is the same text, byte for byte.
+    expect(await publicAgents()).toBe(before);
+    const [row] = await db
+      .select({ personality: agents.personality })
+      .from(agents)
+      .where(eq(agents.id, agentId));
+    expect(row?.personality).toBe(STORED);
+  });
+
+  it('without a variant, plays the stored sheet and each record says so, with its sha256', async () => {
+    const { entityId, agentId } = await seedWithStored();
+    const bodies = scriptedProvider();
+    const records = await measureSpokenReasoning(db as unknown as AnyDrizzleDb, {
+      entityId,
+      agentId,
+      efforts: ['off'],
+      runs: 1,
+      requests: [REQUESTS[1]!],
+    });
+    vi.unstubAllGlobals();
+    const systems = systemsOf(bodies);
+    expect(systems.length).toBeGreaterThanOrEqual(1);
+    for (const system of systems) {
+      expect(system).toContain('STORED-LINE-ALPHA');
+      expect(system).not.toContain('VARIANT-LINE-OMEGA');
+    }
+    expect(records[0]?.persona).toEqual({ source: 'stored', ...personaFingerprint(STORED) });
+  });
+
+  it('works for any agent of the workspace, not one slug', async () => {
+    const { entityId, agentId } = await seedWithStored();
+    const bodies = scriptedProvider();
+    const records = await measureSpokenReasoning(db as unknown as AnyDrizzleDb, {
+      entityId,
+      agentId,
+      efforts: ['auto'],
+      runs: 1,
+      requests: [REQUESTS[2]!],
+      persona: { text: 'Another agent sheet: ZETA-LINE.', file: 'zeta.md' },
+    });
+    vi.unstubAllGlobals();
+    const systems = systemsOf(bodies);
+    expect(systems.length).toBeGreaterThanOrEqual(1);
+    expect(systems.every((s) => s.includes('ZETA-LINE'))).toBe(true);
+    expect(records[0]?.persona?.file).toBe('zeta.md');
+  });
+
+  // The check itself, apart from the UPDATE: a copy that does NOT hold the variant
+  // (the statement that sets it is swallowed on the way to the database) stops the
+  // measure BEFORE the model is called. No record, no paid turn.
+  // Mutation verified: the read-back comparison removed -> this test is red (the
+  // turn plays the stored sheet and is recorded as the variant).
+  it('refuses a turn whose copy does not hold the variant: an error, never a record, no model call', async () => {
+    const { entityId, agentId } = await seedWithStored();
+    const chunkText = (c: unknown): string => {
+      const value = (c as { value?: unknown } | null)?.value;
+      return Array.isArray(value) ? value.join('') : '';
+    };
+    const swallowSheet = (tx: object): object =>
+      new Proxy(tx, {
+        get(target, prop, receiver) {
+          const value = Reflect.get(target, prop, receiver) as unknown;
+          if (prop !== 'execute' || typeof value !== 'function') return value;
+          return (query: { queryChunks?: unknown[] }) => {
+            const text = (query.queryChunks ?? []).map(chunkText).join('');
+            if (text.includes('SET personality')) return Promise.resolve([]);
+            return (value as (q: unknown) => unknown).call(target, query);
+          };
+        },
+      });
+    const faulty = new Proxy(db, {
+      get(target, prop, receiver) {
+        const value = Reflect.get(target, prop, receiver) as unknown;
+        if (prop !== 'transaction') return typeof value === 'function' ? value.bind(target) : value;
+        return (cb: (tx: object) => Promise<unknown>) =>
+          (value as (cb: (tx: object) => Promise<unknown>) => Promise<unknown>).call(
+            target,
+            (tx: object) => cb(swallowSheet(tx)),
+          );
+      },
+    }) as unknown as AnyDrizzleDb;
+
+    const bodies = scriptedProvider();
+    await expect(
+      measureSpokenReasoning(faulty, {
+        entityId,
+        agentId,
+        efforts: ['off'],
+        runs: 1,
+        requests: [REQUESTS[1]!],
+        persona: { text: VARIANT, file: 'variant.md' },
+      }),
+    ).rejects.toThrow(/would play another sheet than variant\.md/);
+    vi.unstubAllGlobals();
+    expect(bodies).toEqual([]);
   });
 });

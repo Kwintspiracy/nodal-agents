@@ -51,3 +51,5 @@ export * from './windows-env';
 export * from './stated-limits';
 // A real small PDF (a text page, a scanned page) built in the test (#903).
 export * from './pdf';
+// N disk operations with a bounded number in flight, not N at once (#1034).
+export * from './bounded-io';

@@ -69,7 +69,7 @@ import {
 } from '../chat/job-reply-voice.ts';
 import type { RunnerDeps } from '../deps.ts';
 import { callerReachesConversation } from '../devices/device-scope.ts';
-import { sseEvent, SSE_HEADERS } from './sse.ts';
+import { sseEvent, SSE_HEADERS, subscriptionStream } from './sse.ts';
 
 const QuerySchema = z.object({ entityId: z.string().guid() });
 
@@ -95,44 +95,26 @@ export async function voiceReplyRoute(c: Context, deps: RunnerDeps): Promise<Res
       return c.json({ error: 'reply_audio_not_found' }, 404);
     }
   }
-  const encoder = new TextEncoder();
-  let stop: () => void = () => {};
-  let controllerRef: ReadableStreamDefaultController<Uint8Array> | null = null;
-  let closed = false;
-  const write = (e: ReplyAudioEvent): void => {
-    if (closed || !controllerRef) return;
-    try {
-      controllerRef.enqueue(encoder.encode(sseEvent(e.event, e.data)));
-    } catch {
-      stop();
-      return;
-    }
-    if (e.event === 'done') stop();
+  // Inscrit AVANT le flux : une voix inconnue se dit par un 404. Ce qui sort
+  // entre l'inscription et l'ouverture du flux attend dans `pending`.
+  const pending: ReplyAudioEvent[] = [];
+  let forward: (e: ReplyAudioEvent) => void = (e) => {
+    pending.push(e);
   };
-  const opened = openReplyAudio(audioId, entityId, write);
+  const opened = openReplyAudio(audioId, entityId, (e) => forward(e));
   if (!opened) return c.json({ error: 'reply_audio_not_found' }, 404);
 
-  const stream = new ReadableStream<Uint8Array>({
-    start(controller) {
-      controllerRef = controller;
-      stop = () => {
-        if (closed) return;
-        closed = true;
-        opened.close();
-        try {
-          controller.close();
-        } catch {
-          // Déjà fermé par le lecteur.
-        }
-      };
-      // Ce qui est déjà sorti, puis le direct (inscrit par `openReplyAudio`).
-      for (const e of opened.replayed) write(e);
-      if (opened.ended) stop();
-    },
-    cancel() {
-      stop();
-    },
+  // La fin du flux, quoi qui la cause, passe par `subscriptionStream` (#1033).
+  const stream = subscriptionStream(c.req.raw, ({ write, end }) => {
+    forward = (e) => {
+      write(sseEvent(e.event, e.data));
+      if (e.event === 'done') end();
+    };
+    // Ce qui est déjà sorti, puis le direct (inscrit par `openReplyAudio`).
+    for (const e of opened.replayed) forward(e);
+    for (const e of pending.splice(0)) forward(e);
+    if (opened.ended) end();
+    return () => opened.close();
   });
-  c.req.raw.signal.addEventListener('abort', () => stop(), { once: true });
   return new Response(stream, { headers: { ...SSE_HEADERS } });
 }

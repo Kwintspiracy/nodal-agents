@@ -1393,18 +1393,28 @@ describe('the voice turn route — the reply spoken as it is written (#943) @cap
       const conv = await conversation();
       network({
         front: { parts: ['Nine in the evening.'] },
-        // A vendor that streams: its first bytes, then the rest 80 ms later,
-        // at the rate IT names.
+        // A vendor that streams: its first bytes, then the rest 80 ms AFTER the
+        // runner took them, at the rate IT names. The stream is pull-driven
+        // (`highWaterMark: 0`): the second `pull` only runs once the consumer
+        // has read the first chunk and asked for more, so the 80 ms start after
+        // the first-byte mark and a slow read cannot eat the gap (#1029).
         speech: () => {
-          const body = new ReadableStream<Uint8Array>({
-            start(c) {
-              c.enqueue(Uint8Array.from([1, 0]));
-              setTimeout(() => {
+          let pulls = 0;
+          const body = new ReadableStream<Uint8Array>(
+            {
+              async pull(c) {
+                pulls++;
+                if (pulls === 1) {
+                  c.enqueue(Uint8Array.from([1, 0]));
+                  return;
+                }
+                await new Promise((r) => setTimeout(r, 80));
                 c.enqueue(Uint8Array.from([2, 0]));
                 c.close();
-              }, 80);
+              },
             },
-          });
+            { highWaterMark: 0 },
+          );
           return new Response(body, {
             status: 200,
             headers: { 'content-type': 'audio/pcm;rate=44100;channels=1' },

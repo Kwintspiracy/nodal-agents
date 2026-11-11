@@ -19,7 +19,7 @@ import { z } from 'zod';
 import { and, eq, conversations } from '@nodal-agents/db';
 import type { RunnerDeps } from '../deps.ts';
 import { attachLiveTurn, type LiveTurnEvent } from '../chat/live-turn.ts';
-import { sseEvent, SSE_HEADERS } from './sse.ts';
+import { sseEvent, SSE_HEADERS, subscriptionStream } from './sse.ts';
 
 const ChatLiveRequestSchema = z.object({
   entityId: z.string().guid(),
@@ -46,9 +46,6 @@ export async function chatLiveRoute(c: Context, deps: RunnerDeps): Promise<Respo
     .limit(1);
   if (!conv) return c.json({ error: 'conversation_not_found' }, 404);
 
-  const encoder = new TextEncoder();
-  let detach: () => void = () => {};
-  let closed = false;
   // Le branchement se fait AVANT d'ouvrir le flux : un tour qui n'existe pas se
   // dit par un 204, pas par un flux vide qui ressemblerait à une réponse vide.
   const pending: LiveTurnEvent[] = [];
@@ -57,45 +54,24 @@ export async function chatLiveRoute(c: Context, deps: RunnerDeps): Promise<Respo
   };
   const attached = attachLiveTurn(entityId, conversationId, (evt) => push(evt));
   if (!attached) return c.body(null, 204);
-  detach = attached.detach;
 
-  const stream = new ReadableStream<Uint8Array>({
-    start(controller) {
-      const close = (): void => {
-        if (closed) return;
-        closed = true;
-        detach();
-        try {
-          controller.close();
-        } catch {
-          // Déjà fermé par le lecteur.
-        }
-      };
-      const write = (evt: LiveTurnEvent): void => {
-        if (closed) return;
-        try {
-          if (evt.kind === 'delta') {
-            controller.enqueue(encoder.encode(sseEvent('delta', { text: evt.text })));
-          } else {
-            controller.enqueue(encoder.encode(sseEvent('end', {})));
-            close();
-          }
-        } catch {
-          // Le lecteur est parti : on se débranche, le tour continue sans lui.
-          close();
-        }
-      };
-      controller.enqueue(
-        encoder.encode(sseEvent('start', { text: attached.text, startedAt: attached.startedAt })),
-      );
-      // Ce qui est arrivé entre le branchement et l'ouverture, dans l'ordre.
-      for (const evt of pending.splice(0)) write(evt);
-      push = write;
-    },
-    cancel() {
-      closed = true;
-      detach();
-    },
+  // La fin du flux, quoi qui la cause (la fin du tour, la requête abandonnée,
+  // le lecteur parti), passe par `subscriptionStream` : le flux se débranche
+  // du tour, qui continue sans lui (#1033).
+  const stream = subscriptionStream(c.req.raw, ({ write, end }) => {
+    const forward = (evt: LiveTurnEvent): void => {
+      if (evt.kind === 'delta') {
+        write(sseEvent('delta', { text: evt.text }));
+      } else {
+        write(sseEvent('end', {}));
+        end();
+      }
+    };
+    write(sseEvent('start', { text: attached.text, startedAt: attached.startedAt }));
+    // Ce qui est arrivé entre le branchement et l'ouverture, dans l'ordre.
+    for (const evt of pending.splice(0)) forward(evt);
+    push = forward;
+    return () => attached.detach();
   });
 
   return new Response(stream, { headers: { ...SSE_HEADERS } });
