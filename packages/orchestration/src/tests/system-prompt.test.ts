@@ -1937,7 +1937,9 @@ ${sentence}`).length > 0,
     'offer to do more, because the person asks again if they want more. ' +
     'A warning they need in order not to be misled stays. ' +
     'A reply the person asked to be long, a story, an email or a list, keeps the length asked. ' +
-    'Open with one short sentence: it is spoken while the rest is still being written.';
+    'Open with one short sentence: it is spoken while the rest is still being written. ' +
+    // #1049 — chosen word for word by the owner, measured 15/40 -> 1/40.
+    'When you start a task or hand it to a teammate, do not say who it goes to or why: say only what is being done.';
 
   it('a spoken reply is stated once in Job context, on every surface that carries it (#941)', async () => {
     const { entityId, root } = await seedTeam();
@@ -2139,6 +2141,90 @@ ${sentence}`).length > 0,
       expect(prompt).not.toContain(BREVITY_KEEPS_WARNING);
       expect(prompt).not.toContain(BREVITY_KEEPS_LENGTH_ASKED);
       for (const never of BREVITY_NEVER) expect(prompt).not.toContain(never);
+    }
+  });
+
+  // #1049 — the acknowledgement of a launched task says what is being done, not
+  // who on the team gets it nor why. The sentence is the owner's, word for word
+  // (measured 15/40 -> 1/40 launches naming the teammate or the reason): a
+  // tripwire on the text, plus where it lives. Mutation verified: the sentence
+  // removed from `replyRenderingLine` -> red (first test); the sentence moved to
+  // the surface line / the personality-independent job block so a read reply or
+  // a delegated job carries it, or the `isDelegated` guard removed -> red (second).
+  const HANDOFF =
+    'When you start a task or hand it to a teammate, do not say who it goes to or why: say only what is being done.';
+
+  it('every surface that carries the spoken line ends it with the hand-off sentence, once (#1049)', async () => {
+    const { entityId, root, worker } = await seedTeam();
+    const surfaces: JobContext[] = [
+      { origin: 'dashboard', surface: 'chat', replyRendering: 'spoken' },
+      { origin: 'dashboard', replyRendering: 'spoken', availableToolNames: [...ALWAYS_ON_TOOLS] },
+      {
+        origin: 'telegram',
+        telegramChatId: '199791464',
+        channelDelivery: TELEGRAM_FACTS,
+        availableToolNames: withSend,
+        replyRendering: 'spoken',
+      },
+      { origin: 'dashboard', surface: 'cli-runtime', replyRendering: 'spoken' },
+    ];
+    // Any agent whose reply is spoken, not only the root.
+    for (const agent of [
+      makeAgent(root.id, entityId, root.personality, 'orchestrator'),
+      makeAgent(worker.id, entityId, worker.personality),
+    ]) {
+      for (const ctx of surfaces) {
+        const prompt = await buildSystemPrompt(agent, db, ctx);
+        const [line, ...extra] = renderingLines(prompt);
+        expect({ role: agent.role, origin: ctx.origin, surface: ctx.surface, extra }).toEqual({
+          role: agent.role,
+          origin: ctx.origin,
+          surface: ctx.surface,
+          extra: [],
+        });
+        // The last words of the line, and the only place the sentence is.
+        expect(line?.endsWith(` ${HANDOFF}`)).toBe(true);
+        expect(prompt.split(HANDOFF)).toHaveLength(2);
+      }
+    }
+  });
+
+  it('a read reply and a delegated job carry neither the spoken line nor the hand-off sentence (#1049)', async () => {
+    const { entityId, root, worker } = await seedTeam();
+    const rootAgent = makeAgent(root.id, entityId, root.personality, 'orchestrator');
+    const workerAgent = makeAgent(worker.id, entityId, worker.personality);
+    const prompts = [
+      await buildSystemPrompt(rootAgent, db, { origin: 'dashboard', surface: 'chat' }),
+      await buildSystemPrompt(rootAgent, db, {
+        origin: 'dashboard',
+        surface: 'chat',
+        replyRendering: 'text',
+      }),
+      await buildSystemPrompt(rootAgent, db, {
+        origin: 'telegram',
+        channelDelivery: TELEGRAM_FACTS,
+        availableToolNames: withSend,
+      }),
+      await buildSystemPrompt(rootAgent, db, {
+        origin: 'telegram',
+        channelDelivery: TELEGRAM_FACTS,
+        availableToolNames: withSend,
+        replyRendering: 'text',
+      }),
+      await buildSystemPrompt(rootAgent, db, { origin: 'api' }),
+      // A delegate answers its parent, even under a spoken root.
+      await buildSystemPrompt(workerAgent, db, {
+        origin: 'internal',
+        isDelegated: true,
+        delegationDepth: 1,
+        replyRendering: 'spoken',
+        availableToolNames: ALWAYS_ON_TOOLS.filter((t) => t !== 'dashboard_publish'),
+      }),
+    ];
+    for (const prompt of prompts) {
+      expect(renderingLines(prompt)).toEqual([]);
+      expect(prompt).not.toContain(HANDOFF);
+      expect(prompt).not.toContain('do not say who it goes to');
     }
   });
 
