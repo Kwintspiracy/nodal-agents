@@ -30,21 +30,9 @@
         "PUBLIC",
         "OS",
         "NUMBER_OF_PROCESSORS",
-        "PROCESSOR_ARCHITECTURE"
-      ]
-    },
-    "exp-measure": {
-      "cache": false,
-      "passThroughEnv": [
-        "NODAL_VITEST_REPORT_DIR",
-        "LOCALAPPDATA",
-        "USERNAME",
-        "USERDOMAIN",
-        "COMPUTERNAME",
-        "PUBLIC",
-        "OS",
-        "NUMBER_OF_PROCESSORS",
-        "PROCESSOR_ARCHITECTURE"
+        "PROCESSOR_ARCHITECTURE",
+        "PSModulePath",
+        "PSModuleAnalysisCachePath"
       ]
     },
     "typecheck": {
