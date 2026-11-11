@@ -127,6 +127,35 @@ export const CHAT_TOOLS: Record<
   },
 };
 
+/**
+ * Les étapes de PRÉPARATION d'un tour, dans l'ordre où `runChatTurn` les
+ * franchit avant d'appeler le fournisseur (#1063). Un appelant qui veut savoir
+ * où passe l'attente avant le premier mot du modèle les reçoit par `onPhase`.
+ * Chaque nom dit la fin d'une étape :
+ *
+ *   - `turnStarted` : le tour a passé la file de la conversation et commence ;
+ *   - `userMessageSaved` : le message de la personne est rangé ;
+ *   - `llmResolved` : le client du modèle (clé, chaîne de secours) est résolu ;
+ *   - `contextLoaded` : le déploiement et le fil (projet courant) sont lus ;
+ *   - `promptBuilt` : le prompt système est construit, mémoire comprise ;
+ *   - `historyLoaded` : l'historique du fil est lu et rogné ;
+ *   - `providerRequest` : l'appel part vers le fournisseur.
+ *
+ * Un tour qui ne va pas jusqu'au fournisseur (agent en runtime CLI, agent
+ * introuvable) s'arrête à la dernière étape franchie : les suivantes ne sont
+ * jamais annoncées, jamais inventées.
+ */
+export const CHAT_TURN_PHASES = [
+  'turnStarted',
+  'userMessageSaved',
+  'llmResolved',
+  'contextLoaded',
+  'promptBuilt',
+  'historyLoaded',
+  'providerRequest',
+] as const;
+export type ChatTurnPhase = (typeof CHAT_TURN_PHASES)[number];
+
 export type ChatTurnResult =
   | {
       ok: true;
@@ -445,6 +474,13 @@ export async function runChatTurn(opts: {
    * tour comme pour le job qu'il lance. Absent : un message tapé, lu.
    */
   spoken?: { durationMs: number };
+  /**
+   * Annonce chaque étape de préparation franchie (`CHAT_TURN_PHASES`, #1063).
+   * Une mesure, rien d'autre : ce rappel ne change ni l'ordre des appels ni ce
+   * qui est dit, et sa valeur ne se lit jamais pour décider quoi que ce soit.
+   * Absent, rien ne change.
+   */
+  onPhase?: (phase: ChatTurnPhase) => void;
 }): Promise<ChatTurnResult> {
   const {
     deps,
@@ -456,8 +492,10 @@ export async function runChatTurn(opts: {
     onReplyText,
     abortSignal,
     spoken,
+    onPhase,
   } = opts;
   const db = deps.db;
+  onPhase?.('turnStarted');
   const replyRendering: ReplyRendering = spoken ? 'spoken' : 'text';
 
   // 1. Load + verify the agent belongs to this entity.
@@ -525,6 +563,7 @@ export async function runChatTurn(opts: {
       .set({ title: provisionalTitle(message) })
       .where(eq(conversations.id, conversationId));
   }
+  onPhase?.('userMessageSaved');
 
   // 1c. Runtime divert (étape E): the reply comes from the agent's Claude
   // Code session, resumed per conversation; the CLI's text is relayed
@@ -605,6 +644,7 @@ export async function runChatTurn(opts: {
     };
   }
   const llmClient = resolved.client;
+  onPhase?.('llmResolved');
 
   // 3. System prompt — memory is AUTO-INJECTED here (recall is free). The
   //    origin (the dashboard, or a device, #945) job-context steers the agent
@@ -614,6 +654,7 @@ export async function runChatTurn(opts: {
   // (1b ci-dessus) — d'où le « moins un » dans le compte des tours précédents,
   // qui vit dans `loadConversationContext`.
   const conversation = await loadConversationContext(db, conversationId, { task: message });
+  onPhase?.('contextLoaded');
   const systemPrompt = await buildSystemPrompt(agent, db, {
     origin: origin.channel,
     surface: 'chat',
@@ -622,6 +663,7 @@ export async function runChatTurn(opts: {
     replyRendering,
     ...(conversation ? { conversation } : {}),
   });
+  onPhase?.('promptBuilt');
 
   // 4. Load recent history of THIS conversation (most recent N, chronological).
   //    CRITICAL: an assistant turn that ESCALATED (has a jobId) is replayed WITH
@@ -717,6 +759,7 @@ export async function runChatTurn(opts: {
     );
   }
   const messages: ModelMessage[] = blocks.flatMap((b) => b);
+  onPhase?.('historyLoaded');
 
   // 5. One LLM call. The agent may reply in text (pure conversation) and/or call
   //    run_task to escalate an action into a real job. Guarded: some providers
@@ -760,6 +803,8 @@ export async function runChatTurn(opts: {
   };
   const keepStoppedReply = (): Promise<ChatTurnResult> => keepPartialReply({ stopped: true });
   try {
+    // Le fournisseur est appelé dans la ligne qui suit, par l'une ou l'autre voie.
+    onPhase?.('providerRequest');
     if (onTextDelta) {
       // Le MÊME appel que celui des jobs, dit au fur et à mesure (#152, #458) :
       // sous les deux horloges de silence et le filet d'une heure, tracé dans

@@ -25,7 +25,14 @@ import {
 import { formatLocalTime, projectKey } from '@nodal-agents/shared';
 import type { RunnerDeps } from '../../deps.ts';
 import { chatSurfaceToolNames } from '@nodal-agents/catalog';
-import { CHAT_TOOLS, runChatTurn } from '../../chat/run-chat-turn.ts';
+import {
+  CHAT_TOOLS,
+  CHAT_TURN_PHASES,
+  runChatTurn,
+  type ChatTurnPhase,
+} from '../../chat/run-chat-turn.ts';
+import { playChatTurn } from '../../chat/play-turn.ts';
+import type { RunnerEnv } from '../../env.ts';
 import { actionRecheckMessages } from '../../llm/action-recheck.ts';
 import { TITLE_SYSTEM_PROMPT } from '../../chat/conversation-title.ts';
 
@@ -1005,6 +1012,125 @@ describe("runChatTurn — le tour appartient à l'agent DU fil @cap:parler-a-un-
       .orderBy(chatMessages.createdAt);
     expect(messages.map((m) => m.role)).toEqual(['user', 'assistant']);
     expect(messages[0]?.content).toBe('coucou');
+  });
+});
+
+// ─── Les étapes de préparation d'un tour (#1063) ─────────────────────────────
+//
+// `onPhase` est le mécanisme UNIQUE par lequel une porte mesure l'attente avant
+// le premier mot du modèle : le tour tapé (`/api/chat`, `/api/chat/stream`) et
+// le tour dit passent par `runChatTurn`, donc par lui. Ces cas lisent l'ordre
+// des étapes ET leur place par rapport à l'appel RÉEL du fournisseur.
+//
+// Mutations vérifiées :
+//   - `onPhase?.('providerRequest')` retiré → les trois cas qui l'attendent rougissent ;
+//   - `onPhase?.('providerRequest')` posé AVANT `buildSystemPrompt` → l'ordre
+//     rougit (le départ de l'appel ne vient plus après `historyLoaded`) ;
+//   - `onPhase?.('turnStarted')` retiré → « un agent qui n'est pas celui du fil »
+//     rougit (rien n'est annoncé).
+describe('runChatTurn — les étapes de préparation, dans l’ordre @cap:parler-a-un-agent/moteur', () => {
+  /** Un client dont l'appel du fournisseur s'inscrit dans le MÊME journal que les étapes. */
+  function clientLogging(log: string[]): RunnerDeps['llmClient'] {
+    const inner = makeMockLlmClient('bien reçu', []);
+    return {
+      ...inner,
+      generateText: (args, opts) => {
+        log.push('provider-called');
+        return inner.generateText(args, opts);
+      },
+    };
+  }
+  async function newConversation(): Promise<string> {
+    const [conv] = await db
+      .insert(conversations)
+      .values({ entityId: seed.entityId, agentId: seed.agentId, title: 'Le fil mesuré' })
+      .returning({ id: conversations.id });
+    if (!conv) throw new Error('conversation insert failed');
+    return conv.id;
+  }
+  const EXPECTED: ChatTurnPhase[] = [...CHAT_TURN_PHASES];
+
+  it('un tour tapé (sans flux) : toutes les étapes, puis l’appel du fournisseur', async () => {
+    const log: string[] = [];
+    setActiveLlmClient(clientLogging(log));
+    const result = await runChatTurn({
+      deps,
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      conversationId: await newConversation(),
+      message: 'coucou',
+      onPhase: (p) => log.push(p),
+    });
+    expect(result.ok).toBe(true);
+    // `providerRequest` part JUSTE avant l'appel : rien entre les deux.
+    expect(log.slice(0, EXPECTED.length + 1)).toEqual([...EXPECTED, 'provider-called']);
+  });
+
+  it('le MÊME mécanisme par `playChatTurn`, tour tapé en flux : mêmes étapes, même ordre', async () => {
+    const log: string[] = [];
+    setActiveLlmClient(clientLogging(log));
+    const result = await playChatTurn(
+      deps,
+      {} as RunnerEnv,
+      {
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        conversationId: await newConversation(),
+        message: 'coucou',
+        onTextDelta: () => {},
+        onPhase: (p) => log.push(p),
+      },
+      'test',
+    );
+    expect(result.ok).toBe(true);
+    expect(log.slice(0, EXPECTED.length + 1)).toEqual([...EXPECTED, 'provider-called']);
+  });
+
+  it('un tour dit (`spoken`) : les mêmes étapes que le tour tapé', async () => {
+    const log: string[] = [];
+    setActiveLlmClient(clientLogging(log));
+    await runChatTurn({
+      deps,
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      conversationId: await newConversation(),
+      message: 'coucou',
+      spoken: { durationMs: 1200 },
+      onTextDelta: () => {},
+      onPhase: (p) => log.push(p),
+    });
+    expect(log.slice(0, EXPECTED.length + 1)).toEqual([...EXPECTED, 'provider-called']);
+  });
+
+  it('un agent qui n’est pas celui du fil : seul le départ est annoncé, aucune étape inventée', async () => {
+    const [agentDuFil] = await db
+      .select({ llmKeyId: agents.llmKeyId })
+      .from(agents)
+      .where(eq(agents.id, seed.agentId));
+    const [autreAgent] = await db
+      .insert(agents)
+      .values({
+        entityId: seed.entityId,
+        name: 'Pas celui du fil',
+        slug: `pas-du-fil-${Date.now()}`,
+        personality: 'Autre.',
+        active: true,
+        llmKeyId: agentDuFil?.llmKeyId ?? null,
+      })
+      .returning({ id: agents.id });
+    if (!autreAgent) throw new Error('agent insert failed');
+    const phases: string[] = [];
+    setActiveLlmClient(makeMockLlmClient('jamais appelé', []));
+    const result = await runChatTurn({
+      deps,
+      entityId: seed.entityId,
+      agentId: autreAgent.id,
+      conversationId: await newConversation(),
+      message: 'coucou',
+      onPhase: (p) => phases.push(p),
+    });
+    expect(result).toEqual({ ok: false, error: 'conversation_agent_mismatch' });
+    expect(phases).toEqual(['turnStarted']);
   });
 });
 

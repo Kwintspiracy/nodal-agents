@@ -59,6 +59,7 @@ import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
 import { resolveEar, resolveVoice } from '../job/resolve-voice.ts';
 import { playChatTurn } from './play-turn.ts';
+import { CHAT_TURN_PHASES } from './run-chat-turn.ts';
 import type { VoiceUtterance } from './voice-utterances.ts';
 import { createReplySpeech, type ReplySpeech, type SpeechFailure } from './voice-speech.ts';
 
@@ -184,6 +185,13 @@ export async function hearVoiceTurn(
  */
 export const VOICE_TIMING_MARKS = [
   'transcript',
+  // L'attente avant le premier mot du modèle, coupée en étapes (#1063) : la
+  // voix de la réponse ouverte, puis chaque étape de préparation du tour
+  // (`CHAT_TURN_PHASES`, la même liste que celle de `runChatTurn`), dont
+  // `providerRequest`, le départ de l'appel. Ce qui reste jusqu'à `firstDelta`
+  // est le temps du fournisseur.
+  'voiceOpened',
+  ...CHAT_TURN_PHASES,
   'firstDelta',
   'firstSentence',
   // Le fournisseur de voix, pour la PREMIÈRE phrase : son premier octet, puis
@@ -359,6 +367,7 @@ export async function speakVoiceTurn(
   // La voix de l'espace (#969), relue à chaque tour : un réglage changé vaut
   // dès le tour suivant.
   const opened = await openReplyVoice(deps.db, u.entityId, emit, timing);
+  timing.mark('voiceOpened');
   let voice: ReplySpeech | null = opened.voice;
   const silence = (): void => {
     voice?.cancel();
@@ -404,6 +413,7 @@ export async function speakVoiceTurn(
         conversationId: u.conversationId,
         message: heard.transcript,
         spoken: { durationMs: heard.durationMs },
+        onPhase: (phase) => timing.mark(phase),
         // Déjà masqué (`playChatTurn`) : le texte rendu ET la voix.
         onTextDelta: (delta) => {
           timing.mark('firstDelta');
