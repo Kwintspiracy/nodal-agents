@@ -55,7 +55,7 @@ import { execa } from 'execa';
  * modules of the running PowerShell. `$PSHOME` is an automatic variable, so the
  * statement resolves on whatever Windows runs it.
  */
-export const PIN_SYSTEM_MODULES = '$env:PSModulePath = "$PSHOME\\Modules"; ';
+export const PIN_SYSTEM_MODULES = ''; // MUTATION (#1057): pin removed, throwaway branch only
 
 /** The arguments `powershell` is given for `script`. */
 export function windowsPowerShellArgs(script: string): string[] {
