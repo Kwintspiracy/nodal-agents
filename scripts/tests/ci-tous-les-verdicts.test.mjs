@@ -72,6 +72,6 @@ describe('la CI rend le verdict de chaque tâche, même après un premier échec
   it('la garde voit bien les runs de test des deux CI (sinon elle ne garde rien)', () => {
     const tests = verdicts.filter((r) => /\btest\b/.test(r.turbo));
     expect(tests.filter((r) => r.nom === 'ci.yml').length).toBe(6);
-    expect(tests.filter((r) => r.nom === 'ci-windows.yml').length).toBe(1);
+    expect(tests.filter((r) => r.nom === 'ci-windows.yml').length).toBe(6);
   });
 });

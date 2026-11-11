@@ -254,7 +254,9 @@ jobs:
           # commentaire du job). La 2 est définie par EXCLUSION : tout paquet
           # qui n'est ni web, ni runner, ni dans la liste de la 1 y tombe, donc
           # un paquet ajouté plus tard est testé sans que personne y pense.
-          # Garde : scripts/tests/ci-shards.test.mjs.
+          # Garde : scripts/tests/ci-shards.test.mjs. ci-windows.yml lance les
+          # MÊMES six tranches (issue 1044) : la garde exige que les deux listes
+          # soient identiques, donc une tranche se change dans les deux fichiers.
           - shard: packages-1
             run: pnpm exec turbo run test --continue=dependencies-successful --filter=@nodal-agents/tools --filter=@nodal-agents/bench
           - shard: packages-2

@@ -12,7 +12,7 @@
 // Never the owner's `~/.nodalai`: NODALAI_HOME is a temp dir, set before the
 // first import (PID_DIR and PG_DATA_DIR are computed at load).
 
-import { describe, it, expect, afterEach, afterAll, vi } from 'vitest';
+import { describe, it, expect, afterEach, afterAll, vi, type TestContext } from 'vitest';
 
 const home = await vi.hoisted(async () => {
   const fs = await import('node:fs');
@@ -28,14 +28,23 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { runDown } from '../commands/down.ts';
-import { isPidAlive, readPids, recordServiceTree, waitForPidDead } from '../lib/processes.ts';
-import { processTable } from './process-table-available.ts';
+import {
+  isPidAlive,
+  lastSnapshotFailure,
+  readPids,
+  recordServiceTree,
+  waitForPidDead,
+  type PidFile,
+} from '../lib/processes.ts';
 
 const onWindows = process.platform === 'win32';
-// `down` needs a process table to confirm anything on Windows; GitHub's Windows
-// runner has none (see process-table-available.ts), and off Windows there is
-// nothing to confirm with, which is a different, documented branch.
-const canRun = !onWindows || processTable.available;
+// No probe at load (#1046). These cases used to be guarded by ONE PowerShell
+// call made when the file was imported (`process-table-available.ts`): on the
+// sharded CI Windows that call lands while two other packages' suites start
+// beside this one, and it timed out in every run while the cases themselves
+// never got to ask. What `down` needs is its own reading, at the moment it
+// takes it, so that is what each case asks — see `skipUnanswered`. Off Windows
+// there is nothing to confirm with, which is a different, documented branch.
 
 const spawned: ChildProcess[] = [];
 
@@ -48,20 +57,79 @@ function spawnIdle(): ChildProcess {
   return child;
 }
 
+/**
+ * Skip THIS case, out loud, when the machine did not answer a reading the case
+ * depends on.
+ *
+ * What `down` needs from the machine is one thing: its own reading of the
+ * table, taken once before it signals anything (#1046) — plus, for the cases
+ * that record a start, the reading `recordServiceTree` takes. When one of those
+ * did not answer, that is a fact about the machine at that moment, said on
+ * stderr and skipped. Anything else — a pid refused or left running although
+ * `down`'s reading DID answer — is the product, and fails the case.
+ */
+function skipUnanswered(ctx: TestContext, what: string): never {
+  const why = `${what} (${lastSnapshotFailure ?? 'no reason reported'})`;
+  // stderr, not console: vitest does not print a passing or skipped case's
+  // console, and a skip that is not seen is the silence to fear.
+  process.stderr.write(`\n[tests] SKIPPING this down-fresh-record case: ${why}\n`);
+  ctx.skip(why);
+}
+
+/** The spawn-time record, skipped out loud when its reading did not answer. */
+async function recordOrSkip(ctx: TestContext, pids: PidFile): Promise<void> {
+  const outcome = await recordServiceTree(pids);
+  if (outcome.unidentified.length > 0) {
+    skipUnanswered(
+      ctx,
+      `the reading that records the spawn did not identify ${outcome.unidentified.join(', ')}`,
+    );
+  }
+}
+
 /** Run `down` with its console and stderr captured, so a refusal can be read. */
-async function runDownCaptured(): Promise<{ stderr: string }> {
+async function runDownCaptured(
+  ctx: TestContext,
+  pids: readonly number[],
+): Promise<{ stderr: string }> {
   const said: string[] = [];
+  const printed: string[] = [];
   const err = vi.spyOn(process.stderr, 'write').mockImplementation(((chunk: string) => {
     said.push(String(chunk));
     return true;
   }) as never);
-  const out = vi.spyOn(console, 'log').mockImplementation(() => {});
+  const out = vi.spyOn(console, 'log').mockImplementation(((line: unknown) => {
+    printed.push(String(line));
+  }) as never);
+  const started = Date.now();
   try {
     await runDown();
   } finally {
     err.mockRestore();
     out.mockRestore();
   }
+  const tookMs = Date.now() - started;
+  // The readings of the table that did NOT answer during this `down`, by the
+  // budget they were given: `readProcessTableWin` says so once per reading.
+  const failedReadings = said
+    .join('')
+    .split('\n')
+    .filter((line) => line.includes('Could not read the process table ('))
+    .map((line) => /timed out after (\d+)ms/.exec(line)?.[1] ?? 'other');
+  // `down`'s own reading did not answer: it refused every pid BEFORE any kill,
+  // with this exact line. A refusal from anywhere else does not match it.
+  const text = printed.join('\n');
+  const unanswered = pids.some((pid) =>
+    text.includes(
+      `(pid ${pid}) was NOT stopped — pid ${pid} could not be confirmed: the process table did not answer`,
+    ),
+  );
+  if (unanswered) skipUnanswered(ctx, "down's own reading of the process table did not answer");
+  // A measurement, not a verdict: #1046 was a `down` that took 56.9 s to fail.
+  process.stderr.write(
+    `[tests] down-fresh-record: runDown took ${tookMs} ms; ` +
+      `readings that did not answer: ${failedReadings.length} [${failedReadings.join(', ')}]\n`,
+  );
   return { stderr: said.join('') };
 }
 
@@ -79,30 +147,28 @@ afterAll(() => {
 });
 
 describe('down after a fresh start @cap:installer-et-demarrer/moteur', () => {
-  it.skipIf(!canRun)(
-    'stops runner and web recorded at the spawn, before any health check',
-    async () => {
-      const runner = spawnIdle();
-      const web = spawnIdle();
-      // What `up` does right after spawning the two services — nothing else has
-      // happened yet: no health check, no render check.
-      await recordServiceTree({ runner: runner.pid!, web: web.pid! });
-      expect(isPidAlive(runner.pid!)).toBe(true);
-      expect(isPidAlive(web.pid!)).toBe(true);
+  it('stops runner and web recorded at the spawn, before any health check', async (ctx) => {
+    const runner = spawnIdle();
+    const web = spawnIdle();
+    // What `up` does right after spawning the two services — nothing else has
+    // happened yet: no health check, no render check.
+    // Off Windows there is no table and nothing to identify: nothing to skip.
+    if (onWindows) await recordOrSkip(ctx, { runner: runner.pid!, web: web.pid! });
+    else await recordServiceTree({ runner: runner.pid!, web: web.pid! });
+    expect(isPidAlive(runner.pid!)).toBe(true);
+    expect(isPidAlive(web.pid!)).toBe(true);
 
-      await runDownCaptured();
+    await runDownCaptured(ctx, [runner.pid!, web.pid!]);
 
-      expect(await waitForPidDead(runner.pid!, 15_000)).toBe(true);
-      expect(await waitForPidDead(web.pid!, 15_000)).toBe(true);
-      // Everything stopped: nothing is kept on record.
-      expect(readPids()).toEqual({});
-    },
-    120_000,
-  );
+    expect(await waitForPidDead(runner.pid!, 15_000)).toBe(true);
+    expect(await waitForPidDead(web.pid!, 15_000)).toBe(true);
+    // Everything stopped: nothing is kept on record.
+    expect(readPids()).toEqual({});
+  }, 120_000);
 
-  it.skipIf(!onWindows || !processTable.available)(
+  it.skipIf(!onWindows)(
     'a record of bare numbers is still refused: nothing is signalled and the record is kept',
-    async () => {
+    async (ctx) => {
       const runner = spawnIdle();
       const web = spawnIdle();
       // The shape 0.9.7 could leave behind: pids, no identity.
@@ -112,7 +178,7 @@ describe('down after a fresh start @cap:installer-et-demarrer/moteur', () => {
         'utf-8',
       );
 
-      const { stderr } = await runDownCaptured();
+      const { stderr } = await runDownCaptured(ctx, [runner.pid!, web.pid!]);
 
       expect(isPidAlive(runner.pid!)).toBe(true);
       expect(isPidAlive(web.pid!)).toBe(true);
@@ -125,13 +191,13 @@ describe('down after a fresh start @cap:installer-et-demarrer/moteur', () => {
     120_000,
   );
 
-  it.skipIf(!onWindows || !processTable.available)(
+  it.skipIf(!onWindows)(
     'a partial stop keeps only what is still running on record',
-    async () => {
+    async (ctx) => {
       const runner = spawnIdle();
       const web = spawnIdle();
       // Runner recorded with its identity; web as a bare number.
-      await recordServiceTree({ runner: runner.pid!, web: web.pid! });
+      await recordOrSkip(ctx, { runner: runner.pid!, web: web.pid! });
       const full = readPids()!;
       writeFileSync(
         join(home, 'pids', 'processes.json'),
@@ -139,7 +205,7 @@ describe('down after a fresh start @cap:installer-et-demarrer/moteur', () => {
         'utf-8',
       );
 
-      await runDownCaptured();
+      await runDownCaptured(ctx, [runner.pid!, web.pid!]);
 
       expect(await waitForPidDead(runner.pid!, 15_000)).toBe(true);
       expect(isPidAlive(web.pid!)).toBe(true);

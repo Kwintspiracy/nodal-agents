@@ -30,7 +30,8 @@
         "PUBLIC",
         "OS",
         "NUMBER_OF_PROCESSORS",
-        "PROCESSOR_ARCHITECTURE"
+        "PROCESSOR_ARCHITECTURE",
+        "PSModuleAnalysisCachePath"
       ]
     },
     "typecheck": {
