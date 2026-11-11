@@ -15,9 +15,10 @@
 //
 // The last block runs everywhere: one way to spawn PowerShell, and only one.
 
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join, relative, resolve, sep } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { listSourceFiles } from '@nodal-agents/test-kit';
 import { processSnapshotWin } from '../lib/processes.ts';
 import { postgresProcessesForDataDir, queryPidDirectWin } from '../lib/postgres.ts';
 import { PIN_SYSTEM_MODULES, windowsPowerShellArgs } from '../lib/windows-powershell.ts';
@@ -100,20 +101,18 @@ describe('one way to run PowerShell @cap:installer-et-demarrer/moteur', () => {
     // A literal `powershell` / `pwsh` as the program of a spawn call.
     const SPAWN =
       /\b(?:execa|execaSync|spawn|spawnSync|execFile|execFileSync)\(\s*['"`](?:powershell|pwsh)(?:\.exe)?['"`]/i;
-    const offenders: string[] = [];
-    const walk = (dir: string): void => {
-      for (const name of readdirSync(dir)) {
-        const path = join(dir, name);
-        if (statSync(path).isDirectory()) {
-          if (name === 'tests' || name === 'node_modules') continue;
-          walk(path);
-        } else if (/\.(ts|mts|js|mjs)$/.test(name) && !/\.test\./.test(name)) {
-          if (SPAWN.test(readFileSync(path, 'utf8')))
-            offenders.push(relative(repo, path).split(sep).join('/'));
-        }
-      }
-    };
-    for (const root of roots) walk(root);
+    // What git tracks as source, tests left out — never a list of build folders
+    // of our own (test-kit `source-files.test.ts` refuses one).
+    const files = roots.flatMap((root) =>
+      listSourceFiles(root, {
+        skipDirs: ['tests', '__tests__'],
+        extensions: ['.ts', '.mts', '.js', '.mjs'],
+      }),
+    );
+    expect(files.length).toBeGreaterThan(0);
+    const offenders = files
+      .filter((file) => SPAWN.test(readFileSync(file, 'utf8')))
+      .map((file) => relative(repo, file).split(sep).join('/'));
     expect(offenders).toEqual(['apps/cli/src/lib/windows-powershell.ts']);
   });
 });
