@@ -31,7 +31,18 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Measure reads (idle, before)
         timeout-minutes: 5
-        run: node scripts/exp-measure-process-table.mjs before 3
+        run: node scripts/exp-measure-process-table.mjs before 3 env
+      - name: Measure reads inside a turbo task
+        timeout-minutes: 5
+        run: pnpm exec turbo run exp-measure --filter=nodal-agents
+      - name: Real-table tests of apps/cli, vitest directly (no turbo)
+        timeout-minutes: 20
+        working-directory: apps/cli
+        run: >-
+          pnpm exec vitest run
+          src/tests/down-fresh-record.test.ts
+          src/tests/process-tree.test.ts
+          src/tests/recorded-tree.test.ts
       - name: Real-table tests of apps/cli, alone
         timeout-minutes: 20
         env:

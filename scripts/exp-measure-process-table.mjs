@@ -18,6 +18,14 @@ const QUERIES = {
 
 const label = process.argv[2] ?? 'measure';
 const rounds = Number(process.argv[3] ?? 3);
+if (process.argv[4] === 'env') {
+  // Names only, never values: what the spawned PowerShell inherits.
+  console.log(`[exp-1056] ${label} env keys: ${Object.keys(process.env).sort().join(',')}`);
+  const pm = process.env['PSModulePath'] ?? process.env['PSMODULEPATH'];
+  console.log(
+    `[exp-1056] ${label} PSModulePath entries: ${pm === undefined ? 'unset' : pm.split(';').length}`,
+  );
+}
 for (let i = 1; i <= rounds; i++) {
   for (const [name, command] of Object.entries(QUERIES)) {
     const started = Date.now();
