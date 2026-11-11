@@ -47,6 +47,31 @@ const CANDIDATES = [
   ['C2w Import-Module by path, WMI', byPath('Microsoft.PowerShell.Management') + WMI, stripped],
   ['C3 .NET searcher (New-Object)', DOTNET, stripped],
   ['C3b .NET searcher (no cmdlet)', DOTNET_NOCMDLET, stripped],
+  ['S0 startup only, stripped', '"1|1|1|x"', stripped],
+  [
+    'C4 $env:PSModulePath set inside, CIM',
+    `$env:PSModulePath = '${PSHOME}\\Modules'; ` + CIM,
+    stripped,
+  ],
+  [
+    'C4w $env:PSModulePath set inside, WMI',
+    `$env:PSModulePath = '${PSHOME}\\Modules'; ` + WMI,
+    stripped,
+  ],
+  [
+    'C2b CimCmdlets + Management by path, CIM',
+    byPath('Microsoft.PowerShell.Management') + byPath('CimCmdlets') + CIM,
+    stripped,
+  ],
+  [
+    'C5 CIM through .NET MMI (no cmdlet)',
+    "[void][Reflection.Assembly]::LoadWithPartialName('Microsoft.Management.Infrastructure'); " +
+      '$c = [Microsoft.Management.Infrastructure.CimSession]::Create($null); ' +
+      "foreach ($p in $c.QueryInstances('root/cimv2', 'WQL', 'SELECT ProcessId,ParentProcessId,CreationDate,Name FROM Win32_Process')) { " +
+      '$v = $p.CimInstanceProperties; ' +
+      "\"$($v['ProcessId'].Value)|$($v['ParentProcessId'].Value)|$($v['CreationDate'].Value.Ticks)|$($v['Name'].Value)\" }",
+    stripped,
+  ],
 ];
 
 const ticksOf = (stdout) =>
