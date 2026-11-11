@@ -11,6 +11,12 @@ export type SpeechErrorCode =
   | 'speech_provider_not_found'
   /** The provider answered, but not with audio/text — bad key, refusal. */
   | 'speech_provider_error'
+  /** Nobody answered: the request got no HTTP answer at all (connection
+   *  refused, unknown host, a deadline passed). Its own code because it is
+   *  not a refusal: a server the user runs themselves is simply not running,
+   *  and a screen or a module says "nothing listens at that address" without
+   *  parsing prose (#1048). Every adapter says it the same way. */
+  | 'speech_unreachable'
   /** The provider refused because the key has no credit left (HTTP 402).
    *  Its own code because it is the one refusal the person fixes themselves,
    *  at the vendor, and a screen or a module says so without parsing prose

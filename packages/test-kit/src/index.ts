@@ -53,3 +53,5 @@ export * from './stated-limits';
 export * from './pdf';
 // N disk operations with a bounded number in flight, not N at once (#1034).
 export * from './bounded-io';
+// A real speech/transcription server of the OpenAI audio surface, for tests (#1048).
+export * from './speech-server';

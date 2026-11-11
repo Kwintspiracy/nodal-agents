@@ -25,8 +25,13 @@
  * interchangeable and cloneable voices. Local engines (Piper, Kokoro, a
  * whisper.cpp server) are the obvious next entries and are exactly why this is
  * an interface: they plug in without a caller changing.
+ *
+ * `openai-compatible` (#1048) is that entry: not a vendor but the standard
+ * OpenAI audio surface (its models, transcriptions and speech routes),
+ * at an address the user gives. Any server that speaks it plugs in — a
+ * Whisper server, whisper.cpp, Speaches, LocalAI — and Nodal ships none.
  */
-export const SPEECH_PROVIDERS = ['google', 'minimax', 'openrouter'] as const;
+export const SPEECH_PROVIDERS = ['google', 'minimax', 'openrouter', 'openai-compatible'] as const;
 
 /** Derived from the tuple above, never written twice: a validator needs the
  *  runtime list (zod enums, a form's options) and the compiler needs the type,
@@ -178,6 +183,8 @@ export interface TranscriptionCapabilities {
  * speech back on the shared connection.
  */
 export interface SpeechConnection {
+  /** Empty only for an adapter that declares `requiresKey: false`: a server
+   *  the user runs themselves may ask for no key (#1048). */
   apiKey: string;
   fetch: typeof globalThis.fetch;
   /**
@@ -211,6 +218,9 @@ export interface SpeechStreamChunk {
 /** Text → audio. */
 export interface SpeechAdapter {
   readonly provider: SpeechProvider;
+  /** A vendor refuses every call without a key, so binding one without it is
+   *  refused at once (bind.ts). A server the user runs may need none (#1048). */
+  readonly requiresKey: boolean;
   readonly capabilities: SpeechCapabilities;
   /** The voices this provider can speak with. Static vendors return a constant
    *  list without touching the network; the connection is still required so a
@@ -258,6 +268,8 @@ export interface SpeechModelOffer {
 /** Audio → text. */
 export interface TranscriptionAdapter {
   readonly provider: SpeechProvider;
+  /** See `SpeechAdapter.requiresKey`. */
+  readonly requiresKey: boolean;
   readonly capabilities: TranscriptionCapabilities;
   transcribe(req: TranscribeRequest, connection: SpeechConnection): Promise<TranscribeResult>;
   /** The models the vendor serves for transcription now, asked of the vendor (#976). */

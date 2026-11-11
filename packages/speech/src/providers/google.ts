@@ -137,7 +137,7 @@ async function callGemini(
     });
   } catch (err) {
     throw new SpeechError(
-      'speech_provider_error',
+      'speech_unreachable',
       `google ${model}: request failed — ${err instanceof Error ? err.message : String(err)}`,
     );
   }
@@ -337,7 +337,7 @@ async function* streamTts(
     );
   } catch (err) {
     throw new SpeechError(
-      'speech_provider_error',
+      'speech_unreachable',
       `google ${model}: request failed — ${err instanceof Error ? err.message : String(err)}`,
     );
   }
@@ -414,7 +414,7 @@ async function listTtsModels(connection: SpeechConnection): Promise<readonly Spe
       });
     } catch (err) {
       throw new SpeechError(
-        'speech_provider_error',
+        'speech_unreachable',
         `google models: request failed — ${err instanceof Error ? err.message : String(err)}`,
       );
     }
@@ -437,6 +437,7 @@ async function listTtsModels(connection: SpeechConnection): Promise<readonly Spe
 
 export const googleSpeechAdapter: SpeechAdapter = {
   provider: 'google',
+  requiresKey: true,
   capabilities: {
     // WAV, because this adapter wraps the raw PCM the API returns. Anything
     // that can play a WAV — every browser, every messaging channel — can play
@@ -510,6 +511,7 @@ const TRANSCRIBE_INSTRUCTION =
 
 export const googleTranscriptionAdapter: TranscriptionAdapter = {
   provider: 'google',
+  requiresKey: true,
   capabilities: { accepts: ACCEPTED_INPUT },
 
   async transcribe(

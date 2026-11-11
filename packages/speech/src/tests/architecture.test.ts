@@ -78,6 +78,14 @@ describe('one speech path @cap:travailler-sur-des-fichiers/moteur', () => {
     const found: string[] = [];
     for (const { file, rel } of files) {
       if (rel.startsWith('packages/speech/src/providers/')) continue;
+      // test-kit is test code by construction (a devDependency only, never in
+      // the tarball): its fake server SERVES the speech route, it calls none.
+      if (rel.startsWith('packages/test-kit/')) continue;
+      // The words of Settings → Voice NAME the route a person's speech server
+      // answers on, in a sentence they read (#1048, approved mockup); that file
+      // calls nothing. Named here, file by file, so a call added there or
+      // anywhere else still turns this red.
+      if (rel === 'apps/web/src/app/(dashboard)/settings/voice-copy.ts') continue;
       const text = readFileSync(file, 'utf8');
       for (const { what, re } of SECOND_PATH) {
         if (re.test(text)) found.push(`${rel}: ${what}`);
