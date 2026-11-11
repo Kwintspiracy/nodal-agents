@@ -3,6 +3,7 @@
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { PG_DATA_DIR } from './config.ts';
+import { runWindowsPowerShell } from './windows-powershell.ts';
 import {
   importEmbeddedPostgres,
   importEmbeddedPostgresBinaries,
@@ -191,30 +192,25 @@ export async function postgresProcessesForDataDir(
   // unanswerable, nothing is owned. `read: false` tells the caller no ancestry
   // was walked, so no workers are in the answer.
   if (process.platform !== 'win32') return unconfirmedReading(dataDir);
-  const { execa } = await import('execa');
   try {
-    const { stdout, stderr, exitCode } = await execa(
-      'powershell',
-      [
-        '-NoProfile',
-        '-NonInteractive',
-        '-Command',
-        // `CreationDate` is the load-bearing field: it tells one generation of
-        // a pid from the next, which is the only thing that catches a pid the
-        // OS recycled onto a stranger. It goes BEFORE the command line, the one
-        // field that may itself carry a `|`. The command line is kept for the
-        // log line that says what was left alone — never to decide ownership.
-        'Get-CimInstance Win32_Process -Filter "Name=\'postgres.exe\'" | ' +
-          // `[datetime]'…Z'` parses as LOCAL time, so the epoch itself landed on
-          // the wrong side of the offset: measured here, eight hours out
-          // (finding R4). `Get-Date … | ToUniversalTime` gives a Utc-kind
-          // epoch, and the millisecond value then matches the real instant.
-          'ForEach-Object { $ms = if ($_.CreationDate) ' +
-          "{ [int64]($_.CreationDate.ToUniversalTime() - (Get-Date '1970-01-01T00:00:00Z')" +
-          '.ToUniversalTime()).TotalMilliseconds } else { 0 }; ' +
-          '"$($_.ProcessId)|$($_.ParentProcessId)|$ms|$($_.CommandLine)" }',
-      ],
-      { reject: false, timeout: 10_000 },
+    // Through the one helper (#1057): `Get-CimInstance` and `Get-Date` are
+    // found among the system modules whoever started `nodal`.
+    const { stdout, stderr, exitCode } = await runWindowsPowerShell(
+      // `CreationDate` is the load-bearing field: it tells one generation of
+      // a pid from the next, which is the only thing that catches a pid the
+      // OS recycled onto a stranger. It goes BEFORE the command line, the one
+      // field that may itself carry a `|`. The command line is kept for the
+      // log line that says what was left alone — never to decide ownership.
+      'Get-CimInstance Win32_Process -Filter "Name=\'postgres.exe\'" | ' +
+        // `[datetime]'…Z'` parses as LOCAL time, so the epoch itself landed on
+        // the wrong side of the offset: measured here, eight hours out
+        // (finding R4). `Get-Date … | ToUniversalTime` gives a Utc-kind
+        // epoch, and the millisecond value then matches the real instant.
+        'ForEach-Object { $ms = if ($_.CreationDate) ' +
+        "{ [int64]($_.CreationDate.ToUniversalTime() - (Get-Date '1970-01-01T00:00:00Z')" +
+        '.ToUniversalTime()).TotalMilliseconds } else { 0 }; ' +
+        '"$($_.ProcessId)|$($_.ParentProcessId)|$ms|$($_.CommandLine)" }',
+      10_000,
     );
     if (exitCode !== 0) {
       // The probe could not ANSWER. That is not the same fact as "no Postgres
@@ -279,21 +275,15 @@ const realProbes: SinglePidProbes = {
 export async function queryPidDirectWin(
   pid: number,
 ): Promise<{ exe: string; startedAt?: number } | undefined> {
-  const { execa } = await import('execa');
   try {
-    const { stdout, exitCode } = await execa(
-      'powershell',
-      [
-        '-NoProfile',
-        '-NonInteractive',
-        '-Command',
-        `Get-CimInstance Win32_Process -Filter "ProcessId=${pid}" | ForEach-Object { ` +
-          '$ms = if ($_.CreationDate) ' +
-          "{ [int64]($_.CreationDate.ToUniversalTime() - (Get-Date '1970-01-01T00:00:00Z')" +
-          '.ToUniversalTime()).TotalMilliseconds } else { 0 }; ' +
-          '"$($_.Name)|$ms" }',
-      ],
-      { reject: false, timeout: 10_000 },
+    // Through the one helper (#1057), like every PowerShell call of the CLI.
+    const { stdout, exitCode } = await runWindowsPowerShell(
+      `Get-CimInstance Win32_Process -Filter "ProcessId=${pid}" | ForEach-Object { ` +
+        '$ms = if ($_.CreationDate) ' +
+        "{ [int64]($_.CreationDate.ToUniversalTime() - (Get-Date '1970-01-01T00:00:00Z')" +
+        '.ToUniversalTime()).TotalMilliseconds } else { 0 }; ' +
+        '"$($_.Name)|$ms" }',
+      10_000,
     );
     if (exitCode !== 0) return undefined;
     const line = stdout.split(/\r?\n/).find((l) => l.includes('|'));

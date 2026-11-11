@@ -69,7 +69,7 @@ import {
 import { findWorkingDirectoryHolders, runReset, type ResetDisk } from '../commands/reset.ts';
 import { CONFIG_DIR, PG_DATA_DIR } from '../lib/config.ts';
 import type { ClaimVerdict } from '../lib/orphans.ts';
-import { isPidAlive, waitForPidDead } from '../lib/processes.ts';
+import { isPidAlive, ProcessReading, waitForPidDead } from '../lib/processes.ts';
 import { processTable } from './process-table-available.ts';
 
 const lockfile = join(home, 'pg-data', 'postmaster.pid');
@@ -88,7 +88,7 @@ let printed: string[];
 function context(overrides: Partial<KillContext>): KillContext {
   return {
     pids: null,
-    snapshot: new Map(),
+    reading: ProcessReading.of(new Map()),
     ownedPostgresPids: new Set(),
     tableAvailable: process.platform === 'win32',
     postgresClaim: UNKNOWN,
