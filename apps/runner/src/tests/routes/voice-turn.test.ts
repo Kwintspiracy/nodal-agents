@@ -1381,7 +1381,10 @@ describe('the voice turn route — the reply spoken as it is written (#943) @cap
   });
 
   // Mutations verified: the vendor's `complete` marked at its first byte →
-  // red (the gap is gone); the rate taken from anywhere but the answer → red.
+  // red (the gap is gone); the rate taken from anywhere but the answer → red;
+  // the `providerRequest` mark removed → red (its field is null, the line
+  // does not match). The order of the phases against the real provider call is
+  // proven in chat/run-chat-turn.test.ts (millisecond marks can tie).
   it('one timing line per turn, numbers only, never the words: the vendor’s first byte apart from its whole body', async () => {
     const lines: string[] = [];
     const warn = vi.spyOn(console, 'warn').mockImplementation((...args: unknown[]) => {
@@ -1436,16 +1439,35 @@ describe('the voice turn route — the reply spoken as it is written (#943) @cap
     expect(timing).toHaveLength(2);
     // #969: the line names the voice that spoke — identifiers only.
     expect(timing[0]).toMatch(
-      /^\[voice-turn\] timing \{"source":"openrouter","model":"google\/gemini-3\.8-flash-tts","voice":"Kore","transcriptionModel":"x-ai\/grok-stt-1\.0","transcriptMs":\d+,"firstDeltaMs":\d+,"firstSentenceMs":\d+,"firstSentenceVendorByteMs":\d+,"firstSentenceVendorDoneMs":\d+,"firstAudioMs":\d+,"doneMs":\d+\}$/,
+      /^\[voice-turn\] timing \{"source":"openrouter","model":"google\/gemini-3\.8-flash-tts","voice":"Kore","transcriptionModel":"x-ai\/grok-stt-1\.0","transcriptMs":\d+,"voiceOpenedMs":\d+,"turnStartedMs":\d+,"userMessageSavedMs":\d+,"llmResolvedMs":\d+,"contextLoadedMs":\d+,"promptBuiltMs":\d+,"historyLoadedMs":\d+,"providerRequestMs":\d+,"firstDeltaMs":\d+,"firstSentenceMs":\d+,"firstSentenceVendorByteMs":\d+,"firstSentenceVendorDoneMs":\d+,"firstAudioMs":\d+,"doneMs":\d+\}$/,
     );
     expect(timing[1]).toMatch(
-      /^\[voice-turn\] timing \{"source":null,"model":null,"voice":null,"transcriptionModel":null,"transcriptMs":null,"firstDeltaMs":null,"firstSentenceMs":null,"firstSentenceVendorByteMs":null,"firstSentenceVendorDoneMs":null,"firstAudioMs":null,"doneMs":\d+\}$/,
+      /^\[voice-turn\] timing \{"source":null,"model":null,"voice":null,"transcriptionModel":null,"transcriptMs":null,"voiceOpenedMs":null,"turnStartedMs":null,"userMessageSavedMs":null,"llmResolvedMs":null,"contextLoadedMs":null,"promptBuiltMs":null,"historyLoadedMs":null,"providerRequestMs":null,"firstDeltaMs":null,"firstSentenceMs":null,"firstSentenceVendorByteMs":null,"firstSentenceVendorDoneMs":null,"firstAudioMs":null,"doneMs":\d+\}$/,
     );
     const marks = JSON.parse(timing[0]!.slice('[voice-turn] timing '.length)) as Record<
       string,
       number
     >;
-    expect(marks['transcriptMs']!).toBeLessThanOrEqual(marks['firstDeltaMs']!);
+    // #1063: the wait before the model's first word is split, in the order the
+    // turn walks it — the reply voice opens, the turn prepares, the provider
+    // request leaves, the first delta comes back.
+    const wait = [
+      'transcriptMs',
+      'voiceOpenedMs',
+      'turnStartedMs',
+      'userMessageSavedMs',
+      'llmResolvedMs',
+      'contextLoadedMs',
+      'promptBuiltMs',
+      'historyLoadedMs',
+      'providerRequestMs',
+      'firstDeltaMs',
+    ];
+    for (let i = 1; i < wait.length; i++) {
+      expect(marks[wait[i - 1]!]!, `${wait[i - 1]!} <= ${wait[i]!}`).toBeLessThanOrEqual(
+        marks[wait[i]!]!,
+      );
+    }
     expect(marks['firstSentenceMs']!).toBeLessThanOrEqual(marks['firstSentenceVendorByteMs']!);
     // The vendor streamed: its whole body came well after its first byte.
     expect(
