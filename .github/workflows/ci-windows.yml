@@ -23,6 +23,7 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: '24'
+          package-manager-cache: false
       - name: Candidate reads, both variables removed
         timeout-minutes: 15
         run: node scripts/exp-ps-env.mjs
