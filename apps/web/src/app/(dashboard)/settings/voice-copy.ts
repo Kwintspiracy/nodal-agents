@@ -185,8 +185,8 @@ export function unreachableText(detail?: string): string {
         ? 'unknown host'
         : code === 'ETIMEDOUT' || code === 'UND_ERR_CONNECT_TIMEOUT'
           ? 'no answer in time'
-          : code === 'ECONNRESET'
-            ? 'connection reset'
+          : code === 'ECONNRESET' || code === 'UND_ERR_SOCKET'
+            ? 'the connection was closed'
             : (code ?? detail ?? 'no answer');
   return `Nothing listens at ${url ? hostOf(url) : 'that address'} (${why}).`;
 }

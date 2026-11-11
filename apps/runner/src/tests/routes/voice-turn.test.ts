@@ -3172,8 +3172,10 @@ describe('a server the person runs, for listening and for speaking (#1048) @cap:
       code: 'speech_unreachable',
       model: WHISPER,
     });
-    // Refused, or reset on a connection the pool still held: no answer either way.
-    expect(String(down['detail'])).toMatch(/no answer \((ECONNREFUSED|ECONNRESET)\)/);
+    // The code is the contract. The words vary with the moment the server
+    // went away (refused; reset or closed on a socket the pool still held:
+    // ECONNREFUSED, ECONNRESET, UND_ERR_SOCKET), all of them "no answer".
+    expect(String(down['detail'])).toMatch(/: no answer \([A-Z_]+\)$/);
   });
 
   it('the state is the same trial for every source: an OpenRouter ear and an OpenRouter voice answer through it', async () => {
