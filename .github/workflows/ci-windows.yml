@@ -1,28 +1,11 @@
 name: CI Windows
 
-# Quentin développe et fait tourner Nodal sur Windows ; la CI ne voyait que
-# Linux. Les pièges qui lui coûtent le plus — arbres de processus, ports
-# tenus, séparateurs de chemin, casse du système de fichiers — n'étaient donc
-# vus par personne avant lui.
-#
-# BLOQUANT depuis le 11/08, sur décision de Quentin. Il a été vert dès son
-# premier passage utile — après avoir rendu deux défauts réels de comparaison
-# de chemins, dont un qui cassait la livraison de fichiers temporaires sur
-# macOS. Si ce job se met à flaker, la réponse n'est PAS de remettre
-# `continue-on-error` mais de traiter la cause.
-#
-# Sur `main` et chaque nuit, PLUS sur les pull requests (#291, 2026-09-21) :
-# en 29 min par PR il n'a jamais trouvé un défaut Windows que le job Linux
-# avait laissé passer, et il doublait le temps d'attente de chaque PR. Un
-# rouge ici se corrige par une PR de suite, et le portail le montre.
+# EXPERIMENT (#1056, step 1) — this file is restored before the PR is opened.
+# One job, on its own runner, that runs ONLY the apps/cli test files that read
+# the real process table, with no other package's tests in parallel, and
+# measures a process-table read before and after them.
 
 on:
-  push:
-    branches: [main]
-  schedule:
-    # 04:47 UTC : hors de la vague de l'heure, et après la mesure nocturne de
-    # `qa.yml` (03:17), pour ne pas se disputer les runners avec elle.
-    - cron: '47 4 * * *'
   workflow_dispatch:
 
 concurrency:
@@ -32,170 +15,45 @@ concurrency:
 permissions:
   contents: read
 
-# Images de runner explicites (issue #882) : `*-latest` bouge sans que le dépôt
-# change. Le 30/10/2026 `ubuntu-latest` est passé à Ubuntu 26.04 et Playwright
-# 1.60 a refusé d'y installer Chromium, sur toutes les PR. Passer à 26.04 se
-# fera exprès, avec une version de Playwright qui la connaît. Garde :
-# scripts/tests/runner-images.test.mjs (étape « Script tests » de `checks`).
 jobs:
-  # ── Ce qui tourne UNE fois ──────────────────────────────────────────────────
-  # Typecheck et signatures du runtime VC++ ne dépendent pas de la tranche de
-  # tests : les mettre dans chaque tranche les referait six fois pour le même
-  # verdict. Ils ont leur job, donc leur runner : la vérification Authenticode
-  # tourne sur une machine qu'aucune suite ne sature (c'était l'intention de
-  # l'ordre « avant Unit tests », 2026-10-17), et un typecheck rouge
-  # n'empêche pas les six tranches de rendre leur verdict.
-  checks:
+  exp-process-table:
     runs-on: windows-2025-vs2026
-    # Typecheck à froid, runner rapide : 322 s (run 42876715906) ; installation
-    # 20 à 31 s ; signatures VC++ 3 à 6 s. Au pire d'un runner lent (×1,78) le
-    # typecheck prend 573 s : sa borne passe de 10 à 15 min (+160 %), car 10
-    # n'aurait laissé que 4 % de marge. Job : 10 + 15 + 6 + 5 de mise en place
-    # = 36, arrondi à 40 (ci-budgets.mjs).
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v5
-
-      # No `version:` here on purpose — pnpm/action-setup@v4 reads the
-      # version from the `packageManager` field in the root package.json.
-      # Specifying both causes ERR_PNPM_BAD_PM_VERSION.
       - uses: pnpm/action-setup@v4
-
       - uses: actions/setup-node@v5
         with:
           node-version: '24'
           cache: 'pnpm'
-
-      # Turborepo's own cache, persisted between runs, keyed per OS because
-      # Linux and Windows artefacts are not interchangeable. The key carries
-      # the SHA so each run writes its own entry; restore-keys falls back to
-      # the most recent one, which is what makes an unchanged package a cache
-      # hit. ~100 KB on Windows (typecheck declares no outputs, so only
-      # logs and the up-to-date markers are stored — all that is needed to
-      # SKIP them). UNE lignée par job (celle-ci, `checks`, et une par tranche
-      # de `test`), comme dans ci.yml : une clé partagée n'aurait gardé que les
-      # sorties du premier job fini.
-      - uses: actions/cache@v4
-        with:
-          path: .turbo/cache
-          key: turbo-${{ runner.os }}-checks-${{ github.sha }}
-          restore-keys: |
-            turbo-${{ runner.os }}-checks-
-
       - name: Install dependencies
         timeout-minutes: 10
         run: pnpm install --frozen-lockfile
-
-      # Typecheck et tests seulement : lint et format ne dépendent pas de l'OS,
-      # les refaire ici doublerait le coût sans rien apprendre.
-      - name: Typecheck
-        timeout-minutes: 15
-        run: pnpm typecheck
-
-      # Signatures Authenticode des DLL du runtime VC++ : seul Windows sait les
-      # vérifier, et un PowerShell à froid dans la suite unitaire parallèle a
-      # dépassé 80 s (2026-10-17).
-      - name: Verify VC++ runtime signatures
-        timeout-minutes: 6
-        run: node scripts/verify-vc-runtime-signatures.mjs
-
-  # ── La suite unitaire, en six tranches ──────────────────────────────────────
-  # `pnpm test` en une seule étape durait 24 à 25 min sur un runner et 40 à 45
-  # sur un autre, pour le même commit : tous les paquets sont ~1,65× plus lents
-  # d'un coup (runner 1 159 s contre 1 875 s, web 918 s contre 1 546 s, tools
-  # 311 s contre 532 s…), donc la cause est la machine, pas un test (issue
-  # #1044). Le run 42864007304 a atteint la borne de 45 min sans aucun test rouge.
-  #
-  # LES TRANCHES SONT CELLES DE ci.yml, À LA LIGNE PRÈS : web et runner coupés en
-  # deux par fichier (`--shard=k/2`), `packages-1` = tools + bench, `packages-2`
-  # = tout le reste, définie par EXCLUSION pour qu'un paquet ajouté plus tard y
-  # tombe sans que personne y pense. GitHub Actions ne partage pas une matrice
-  # entre deux fichiers : la définition est donc écrite deux fois, et
-  # scripts/tests/ci-shards.test.mjs fait rougir la CI Linux (étape « Script
-  # tests ») si les deux listes de tranches divergent ou si l'une perd un
-  # paquet. Une tranche se change dans les deux fichiers, ou la garde refuse.
-  # Seules les limites de temps sont propres à Windows.
-  #
-  # Pourquoi les tranches de Linux et pas d'autres, calculées pour Windows : la
-  # répartition Linux est équilibrée à 4 % près sur des durées mesurées, et
-  # l'écart Windows/Linux est un facteur quasi uniforme sur tous les paquets d'un
-  # même run : une tranche équilibrée sur l'un l'est sur l'autre.
-  #
-  # LIMITE, une seule pour les six tranches (la garde scripts/lib/ci-budgets.mjs
-  # veut un nombre écrit, pas une valeur de matrice) : 30 min sur l'étape « Unit
-  # tests », 50 sur le job (installation 10 + étape 30 + 5 de mise en place, plus
-  # une marge pour l'envoi des rapports). Elle se règle sur la tranche la plus
-  # LONGUE, packages-2 (le paquet `apps/cli` y tient 6 à 10 min à lui seul).
-  # Mesures sur ce fichier, le 10/11/2026, runner rapide (runs 42876715906 et
-  # 42879270803) : packages-2 757 s et 554 s, runner-1 479 s et 491 s, runner-2
-  # 424 s et 533 s, web-1 394 s et 308 s, web-2 295 s et 227 s, packages-1 226 s
-  # et 218 s. Sur un runner lent, tout est ~1,65× plus long en moyenne et au pire
-  # 1,78× (orchestration, issue #1044) : 757 s × 1,78 = 22,5 min. 30 min laissent
-  # ~33 % de marge sur ce pire cas, et sont 15 min sous la borne de l'ancienne
-  # étape unique (45), que ce changement ne relève pas.
-  test:
-    runs-on: windows-2025-vs2026
-    timeout-minutes: 50
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - shard: web-1
-            run: pnpm exec turbo run test --continue=dependencies-successful --filter=@nodal-agents/web -- --shard=1/2
-          - shard: web-2
-            run: pnpm exec turbo run test --continue=dependencies-successful --filter=@nodal-agents/web -- --shard=2/2
-          - shard: runner-1
-            run: pnpm exec turbo run test --continue=dependencies-successful --filter=@nodal-agents/runner -- --shard=1/2
-          - shard: runner-2
-            run: pnpm exec turbo run test --continue=dependencies-successful --filter=@nodal-agents/runner -- --shard=2/2
-          - shard: packages-1
-            run: pnpm exec turbo run test --continue=dependencies-successful --filter=@nodal-agents/tools --filter=@nodal-agents/bench
-          - shard: packages-2
-            run: pnpm exec turbo run test --continue=dependencies-successful --filter=!@nodal-agents/web --filter=!@nodal-agents/runner --filter=!@nodal-agents/tools --filter=!@nodal-agents/bench
-    name: test (${{ matrix.shard }})
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: pnpm/action-setup@v4
-
-      - uses: actions/setup-node@v5
-        with:
-          node-version: '24'
-          cache: 'pnpm'
-
-      # Une lignée de cache turbo par tranche, par OS (voir `checks`). `test`
-      # n'est jamais mis en cache (`turbo.json`, issue #698) : ce que cette
-      # lignée garde, ce sont les `build` des dépendances de la tranche.
-      - uses: actions/cache@v4
-        with:
-          path: .turbo/cache
-          key: turbo-${{ runner.os }}-test-${{ matrix.shard }}-${{ github.sha }}
-          restore-keys: |
-            turbo-${{ runner.os }}-test-${{ matrix.shard }}-
-
-      - name: Install dependencies
-        timeout-minutes: 10
-        run: pnpm install --frozen-lockfile
-
-      # Le plafond de concurrence turbo (3) vit dans `turbo.json` depuis #292 :
-      # `--concurrency` est un drapeau TURBO, et le passer par `pnpm test -- …`
-      # le transmettait à vitest, qui le refusait. Plus de drapeau à copier.
-      #
-      # `NODAL_VITEST_REPORT_DIR` (#841) : chaque paquet y écrit ses résultats
-      # (`<paquet>.vitest-report.json`, avec les fichiers qui n'ont jamais rendu
-      # de résultat) et, si un worker meurt sans que vitest l'ait demandé, son
-      # code de sortie, son signal et ses fichiers (`<paquet>.worker-exits.log`).
-      # Le dossier part en artefact même quand l'étape est rouge, un par tranche.
-      - name: Unit tests (${{ matrix.shard }})
-        timeout-minutes: 30
+      - name: Measure reads (idle, before)
+        timeout-minutes: 5
+        run: node scripts/exp-measure-process-table.mjs before 3
+      - name: Real-table tests of apps/cli, alone
+        timeout-minutes: 20
         env:
           NODAL_VITEST_REPORT_DIR: ${{ runner.temp }}/vitest-reports
-        run: ${{ matrix.run }}
-
+        run: >-
+          pnpm exec turbo run test --filter=nodal-agents --
+          src/tests/down-fresh-record.test.ts
+          src/tests/process-tree.test.ts
+          src/tests/recorded-tree.test.ts
+          src/tests/down-postgres-ownership.test.ts
+          src/tests/detach.test.ts
+          src/tests/postmaster-pid.test.ts
+          src/tests/detach-keeps-postgres.pg.test.ts
+          src/tests/down-fresh-install.pg.test.ts
+      - name: Measure reads (idle, after)
+        if: always()
+        timeout-minutes: 5
+        run: node scripts/exp-measure-process-table.mjs after 3
       - name: Upload test reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: vitest-reports-windows-${{ matrix.shard }}
+          name: vitest-reports-windows-exp-process-table
           path: ${{ runner.temp }}/vitest-reports
           if-no-files-found: warn
