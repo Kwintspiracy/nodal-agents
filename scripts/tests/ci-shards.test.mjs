@@ -12,6 +12,7 @@ import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   constats,
+  divergences,
   lireCommande,
   lireTranches,
   paquetsAvecTests,
@@ -20,6 +21,7 @@ import {
 
 const racine = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const CI = readFileSync(join(racine, '.github', 'workflows', 'ci.yml'), 'utf-8');
+const WINDOWS = readFileSync(join(racine, '.github', 'workflows', 'ci-windows.yml'), 'utf-8');
 const TURBO = 'pnpm exec turbo run test --continue=dependencies-successful';
 
 /** Un ci.yml minimal : le job `test` et sa matrice, une tranche par commande. */
@@ -200,6 +202,105 @@ describe('le VRAI ci.yml, contre les VRAIS paquets du dépôt', () => {
     expect(sansMoitie).not.toBe(CI);
     expect(constats(sansMoitie, noms)).toEqual([
       '@nodal-agents/web: ses tranches (web-1) portent [1/2], attendu [1/2, 2/2]',
+    ]);
+  });
+});
+
+describe('divergences, sur des workflows écrits exprès', () => {
+  const ref = workflow(BONNES);
+
+  it('deux workflows aux mêmes tranches ne divergent pas', () => {
+    expect(divergences('ci.yml', ref, 'ci-windows.yml', workflow(BONNES))).toEqual([]);
+  });
+
+  it('une tranche absente du second workflow : écart', () => {
+    expect(divergences('ci.yml', ref, 'ci-windows.yml', workflow(sans('web-2')))).toEqual([
+      'web-2: définie dans ci.yml, absente de ci-windows.yml',
+    ]);
+  });
+
+  it('une tranche en trop dans le second workflow : écart', () => {
+    const yml = workflow([...BONNES, ['p-3', `${TURBO} --filter=@x/b`]]);
+    expect(divergences('ci.yml', ref, 'ci-windows.yml', yml)).toEqual([
+      'p-3: définie dans ci-windows.yml, absente de ci.yml',
+    ]);
+  });
+
+  it('une tranche de même nom qui lance autre chose : écart, avec les deux commandes', () => {
+    const yml = workflow(avec('p-1', `${TURBO} --filter=@x/a --filter=@x/b`));
+    expect(divergences('ci.yml', ref, 'ci-windows.yml', yml)).toEqual([
+      `p-1: ci.yml lance « ${TURBO} --filter=@x/a », ci-windows.yml lance « ${TURBO} --filter=@x/a --filter=@x/b »`,
+    ]);
+  });
+
+  it('un job `test` introuvable est un constat, jamais un « aucun écart »', () => {
+    const sansTest = 'jobs:\n  build:\n    steps: []\n';
+    expect(divergences('ci.yml', ref, 'ci-windows.yml', sansTest)[0]).toMatch(
+      /job `test` est introuvable/,
+    );
+  });
+});
+
+describe('ci-windows.yml : la même suite que ci.yml, contre les VRAIS paquets', () => {
+  const noms = paquetsAvecTests(racine).map((p) => p.nom);
+
+  it('chaque paquet à tests est lancé par exactement une tranche Windows, web et runner par leurs deux moitiés', () => {
+    expect(constats(WINDOWS, noms)).toEqual([]);
+  });
+
+  it('un paquet neuf, que personne n’a listé, tombe dans la tranche Windows par exclusion', () => {
+    expect(constats(WINDOWS, [...noms, '@nodal-agents/neuf'])).toEqual([]);
+  });
+
+  it('les tranches Windows sont celles de ci.yml : mêmes noms, mêmes commandes', () => {
+    expect(lireTranches(WINDOWS).map((t) => t.tranche)).toEqual(
+      lireTranches(CI).map((t) => t.tranche),
+    );
+    expect(divergences('ci.yml', CI, 'ci-windows.yml', WINDOWS)).toEqual([]);
+  });
+
+  it('chaque tranche envoie son artefact de rapports sous un nom propre', () => {
+    // Deux tranches au même nom d'artefact : le second envoi échoue (upload-artifact v4).
+    expect(WINDOWS).toContain('name: vitest-reports-windows-${{ matrix.shard }}');
+  });
+
+  it('l’étape des tests a une borne propre, sous les 45 minutes de l’ancienne étape unique', () => {
+    const m = /- name: Unit tests \(\$\{\{ matrix\.shard \}\}\)\n\s+timeout-minutes: (\d+)\n/.exec(
+      WINDOWS,
+    );
+    expect(m).not.toBeNull();
+    expect(Number(m[1])).toBeGreaterThan(0);
+    expect(Number(m[1])).toBeLessThan(45);
+  });
+
+  it('MUTATION : un paquet retiré de la tranche 1 de Windows fait rougir la garde de divergence', () => {
+    const mute = WINDOWS.replace(' --filter=@nodal-agents/bench\n', '\n');
+    expect(mute).not.toBe(WINDOWS);
+    const ecarts = divergences('ci.yml', CI, 'ci-windows.yml', mute);
+    expect(ecarts).toHaveLength(1);
+    expect(ecarts[0]).toMatch(/^packages-1: ci\.yml lance/);
+  });
+
+  it('MUTATION : la tranche 2 de Windows réécrite en liste qui oublie des paquets : paquet perdu ET écart', () => {
+    const mute = WINDOWS.replace(
+      /run: pnpm exec turbo run test --continue=dependencies-successful --filter=!@nodal-agents\/web .*\n/,
+      'run: pnpm exec turbo run test --continue=dependencies-successful --filter=@nodal-agents/orchestration\n',
+    );
+    expect(mute).not.toBe(WINDOWS);
+    expect(constats(mute, noms)).toContain(
+      '@nodal-agents/db: aucune tranche ne le lance (suite perdue, CI verte à tort)',
+    );
+    expect(divergences('ci.yml', CI, 'ci-windows.yml', mute)).toHaveLength(1);
+  });
+
+  it('MUTATION : une moitié de runner retirée de Windows fait rougir les deux gardes', () => {
+    const mute = WINDOWS.replace(/ {10}- shard: runner-2\n {12}run: .*\n/, '');
+    expect(mute).not.toBe(WINDOWS);
+    expect(constats(mute, noms)).toEqual([
+      '@nodal-agents/runner: ses tranches (runner-1) portent [1/2], attendu [1/2, 2/2]',
+    ]);
+    expect(divergences('ci.yml', CI, 'ci-windows.yml', mute)).toEqual([
+      'runner-2: définie dans ci.yml, absente de ci-windows.yml',
     ]);
   });
 });
