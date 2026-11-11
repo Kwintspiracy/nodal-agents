@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { PID_DIR, LOG_DIR, CONFIG_DIR } from './config.ts';
 import { rotateLogIfNeeded } from './log-rotation.ts';
 import { childProcessEnv, type ChildEnv } from './env.ts';
+import { runWindowsPowerShell } from './windows-powershell.ts';
 import {
   confirmRecordedPid,
   confirmTree,
@@ -307,10 +308,12 @@ async function readProcessTableWin(timeoutMs: number): Promise<Map<number, Proce
   for (const query of PROCESS_TABLE_QUERIES) {
     let rows: string;
     try {
-      const { stdout, stderr, exitCode, timedOut } = await execa(
-        'powershell',
-        ['-NoProfile', '-NonInteractive', '-Command', query.command],
-        { reject: false, timeout: timeoutMs },
+      // Through the one helper, whose first statement pins module discovery
+      // to the system modules: without it, a caller with no PSModulePath made
+      // every read here time out on a machine with many modules (#1057).
+      const { stdout, stderr, exitCode, timedOut } = await runWindowsPowerShell(
+        query.command,
+        timeoutMs,
       );
       if (timedOut) {
         attempts.push(`${query.name}: timed out after ${timeoutMs}ms`);
