@@ -627,7 +627,15 @@ function replyRenderingLine(ctx: JobContext): string | null {
     // #943 : la réponse est dite phrase par phrase, et la première part en
     // voix dès qu'elle est écrite. Une première phrase courte, c'est le
     // premier son plus tôt. Une consigne au modèle, jamais un texte du runner.
-    'Open with one short sentence: it is spoken while the rest is still being written.'
+    'Open with one short sentence: it is spoken while the rest is still being written. ' +
+    // #1049 : l'accusé d'une tâche lancée disait souvent à qui elle va et
+    // pourquoi (« je confie ça à X, c'est son métier ») : 15 lancements sur 40
+    // mesurés. Avec cette phrase, 1 sur 40, sans changer les décisions ni le
+    // délai du premier mot ; la même consigne dans la personnalité de l'agent
+    // n'a rien changé de mesurable. Phrase choisie mot pour mot par le
+    // propriétaire (2026-11-11) : ne pas la reformuler. Une consigne au
+    // modèle, jamais un texte du runner (invariant #2).
+    'When you start a task or hand it to a teammate, do not say who it goes to or why: say only what is being done.'
   );
 }
 
