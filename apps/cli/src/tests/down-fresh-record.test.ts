@@ -36,13 +36,15 @@ import {
   waitForPidDead,
   type PidFile,
 } from '../lib/processes.ts';
-import { processTable } from './process-table-available.ts';
 
 const onWindows = process.platform === 'win32';
-// `down` needs a process table to confirm anything on Windows; GitHub's Windows
-// runner has none (see process-table-available.ts), and off Windows there is
-// nothing to confirm with, which is a different, documented branch.
-const canRun = !onWindows || processTable.available;
+// No probe at load (#1046). These cases used to be guarded by ONE PowerShell
+// call made when the file was imported (`process-table-available.ts`): on the
+// sharded CI Windows that call lands while two other packages' suites start
+// beside this one, and it timed out in every run while the cases themselves
+// never got to ask. What `down` needs is its own reading, at the moment it
+// takes it, so that is what each case asks — see `skipUnanswered`. Off Windows
+// there is nothing to confirm with, which is a different, documented branch.
 
 const spawned: ChildProcess[] = [];
 
@@ -60,15 +62,17 @@ function spawnIdle(): ChildProcess {
  * depends on.
  *
  * What `down` needs from the machine is one thing: its own reading of the
- * table, taken once before it signals anything (#1046). The probe at load asks
- * that same question the same way; a loaded runner can still answer the probe
- * and not answer `down` a minute later. That is a fact about the machine, said
- * and skipped. Anything else — a pid refused or left running although `down`'s
- * reading DID answer — is the product, and fails the case.
+ * table, taken once before it signals anything (#1046) — plus, for the cases
+ * that record a start, the reading `recordServiceTree` takes. When one of those
+ * did not answer, that is a fact about the machine at that moment, said on
+ * stderr and skipped. Anything else — a pid refused or left running although
+ * `down`'s reading DID answer — is the product, and fails the case.
  */
 function skipUnanswered(ctx: TestContext, what: string): never {
   const why = `${what} (${lastSnapshotFailure ?? 'no reason reported'})`;
-  console.warn(`\n[tests] SKIPPING this down-fresh-record case: ${why}\n`);
+  // stderr, not console: vitest does not print a passing or skipped case's
+  // console, and a skip that is not seen is the silence to fear.
+  process.stderr.write(`\n[tests] SKIPPING this down-fresh-record case: ${why}\n`);
   ctx.skip(why);
 }
 
@@ -97,6 +101,7 @@ async function runDownCaptured(
   const out = vi.spyOn(console, 'log').mockImplementation(((line: unknown) => {
     printed.push(String(line));
   }) as never);
+  const started = Date.now();
   try {
     await runDown();
   } finally {
@@ -112,6 +117,8 @@ async function runDownCaptured(
     ),
   );
   if (unanswered) skipUnanswered(ctx, "down's own reading of the process table did not answer");
+  // A measurement, not a verdict: #1046 was a `down` that took 56.9 s to fail.
+  process.stderr.write(`[tests] down-fresh-record: runDown took ${Date.now() - started} ms\n`);
   return { stderr: said.join('') };
 }
 
@@ -129,30 +136,26 @@ afterAll(() => {
 });
 
 describe('down after a fresh start @cap:installer-et-demarrer/moteur', () => {
-  it.skipIf(!canRun)(
-    'stops runner and web recorded at the spawn, before any health check',
-    async (ctx) => {
-      const runner = spawnIdle();
-      const web = spawnIdle();
-      // What `up` does right after spawning the two services — nothing else has
-      // happened yet: no health check, no render check.
-      // Off Windows there is no table and nothing to identify: nothing to skip.
-      if (onWindows) await recordOrSkip(ctx, { runner: runner.pid!, web: web.pid! });
-      else await recordServiceTree({ runner: runner.pid!, web: web.pid! });
-      expect(isPidAlive(runner.pid!)).toBe(true);
-      expect(isPidAlive(web.pid!)).toBe(true);
+  it('stops runner and web recorded at the spawn, before any health check', async (ctx) => {
+    const runner = spawnIdle();
+    const web = spawnIdle();
+    // What `up` does right after spawning the two services — nothing else has
+    // happened yet: no health check, no render check.
+    // Off Windows there is no table and nothing to identify: nothing to skip.
+    if (onWindows) await recordOrSkip(ctx, { runner: runner.pid!, web: web.pid! });
+    else await recordServiceTree({ runner: runner.pid!, web: web.pid! });
+    expect(isPidAlive(runner.pid!)).toBe(true);
+    expect(isPidAlive(web.pid!)).toBe(true);
 
-      await runDownCaptured(ctx, [runner.pid!, web.pid!]);
+    await runDownCaptured(ctx, [runner.pid!, web.pid!]);
 
-      expect(await waitForPidDead(runner.pid!, 15_000)).toBe(true);
-      expect(await waitForPidDead(web.pid!, 15_000)).toBe(true);
-      // Everything stopped: nothing is kept on record.
-      expect(readPids()).toEqual({});
-    },
-    120_000,
-  );
+    expect(await waitForPidDead(runner.pid!, 15_000)).toBe(true);
+    expect(await waitForPidDead(web.pid!, 15_000)).toBe(true);
+    // Everything stopped: nothing is kept on record.
+    expect(readPids()).toEqual({});
+  }, 120_000);
 
-  it.skipIf(!onWindows || !processTable.available)(
+  it.skipIf(!onWindows)(
     'a record of bare numbers is still refused: nothing is signalled and the record is kept',
     async (ctx) => {
       const runner = spawnIdle();
@@ -177,7 +180,7 @@ describe('down after a fresh start @cap:installer-et-demarrer/moteur', () => {
     120_000,
   );
 
-  it.skipIf(!onWindows || !processTable.available)(
+  it.skipIf(!onWindows)(
     'a partial stop keeps only what is still running on record',
     async (ctx) => {
       const runner = spawnIdle();
