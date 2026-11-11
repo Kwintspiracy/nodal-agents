@@ -237,4 +237,47 @@ describe('down reads the process table once @cap:installer-et-demarrer/moteur', 
     expect(await waitForPidDead(web.pid!, 5_000)).toBe(true);
     expect(said.join('')).toContain(`KILL_REFUSED code=FOREIGN_POSTGRES pid=${foreignPg.pid}`);
   });
+  it('refuses the web when its number went to a stranger after the runner was killed', async () => {
+    // Review pass 1 of #1046. The reading taken at the start confirms both.
+    // The runner is killed; the web then exits on its own and Windows hands
+    // its number to a stranger S (played by the stand-in, which the table now
+    // reports as another executable of another generation). The look taken
+    // after the runner's kill answers, and S must be refused: no signal at all
+    // for that number, `/T` or not.
+    const runner = spawnIdle();
+    const stranger = spawnIdle();
+    const runnerRow = row(runner, 4, TICK_RUNNER);
+    const webRow = row(stranger, 4, TICK_WEB);
+    recordStart(runnerRow, webRow);
+    drive([[runnerRow, webRow], [{ ...webRow, startedAt: TICK_PG, name: 'chrome.exe' }]]);
+
+    await runDown();
+
+    expect(taskkillArgs.some((a) => a.includes(String(stranger.pid)))).toBe(false);
+    expect(isPidAlive(stranger.pid!)).toBe(true);
+    expect(said.join('')).toContain(`KILL_REFUSED code=BINARY_CHANGED pid ${stranger.pid}`);
+    // Said as a refusal, never as a stop that failed.
+    expect(printed.join('\n')).toContain(`web (pid ${stranger.pid}) was NOT stopped`);
+    expect(printed.join('\n')).not.toContain('STILL RUNNING');
+    expect(await waitForPidDead(runner.pid!, 5_000)).toBe(true);
+    expect(readPids()?.web).toBe(stranger.pid);
+  });
+
+  it('stops the web on the held reading when the look after the runner kill does not answer', async () => {
+    // The same start on the slow machine of #1046: the look times out, the
+    // reading taken at the start still vouches for the web, and it is stopped.
+    const runner = spawnIdle();
+    const web = spawnIdle();
+    const runnerRow = row(runner, 4, TICK_RUNNER);
+    const webRow = row(web, 4, TICK_WEB);
+    recordStart(runnerRow, webRow);
+    drive([[runnerRow, webRow], 'timeout']);
+
+    await runDown();
+
+    expect(await waitForPidDead(runner.pid!, 5_000)).toBe(true);
+    expect(await waitForPidDead(web.pid!, 5_000)).toBe(true);
+    expect(said.join('')).not.toContain('KILL_REFUSED');
+    expect(readPids()).toEqual({});
+  });
 });

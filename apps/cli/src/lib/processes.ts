@@ -132,13 +132,30 @@ const SHUTDOWN_SNAPSHOT_BUDGET_MS = 6_000;
  *      it was freed: Windows hands a freed number to the next process that asks,
  *      and a later lookup must find nothing (`PID_GONE`), not the old row.
  *
- * What the held reading still does not cover, said rather than implied: a
- * process this shutdown never touched exiting ON ITS OWN after the reading and
- * its number being reused before the kill. That window existed before, between
- * `killPidTree`'s own reading and its `taskkill`; holding one reading lengthens
- * it by the earlier kills of the same shutdown, and rule 2 shortens it again
- * whenever one of their second looks answers. A pid is not a handle; on
- * Windows this is the floor.
+ *   4. A ROOT is judged on a look taken after this shutdown's last signal
+ *      (`lookBeforeJudgingRoot`, review pass 1 of #1046). Once anything has
+ *      been signalled, the held reading is older than the earlier kills, and
+ *      in that time a recorded service can exit on its own and Windows can
+ *      hand its number to a stranger — whose tree `/T` would then take, a
+ *      `postgres.exe` started meanwhile included. So the next root first takes
+ *      one look at the shutdown budget: when it answers, the root is judged on
+ *      it and a reused number is refused (`PID_RECYCLED`, `BINARY_CHANGED`),
+ *      exactly as the second reading inside `killPidTree` used to. One look per
+ *      signal, not per call: `down` and `up` judge a root before handing it to
+ *      `killPidTree`, which judges it again, and both see the same look.
+ *
+ * HOW OLD the reading a root is judged on can be. When nothing has been
+ * signalled since it was taken: as old as the gap between that reading and the
+ * kill, the window the code before #1046 had between `killPidTree`'s own
+ * reading and its `taskkill`. When the look of rule 4 answered: the same. When
+ * it did NOT answer: as old as the last reading of this shutdown that answered,
+ * which is at most the whole shutdown so far. Rule 3 keeps every pid this
+ * shutdown signalled out of it; what remains is a process this shutdown never
+ * touched exiting on its own in that time and its number being reused. That
+ * risk is accepted ONLY when the table will not answer: the alternative is to
+ * refuse every pid the first reading identified, which is the defect #1046
+ * fixed — a `down` on a slow machine that stops nothing. A pid is not a
+ * handle; on Windows this is the floor.
  *
  * `answered` is kept apart from the table's size on purpose: rule 3 removes
  * rows, and a reading emptied by its own strikes is still a reading that
@@ -180,6 +197,9 @@ export class ProcessReading {
    * reading held; false when it did not, and nothing was changed.
    */
   async refresh(timeoutMs: number): Promise<boolean> {
+    // Any look, answered or not, is the look rule 4 asks for: a look that timed
+    // out is not asked again until something else is signalled.
+    this.lookDue = false;
     const fresh = await processSnapshotWin(timeoutMs);
     if (fresh.size === 0) return false;
     this.table = fresh;
@@ -187,10 +207,25 @@ export class ProcessReading {
     return true;
   }
 
+  /**
+   * Rule 4: before a root is judged, one fresh look if this shutdown has
+   * signalled anything since its last look. The root is judged on that look
+   * when it answers, on the reading held when it does not (rule 2).
+   */
+  async lookBeforeJudgingRoot(): Promise<void> {
+    if (this.lookDue) await this.refresh(SHUTDOWN_SNAPSHOT_BUDGET_MS);
+  }
+
   /** Rule 3: these pids were signalled, or found dead, by this shutdown; vouch for them no more. */
   forget(pids: Iterable<number>): void {
-    for (const pid of pids) this.table.delete(pid);
+    for (const pid of pids) {
+      this.table.delete(pid);
+      this.lookDue = true;
+    }
   }
+
+  /** Something was signalled since the last look (rule 4). */
+  private lookDue = false;
 }
 
 /** One process as WMI reports it. `startedAt` is CreationDate in .NET ticks. */
@@ -592,9 +627,14 @@ export async function killPidTree(
     // has to be taken first. A caller with a record already holds that reading,
     // taken before it signalled anything (`ProcessReading`, rule 1), and it is
     // the one used: reading again here, with a shorter budget, is what refused
-    // a pid the caller had just identified (#1046). A live handle has no reading
-    // to hand over and takes its own, at the short budget, because its kill does
+    // a pid the caller had just identified (#1046) — unless this shutdown has
+    // signalled something since, and then one fresh look comes first (rule 4):
+    // a held reading older than the earlier kills cannot tell a recorded root
+    // from a stranger that took its number. Free when the caller already took
+    // that look before judging the root itself. A live handle has no reading to
+    // hand over and takes its own, at the short budget, because its kill does
     // not depend on it.
+    if (proof) await proof.reading.lookBeforeJudgingRoot();
     const reading =
       proof?.reading ?? ProcessReading.of(await processSnapshotWin(SHUTDOWN_SNAPSHOT_BUDGET_MS));
     const recorded = proof?.recorded;

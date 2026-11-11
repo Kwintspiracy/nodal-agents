@@ -481,3 +481,53 @@ describe('killPidTree — the table is read again only when a member is still al
     ]);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('killPidTree — a root is judged on a look taken after the last signal (#1046, review pass 1) @cap:installer-et-demarrer/moteur', () => {
+  // Two roots, no member: nothing in the first kill re-reads the table. The
+  // second root's number goes to a stranger in between.
+  const FIRST: Row = { pid: ROOT, ppid: 4, ticks: TICK_RECORDED, name: 'node.exe' };
+  const FIRST_RECORD = { pid: ROOT, name: 'node.exe', startedAt: TICK_RECORDED };
+  const SECOND_PID = 999_003;
+  const SECOND: Row = { pid: SECOND_PID, ppid: 4, ticks: TICK_RECORDED, name: 'node.exe' };
+  const SECOND_RECORD = { pid: SECOND_PID, name: 'node.exe', startedAt: TICK_RECORDED };
+
+  it('refuses the second root when the look after the first kill shows a stranger on its number', async () => {
+    tableSequence([[FIRST, SECOND], [{ ...SECOND, ticks: TICK_OTHER, name: 'chrome.exe' }]]);
+    const { reading } = await proofOf(FIRST_RECORD);
+
+    // kill-by-pid: execa is mocked in this file, nothing is signalled.
+    await killPidTree(ROOT, new Set(), { recorded: FIRST_RECORD, reading });
+    await killPidTree(SECOND_PID, new Set(), { recorded: SECOND_RECORD, reading });
+
+    expect(taskkills()).toEqual([['/T', '/F', '/PID', String(ROOT)]]);
+    expect(stderrLines.join('')).toContain(`KILL_REFUSED code=BINARY_CHANGED pid ${SECOND_PID}`);
+  });
+
+  it('kills the second root on the held reading when that look does not answer', async () => {
+    tableSequence([[FIRST, SECOND], []]);
+    const { reading } = await proofOf(FIRST_RECORD);
+
+    // kill-by-pid: execa is mocked in this file, nothing is signalled.
+    await killPidTree(ROOT, new Set(), { recorded: FIRST_RECORD, reading });
+    await killPidTree(SECOND_PID, new Set(), { recorded: SECOND_RECORD, reading });
+
+    expect(taskkills()).toEqual([
+      ['/T', '/F', '/PID', String(ROOT)],
+      ['/T', '/F', '/PID', String(SECOND_PID)],
+    ]);
+    expect(stderrLines.join('')).not.toContain('KILL_REFUSED');
+  });
+
+  it('takes no look before the first root: nothing was signalled since the reading', async () => {
+    // A look here would consume the second table and refuse the root.
+    tableSequence([[FIRST], [{ ...FIRST, ticks: TICK_OTHER }]]);
+    const { reading } = await proofOf(FIRST_RECORD);
+
+    // kill-by-pid: execa is mocked in this file, nothing is signalled.
+    await killPidTree(ROOT, new Set(), { recorded: FIRST_RECORD, reading });
+
+    expect(taskkills()).toEqual([['/T', '/F', '/PID', String(ROOT)]]);
+  });
+});

@@ -607,6 +607,9 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
     const reading = tableAvailable ? await ProcessReading.take() : ProcessReading.of(new Map());
     for (const o of orphans) {
       if (o.name === 'postgres') continue; // already handled above
+      // After an earlier orphan's kill, one fresh look first (rule 4 of
+      // `ProcessReading`); `killPidTree` judges on the same look.
+      await reading.lookBeforeJudgingRoot();
       const live = reading.get(o.pid);
       const verdict = !tableAvailable
         ? ({ killable: true } as const)

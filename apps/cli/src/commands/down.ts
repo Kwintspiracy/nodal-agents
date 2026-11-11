@@ -108,6 +108,12 @@ async function killPid(pid: number, label: string, ctx: KillContext): Promise<Ki
   // said nothing about whether the process now carrying it is the service we
   // started; `recordServiceTree` now writes the creation tick and the
   // executable name next to it, and this is where they are spent.
+  //
+  // On a look taken after this `down`'s last signal, when the table answers
+  // (rule 4 of `ProcessReading`): the reading taken at the start is older
+  // than the kill of the runner, and the web can have exited and its number
+  // been reused in that time. `killPidTree` judges on the same look.
+  await ctx.reading.lookBeforeJudgingRoot();
   const verdict = confirmRecordedPid({
     recorded: recordedRoot(ctx.pids, pid),
     live: liveOf(ctx.reading, pid),
