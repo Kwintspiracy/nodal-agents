@@ -1142,6 +1142,13 @@
       "when": 1786437000000,
       "tag": "0164_device_pairing",
       "breakpoints": true
+    },
+    {
+      "idx": 165,
+      "version": "7",
+      "when": 1786437100000,
+      "tag": "0165_voice_listening_source",
+      "breakpoints": true
     }
   ]
 }

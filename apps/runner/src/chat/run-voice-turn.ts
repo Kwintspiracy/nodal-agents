@@ -5,8 +5,9 @@
 // et une voix pendant :
 //
 //   1. `hearVoiceTurn` : l'audio reçu par morceaux (`voice-utterances.ts`) est
-//      transcrit par packages/speech, sur la clé OpenRouter de l'espace
-//      (`resolveEar`, le modèle du réglage de voix, #976). Tout ce qui se refuse se refuse ICI, avant
+//      transcrit par packages/speech, par l'oreille du réglage de voix
+//      (`resolveEar` : la source, le modèle, et l'adresse d'un serveur de la
+//      personne, #976, #1048). Tout ce qui se refuse se refuse ICI, avant
 //      que la route ouvre son flux : un audio illisible, l'espace sans clé, la
 //      transcription en échec, et le « rien entendu ». Aucun n'écrit de ligne
 //      (invariant #4) : un message vide serait un tour que personne n'a dit ;
@@ -70,6 +71,8 @@ export type VoiceTurnHearing =
       outcome: 'failed';
       status: 400 | 409 | 502;
       error: string;
+      /** The code of packages/speech behind a failed transcription (`speech_unreachable`…, #1048). */
+      reason?: string;
       detail?: string;
       /** Le modèle qui devait transcrire, quand il est connu. */
       model?: string;
@@ -85,6 +88,7 @@ function logHearingFailure(h: Extract<VoiceTurnHearing, { outcome: 'failed' }>):
   console.warn(
     `[voice-turn] transcription failed ${JSON.stringify({
       error: h.error,
+      ...(h.reason ? { reason: h.reason } : {}),
       status: h.status,
       model: h.model ?? null,
       ...(h.detail ? { detail: h.detail.slice(0, 500) } : {}),
@@ -166,10 +170,13 @@ export async function hearVoiceTurn(
     if (err instanceof SpeechError && err.code === 'speech_nothing_heard') {
       return { outcome: 'nothing_heard', durationMs: audio.durationMs, model };
     }
+    // The ear the setting names failed: the turn fails with its code, and no
+    // other ear is tried in its place (invariant #4, #1048).
     return failed({
       outcome: 'failed',
       status: 502,
       error: 'transcription_failed',
+      ...(err instanceof SpeechError ? { reason: err.code } : {}),
       detail: err instanceof Error ? err.message : String(err),
       model,
     });

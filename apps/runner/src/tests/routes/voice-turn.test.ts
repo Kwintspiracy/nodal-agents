@@ -29,7 +29,7 @@
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { _setMasterKeyForTests, encrypt } from '@nodal-agents/secrets';
+import { _setMasterKeyForTests, decrypt, encrypt } from '@nodal-agents/secrets';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import {
@@ -52,8 +52,15 @@ import {
   telegramAllowedChats,
   readVoiceSetting,
   writeVoiceSetting,
+  entitySettings,
 } from '@nodal-agents/db';
 import { clearVoiceCatalog } from '../../job/resolve-voice.ts';
+import { clearVoiceChecks } from '../../chat/voice-checks.ts';
+import {
+  closedServerAddress,
+  startFakeSpeechServer,
+  type FakeSpeechServer,
+} from '@nodal-agents/test-kit';
 import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
 import { createEmbeddingClient } from '@nodal-agents/llm';
 import { LocalTrustProvider } from '@nodal-agents/auth';
@@ -224,6 +231,14 @@ function gate(): { wait: Promise<void>; open: () => void } {
  * remplace la réponse de la voix, phrase par phrase. `log` dit, dans l'ordre,
  * quand le front a fini et quand la relecture a commencé.
  */
+/**
+ * The process's own `fetch`, taken before any test stubs it: a server the
+ * person runs (#1048) is a REAL server of the test on 127.0.0.1, reached for
+ * real; every hosted vendor stays faked by `network`.
+ */
+const realFetch = globalThis.fetch;
+const LOCAL_SERVER = /^http:\/\/127\.0\.0\.1:\d+\//;
+
 function network(opts: {
   /** The transcription answer: one for every request, or one per request's audio (#976). */
   transcription?:
@@ -261,6 +276,7 @@ function network(opts: {
     'fetch',
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input.toString();
+      if (LOCAL_SERVER.test(url)) return realFetch(input, init);
       // #969 — the speech models each source lists (a trimmed copy of the
       // real answers of 2026-11-03).
       if (url.includes('/models?output_modalities=speech')) {
@@ -892,6 +908,8 @@ describe('the voice turn route @cap:parler-a-un-agent/moteur', () => {
     expect(status).toBe(502);
     expect(body).toEqual({
       error: 'transcription_failed',
+      // #1048: the code of packages/speech travels with it.
+      reason: 'speech_no_credit',
       detail: 'openrouter x-ai/grok-stt-1.0: HTTP 402 — Insufficient credits',
     });
     expect(sent.front).toEqual([]);
@@ -1619,6 +1637,7 @@ const FIRST_VOICE = {
   source: 'openrouter',
   model: 'google/gemini-3.8-flash-tts',
   voice: 'Kore',
+  transcriptionSource: 'openrouter',
   transcriptionModel: 'x-ai/grok-stt-1.0',
 } as const;
 
@@ -1662,6 +1681,7 @@ describe('the voice turn speaks with the workspace voice (#969) @cap:parler-a-un
         source: 'openrouter',
         model: 'x-ai/grok-voice-tts-1.0',
         voice: 'leo',
+        transcriptionSource: 'openrouter',
         transcriptionModel: 'x-ai/grok-stt-1.0',
       },
     });
@@ -1673,6 +1693,7 @@ describe('the voice turn speaks with the workspace voice (#969) @cap:parler-a-un
         source: 'openrouter',
         model: 'x-ai/grok-voice-tts-1.0',
         voice: 'leo',
+        transcriptionSource: 'openrouter',
         transcriptionModel: 'x-ai/grok-stt-1.0',
       },
     });
@@ -1696,6 +1717,7 @@ describe('the voice turn speaks with the workspace voice (#969) @cap:parler-a-un
         source: 'google',
         model: 'gemini-3.8-flash-tts',
         voice: 'Puck',
+        transcriptionSource: 'openrouter',
         transcriptionModel: 'x-ai/grok-stt-1.0',
       },
     });
@@ -1734,6 +1756,7 @@ describe('the voice turn speaks with the workspace voice (#969) @cap:parler-a-un
       source: 'openrouter',
       model: 'minimax/speech-2.8-turbo',
       voice: 'English_CalmWoman',
+      transcriptionSource: 'openrouter',
       transcriptionModel: 'x-ai/grok-stt-1.0',
     });
     const MP3 = Uint8Array.from([0xff, 0xfb, 0x90, 0x64, 0x00]);
@@ -1785,6 +1808,7 @@ describe('the voice turn speaks with the workspace voice (#969) @cap:parler-a-un
         source: 'openrouter',
         model: 'minimax/speech-2.8-turbo',
         voice: 'English_CalmWoman',
+        transcriptionSource: 'openrouter',
         transcriptionModel: 'x-ai/grok-stt-1.0',
       },
     });
@@ -1830,6 +1854,7 @@ describe('the voice turn speaks with the workspace voice (#969) @cap:parler-a-un
         source: 'openrouter',
         model: 'x-ai/grok-voice-tts-1.0',
         voice: 'leo',
+        transcriptionSource: 'openrouter',
         transcriptionModel: 'x-ai/grok-stt-1.0',
       },
     });
@@ -1856,6 +1881,7 @@ describe('the voice turn speaks with the workspace voice (#969) @cap:parler-a-un
         source: 'openrouter',
         model: 'x-ai/grok-voice-tts-1.0',
         voice: 'Kore',
+        transcriptionSource: 'openrouter',
         transcriptionModel: 'x-ai/grok-stt-1.0',
       },
     });
@@ -1871,6 +1897,7 @@ describe('the voice turn speaks with the workspace voice (#969) @cap:parler-a-un
         source: 'openrouter',
         model: 'nobody/tts',
         voice: 'leo',
+        transcriptionSource: 'openrouter',
         transcriptionModel: 'x-ai/grok-stt-1.0',
       },
     });
@@ -1889,6 +1916,7 @@ describe('the voice turn speaks with the workspace voice (#969) @cap:parler-a-un
       source: 'google',
       model: 'gemini-3.8-flash-tts',
       voice: 'Kore',
+      transcriptionSource: 'openrouter',
       transcriptionModel: 'x-ai/grok-stt-1.0',
     });
     network({
@@ -2566,10 +2594,11 @@ describe('the voice turn listens with the workspace ear (#976) @cap:parler-a-un-
     expect(res.status).toBe(502);
     expect(res.body).toEqual({
       error: 'transcription_failed',
+      reason: 'speech_provider_error',
       detail: 'openrouter x-ai/grok-stt-1.0: HTTP 502 — Upstream provider timed out',
     });
     expect(lines.filter((l) => l.startsWith('[voice-turn] transcription failed'))).toEqual([
-      '[voice-turn] transcription failed {"error":"transcription_failed","status":502,"model":"x-ai/grok-stt-1.0","detail":"openrouter x-ai/grok-stt-1.0: HTTP 502 — Upstream provider timed out"}',
+      '[voice-turn] transcription failed {"error":"transcription_failed","reason":"speech_provider_error","status":502,"model":"x-ai/grok-stt-1.0","detail":"openrouter x-ai/grok-stt-1.0: HTTP 502 — Upstream provider timed out"}',
     ]);
   });
 
@@ -2656,6 +2685,8 @@ describe('the voice turn listens with the workspace ear (#976) @cap:parler-a-un-
       error: 'transcription_not_faithful',
       source: 'openrouter',
       detail: 'openai/gpt-transcribe wrote "It is nine in the evening." for the voice saying "OK."',
+      // #1048: what it wrote, as a field a screen quotes.
+      heard: 'It is nine in the evening.',
     });
     const empty = await saveEar('deepgram/nova-3', {
       transcription: { status: 200, body: { text: '' } },
@@ -2664,6 +2695,7 @@ describe('the voice turn listens with the workspace ear (#976) @cap:parler-a-un-
       error: 'transcription_not_faithful',
       source: 'openrouter',
       detail: 'deepgram/nova-3 wrote nothing for the voice saying "OK."',
+      heard: '',
     });
     expect(await readVoiceSetting(db as never, seed.entityId)).toEqual({
       ok: true,
@@ -2705,5 +2737,482 @@ describe('the voice turn listens with the workspace ear (#976) @cap:parler-a-un-
     });
     expect(sent.speech).toEqual([]);
     expect(sent.transcription).toEqual([]);
+  });
+});
+
+// ─── #1048 — a server the person runs, for listening and for speaking ───────
+//
+// A REAL HTTP server of the test, on a free port of 127.0.0.1, speaks the
+// OpenAI audio surface (packages/test-kit, speech-server.ts) and records what
+// Nodal sent. OpenRouter stays faked by `network`, so a test can prove that
+// it was NEVER asked in the server's place (invariant #4).
+
+describe('a server the person runs, for listening and for speaking (#1048) @cap:parler-a-un-agent/moteur', () => {
+  let server: FakeSpeechServer | null = null;
+  const WHISPER = 'openai/whisper-large-v3-turbo';
+  /** The probe the workspace's OpenRouter voice says: its PCM, as one WAV. */
+  const PROBE_WAV = pcmToWav(VOICE_PCM, { sampleRate: 24_000 });
+
+  beforeEach(async () => {
+    clearVoiceCatalog();
+    clearVoiceChecks();
+    await writeVoiceSetting(db as never, seed.entityId, FIRST_VOICE);
+  });
+  afterEach(async () => {
+    await server?.close();
+    server = null;
+    clearVoiceChecks();
+    await writeVoiceSetting(db as never, seed.entityId, FIRST_VOICE);
+  });
+
+  /** The workspace's voice with its ear on the server at `address`. */
+  const localEar = (address: string, key?: string) => ({
+    ...FIRST_VOICE,
+    transcriptionSource: 'openai-compatible' as const,
+    transcriptionModel: WHISPER,
+    transcriptionServer: { address, ...(key ? { key: encrypt(key) } : {}) },
+  });
+  /** The workspace's ear with its voice on the server at `address`. */
+  const localVoice = (address: string) => ({
+    ...FIRST_VOICE,
+    source: 'openai-compatible' as const,
+    model: 'kokoro',
+    voice: 'af_heart',
+    speechServer: { address },
+  });
+
+  async function storedRow(): Promise<string> {
+    const [row] = await db
+      .select({ value: entitySettings.value })
+      .from(entitySettings)
+      .where(and(eq(entitySettings.entityId, seed.entityId), eq(entitySettings.key, 'voice')));
+    return row!.value;
+  }
+
+  // Mutation verified: `resolveEar` always binding the OpenRouter adapter →
+  // red (the server gets nothing, OpenRouter is asked).
+  it.each([
+    { key: undefined, slash: '' },
+    { key: 'sk-local-1', slash: '/' },
+  ])(
+    'a turn is heard by the server at its address, as an OpenAI multipart form (key: $key, trailing slash: "$slash")',
+    async ({ key, slash }) => {
+      server = await startFakeSpeechServer({ transcript: TRANSCRIPT, ...(key ? { key } : {}) });
+      await writeVoiceSetting(
+        db as never,
+        seed.entityId,
+        localEar(`${server.address}${slash}`, key),
+      );
+      const app = createApp(makeDeps(), testEnv);
+      const conv = await conversation();
+      const sent = network({ front: { text: 'Nine in the evening.' } });
+      const { status, body } = await say(app, conv, FIXTURE, { format: 'audio/wav' });
+      expect(status).toBe(200);
+      expect(body['transcript']).toBe(TRANSCRIPT);
+      const heard = server.requests.filter((r) => r.path === '/v1/audio/transcriptions');
+      expect(heard).toHaveLength(1);
+      expect(heard[0]!.form!.fields).toEqual(['file', 'model']);
+      expect(heard[0]!.form!.model).toBe(WHISPER);
+      expect(heard[0]!.form!.file!.type).toBe('audio/wav');
+      expect([...heard[0]!.form!.file!.bytes]).toEqual([...FIXTURE]);
+      expect(heard[0]!.headers['authorization']).toBe(key ? `Bearer ${key}` : undefined);
+      // OpenRouter's ear was never asked, and the person's words reached the agent.
+      expect(sent.transcription).toEqual([]);
+      expect(textOf(sent.front[0]!.messages.at(-1)!.content)).toContain(TRANSCRIPT);
+    },
+  );
+
+  // Mutation verified: a failed server transcription retried on OpenRouter's
+  // ear (the workspace has an OpenRouter key) → red: the turn is answered,
+  // and OpenRouter was asked.
+  it('a server that does not answer fails the turn loudly with its code; OpenRouter is never asked in its place', async () => {
+    const address = await closedServerAddress();
+    await writeVoiceSetting(db as never, seed.entityId, localEar(address));
+    const app = createApp(makeDeps(), testEnv);
+    const conv = await conversation();
+    const sent = network({ front: { text: 'Nine in the evening.' } });
+    const { status, body } = await say(app, conv, FIXTURE, { format: 'audio/wav' });
+    expect(status).toBe(502);
+    expect(body).toMatchObject({ error: 'transcription_failed', reason: 'speech_unreachable' });
+    expect(String(body['detail'])).toContain('ECONNREFUSED');
+    expect(String(body['detail'])).toContain(address.replace('http://', '').split('/')[0]!);
+    expect(sent.transcription).toEqual([]);
+    expect(sent.front).toEqual([]);
+    expect(await rows(conv)).toEqual([]);
+  });
+
+  it('a turn speaks through the server at its address: the reply is asked in JSON, and its WAV is what the client gets', async () => {
+    server = await startFakeSpeechServer();
+    await writeVoiceSetting(db as never, seed.entityId, localVoice(server.address));
+    const app = createApp(makeDeps(), testEnv);
+    const conv = await conversation();
+    const sent = network({ front: { text: 'Nine in the evening.' } });
+    const { status, body, events: evs } = await say(app, conv, FIXTURE, { format: 'audio/wav' });
+    expect(status).toBe(200);
+    expect(body['speechError']).toBeNull();
+    expect(server.requests.filter((r) => r.path === '/v1/audio/speech').map((r) => r.json)).toEqual(
+      [
+        {
+          model: 'kokoro',
+          input: 'Nine in the evening.',
+          voice: 'af_heart',
+          response_format: 'wav',
+        },
+      ],
+    );
+    const audio = evs.filter((e) => e.event === 'audio');
+    expect(new Set(audio.map((e) => e.data['mimeType']))).toEqual(new Set(['audio/wav']));
+    expect([...heardAudio(evs)]).toEqual([...server.speechWav]);
+    // The hosted voice was never asked.
+    expect(sent.speech).toEqual([]);
+  });
+
+  // Mutation verified: a failed server synthesis spoken by OpenRouter's voice
+  // instead → red.
+  it('a speaking server that does not answer is said in the turn (speech_unreachable); the text stays, no other voice speaks', async () => {
+    const address = await closedServerAddress();
+    await writeVoiceSetting(db as never, seed.entityId, localVoice(address));
+    const app = createApp(makeDeps(), testEnv);
+    const conv = await conversation();
+    const sent = network({ front: { text: 'Nine in the evening.' } });
+    const { status, body, events: evs } = await say(app, conv, FIXTURE, { format: 'audio/wav' });
+    expect(status).toBe(200);
+    expect(body['reply']).toBe('Nine in the evening.');
+    expect(body['speechError']).toMatchObject({ code: 'speech_unreachable' });
+    expect(evs.filter((e) => e.event === 'audio')).toEqual([]);
+    expect(sent.speech).toEqual([]);
+  });
+
+  // Mutation verified: the ear trial skipped for a server's ear → red (the
+  // model that writes "Thank you." is stored).
+  it('saving an ear on a server: the workspace voice says "OK.", the server must write it; its key is stored encrypted and never read back', async () => {
+    server = await startFakeSpeechServer({ models: [WHISPER], key: 'sk-ear-42' });
+    const app = createApp(makeDeps(), testEnv);
+    const sent = network({});
+    const res = await call(app, 'PUT', '/api/voice/setting', {
+      entityId: seed.entityId,
+      setting: {
+        ...FIRST_VOICE,
+        transcriptionSource: 'openai-compatible',
+        transcriptionModel: WHISPER,
+        transcriptionServer: { address: `${server.address}/`, key: { value: 'sk-ear-42' } },
+      },
+    });
+    expect(res.status).toBe(200);
+    const saved = await res.text();
+    expect(JSON.parse(saved)).toEqual({
+      setting: {
+        ...FIRST_VOICE,
+        transcriptionSource: 'openai-compatible',
+        transcriptionModel: WHISPER,
+        transcriptionServer: { address: server.address, hasKey: true },
+      },
+    });
+    // The probe: the workspace's voice (unchanged, OpenRouter) said "OK.", and
+    // its audio is the file the server received, with the model.
+    expect(sent.speech).toEqual([
+      { model: 'google/gemini-3.8-flash-tts', input: 'OK.', voice: 'Kore', response_format: 'pcm' },
+    ]);
+    const heard = server.requests.find((r) => r.path === '/v1/audio/transcriptions')!;
+    expect(heard.form!.model).toBe(WHISPER);
+    expect([...heard.form!.file!.bytes]).toEqual([...PROBE_WAV]);
+    expect(heard.headers['authorization']).toBe('Bearer sk-ear-42');
+    expect(sent.transcription).toEqual([]);
+    // At rest: the address in one form, the key as an enc:v1: blob, never in clear.
+    const raw = await storedRow();
+    expect(raw).not.toContain('sk-ear-42');
+    const read = await readVoiceSetting(db as never, seed.entityId);
+    if (!read.ok) throw new Error(read.code);
+    expect(read.setting.transcriptionServer!.address).toBe(server.address);
+    expect(decrypt(read.setting.transcriptionServer!.key!)).toBe('sk-ear-42');
+    // Read back by a client: `hasKey`, never the key nor its blob.
+    const got = await (
+      await call(app, 'GET', `/api/voice/setting?entityId=${seed.entityId}`)
+    ).text();
+    for (const leak of ['sk-ear-42', 'enc:v1:', '"key"']) expect(got).not.toContain(leak);
+    expect(saved).not.toContain('enc:v1:');
+    expect(JSON.parse(got).setting.transcriptionServer).toEqual({
+      address: server.address,
+      hasKey: true,
+    });
+  });
+
+  it('a server ear that writes other words is refused with what it wrote; nothing changes', async () => {
+    server = await startFakeSpeechServer({
+      models: ['openai/whisper-tiny'],
+      transcript: 'Thank you.',
+    });
+    const app = createApp(makeDeps(), testEnv);
+    network({});
+    const res = await call(app, 'PUT', '/api/voice/setting', {
+      entityId: seed.entityId,
+      setting: {
+        ...FIRST_VOICE,
+        transcriptionSource: 'openai-compatible',
+        transcriptionModel: 'openai/whisper-tiny',
+        transcriptionServer: { address: server.address, key: 'none' },
+      },
+    });
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({
+      error: 'transcription_not_faithful',
+      source: 'openai-compatible',
+      detail: 'openai/whisper-tiny wrote "Thank you." for the voice saying "OK."',
+      heard: 'Thank you.',
+    });
+    expect(await readVoiceSetting(db as never, seed.entityId)).toEqual({
+      ok: true,
+      setting: FIRST_VOICE,
+    });
+  });
+
+  it('a server that does not answer is refused at save with speech_unreachable, before anything is said', async () => {
+    const address = await closedServerAddress();
+    const app = createApp(makeDeps(), testEnv);
+    const sent = network({});
+    const res = await call(app, 'PUT', '/api/voice/setting', {
+      entityId: seed.entityId,
+      setting: {
+        ...FIRST_VOICE,
+        transcriptionSource: 'openai-compatible',
+        transcriptionModel: WHISPER,
+        transcriptionServer: { address, key: 'none' },
+      },
+    });
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body).toMatchObject({ error: 'speech_unreachable', source: 'openai-compatible' });
+    expect(String(body['detail'])).toContain('ECONNREFUSED');
+    expect(sent.speech).toEqual([]);
+    expect(await readVoiceSetting(db as never, seed.entityId)).toEqual({
+      ok: true,
+      setting: FIRST_VOICE,
+    });
+  });
+
+  it('a model the server does not list is refused; a server that lists none lets the typed name be tried', async () => {
+    server = await startFakeSpeechServer({ models: [WHISPER] });
+    const app = createApp(makeDeps(), testEnv);
+    network({});
+    const ear = (address: string, model: string) => ({
+      entityId: seed.entityId,
+      setting: {
+        ...FIRST_VOICE,
+        transcriptionSource: 'openai-compatible',
+        transcriptionModel: model,
+        transcriptionServer: { address, key: 'none' },
+      },
+    });
+    const refused = await call(
+      app,
+      'PUT',
+      '/api/voice/setting',
+      ear(server.address, 'whisper-typo'),
+    );
+    expect(refused.status).toBe(409);
+    expect(await refused.json()).toEqual({
+      error: 'transcription_model_not_offered',
+      source: 'openai-compatible',
+      detail: 'whisper-typo',
+    });
+    await server.close();
+    server = await startFakeSpeechServer({ models: 'none' });
+    const typed = await call(app, 'PUT', '/api/voice/setting', ear(server.address, 'my-whisper'));
+    expect(typed.status).toBe(200);
+    expect(server.requests.find((r) => r.path === '/v1/audio/transcriptions')!.form!.model).toBe(
+      'my-whisper',
+    );
+  });
+
+  // Mutation verified: the probe skipped when the voice is on a server → red.
+  it('saving a voice on a server makes it say the sample there; a voice the server refuses is not stored', async () => {
+    server = await startFakeSpeechServer({ models: ['kokoro'] });
+    const app = createApp(makeDeps(), testEnv);
+    const sent = network({});
+    const body = {
+      entityId: seed.entityId,
+      setting: {
+        ...localVoice(server.address),
+        speechServer: { address: server.address, key: 'none' },
+      },
+    };
+    const ok = await call(app, 'PUT', '/api/voice/setting', body);
+    expect(ok.status).toBe(200);
+    expect(server.requests.filter((r) => r.path === '/v1/audio/speech').map((r) => r.json)).toEqual(
+      [{ model: 'kokoro', input: 'OK.', voice: 'af_heart', response_format: 'wav' }],
+    );
+    // The ear did not change: it is not tried again.
+    expect(sent.transcription).toEqual([]);
+    expect(sent.speech).toEqual([]);
+    await writeVoiceSetting(db as never, seed.entityId, FIRST_VOICE);
+    await server.close();
+    server = await startFakeSpeechServer({ models: ['kokoro'], speechStatus: 400 });
+    const refused = await call(app, 'PUT', '/api/voice/setting', {
+      ...body,
+      setting: { ...body.setting, speechServer: { address: server.address, key: 'none' } },
+    });
+    expect(refused.status).toBe(409);
+    expect(await refused.json()).toMatchObject({
+      error: 'speech_provider_error',
+      source: 'openai-compatible',
+    });
+    expect(await readVoiceSetting(db as never, seed.entityId)).toEqual({
+      ok: true,
+      setting: FIRST_VOICE,
+    });
+  });
+
+  it('`keep` keeps the stored key at the same address, and is refused at another: a key never follows an address', async () => {
+    server = await startFakeSpeechServer({ models: [WHISPER, 'tiny'], key: 'sk-keep' });
+    await writeVoiceSetting(db as never, seed.entityId, localEar(server.address, 'sk-keep'));
+    const before = await readVoiceSetting(db as never, seed.entityId);
+    if (!before.ok) throw new Error(before.code);
+    const app = createApp(makeDeps(), testEnv);
+    network({});
+    const put = (address: string) =>
+      call(app, 'PUT', '/api/voice/setting', {
+        entityId: seed.entityId,
+        setting: {
+          ...FIRST_VOICE,
+          transcriptionSource: 'openai-compatible',
+          transcriptionModel: 'tiny',
+          transcriptionServer: { address, key: 'keep' },
+        },
+      });
+    expect((await put(server.address)).status).toBe(200);
+    const after = await readVoiceSetting(db as never, seed.entityId);
+    if (!after.ok) throw new Error(after.code);
+    expect(after.setting.transcriptionModel).toBe('tiny');
+    expect(after.setting.transcriptionServer!.key).toBe(before.setting.transcriptionServer!.key);
+    expect(server.requests.at(-1)!.headers['authorization']).toBe('Bearer sk-keep');
+    const moved = await put('http://127.0.0.1:9/v1');
+    expect(moved.status).toBe(409);
+    expect(await moved.json()).toEqual({
+      error: 'voice_server_key_not_kept',
+      detail: 'no key is stored for http://127.0.0.1:9/v1',
+    });
+  });
+
+  it("lists a server's models at the address shown, for either part: listed, none, or not answering", async () => {
+    server = await startFakeSpeechServer({ models: [WHISPER] });
+    const app = createApp(makeDeps(), testEnv);
+    network({});
+    const models = async (part: string, address: string) =>
+      (await call(app, 'POST', '/api/voice/server/models', {
+        entityId: seed.entityId,
+        part,
+        server: { address, key: 'none' },
+      }).then((r) => r.json())) as Record<string, unknown>;
+    expect(await models('listening', `${server.address}/`)).toMatchObject({
+      state: 'listed',
+      models: [{ id: WHISPER }],
+    });
+    expect(await models('speaking', server.address)).toMatchObject({
+      state: 'listed',
+      models: [{ id: WHISPER }],
+    });
+    await server.close();
+    server = await startFakeSpeechServer({ models: 'none' });
+    expect(await models('listening', server.address)).toMatchObject({
+      state: 'listed',
+      models: [],
+    });
+    const down = await models('listening', await closedServerAddress());
+    expect(down).toMatchObject({ state: 'unavailable', code: 'speech_unreachable' });
+  });
+
+  // Mutation verified: the kept trial ignored (every check runs again) → red
+  // on the second call; `fresh` ignored → red on the third.
+  it('the state of a part: the trial of a save, kept with its time, tried again only on "Check again"', async () => {
+    server = await startFakeSpeechServer({ models: [WHISPER] });
+    const app = createApp(makeDeps(), testEnv);
+    network({});
+    const put = await call(app, 'PUT', '/api/voice/setting', {
+      entityId: seed.entityId,
+      setting: {
+        ...FIRST_VOICE,
+        transcriptionSource: 'openai-compatible',
+        transcriptionModel: WHISPER,
+        transcriptionServer: { address: server.address, key: 'none' },
+      },
+    });
+    expect(put.status).toBe(200);
+    const transcriptions = () =>
+      server!.requests.filter((r) => r.path === '/v1/audio/transcriptions').length;
+    expect(transcriptions()).toBe(1);
+    const check = async (fresh?: boolean) =>
+      (await call(app, 'POST', '/api/voice/check', {
+        entityId: seed.entityId,
+        part: 'listening',
+        ...(fresh ? { fresh } : {}),
+      }).then((r) => r.json())) as Record<string, unknown>;
+    const first = await check();
+    expect(first).toMatchObject({
+      part: 'listening',
+      state: 'answers',
+      model: WHISPER,
+      heard: 'OK.',
+    });
+    expect(typeof first['latencyMs']).toBe('number');
+    // The save's own trial: nothing asked again.
+    expect(transcriptions()).toBe(1);
+    const again = await check(true);
+    expect(again).toMatchObject({ state: 'answers', model: WHISPER });
+    expect(transcriptions()).toBe(2);
+    expect(Date.parse(String(again['checkedAt']))).toBeGreaterThanOrEqual(
+      Date.parse(String(first['checkedAt'])),
+    );
+    // The server stops: "Check again" says so, with the code and the server's words.
+    await server.close();
+    server = null;
+    const down = await check(true);
+    expect(down).toMatchObject({
+      part: 'listening',
+      state: 'not_answering',
+      code: 'speech_unreachable',
+      model: WHISPER,
+    });
+    // The code is the contract. The words vary with the moment the server
+    // went away (refused; reset or closed on a socket the pool still held:
+    // ECONNREFUSED, ECONNRESET, UND_ERR_SOCKET), all of them "no answer".
+    expect(String(down['detail'])).toMatch(/: no answer \([A-Z_]+\)$/);
+  });
+
+  it('the state is the same trial for every source: an OpenRouter ear and an OpenRouter voice answer through it', async () => {
+    const app = createApp(makeDeps(), testEnv);
+    const sent = network({ transcription: { status: 200, body: { text: 'OK.' } } });
+    const ear = (await call(app, 'POST', '/api/voice/check', {
+      entityId: seed.entityId,
+      part: 'listening',
+    }).then((r) => r.json())) as Record<string, unknown>;
+    expect(ear).toMatchObject({ state: 'answers', model: 'x-ai/grok-stt-1.0', heard: 'OK.' });
+    const voice = (await call(app, 'POST', '/api/voice/check', {
+      entityId: seed.entityId,
+      part: 'speaking',
+    }).then((r) => r.json())) as Record<string, unknown>;
+    expect(voice).toMatchObject({ state: 'answers', model: 'google/gemini-3.8-flash-tts' });
+    expect(sent.transcription.map((t) => t.body['model'])).toEqual(['x-ai/grok-stt-1.0']);
+    expect(sent.speech.map((r) => r['input'])).toEqual(['OK.', 'OK.']);
+  });
+
+  it('the check of a part the screen shows, not saved, with a typed key: the server gets the key, nothing is stored', async () => {
+    server = await startFakeSpeechServer({ key: 'sk-typed' });
+    const app = createApp(makeDeps(), testEnv);
+    network({});
+    const res = await call(app, 'POST', '/api/voice/check', {
+      entityId: seed.entityId,
+      part: 'listening',
+      listening: {
+        transcriptionSource: 'openai-compatible',
+        transcriptionModel: 'typed-model',
+        transcriptionServer: { address: server.address, key: { value: 'sk-typed' } },
+      },
+    });
+    expect(await res.json()).toMatchObject({ state: 'answers', model: 'typed-model' });
+    expect(server.requests.at(-1)!.headers['authorization']).toBe('Bearer sk-typed');
+    expect(await readVoiceSetting(db as never, seed.entityId)).toEqual({
+      ok: true,
+      setting: FIRST_VOICE,
+    });
   });
 });

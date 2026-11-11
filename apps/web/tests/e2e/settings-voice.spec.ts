@@ -71,6 +71,7 @@ const FIRST = {
   source: 'openrouter',
   model: 'google/gemini-3.8-flash-tts',
   voice: 'Kore',
+  transcriptionSource: 'openrouter',
   transcriptionModel: 'x-ai/grok-stt-1.0',
 };
 
@@ -90,7 +91,13 @@ const EAR = {
 
 type Seen = { method: string; path: string; body: unknown };
 
-async function stubVoice(page: Page, sources: unknown[]): Promise<Seen[]> {
+/** #1048 — what the runner's trial answers for each part, and what a server lists. */
+type Stubs = {
+  check?: (body: { part: string; listening?: unknown }) => unknown;
+  models?: () => unknown;
+};
+
+async function stubVoice(page: Page, sources: unknown[], stubs: Stubs = {}): Promise<Seen[]> {
   const seen: Seen[] = [];
   const note = (route: Route) => {
     const req = route.request();
@@ -103,10 +110,41 @@ async function stubVoice(page: Page, sources: unknown[]): Promise<Seen[]> {
   await page.route('**/api/voice/setting', async (route) => {
     note(route);
     if (route.request().method() === 'PUT') {
-      await route.fulfill({ json: route.request().postDataJSON() as { setting: unknown } });
+      // The runner answers the setting as a client reads it: a key is only `hasKey` (#1048).
+      const { setting } = route.request().postDataJSON() as {
+        setting: Record<string, { address: string; key: unknown } | string>;
+      };
+      const view = Object.fromEntries(
+        Object.entries(setting).map(([k, v]) =>
+          typeof v === 'object' && v !== null && 'key' in v
+            ? [k, { address: v.address, hasKey: typeof v.key === 'object' }]
+            : [k, v],
+        ),
+      );
+      await route.fulfill({ json: { setting: view } });
       return;
     }
     await route.fulfill({ json: { setting: FIRST, sources, transcription: EAR } });
+  });
+  await page.route('**/api/voice/check', async (route) => {
+    note(route);
+    const body = route.request().postDataJSON() as { part: string; listening?: unknown };
+    await route.fulfill({
+      json: stubs.check?.(body) ?? {
+        part: body.part,
+        state: 'answers',
+        model: body.part === 'listening' ? 'x-ai/grok-stt-1.0' : 'google/gemini-3.8-flash-tts',
+        latencyMs: 620,
+        ...(body.part === 'listening' ? { heard: 'OK.' } : {}),
+        checkedAt: new Date().toISOString(),
+      },
+    });
+  });
+  await page.route('**/api/voice/server/models', async (route) => {
+    note(route);
+    await route.fulfill({
+      json: stubs.models?.() ?? { state: 'listed', models: [], listedAt: new Date().toISOString() },
+    });
   });
   await page.route('**/api/voice/sample', async (route) => {
     note(route);
@@ -177,6 +215,7 @@ test.describe('the Voice setting @cap:parler-a-un-agent/ecran', () => {
             source: 'google',
             model: 'gemini-3.8-flash-tts',
             voice: 'Puck',
+            transcriptionSource: 'openrouter',
             transcriptionModel: 'openai/gpt-transcribe',
           },
         },
@@ -197,5 +236,69 @@ test.describe('the Voice setting @cap:parler-a-un-agent/ecran', () => {
       'No Google key in this workspace. Add one in LLM Providers to speak through Google.',
     );
     await expect(section.getByTestId('voice-model')).toHaveCount(0);
+  });
+
+  // #1048 — listening on a server the person runs: the address typed, the
+  // models it lists, the state under the part, then exactly that saved.
+  test('listens on a local server: its models at the address typed, its state, and Save sends it', async ({
+    page,
+  }) => {
+    const whisper = 'openai/whisper-large-v3-turbo';
+    const seen = await stubVoice(page, [OPENROUTER, GOOGLE], {
+      models: () => ({
+        state: 'listed',
+        models: [{ id: whisper }],
+        listedAt: new Date().toISOString(),
+      }),
+      check: (body) =>
+        body.part === 'listening' && body.listening
+          ? {
+              part: 'listening',
+              state: 'answers',
+              model: whisper,
+              latencyMs: 210,
+              heard: 'OK.',
+              checkedAt: new Date().toISOString(),
+            }
+          : undefined,
+    });
+    await page.goto('/settings?page=workspace');
+    const section = page.getByTestId('setting-section-voice');
+    await expect(section.getByTestId('voice-transcription')).toHaveValue('x-ai/grok-stt-1.0', {
+      timeout: 30_000,
+    });
+    // The state is always there, the saved ear's included.
+    await expect(section.getByTestId('voice-listening-status')).toContainText(
+      'Answers. x-ai/grok-stt-1.0 wrote back the sample “OK.” in 0.62 s.',
+    );
+
+    await section.getByTestId('voice-ear-source-openai-compatible').click();
+    await expect(section.getByTestId('voice-transcription-hint')).toContainText(
+      'Nodal does not start or stop it.',
+    );
+    await section.getByTestId('voice-transcription-address').fill('http://127.0.0.1:8786/v1');
+    await expect(section.getByTestId('voice-transcription-listed')).toHaveText(
+      'Models listed by the server at 127.0.0.1:8786, read just now.',
+    );
+    await section.getByTestId('voice-transcription').selectOption(whisper);
+    await expect(section.getByTestId('voice-listening-status')).toContainText(
+      `Answers. ${whisper} wrote back the sample “OK.” in 0.21 s.`,
+    );
+    await expect(section.getByTestId('voice-unsaved')).toHaveText(
+      'Unsaved change: listening moves from OpenRouter to the local server.',
+    );
+    await section.getByRole('button', { name: 'Save' }).click();
+    await expect
+      .poll(() => seen.filter((s) => s.method === 'PUT').map((s) => s.body))
+      .toEqual([
+        {
+          setting: {
+            ...FIRST,
+            transcriptionSource: 'openai-compatible',
+            transcriptionModel: whisper,
+            transcriptionServer: { address: 'http://127.0.0.1:8786/v1', key: 'none' },
+          },
+        },
+      ]);
   });
 });
