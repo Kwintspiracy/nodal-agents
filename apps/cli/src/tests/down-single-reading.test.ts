@@ -71,7 +71,8 @@ function spawnIdle(): ChildProcess {
  * gets the Nth answer, and the last one repeats. The postgres ownership probe
  * is a different query and finds no postgres at all, so nothing is owned.
  *
- * `taskkill` ends its target through the stand-in's handle; with `/T` it ends
+ * `taskkill` ends its target through the stand-in's handle, and returns once it
+ * has exited; with `/T` it ends
  * every stand-in the FIRST answer draws under the target, as a real tree kill
  * would — the case that must never reach a foreign Postgres — except the pids
  * in `missedByTreeKill`: a Turbopack worker that re-parented is not in the tree
@@ -106,7 +107,18 @@ function drive(answers: readonly Answer[], missedByTreeKill: readonly number[] =
       const victims = args.includes('/T')
         ? subtree(target).filter((pid) => !missedByTreeKill.includes(pid))
         : [target];
-      for (const pid of victims) standIns.get(pid)?.kill('SIGKILL');
+      // Returns once the victims are GONE, as `taskkill /F` does. Off Windows a
+      // killed child stays a zombie until node reaps it, and signal 0 still
+      // answers for a zombie: `down`'s re-probe right after the kill would then
+      // read a dead stand-in as running (Linux CI, first run of this file).
+      const gone = victims.flatMap((pid) => {
+        const child = standIns.get(pid);
+        if (child === undefined || child.exitCode !== null || child.signalCode !== null) return [];
+        const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()));
+        child.kill('SIGKILL');
+        return [exited];
+      });
+      return Promise.all(gone).then(() => ok(''));
     }
     return ok('');
   }) as unknown as typeof execa);
