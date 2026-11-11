@@ -16,11 +16,12 @@
 
 import { describe, it, expect, afterAll } from 'vitest';
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { COUNTER_DAEMON_SOURCE, counterRise, crashRecordOf, readCounter } from '../counter-process';
 import { watchProcess, type ProcessWatch } from '../process-watch';
+import { waitForFile } from '../wait-for-file';
 
 const dir = mkdtempSync(join(tmpdir(), 'nodal-counter-'));
 afterAll(() => rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 }));
@@ -34,9 +35,8 @@ async function startCounting(
   const counter = join(dir, `${tag}.count`);
   const pidFile = join(dir, `${tag}.pid`);
   spawn(process.execPath, [daemon, counter, pidFile], { stdio: 'ignore' }).unref();
-  for (let i = 0; i < 200 && !(existsSync(pidFile) && existsSync(counter)); i++) {
-    await new Promise((r) => setTimeout(r, 50));
-  }
+  await waitForFile(pidFile, { timeoutMs: 10_000 });
+  await waitForFile(counter, { timeoutMs: 10_000 });
   const pid = Number(readFileSync(pidFile, 'utf8'));
   return { pid, counter, watch: await watchProcess(pid) };
 }
@@ -140,9 +140,8 @@ describe('the counter file is never left empty, whatever the instant (#843, run 
     const counter = join(dir, 'sampled.count');
     const pidFile = join(dir, 'sampled.pid');
     spawn(process.execPath, [daemon, counter, pidFile, '1'], { stdio: 'ignore' }).unref();
-    for (let i = 0; i < 200 && !(existsSync(pidFile) && existsSync(counter)); i++) {
-      await new Promise((r) => setTimeout(r, 50));
-    }
+    await waitForFile(pidFile, { timeoutMs: 10_000 });
+    await waitForFile(counter, { timeoutMs: 10_000 });
     const watch = await watchProcess(Number(readFileSync(pidFile, 'utf8')));
     try {
       const seen: string[] = [];
@@ -192,9 +191,8 @@ describe('the counter file is never left empty, whatever the instant (#843, run 
     const daemons: { pid: number; counter: string; watch: ProcessWatch }[] = [];
     try {
       for (const f of files) {
-        for (let n = 0; n < 200 && !(existsSync(f.pidFile) && existsSync(f.counter)); n++) {
-          await new Promise((r) => setTimeout(r, 50));
-        }
+        await waitForFile(f.pidFile, { timeoutMs: 10_000 });
+        await waitForFile(f.counter, { timeoutMs: 10_000 });
         const pid = readCounter(f.pidFile);
         daemons.push({ pid, counter: f.counter, watch: await watchProcess(pid) });
       }
