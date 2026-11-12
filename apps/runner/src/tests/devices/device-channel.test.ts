@@ -853,6 +853,15 @@ describe('after a resync, a device re-reads its pending cards (#945) @cap:approu
 });
 
 // ─── 3b'. The question an MCP server asks during a call (#1067) ─────────────
+//
+// Mutations verified (each turns at least one case red):
+//   - the choices rule skipped (every question goes as the bubble);
+//   - the images dropped from the card;
+//   - the image route's ownership check removed;
+//   - the device card not recorded (no card.closed, its answer refused);
+//   - the choice's content not read on the decision (accept needs `content`);
+//   - any answer taken as the choice;
+//   - the question left out of the cards list after a resync.
 
 describe('a question an MCP server asks during a call reaches the device as a card, with its images (#1067) @cap:approuver-une-action/moteur', () => {
   // 1×1 PNG, and bytes stored as a JPEG: the route serves what is stored, as stored.
