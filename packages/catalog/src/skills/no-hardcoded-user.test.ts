@@ -90,8 +90,10 @@ describe('print-request skill', () => {
     // The only sentence that mentions the Print button is conditional on the preview mode.
     const button = sentenceWith(c, 'Print button');
     expect(button).toHaveLength(1);
-    expect(button[0]).toMatch(/with a preview, [^;]*Print button/);
-    expect(button[0]).toMatch(/with direct printing, the job status the print tool returned/);
+    expect(button[0]).toMatch(/with a preview still waiting, [^;]*Print button/);
+    expect(button[0]).toMatch(
+      /with a job the print tool cannot follow, the status it returned \(accepted, failed\), and that accepted is not printed yet/,
+    );
     expect(c).not.toMatch(/A preview is shown/);
   });
 
@@ -122,13 +124,36 @@ describe('print-request skill', () => {
     );
   });
 
-  it('never says it printed before the print tool reports the job, in either mode', () => {
-    const never = sentenceWith(skill?.content ?? '', 'Never say it printed');
-    expect(never).toHaveLength(1);
-    expect(never[0]).toBe(
-      'Never say it printed before the print tool reports the job as accepted or completed, whichever mode you used.',
+  // #1071: "accepted" is not "printed". The skill says it printed only once the
+  // tool reports the job COMPLETED, and follows a submitted job to its end when
+  // the print tool can, without naming any tool, parameter or printer.
+  it('says it printed only once the tool reports the job completed: accepted or submitted is not printed', () => {
+    const c = skill?.content ?? '';
+    const only = sentenceWith(c, 'Say it printed only once');
+    expect(only).toEqual([
+      '- Say it printed only once the print tool reports the job completed: accepted or submitted is not printed, whichever mode you used.',
+    ]);
+    // No sentence lets "accepted" stand for printed any more.
+    expect(c).not.toMatch(/printed before the print tool reports the job as accepted/);
+    expect(c).not.toMatch(/accepted or completed/);
+    expect(c).toContain('With direct printing there is no pending request to replace');
+  });
+
+  it('follows a submitted job to its end when the print tool can, and says whether the pages came out', () => {
+    const c = skill?.content ?? '';
+    const follow = sentenceWith(c, 'Follow a submitted job to its end');
+    expect(follow).toHaveLength(1);
+    expect(follow[0]).toBe(
+      '- **Follow a submitted job to its end when the print tool can** (its description or its answer says so, such as a status call that waits): follow it before you answer, and once more if it is still in progress when the wait ends.',
     );
-    expect(skill?.content).toContain('With direct printing there is no pending request to replace');
+    expect(sentenceWith(c, 'whether the pages came out')).toEqual([
+      'Then say in one sentence whether the pages came out, how many, or why not; still in progress after that, that it is still printing.',
+    ]);
+    // A capability, not a product: the rule sits in section 4 and names no
+    // wait parameter (the guard above already refuses tool names).
+    const section4 = c.slice(c.indexOf('## 4.'));
+    expect(section4).toContain('Follow a submitted job to its end');
+    expect(section4).not.toMatch(/wait_?seconds|waitSeconds|timeout_?s|get_\w+/i);
   });
 
   it('names no connector-specific print tool', () => {

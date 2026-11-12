@@ -329,7 +329,9 @@ export async function applyCampaignConfig(
       const key = `${entityId}:printer`;
       let serverId = connectorIds.get(key);
       if (!serverId) {
-        const declaration = benchPrinterServer(deps.printerRecordsDir!);
+        const declaration = benchPrinterServer(deps.printerRecordsDir!, {
+          printSeconds: p.printSeconds ?? null,
+        });
         mkdirSync(deps.printerRecordsDir!, { recursive: true });
         const listed = await (deps.listMcpServer ?? listStdioMcpServer)(declaration);
         serverId = (
