@@ -479,3 +479,101 @@ export function renderElicitationCard(args: {
   }
   return { ok: true, text, buttons: rows };
 }
+
+// ─── La question répondue d'une liste de choix ────────────────────────────────
+
+/**
+ * Un choix de la question d'un serveur : ce qu'un client renvoie à
+ * `POST /api/approve` (`decision`, et `answer` quand il y en a un), et ce que
+ * le serveur reçoit pour lui (`content`, absent pour le refus).
+ */
+export interface ElicitationChoice {
+  label: string;
+  decision: 'approve' | 'reject';
+  /** Le libellé de l'option choisie ; absent pour l'accord d'un formulaire sans champ, et pour le refus. */
+  answer?: string;
+  content?: Record<string, ElicitationValue>;
+}
+
+export type ElicitationChoices =
+  | { ok: true; choices: ElicitationChoice[] }
+  | { ok: false; reason: string };
+
+/**
+ * LA règle qui dit si une liste de choix répond à la question d'un serveur
+ * (#1067), pour toute surface qui ne dessine que des choix (un appareil) et
+ * pour la route qui reçoit le choix (approvals/resolve.ts) : les deux lisent
+ * la même liste, jamais deux.
+ *
+ *   - aucun champ : l'accord et le refus du serveur (`nodal/actions`) ;
+ *   - un seul champ à choix unique (une énumération, un oui/non) : un choix
+ *     par valeur, nommé par son champ comme sur la carte d'un canal, puis le
+ *     refus ;
+ *   - tout autre formulaire (un nombre, un texte, plusieurs champs, plusieurs
+ *     cases) : refusé avec la raison. Il se remplit sur le dashboard, et la
+ *     surface le dit.
+ *
+ * Deux options du même libellé ne se distinguent pas par `answer` : refusé,
+ * jamais l'une prise pour l'autre (invariant #4).
+ */
+export function elicitationChoices(
+  fields: readonly ElicitationField[],
+  actions: ElicitationActions | null | undefined,
+): ElicitationChoices {
+  const labels = elicitationActionLabels(actions);
+  const decline: ElicitationChoice = { label: labels.decline, decision: 'reject' };
+  if (fields.length === 0) {
+    return {
+      ok: true,
+      choices: [{ label: labels.accept, decision: 'approve', content: {} }, decline],
+    };
+  }
+  if (fields.length > 1) {
+    return {
+      ok: false,
+      reason: `it has ${fields.length} fields, and a list of choices answers one at most`,
+    };
+  }
+  const field = fields[0]!;
+  const one = (value: ElicitationValue): Record<string, ElicitationValue> => {
+    const content: Record<string, ElicitationValue> = {};
+    setOwnValue(content, field.key, value);
+    return content;
+  };
+  let values: Array<{ answer: string; value: ElicitationValue }>;
+  switch (field.kind) {
+    case 'choice':
+      values = field.options.map((o) => ({ answer: o.label, value: o.value }));
+      break;
+    case 'boolean':
+      values = [
+        { answer: 'Yes', value: true },
+        { answer: 'No', value: false },
+      ];
+      break;
+    case 'multi':
+      return { ok: false, reason: `its field "${field.label}" takes several choices at once` };
+    case 'number':
+    case 'text':
+      return { ok: false, reason: `its field "${field.label}" is typed, not chosen` };
+  }
+  const answers = values.map((v) => v.answer.trim());
+  const twice = answers.find((a, i) => answers.indexOf(a) !== i);
+  if (twice !== undefined) {
+    return { ok: false, reason: `two choices of "${field.label}" read "${twice}"` };
+  }
+  return {
+    ok: true,
+    choices: [
+      ...values.map(
+        (v): ElicitationChoice => ({
+          label: `${field.label}: ${v.answer}`,
+          decision: 'approve',
+          answer: v.answer,
+          content: one(v.value),
+        }),
+      ),
+      decline,
+    ],
+  };
+}

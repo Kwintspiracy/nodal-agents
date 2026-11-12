@@ -11,6 +11,7 @@
 //   const session = await pairing.done();                      // the owner confirmed it
 //   const nodal = connect(url, session);                       // keep `session` to reconnect
 //   nodal.on('card', (card) => …); await nodal.say(wav, 'audio/wav');
+//   const { bytes, mimeType } = await nodal.image(card.images[0]);  // a card's image, if any
 //
 // The protocol itself (events, payloads, routes) is NOT written here: it comes
 // from the single protocol module `packages/shared/src/device-protocol.ts`,
@@ -36,6 +37,7 @@ import {
   DEVICE_PROTOCOL_VERSION,
   type DeviceCapability,
   type DeviceCardChoice,
+  type DeviceCardImage,
   type DeviceEvent,
 } from './protocol.generated.ts';
 
@@ -46,6 +48,7 @@ export {
   DEVICE_PROTOCOL_VERSION,
   type DeviceCapability,
   type DeviceCardChoice,
+  type DeviceCardImage,
   type DeviceDeliverable,
   type DeviceEvent,
   type DeviceEventType,
@@ -151,6 +154,22 @@ function fetchOf(options: FetchOptions): typeof fetch {
 /** `http://host:3001/` + `/api/x` → `http://host:3001/api/x`. */
 function urlOf(baseUrl: string, path: string): string {
   return baseUrl.replace(/\/+$/, '') + path;
+}
+
+/** Is `path` the route of an image of one of device `deviceId`'s cards (DEVICE_GESTURES `see`)? */
+function isImagePathOf(deviceId: string, path: string): boolean {
+  const want = DEVICE_GESTURES.see[0].path.split('/');
+  const got = path.split('/');
+  return (
+    want.length === got.length &&
+    want.every((seg, i) => {
+      const part = got[i] ?? '';
+      if (seg === ':deviceId') return part === encodeURIComponent(deviceId);
+      if (seg === ':n') return /^[0-9]+$/.test(part);
+      if (seg.startsWith(':')) return /^[A-Za-z0-9-]+$/.test(part);
+      return seg === part;
+    })
+  );
 }
 
 /** A route of the protocol table with its `:params` filled in. */
@@ -598,6 +617,12 @@ export interface NodalDevice {
   send(text: string): Promise<TurnResult>;
   /** Answer a card with one of its `choices`. */
   answer(cardId: string, choice: DeviceCardChoice): Promise<void>;
+  /**
+   * Read one image of a card (`card.images`), with this device's token: its
+   * bytes and their content type. Only a card's image route is read; any
+   * other path is refused before a request leaves.
+   */
+  image(image: DeviceCardImage): Promise<{ mimeType: string; bytes: Uint8Array }>;
   /** Stop the current turn. Resolves true when a turn was running. */
   cancel(): Promise<boolean>;
   /** Start a new conversation (like `/new`): the next turns begin from a blank thread. */
@@ -1069,6 +1094,23 @@ export function connect(
     });
   };
 
+  const image: NodalDevice['image'] = async (img) => {
+    // The token goes to this device's card image route and nowhere else: a
+    // path that is not one (another device's, another route, an address) is
+    // refused here, before the token leaves.
+    if (!isImagePathOf(session.deviceId, img.path)) {
+      throw new NodalDeviceError(
+        'protocol',
+        `protocol: "${img.path}" is not an image route of this device's cards`,
+      );
+    }
+    const res = await request('GET', img.path);
+    return {
+      mimeType: res.headers.get('content-type') ?? img.mimeType,
+      bytes: new Uint8Array(await res.arrayBuffer()),
+    };
+  };
+
   const cancel: NodalDevice['cancel'] = async () => {
     const [cancelTurn, stopChat] = DEVICE_GESTURES.cancel;
     let stopped = false;
@@ -1121,6 +1163,7 @@ export function connect(
     say: gesture(say),
     send: gesture(send),
     answer: gesture(answer),
+    image: gesture(image),
     cancel: gesture(cancel),
     newConversation: gesture(async () => {
       const next = readConversation(true);

@@ -14,6 +14,7 @@ import {
   applyTypedElicitationValue,
   elicitationDraftRevision,
   renderElicitationCard,
+  elicitationChoices,
 } from '../elicitation-card';
 
 const FORM = {
@@ -347,6 +348,122 @@ describe('une réponse tapée va au champ qu’elle visait @cap:approuver-une-ac
     expect(applyTypedElicitationValue(f, d, 'Alice', 'note')).toMatchObject({
       ok: true,
       draft: { values: { note: 'Alice' } },
+    });
+  });
+});
+
+describe('une liste de choix répond-elle à la question ? (#1067) @cap:approuver-une-action/moteur', () => {
+  const parse = (schema: unknown): ElicitationField[] => {
+    const parsed = parseElicitationSchema(schema);
+    if (!parsed.ok) throw new Error(parsed.reason);
+    return parsed.fields;
+  };
+
+  it('sans champ : l’accord et le refus du serveur, à ses mots, sinon ceux par défaut', () => {
+    const noField = parse({ type: 'object', properties: {} });
+    expect(elicitationChoices(noField, { accept: 'Go ahead', decline: 'Stop' })).toEqual({
+      ok: true,
+      choices: [
+        { label: 'Go ahead', decision: 'approve', content: {} },
+        { label: 'Stop', decision: 'reject' },
+      ],
+    });
+    expect(elicitationChoices(noField, null)).toEqual({
+      ok: true,
+      choices: [
+        { label: '✅ Confirm', decision: 'approve', content: {} },
+        { label: 'Decline', decision: 'reject' },
+      ],
+    });
+  });
+
+  it('un seul champ à choix : un choix par valeur, nommé par son champ, puis le refus', () => {
+    const one = parse({
+      type: 'object',
+      properties: {
+        color: {
+          type: 'string',
+          title: 'Color',
+          enum: ['color', 'grayscale'],
+          enumNames: ['Full color', 'Grayscale'],
+        },
+      },
+      required: ['color'],
+    });
+    expect(elicitationChoices(one, { accept: null, decline: 'Cancel' })).toEqual({
+      ok: true,
+      choices: [
+        {
+          label: 'Color: Full color',
+          decision: 'approve',
+          answer: 'Full color',
+          content: { color: 'color' },
+        },
+        {
+          label: 'Color: Grayscale',
+          decision: 'approve',
+          answer: 'Grayscale',
+          content: { color: 'grayscale' },
+        },
+        { label: 'Cancel', decision: 'reject' },
+      ],
+    });
+  });
+
+  it('un seul oui / non : Yes et No, la valeur booléenne pour le serveur', () => {
+    const one = parse({
+      type: 'object',
+      properties: { duplex: { type: 'boolean', title: 'Two-sided' } },
+    });
+    const r = elicitationChoices(one, null);
+    expect(r).toEqual({
+      ok: true,
+      choices: [
+        { label: 'Two-sided: Yes', decision: 'approve', answer: 'Yes', content: { duplex: true } },
+        { label: 'Two-sided: No', decision: 'approve', answer: 'No', content: { duplex: false } },
+        { label: 'Decline', decision: 'reject' },
+      ],
+    });
+  });
+
+  it('tout autre formulaire est refusé, avec la raison', () => {
+    const text = parse({ type: 'object', properties: { note: { type: 'string', title: 'Note' } } });
+    expect(elicitationChoices(text, null)).toEqual({
+      ok: false,
+      reason: 'its field "Note" is typed, not chosen',
+    });
+    const number = parse({
+      type: 'object',
+      properties: { n: { type: 'integer', title: 'Copies' } },
+    });
+    expect(elicitationChoices(number, null)).toEqual({
+      ok: false,
+      reason: 'its field "Copies" is typed, not chosen',
+    });
+    const multi = parse({
+      type: 'object',
+      properties: { pages: { type: 'array', title: 'Pages', items: { enum: ['1', '2'] } } },
+    });
+    expect(elicitationChoices(multi, null)).toEqual({
+      ok: false,
+      reason: 'its field "Pages" takes several choices at once',
+    });
+    expect(elicitationChoices(fields(), null)).toEqual({
+      ok: false,
+      reason: 'it has 5 fields, and a list of choices answers one at most',
+    });
+  });
+
+  it('deux options du même libellé : refusé, jamais l’une prise pour l’autre', () => {
+    const twins = parse({
+      type: 'object',
+      properties: {
+        tray: { type: 'string', title: 'Tray', enum: ['a', 'b'], enumNames: ['Main', 'Main'] },
+      },
+    });
+    expect(elicitationChoices(twins, null)).toEqual({
+      ok: false,
+      reason: 'two choices of "Tray" read "Main"',
     });
   });
 });
