@@ -38,6 +38,7 @@ import {
   agents,
   jobDeliverableVerificationState,
   approvalCardMessages,
+  approvalRequestAttachments,
   approvalRequests,
   conversations,
   devices,
@@ -45,6 +46,7 @@ import {
   telegramAllowedChats,
 } from '@nodal-agents/db';
 import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
+import type { UserInputRequest, UserInputResponse } from '@nodal-agents/tools';
 import { createEmbeddingClient } from '@nodal-agents/llm';
 import { LocalTrustProvider } from '@nodal-agents/auth';
 import { deviceAdapter, DeliveryError } from '@nodal-agents/delivery';
@@ -55,6 +57,7 @@ import type { RunnerEnv } from '../../env.ts';
 import { createApp } from '../../server.ts';
 import { executeJob } from '../../job/execute.ts';
 import { notifyApprovalCreated } from '../../approvals/notify.ts';
+import { createRequestUserInput } from '../../approvals/elicitation.ts';
 import { publishApprovalRequested, publishJobEnded } from '../../events/publish.ts';
 import { speakFinishedJob } from '../../chat/job-reply-voice.ts';
 import { jobEvents } from '../../events/job-events.ts';
@@ -847,6 +850,373 @@ describe('after a resync, a device re-reads its pending cards (#945) @cap:approu
     const sent = onA.gestures().find((e) => e.event === 'card')!.data;
     expect((await getCards(app, deviceA)).cards).toEqual([sent]);
   });
+});
+
+// ─── 3b'. The question an MCP server asks during a call (#1067) ─────────────
+//
+// Mutations verified (each turns at least one case red):
+//   - the choices rule skipped (every question goes as the bubble);
+//   - the images dropped from the card;
+//   - the image route's ownership check removed;
+//   - the device card not recorded (no card.closed, its answer refused);
+//   - the choice's content not read on the decision (accept needs `content`);
+//   - any answer taken as the choice;
+//   - the question left out of the cards list after a resync.
+
+describe('a question an MCP server asks during a call reaches the device as a card, with its images (#1067) @cap:approuver-une-action/moteur', () => {
+  // 1×1 PNG, and bytes stored as a JPEG: the route serves what is stored, as stored.
+  const PNG =
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
+  const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 4, 0xff, 0xd9]).toString('base64');
+  const NO_FIELD = { type: 'object', properties: {} };
+  const MESSAGE = 'Confirm the job shown in the preview?';
+
+  async function ownDevice(name: string): Promise<string> {
+    const [d] = await db
+      .insert(devices)
+      .values({ entityId: x.entityId, name, capabilities: ['screen', 'buttons'] })
+      .returning({ id: devices.id });
+    const { token, tokenHash } = drawDeviceToken();
+    await db.update(devices).set({ tokenHash }).where(eq(devices.id, d!.id));
+    keyOf.set(d!.id, token);
+    return d!.id;
+  }
+
+  /** A running job of the device's conversation, and its server asking, as the MCP adapter does. */
+  async function serverAsks(
+    app: ReturnType<typeof createApp>,
+    dev: string,
+    over: Partial<UserInputRequest> = {},
+  ): Promise<{
+    job: string;
+    withdraw: () => void;
+    reply: Promise<UserInputResponse>;
+    requestId: () => Promise<string>;
+  }> {
+    const conv = String((await postConversation(app, dev)).json['conversationId']);
+    const job = await deviceJob({
+      entityId: x.entityId,
+      agentId: x.agentId,
+      deviceId: dev,
+      conversationId: conv,
+      status: 'processing',
+    });
+    const ctl = new AbortController();
+    const ask = createRequestUserInput(
+      makeDeps(),
+      { jobId: job, agentId: x.agentId, entityId: x.entityId },
+      { isLost: async () => false, timeoutMs: 60_000, pollMs: 10 },
+    );
+    const reply = ask({
+      serverSlug: 'preview-server',
+      toolName: 'preview-server__run',
+      toolCallId: `call-${job}`,
+      message: MESSAGE,
+      requestedSchema: NO_FIELD,
+      attachments: [
+        { mimeType: 'image/png', data: PNG, byteSize: 68, caption: 'Page 1' },
+        { mimeType: 'image/jpeg', data: JPEG, byteSize: 10, caption: null },
+      ],
+      actions: { accept: 'Confirm', decline: 'Cancel' },
+      signal: ctl.signal,
+      ...over,
+    });
+    asking.push({ ctl, reply });
+    const requestId = async (): Promise<string> => {
+      for (let i = 0; i < 300; i += 1) {
+        const [row] = await db
+          .select({ id: approvalRequests.id })
+          .from(approvalRequests)
+          .where(eq(approvalRequests.jobId, job));
+        if (row) return row.id;
+        await new Promise((r) => setTimeout(r, 10));
+      }
+      throw new Error('the question was never asked');
+    };
+    return { job, withdraw: () => ctl.abort(), reply, requestId };
+  }
+
+  /** Every question still waiting is withdrawn at the end of its test: nothing polls on. */
+  const asking: { ctl: AbortController; reply: Promise<UserInputResponse> }[] = [];
+  afterEach(async () => {
+    for (const a of asking.splice(0)) {
+      a.ctl.abort();
+      await a.reply.catch(() => undefined);
+    }
+  });
+
+  const get = (app: ReturnType<typeof createApp>, path: string, headers: Record<string, string>) =>
+    app.fetch(new Request(`http://localhost${path}`, { headers }));
+
+  const approve = (
+    app: ReturnType<typeof createApp>,
+    dev: string,
+    body: Record<string, unknown>,
+  ): Promise<Response> =>
+    Promise.resolve(
+      app.fetch(
+        new Request('http://localhost/api/approve', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...as(dev) },
+          body: JSON.stringify(body),
+        }),
+      ),
+    );
+
+  it('a question with no field: a card with the server’s labels and image pointers; its images read with the device’s key; answered from the device, the server gets accept', async () => {
+    const dev = await ownDevice('Porch');
+    const app = createApp(makeDeps(), testEnv);
+    const onDev = await device(app, dev);
+    const onB = await device(app, deviceB);
+    const asked = await serverAsks(app, dev);
+    const id = await asked.requestId();
+    await waitFor(() => onDev.gestures().some((e) => e.event === 'card'));
+    const sent = onDev.gestures().find((e) => e.event === 'card')!.data;
+
+    // The card, as the device receives it: the platform's frame, the server's
+    // words quoted, its own labels, and pointers to its two images.
+    expect(DeviceEventSchema.parse(sent)).toEqual(sent);
+    expect(sent).toEqual({
+      type: 'card',
+      cardId: id,
+      kind: 'question',
+      text:
+        '❓ The MCP server "preview-server" asks:\n\n' +
+        `│ ${MESSAGE}\n\n` +
+        'Tap an option below, or answer from the dashboard.',
+      choices: [
+        { label: 'Confirm', decision: 'approve' },
+        { label: 'Cancel', decision: 'reject' },
+      ],
+      images: [
+        {
+          path: `/api/devices/${dev}/cards/${id}/images/0`,
+          mimeType: 'image/png',
+          caption: 'Page 1',
+        },
+        { path: `/api/devices/${dev}/cards/${id}/images/1`, mimeType: 'image/jpeg' },
+      ],
+    });
+    // Recorded as a card of THIS device; nothing went anywhere else.
+    expect(await cardsOf(id)).toEqual([{ channel: 'device', conversationId: dev }]);
+    expect(onB.gestures()).toEqual([]);
+    expect(telegramSends).toEqual([]);
+
+    // Each pointer, read with the device's key: the stored bytes, with their type.
+    const card = DeviceEventSchema.parse(sent);
+    const images = card.type === 'card' ? (card.images ?? []) : [];
+    const stored = [PNG, JPEG];
+    for (const [n, image] of images.entries()) {
+      const res = await get(app, image.path, as(dev));
+      expect(res.status).toBe(200);
+      expect(res.headers.get('content-type')).toBe(image.mimeType);
+      expect(Buffer.from(await res.arrayBuffer())).toEqual(Buffer.from(stored[n]!, 'base64'));
+    }
+    // Another device: through its own route, or naming this one, nothing.
+    expect(
+      (await get(app, `/api/devices/${deviceB}/cards/${id}/images/0`, as(deviceB))).status,
+    ).toBe(404);
+    expect((await get(app, images[0]!.path, as(deviceB))).status).toBe(404);
+    // No key, the worker secret: refused.
+    expect((await get(app, images[0]!.path, {})).status).toBe(401);
+    expect(
+      (await get(app, images[0]!.path, { Authorization: `Bearer ${testEnv.WORKER_SECRET}` }))
+        .status,
+    ).toBe(401);
+    // An image this request does not have.
+    expect((await get(app, `/api/devices/${dev}/cards/${id}/images/2`, as(dev))).status).toBe(404);
+
+    // After a resync, the cards list holds the very card that was sent.
+    expect((await getCards(app, dev)).cards).toEqual([sent]);
+    expect((await getCards(app, deviceB)).cards).toEqual([]);
+
+    // Answered as a module that sends back exactly the choice it received.
+    const confirm = card.type === 'card' ? card.choices[0]! : null;
+    const res = await approve(app, dev, { approvalRequestId: id, ...confirm });
+    expect(res.status).toBe(200);
+    // The server receives accept, with the empty content its form asks for.
+    expect(await asked.reply).toEqual({ action: 'accept', content: {} });
+    const [row] = await db.select().from(approvalRequests).where(eq(approvalRequests.id, id));
+    expect(row).toMatchObject({ status: 'approved', response: {}, resolvedBy: 'api' });
+    // The card closes on the device, in the platform's words.
+    await waitFor(() => onDev.gestures().some((e) => e.event === 'card.closed'));
+    expect(onDev.gestures().find((e) => e.event === 'card.closed')!.data).toEqual({
+      type: 'card.closed',
+      cardId: id,
+      text: '✅ Answered',
+    });
+    expect((await getCards(app, dev)).cards).toEqual([]);
+    expect(onB.gestures()).toEqual([]);
+  });
+
+  it('a request made elsewhere: its images are not the device’s to read', async () => {
+    const dev = await ownDevice('Garage');
+    const app = createApp(makeDeps(), testEnv);
+    // A job of the same workspace, launched from the dashboard.
+    const [job] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: x.entityId,
+        agentId: x.agentId,
+        channel: 'dashboard',
+        task: 'elsewhere',
+        status: 'processing',
+        messages: [],
+        chainCount: 0,
+      })
+      .returning({ id: agentJobs.id });
+    const [request] = await db
+      .insert(approvalRequests)
+      .values({
+        entityId: x.entityId,
+        jobId: job!.id,
+        agentId: x.agentId,
+        toolName: 'preview-server__run',
+        toolInput: { server: 'preview-server', message: MESSAGE, requestedSchema: NO_FIELD },
+        kind: 'elicitation',
+        executedAt: new Date(),
+      })
+      .returning({ id: approvalRequests.id });
+    await db.insert(approvalRequestAttachments).values({
+      approvalRequestId: request!.id,
+      position: 0,
+      mimeType: 'image/png',
+      data: PNG,
+      byteSize: 68,
+      caption: null,
+    });
+    const res = await get(app, `/api/devices/${dev}/cards/${request!.id}/images/0`, as(dev));
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ error: 'image_not_found' });
+  });
+
+  it('declined from the device: the server gets decline, and the card closes', async () => {
+    const dev = await ownDevice('Attic');
+    const app = createApp(makeDeps(), testEnv);
+    const onDev = await device(app, dev);
+    const asked = await serverAsks(app, dev);
+    const id = await asked.requestId();
+    await waitFor(() => onDev.gestures().some((e) => e.event === 'card'));
+    // The reference kit's body: the decision, and no answer.
+    const res = await approve(app, dev, { approvalRequestId: id, decision: 'reject' });
+    expect(res.status).toBe(200);
+    expect(await asked.reply).toEqual({ action: 'decline' });
+    const [row] = await db.select().from(approvalRequests).where(eq(approvalRequests.id, id));
+    expect(row).toMatchObject({ status: 'rejected', response: null });
+    await waitFor(() => onDev.gestures().some((e) => e.event === 'card.closed'));
+    expect(onDev.gestures().find((e) => e.event === 'card.closed')!.data).toEqual({
+      type: 'card.closed',
+      cardId: id,
+      text: '❌ Declined',
+    });
+  });
+
+  it('the server withdraws its question: the device receives card.closed', async () => {
+    const dev = await ownDevice('Cellar');
+    const app = createApp(makeDeps(), testEnv);
+    const onDev = await device(app, dev);
+    const asked = await serverAsks(app, dev);
+    const id = await asked.requestId();
+    await waitFor(() => onDev.gestures().some((e) => e.event === 'card'));
+    asked.withdraw();
+    expect(await asked.reply).toEqual({ action: 'cancel' });
+    const [row] = await db.select().from(approvalRequests).where(eq(approvalRequests.id, id));
+    expect(row).toMatchObject({ status: 'expired', resolvedBy: 'system:server_cancelled' });
+    await waitFor(() => onDev.gestures().some((e) => e.event === 'card.closed'));
+    expect(onDev.gestures().find((e) => e.event === 'card.closed')!.data).toEqual({
+      type: 'card.closed',
+      cardId: id,
+      text: '⌛ Closed without an answer',
+    });
+    expect((await getCards(app, dev)).cards).toEqual([]);
+  });
+
+  it('one field to pick from: a choice per value, then decline; the choice fills the form', async () => {
+    const dev = await ownDevice('Hallway');
+    const app = createApp(makeDeps(), testEnv);
+    const onDev = await device(app, dev);
+    const asked = await serverAsks(app, dev, {
+      attachments: [],
+      requestedSchema: {
+        type: 'object',
+        properties: {
+          size: { type: 'string', title: 'Size', enum: ['s', 'l'], enumNames: ['Small', 'Large'] },
+        },
+        required: ['size'],
+      },
+    });
+    const id = await asked.requestId();
+    await waitFor(() => onDev.gestures().some((e) => e.event === 'card'));
+    const card = DeviceEventSchema.parse(onDev.gestures().find((e) => e.event === 'card')!.data);
+    expect(card).toMatchObject({
+      type: 'card',
+      cardId: id,
+      kind: 'question',
+      choices: [
+        { label: 'Size: Small', decision: 'approve', answer: 'Small' },
+        { label: 'Size: Large', decision: 'approve', answer: 'Large' },
+        { label: 'Cancel', decision: 'reject' },
+      ],
+    });
+    // No images: the field is absent, not empty.
+    expect(card).not.toHaveProperty('images');
+    // An answer that is none of the choices is refused, the question stays open.
+    const wrong = await approve(app, dev, {
+      approvalRequestId: id,
+      decision: 'approve',
+      answer: 'Huge',
+    });
+    expect(wrong.status).toBe(400);
+    expect(await wrong.json()).toEqual({ error: 'answer_not_an_option' });
+    // Approve without a choice: the form has a field, it needs one.
+    const none = await approve(app, dev, { approvalRequestId: id, decision: 'approve' });
+    expect(await none.json()).toEqual({ error: 'content_required' });
+    const large = card.type === 'card' ? card.choices[1]! : null;
+    expect((await approve(app, dev, { approvalRequestId: id, ...large })).status).toBe(200);
+    expect(await asked.reply).toEqual({ action: 'accept', content: { size: 'l' } });
+    const [row] = await db.select().from(approvalRequests).where(eq(approvalRequests.id, id));
+    expect(row).toMatchObject({ status: 'approved', response: { size: 'l' } });
+  });
+
+  it.each([
+    ['a text field', { name: { type: 'string', title: 'Name' } }],
+    ['a number field', { copies: { type: 'integer', title: 'Copies', minimum: 1 } }],
+    [
+      'two fields to pick from',
+      {
+        size: { type: 'string', title: 'Size', enum: ['s', 'l'] },
+        tint: { type: 'boolean', title: 'Tint' },
+      },
+    ],
+  ])(
+    'a form with %s: the device gets today’s bubble with its reason, and no card',
+    async (_, properties) => {
+      const dev = await ownDevice('Landing');
+      const app = createApp(makeDeps(), testEnv);
+      const onDev = await device(app, dev);
+      const asked = await serverAsks(app, dev, {
+        message: 'Which one?',
+        requestedSchema: { type: 'object', properties },
+      });
+      const id = await asked.requestId();
+      await waitFor(() => onDev.gestures().some((e) => e.event === 'bubble'));
+      // Besides the run's `state`: one bubble, and no card. Its words are the
+      // ones every channel without a form gets, unchanged by #1067.
+      const said = onDev.gestures().filter((e) => e.event !== 'state');
+      expect(said.map((e) => e.event)).toEqual(['bubble']);
+      expect((said[0]!.data as { text: string }).text).toBe(
+        '❓ The MCP server "preview-server" asks:\n\n' +
+          '│ Which one?\n\n' +
+          'Answer from the dashboard: the question is on the run, and on the Approvals page.\n' +
+          '(device has no buttons to fill a form with.)',
+      );
+      expect(await cardsOf(id)).toEqual([]);
+      expect((await getCards(app, dev)).cards).toEqual([]);
+      // Not a card the device holds: it cannot answer it.
+      const res = await approve(app, dev, { approvalRequestId: id, decision: 'reject' });
+      expect(res.status).toBe(404);
+    },
+  );
 });
 
 // ─── 3c. The origin is the RUN's: delegates, task-board children, relaunches ─
