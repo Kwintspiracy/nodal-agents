@@ -1,5 +1,6 @@
 // campaign/command.ts — ce que `pnpm bench:campaign` fait, une fois le processus pointé sur la campagne.
 
+import { resolve } from 'node:path';
 import { readTreeFacts } from '../workflows/facts';
 import { BenchStop } from '../workflows/lock';
 import { formatPlan, parseModels, planMatrix, readPastLines } from '../workflows/matrix';
@@ -32,7 +33,9 @@ export async function runCommand(
   command: string,
   ctx: { id: string; baseEnv: Record<string, string | undefined> },
 ): Promise<void> {
-  const config = loadCampaignConfig();
+  // --config : une autre configuration que banc.json (une mesure ciblée, #1071).
+  const configFile = arg('config');
+  const config = loadCampaignConfig(configFile === undefined ? undefined : resolve(configFile));
   const fingerprint = configFingerprint(config);
   const lifecycle: LifecycleDeps = {
     cli: productCli(REPO),

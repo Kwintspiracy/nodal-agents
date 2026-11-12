@@ -10,6 +10,7 @@ import { createRequire } from 'node:module';
 import { isAbsolute, join } from 'node:path';
 import { BENCH_DIR } from '../workflows/paths';
 import {
+  BENCH_PRINTER_PRINT_SECONDS_ENV,
   BENCH_PRINTER_RECORDS_ENV,
   BENCH_PRINTER_SLUG,
   type BenchPrinterServerDeclaration,
@@ -41,10 +42,23 @@ const PRINTER_DIR = join(BENCH_DIR, 'src', 'printer');
  * `recordsDir` (un chemin ABSOLU : le runner le lance depuis un dossier qui
  * n'est pas celui du banc). Il tourne avec le Node du banc et son `tsx`, sans
  * passer par `pnpm` ni par un dossier de travail.
+ *
+ * `printSeconds` (#1071) : une imprimante qui imprime, chaque demande devenant
+ * un travail terminé en ce nombre de secondes, que son outil d'état sait suivre.
+ * Absent ou null : la déclaration d'avant, à l'octet près.
  */
-export function benchPrinterServer(recordsDir: string): BenchPrinterServerDeclaration {
+export function benchPrinterServer(
+  recordsDir: string,
+  options: { readonly printSeconds?: number | null } = {},
+): BenchPrinterServerDeclaration {
   if (!isAbsolute(recordsDir))
     throw new Error(`bench_printer_records_dir_not_absolute: "${recordsDir}"`);
+  const printSeconds = options.printSeconds ?? null;
+  if (
+    printSeconds !== null &&
+    !(Number.isFinite(printSeconds) && printSeconds > 0 && printSeconds <= 600)
+  )
+    throw new Error(`bench_printer_bad_print_seconds: ${printSeconds} is not from 0 to 600`);
   const tsxCli = createRequire(join(BENCH_DIR, 'package.json')).resolve('tsx/cli');
   return {
     name: 'Bench printer',
@@ -52,6 +66,9 @@ export function benchPrinterServer(recordsDir: string): BenchPrinterServerDeclar
     transport: 'stdio',
     command: process.execPath,
     args: [tsxCli, join(PRINTER_DIR, 'main.ts')],
-    envVars: { [BENCH_PRINTER_RECORDS_ENV]: recordsDir },
+    envVars: {
+      [BENCH_PRINTER_RECORDS_ENV]: recordsDir,
+      ...(printSeconds === null ? {} : { [BENCH_PRINTER_PRINT_SECONDS_ENV]: String(printSeconds) }),
+    },
   };
 }

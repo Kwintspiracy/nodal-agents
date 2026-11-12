@@ -23,6 +23,29 @@ export const BENCH_PRINTER_SLUG = 'bench-printer';
  */
 export const BENCH_PRINTER_RECORDS_ENV = 'NODAL_BENCH_PRINTER_RECORDS_DIR';
 
+/**
+ * La variable par laquelle la déclaration fait de l'imprimante du banc une
+ * imprimante qui IMPRIME (#1071) : chaque demande devient un travail, terminé
+ * en ce nombre de secondes. Absente : les demandes attendent, rien n'imprime.
+ */
+export const BENCH_PRINTER_PRINT_SECONDS_ENV = 'NODAL_BENCH_PRINTER_PRINT_SECONDS';
+
+/** Les secondes d'impression que la déclaration porte ; une valeur qui n'en est pas une est dite. */
+export function parsePrintSeconds(
+  raw: unknown,
+):
+  | { readonly ok: true; readonly seconds: number | null }
+  | { readonly ok: false; readonly reason: string } {
+  if (raw === undefined) return { ok: true, seconds: null };
+  const n = typeof raw === 'string' && raw.trim() !== '' ? Number(raw) : NaN;
+  if (!Number.isFinite(n) || n <= 0 || n > 600)
+    return {
+      ok: false,
+      reason: `${BENCH_PRINTER_PRINT_SECONDS_ENV}="${String(raw)}" is not a number of seconds from 0 to 600`,
+    };
+  return { ok: true, seconds: n };
+}
+
 /** Les outils du serveur. Aucun ne confirme : il n'y a pas d'imprimante derrière. */
 export const BENCH_PRINTER_TOOLS = ['request_print', 'get_print_request'] as const;
 export type BenchPrinterTool = (typeof BENCH_PRINTER_TOOLS)[number];
@@ -113,7 +136,10 @@ function differences(row: AttachedMcpServer, d: BenchPrinterServerDeclaration): 
  */
 export function benchPrinterState(
   servers: readonly AttachedMcpServer[],
-  declare: (recordsDir: string) => BenchPrinterServerDeclaration,
+  declare: (
+    recordsDir: string,
+    options?: { readonly printSeconds?: number | null },
+  ) => BenchPrinterServerDeclaration,
   expectedDir: string | null = null,
 ): BenchPrinterState {
   const prefix = mcpToolPrefix(BENCH_PRINTER_SLUG);
@@ -135,9 +161,13 @@ export function benchPrinterState(
       return broken(
         `the "${s.slug}" server declares no ${BENCH_PRINTER_RECORDS_ENV}: the judge cannot know where it records`,
       );
+    const print = parsePrintSeconds(
+      (env as Record<string, unknown>)[BENCH_PRINTER_PRINT_SECONDS_ENV],
+    );
+    if (!print.ok) return broken(`the "${s.slug}" server: ${print.reason}`);
     let expected: BenchPrinterServerDeclaration;
     try {
-      expected = declare(dir);
+      expected = declare(dir, { printSeconds: print.seconds });
     } catch (e) {
       return broken(
         `the "${s.slug}" server cannot be the bench printer: ${String(e instanceof Error ? e.message : e)}`,
