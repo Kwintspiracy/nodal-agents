@@ -199,10 +199,13 @@ describe('print-request skill', () => {
     const asked = c.split(/\r?\n/).filter((l) => l.includes('changes the person asked for'));
     expect(asked).toHaveLength(1);
     const bullet = asked[0] ?? '';
-    expect(bullet).toContain('(in their words), that is a request, not a failure.');
-    // Make them, and send the new page to the print tool in the same task.
     expect(bullet).toContain(
-      'Make them, and send the new page to the print tool in this same task, so they see a new preview to approve.',
+      '(in the preview or in their answer, in their words), that is a request, not a failure.',
+    );
+    // Make them, and send the new page to the print tool in the same task.
+    expect(bullet).toContain('Do not ask whether they want changes: they just said which ones.');
+    expect(bullet).toContain(
+      'Make them, and send the new page to the print tool in this same task, REPLACING the pending or declined request where the tool allows it, so they see a new preview to approve.',
     );
     // One short sentence saying so.
     expect(bullet).toContain('Say in one short sentence that you are changing it.');
