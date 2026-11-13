@@ -156,6 +156,71 @@ describe('print-request skill', () => {
     expect(section4).not.toMatch(/wait_?seconds|waitSeconds|timeout_?s|get_\w+/i);
   });
 
+  // #1073 follow-up: a print the PERSON cancelled (or declined) on the preview
+  // card is not a failure to report. The spoken end-of-task announcement is
+  // condensed from the agent's final answer, so the guidance lives here (agent
+  // layer), for every print connector, mode and channel.
+  it("acknowledges a person's cancel in one short sentence, offers to change the page, never resubmits on its own", () => {
+    const c = skill?.content ?? '';
+    // The whole bullet (one line of the skill), not a sentence of it.
+    const cancel = c.split(/\r?\n/).filter((l) => l.includes('cancelled or declined'));
+    expect(cancel).toHaveLength(1);
+    const bullet = cancel[0] ?? '';
+    // Their choice, not a failure.
+    expect(bullet).toContain('it is their choice, not a failure.');
+    // The case where the tool reports no change they asked for.
+    expect(bullet).toContain('If it reports no change they asked for:');
+    // Acknowledge briefly, in the person's language.
+    expect(bullet).toContain('acknowledge it in one short sentence in their language');
+    // Offer a change, in the same answer.
+    expect(bullet).toContain(
+      'in that same answer ask whether they want something changed on the page',
+    );
+    // Do not repeat the tool's status or tell them nothing printed.
+    expect(bullet).toContain("Do not quote the tool's status or message");
+    expect(bullet).toContain('do not say that nothing printed (they know).');
+    // No resubmission on its own, with this tool or another.
+    expect(bullet).toContain('Do not submit again, with this tool or another, unless they ask.');
+    // The cancel case is read BEFORE the generic "where things stand" case, so
+    // a cancel never falls under the status report.
+    expect(c.indexOf('cancelled or declined')).toBeGreaterThan(c.indexOf('## 4.'));
+    expect(c.indexOf('cancelled or declined')).toBeLessThan(c.indexOf('Otherwise tell the person'));
+    // A capability, not a product: no tool, parameter, printer or device named.
+    expect(bullet).not.toMatch(CONNECTOR_TOOL);
+    expect(bullet).not.toMatch(PRINTER_BRAND);
+    expect(bullet).not.toMatch(/get_\w+|request_\w+|print_\w+/);
+  });
+
+  // The other half of a cancel: the print tool passes on what the person wants
+  // changed (in their own words). That IS a request, so the agent makes the
+  // changes and sends a new page in the same task: not a resubmission on its own.
+  it('makes the changes the person asked for and sends the new page in the same task, saying so in one sentence', () => {
+    const c = skill?.content ?? '';
+    const asked = c.split(/\r?\n/).filter((l) => l.includes('changes the person asked for'));
+    expect(asked).toHaveLength(1);
+    const bullet = asked[0] ?? '';
+    expect(bullet).toContain('(in their words), that is a request, not a failure.');
+    // Make them, and send the new page to the print tool in the same task.
+    expect(bullet).toContain(
+      'Make them, and send the new page to the print tool in this same task, so they see a new preview to approve.',
+    );
+    // One short sentence saying so.
+    expect(bullet).toContain('Say in one short sentence that you are changing it.');
+    // The person's changes are not the agent's own corrections.
+    expect(bullet).toContain('These changes do not count among the 2 corrections.');
+    // Read right after the no-change case and before the generic status case.
+    const cancelAt = c.indexOf('cancelled or declined');
+    const askedAt = c.indexOf('changes the person asked for');
+    expect(askedAt).toBeGreaterThan(cancelAt);
+    expect(askedAt).toBeLessThan(c.indexOf('Otherwise tell the person'));
+    // The two cases are told apart: only the no-change one forbids resubmitting.
+    expect(bullet).not.toMatch(/Do not submit again/);
+    // A capability, not a product.
+    expect(bullet).not.toMatch(CONNECTOR_TOOL);
+    expect(bullet).not.toMatch(PRINTER_BRAND);
+    expect(bullet).not.toMatch(/get_\w+|request_\w+|print_\w+/);
+  });
+
   it('names no connector-specific print tool', () => {
     const text = `${skill?.description}
 ${skill?.content}`;
