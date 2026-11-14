@@ -34,6 +34,7 @@
 // se contredisent pas sur l'ordre de ce qui s'est passé.
 
 import { TERMINAL_STATUSES, type JobStatus } from './state.ts';
+import { quotedLines } from './tool-acts.ts';
 
 /**
  * Quand un job lancé a fini, s'il a une fin à placer : un statut terminal ET
@@ -49,6 +50,38 @@ export function taskEndedAt(job: { status: string | null; completedAt: Date | nu
 /** Le job a-t-il fini (terminé, échoué, annulé) ? */
 export function isJobEnded(status: string | null): boolean {
   return TERMINAL_STATUSES.includes(status as JobStatus);
+}
+
+/**
+ * Le cadre du runner au-dessus de ce qui a ATTEINT la personne à la fin d'une
+ * tâche : l'annonce qu'un job lancé par la voix a faite en finissant
+ * (`agent_jobs.spoken_announcement`, #967). Le cadre fixe d'un relevé est au
+ * runner (invariant #2) ; les mots sont ceux de l'agent, cités comme données.
+ */
+export const ANNOUNCED_FRAME = '[Announced to the person when it ended]';
+
+/**
+ * Ce qui a atteint la personne quand la tâche a fini, quand c'est un fait
+ * rangé, dans les mots employés : le cadre, puis l'annonce citée ligne à ligne
+ * (`quotedLines`). Rien quand rien n'est rangé : le runner ne dit jamais que la
+ * personne a vu ou entendu ce qu'il ne sait pas (invariant #4).
+ *
+ * POURQUOI. Une fin placée à son heure est souvent la dernière chose que le
+ * modèle lit avant le message suivant. Sans ce fait, une correction que
+ * l'annonce avait déjà DITE à la personne était redonnée trente minutes plus
+ * tard, 5 fois sur 5, comme une correction « pas encore faite ».
+ *
+ * C'est le seul fait de remise rangé pour un job lancé depuis une conversation
+ * de chat : `job_deliveries` ne sert que les canaux de messagerie, et un job du
+ * tableau de bord ou d'un appareil répond dans le fil (`replyDestination` rend
+ * `result`), où rien ne dit que la personne l'a lu.
+ */
+export function reachedThePerson(
+  spokenAnnouncement: string | null,
+  cut: (text: string) => string,
+): string[] {
+  const said = (spokenAnnouncement ?? '').trim();
+  return said === '' ? [] : [ANNOUNCED_FRAME, ...quotedLines(cut(said))];
 }
 
 /** Un moment : une ligne de la conversation, ou la fin du job qu'elle a lancé. */

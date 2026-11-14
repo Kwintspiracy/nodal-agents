@@ -87,7 +87,12 @@ import { agentJobs, chatMessages } from '@nodal-agents/db';
 import type { ModelMessage } from 'ai';
 import type { RunnerDeps } from '../deps.ts';
 import { loadExchangeRecords } from './exchange-record.ts';
-import { conversationMoments, isJobEnded, taskEndedAt } from './conversation-moments.ts';
+import {
+  conversationMoments,
+  isJobEnded,
+  reachedThePerson,
+  taskEndedAt,
+} from './conversation-moments.ts';
 import { ownTranscript } from './tool-acts.ts';
 import {
   formatLocalTime,
@@ -410,6 +415,7 @@ async function loadDashboardHistory(opts: LoadThreadHistoryOptions): Promise<Mod
       jobId: chatMessages.jobId,
       jobStatus: agentJobs.status,
       jobCompletedAt: agentJobs.completedAt,
+      spokenAnnouncement: agentJobs.spokenAnnouncement,
       result: agentJobs.result,
       resultKind: agentJobs.resultKind,
       runnerNotes: agentJobs.runnerNotes,
@@ -499,7 +505,11 @@ async function loadDashboardHistory(opts: LoadThreadHistoryOptions): Promise<Mod
     if (m.kind === 'end') {
       // La fin du job, à l'heure où il a fini : ce qu'il a produit.
       const out = outcome(row);
-      return spokenAndRecord((out.own ?? '').trim(), recordOf(row, out));
+      return spokenAndRecord((out.own ?? '').trim(), [
+        ...recordOf(row, out),
+        // Ce qui a atteint la personne à la fin, quand c'est rangé.
+        ...reachedThePerson(row.spokenAnnouncement, truncate),
+      ]);
     }
     if (row.role === 'user') {
       if (!row.createdAt) throw new Error('thread history: a chat_messages row has no created_at');
