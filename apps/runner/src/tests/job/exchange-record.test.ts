@@ -23,6 +23,7 @@ import {
   mcpServers,
   toolCalls,
   eq,
+  conversationHandleFor,
 } from '@nodal-agents/db';
 import { runnerRecordEntries, wrapUntrusted } from '@nodal-agents/shared';
 import type { ModelMessage } from 'ai';
@@ -1004,6 +1005,117 @@ describe('a send is the reply when it addresses THIS conversation (#1076 review,
       ],
     ]);
     expect(JSON.stringify(history)).not.toContain('Here you go.');
+  });
+});
+
+describe('a send target is read as the send read it: a conversation address resolves (#1076 review pass 2, P2) @cap:reprendre-conversation/moteur', () => {
+  const sent = json({ sent: true });
+
+  /**
+   * A telegram job of a conversation whose chat is `convChat`, the job's own
+   * chat `jobChat` (null: a job from before `chat_id` was stored), that sent
+   * `Here you go.` to `target` and nothing else.
+   */
+  async function sendIn(opts: {
+    convChat: string;
+    jobChat: string | null;
+    target: Record<string, unknown>;
+    output?: unknown;
+  }) {
+    const conv = await conversation('telegram', opts.convChat);
+    const task = 'Send it';
+    await job({
+      conversationId: conv,
+      channel: 'telegram',
+      task,
+      steps: [
+        {
+          name: 'telegram_send_message',
+          risk: 'write',
+          input: { text: 'Here you go.', ...opts.target },
+          output: opts.output ?? sent,
+        },
+      ],
+      toolsUsed: ['telegram_send_message'],
+      result: null,
+      minutesAgo: 5,
+      ...(opts.jobChat ? { chatId: opts.jobChat, chatChannel: 'telegram' } : {}),
+    });
+    const current = await job({
+      conversationId: conv,
+      channel: 'telegram',
+      task: 'And?',
+      minutesAgo: 0,
+    });
+    return replay(conv, 'telegram', current);
+  }
+
+  const handleOf = (chat: string) =>
+    conversationHandleFor(db as unknown as Parameters<typeof conversationHandleFor>[0], {
+      entityId: seed.entityId,
+      channel: 'telegram',
+      conversationId: chat,
+    });
+
+  const replayedSends = (history: ModelMessage[]) =>
+    history
+      .filter((m) => m.role === 'assistant')
+      .flatMap((m) => (Array.isArray(m.content) ? m.content : []))
+      .map((p) => (p as { input?: { text?: unknown } }).input?.text);
+
+  const AS_ACTION = [
+    [
+      '[Actions performed in this exchange: telegram_send_message]',
+      'telegram_send_message → {"sent":true}',
+    ],
+  ];
+
+  it('the address of THIS chat: the reply, replayed and absent from the record', async () => {
+    const history = await sendIn({
+      convChat: '555',
+      jobChat: '555',
+      target: { chatId: await handleOf('555') },
+    });
+    expect(replayedSends(history)).toEqual(['Here you go.']);
+    expect(records(history)).toEqual([]);
+  });
+
+  it('the address of ANOTHER chat: an action, named and quoted, its words not replayed', async () => {
+    const history = await sendIn({
+      convChat: '555',
+      jobChat: '555',
+      target: { chatId: await handleOf('777') },
+    });
+    expect(replayedSends(history)).toEqual([]);
+    expect(records(history)).toEqual(AS_ACTION);
+    expect(JSON.stringify(history)).not.toContain('Here you go.');
+  });
+
+  it('a job with no chat_id stored: its conversation’s chat, written out or as an address, is the reply', async () => {
+    for (const target of [{ chatId: '888' }, { chatId: await handleOf('888') }]) {
+      await db.delete(agentJobs);
+      await db.delete(conversations);
+      const history = await sendIn({ convChat: '888', jobChat: null, target });
+      expect(replayedSends(history)).toEqual(['Here you go.']);
+      expect(records(history)).toEqual([]);
+    }
+  });
+
+  it('an address the workspace does not know: the send failed, nothing was read, it is an action', async () => {
+    const unknown = 'conv_aaaaaaaaaa';
+    const history = await sendIn({
+      convChat: '555',
+      jobChat: '555',
+      target: { chatId: unknown },
+      output: json({ error: `conversation_handle_unknown: ${unknown} names no conversation` }),
+    });
+    expect(replayedSends(history)).toEqual([]);
+    expect(records(history)).toEqual([
+      [
+        '[Actions performed in this exchange: telegram_send_message]',
+        `telegram_send_message → {"error":"conversation_handle_unknown: ${unknown} names no conversation"}`,
+      ],
+    ]);
   });
 });
 

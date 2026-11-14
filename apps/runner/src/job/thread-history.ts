@@ -82,14 +82,15 @@
 // turns are its `chat_messages` (`loadDashboardHistory`), where a channel's
 // are its head jobs.
 
-import { eq, and, ne, desc, inArray, isNull, lt } from '@nodal-agents/db';
-import { agentJobs, chatMessages } from '@nodal-agents/db';
+import { eq, and, ne, desc, inArray, isNull, lt, conversationsOfHandles } from '@nodal-agents/db';
+import { agentJobs, chatMessages, conversations } from '@nodal-agents/db';
 import type { ModelMessage } from 'ai';
 import type { RunnerDeps } from '../deps.ts';
 import { loadExchangeRecords } from './exchange-record.ts';
 import { ownTranscript } from './tool-acts.ts';
 import {
   formatLocalTime,
+  type HandledConversation,
   inboxMessageReceivedAt,
   isInboxMessage,
   keepsTurnsInChat,
@@ -98,6 +99,7 @@ import {
 import { messageText } from './state.ts';
 import { jobChatOn } from '@nodal-agents/delivery';
 import type { ChannelKind, JobChat } from '@nodal-agents/delivery';
+import { readSendTarget, type ConversationArgument } from '@nodal-agents/tools';
 
 /**
  * Channels that represent ongoing conversations. Others (`api`, `cron`,
@@ -222,7 +224,8 @@ export async function loadThreadHistory(opts: LoadThreadHistoryOptions): Promise
   // Ce que l'agent a répondu à chaque tour, lu AVANT le relevé : les appels
   // qui ont livré cette réponse sont déjà redonnés comme son tour, le relevé
   // ne les redit pas (#1075). Une seule lecture, ici, pour les deux.
-  const replies = new Map(chronological.map((row) => [row.id, replyOfRow(row)]));
+  const here = await conversationHere(opts.db, opts.conversationId, chronological);
+  const replies = new Map(chronological.map((row) => [row.id, replyOfRow(row, here)]));
 
   // Le relevé de chaque tour (#1075, exchange-record.ts) : ses outils, ce que
   // ceux qui agissent ont rendu, et ses délégations — `create_task` comme EN
@@ -578,6 +581,60 @@ export const CHANNEL_SEND_TOOL: Readonly<Record<string, string>> = {
  * the same stale MCP pre-amble before this fix.
  */
 /**
+ * Ce qu'un tour passé d'une conversation sait de « cette conversation », pour
+ * lire la cible de ses envois rangés (#1075) : le chat de la conversation
+ * (`conversations.channel` / `chat_id`), et la conversation que nomme chaque
+ * adresse (`conv_…`) que ses envois ont écrite, lue dans l'entité de la
+ * conversation en UNE requête pour tous les tours relus.
+ */
+interface ConversationHere {
+  chat: JobChat | null;
+  conversationOf: (handle: string) => HandledConversation | null;
+}
+
+async function conversationHere(
+  db: RunnerDeps['db'],
+  conversationId: string,
+  rows: ReadonlyArray<{ task: string; messages: unknown; channel: string }>,
+): Promise<ConversationHere> {
+  const [conversation] = await db
+    .select({
+      entityId: conversations.entityId,
+      channel: conversations.channel,
+      chatId: conversations.chatId,
+    })
+    .from(conversations)
+    .where(eq(conversations.id, conversationId));
+  const handles = new Set<string>();
+  for (const row of rows) {
+    const sendTool = CHANNEL_SEND_TOOL[row.channel];
+    if (!sendTool) continue;
+    for (const msg of ownTranscript(row.messages, row.task)) {
+      if (msg.role !== 'assistant' || !Array.isArray(msg.content)) continue;
+      for (const p of msg.content as unknown[]) {
+        const part = p as { type?: unknown; toolName?: unknown; input?: { chatId?: unknown } };
+        const chatId = part?.input?.chatId;
+        if (
+          part?.type === 'tool-call' &&
+          part.toolName === sendTool &&
+          typeof chatId === 'string'
+        ) {
+          handles.add(chatId.trim());
+        }
+      }
+    }
+  }
+  const named = await conversationsOfHandles(db, {
+    entityId: conversation?.entityId ?? null,
+    handles,
+  });
+  return {
+    chat: conversation ? { id: conversation.chatId, channel: conversation.channel } : null,
+    conversationOf: (handle) => named.get(handle) ?? null,
+  };
+}
+
+/**
  * Ce que l'agent a répondu à un tour passé, et ce qui en vient : ses propres
  * mots (`result` moins ce que le runner y a écrit), et la réponse relue.
  */
@@ -593,6 +650,7 @@ function replyOfRow(
     // Typed through `Record`: `runner-notes-one-writer.test.ts` reads a key
     // followed by a colon as a write, and this is a read of the stored column.
   } & Record<'runnerNotes', unknown>,
+  here: ConversationHere,
 ) {
   const agentsOwnResult = row.resultKind !== 'relay';
   const runnerNotes = Array.isArray(row.runnerNotes) ? (row.runnerNotes as string[]) : [];
@@ -602,7 +660,8 @@ function replyOfRow(
     result: agentsOwnResult ? agentsWords : null,
     messages: row.messages,
     channel: row.channel,
-    chat: { id: row.chatId, channel: row.chatChannel },
+    chats: [{ id: row.chatId, channel: row.chatChannel }, ...(here.chat ? [here.chat] : [])],
+    conversationOf: here.conversationOf,
   });
   return { agentsOwnResult, runnerNotes, agentsWords, reply };
 }
@@ -618,32 +677,46 @@ interface AssistantReply {
 }
 
 /**
- * Un appel d'envoi qui s'adresse à CETTE conversation (#1075), comme le garde
- * de livraison le résout pour l'envoi réel (`resolveRecipient`,
- * @nodal-agents/tools) : sa cible est le chat de la tâche sur son canal. Une
- * cible absente (absente, `null` ou vide) est celle-là : le schéma de l'outil
- * le dit (« omit to reply to the chat that triggered this job », « omit to
- * reply on the current conversation's channel »). Une cible écrite en clair
- * l'est aussi quand elle EST le chat de la tâche sur ce canal (`jobChatOn`, la
- * même lecture que le garde). Tout autre envoi part ailleurs : une autre
- * personne, un autre canal. Ce n'est pas la réponse de ce tour, c'est une
- * action, que le relevé nomme et cite.
+ * Un appel d'envoi qui s'adresse à CETTE conversation (#1075). Sa cible se lit
+ * par la fonction même qui l'a lue pour l'envoyer (`readSendTarget`,
+ * @nodal-agents/tools) : une adresse `conv_…` devient son canal et son chat,
+ * un identifiant brut reste ce qu'il est. « Cette conversation » est le chat de
+ * la tâche (`agent_jobs.chat_id` / `chat_channel`) ou celui de sa conversation
+ * (`conversations.channel` / `chat_id`), sur le canal visé (`jobChatOn`).
+ *
+ * Une cible laissée de côté (absente, `null` ou vide) est cette conversation :
+ * le schéma de l'outil le dit (« omit to reply to the chat that triggered this
+ * job », « omit to reply on the current conversation's channel »). Une cible
+ * que l'envoi réel aurait refusée (une adresse que l'entité ne connaît pas, un
+ * canal qui contredit l'adresse) n'a rien livré : rien n'a été lu, ce n'est pas
+ * la réponse ; l'appel reste dans le relevé avec ce qu'il a rendu (son erreur).
+ * Tout autre envoi part ailleurs : une action, que le relevé nomme et cite.
  */
 function repliesToConversation(
   input: unknown,
-  job: { channel: string; chat: JobChat },
+  job: {
+    channel: string;
+    chats: readonly JobChat[];
+    conversationOf: (handle: string) => HandledConversation | null;
+  },
 ): input is { text: string } {
   if (!input || typeof input !== 'object') return false;
   const i = input as { text?: unknown; chatId?: unknown; channel?: unknown };
   if (typeof i.text !== 'string' || i.text.trim() === '') return false;
-  const named = (v: unknown): string | null =>
-    v === undefined || v === null || String(v).trim() === '' ? null : String(v).trim();
+  const named = (v: unknown): string | undefined =>
+    v === undefined || v === null || String(v).trim() === '' ? undefined : String(v).trim();
   const chatId = named(i.chatId);
-  const channel = named(i.channel);
-  if (chatId === null && channel === null) return true;
-  const target = channel ?? job.channel;
-  const own = jobChatOn(job.chat, target as ChannelKind);
-  return own !== null && (chatId ?? own) === own;
+  const channel = named(i.channel) as ChannelKind | undefined;
+  if (chatId === undefined && channel === undefined) return true;
+  let target: ConversationArgument;
+  try {
+    target = readSendTarget(chatId, channel, job.conversationOf);
+  } catch {
+    return false;
+  }
+  const on = (target.channel ?? job.channel) as ChannelKind;
+  const own = job.chats.map((chat) => jobChatOn(chat, on)).filter((id) => id !== null);
+  return own.length > 0 && (target.chatId === undefined || own.includes(target.chatId));
 }
 
 function extractAssistantReply(row: {
@@ -651,8 +724,10 @@ function extractAssistantReply(row: {
   result: string | null;
   messages: unknown;
   channel: string;
-  /** The job's chat (`agent_jobs.chat_id` and the channel it was resolved on). */
-  chat: JobChat;
+  /** This conversation's chats: the job's, and its conversation's. */
+  chats: readonly JobChat[];
+  /** The conversation a `conv_…` address names in the job's entity. */
+  conversationOf: (handle: string) => HandledConversation | null;
 }): AssistantReply | null {
   // 1. result column.
   if (row.result !== null && row.result !== undefined && row.result.trim() !== '') {

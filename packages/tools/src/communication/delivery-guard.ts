@@ -23,7 +23,11 @@ import {
   conversationHandleFor,
   resolveConversationHandle,
 } from '@nodal-agents/db';
-import { CONVERSATION_HANDLE_RE, isConversationHandle } from '@nodal-agents/shared';
+import {
+  CONVERSATION_HANDLE_RE,
+  isConversationHandle,
+  type HandledConversation,
+} from '@nodal-agents/shared';
 import {
   defaultSendChannel,
   isMessagingChannel,
@@ -190,7 +194,7 @@ export const CHAT_ID_ARGUMENT_HINT =
   'must be a conversation address you were given (conv_…), or a numeric chat ID';
 
 /** A send tool's conversation arguments, once a handle has named its conversation. */
-interface ConversationArgument {
+export interface ConversationArgument {
   chatId?: string;
   channel?: ChannelKind;
 }
@@ -217,13 +221,31 @@ async function conversationArgument(
   chatId: string | undefined,
   channel: ChannelKind | undefined,
 ): Promise<ConversationArgument> {
+  const conversation =
+    chatId !== undefined && isConversationHandle(chatId)
+      ? await resolveConversationHandle(ctx.db, { entityId: ctx.entityId, handle: chatId })
+      : null;
+  return readSendTarget(chatId, channel, () => conversation);
+}
+
+/**
+ * The reading of a send's target, once its handle has been looked up: the
+ * send above reads it before sending, and the runner's replay of a stored
+ * send (thread-history.ts, #1075) reads it to know whether that send answered
+ * the conversation. ONE function, so the two can never diverge.
+ * `conversationOf` gives the conversation a handle names in the job's entity
+ * (null: none). Throws exactly what the send throws: a target that throws
+ * here was never delivered.
+ */
+export function readSendTarget(
+  chatId: string | undefined,
+  channel: ChannelKind | undefined,
+  conversationOf: (handle: string) => HandledConversation | null | undefined,
+): ConversationArgument {
   if (chatId === undefined || !isConversationHandle(chatId)) {
     return { ...(chatId !== undefined ? { chatId } : {}), ...(channel ? { channel } : {}) };
   }
-  const conversation = await resolveConversationHandle(ctx.db, {
-    entityId: ctx.entityId,
-    handle: chatId,
-  });
+  const conversation = conversationOf(chatId) ?? null;
   // A send tool writes to a messaging platform only: a device's conversation
   // (#945) reads what Nodal says on its stream, never a send tool's message.
   if (conversation === null || !isMessagingChannel(conversation.channel)) {
