@@ -38,6 +38,7 @@ import type { JobId } from '@nodal-agents/orchestration';
 import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';
 import { executeJob } from '../../job/execute.ts';
+import { completeJob } from '../../job/state.ts';
 
 vi.setConfig({ testTimeout: 30_000 });
 
@@ -858,5 +859,156 @@ describe('un envoi ne périme pas le texte qui le précède (#1083, P2) @cap:par
     // La livraison de ce job est son résultat : l'envoi en passant ne fait pas
     // de lui un job « qui répond par un envoi », et son reason n'est pas jeté.
     expect((await rowOf(jobId)).result).toBe(REASON);
+  });
+});
+
+// ─── Revue Nodal de #1087, passe 1 ──────────────────────────────────────────
+
+describe('les portes autour de la règle (revue de #1087, passe 1) @cap:verifier-un-livrable/moteur', () => {
+  it('F1 — un livrable promis non vérifié garde ce qu’une PUBLICATION a déjà écrit, puis la ligne', async () => {
+    const dehors = join(tmpdir(), `hors-dossier-${Date.now()}`, 'missing.html');
+    const jobId = await insertJob({ agentId: worker });
+    const fin = done({ reason: 'Checked.', deliverables: [dehors] });
+    const { client } = makeMockLlmClient([
+      { toolCalls: [{ toolName: 'dashboard_publish', args: { text: REPORT } }] },
+      { toolCalls: [write('f1.html', GOOD)] },
+      { toolCalls: [fin] },
+      { toolCalls: [fin] },
+    ]);
+
+    await executeJob(jobId as JobId, makeDeps(client), testEnv);
+
+    const row = await rowOf(jobId);
+    expect(row.status).toBe('failed');
+    expect(row.error).toBe('deliverable_not_verified');
+    // Comme sur main : le texte publié d'abord, puis la ligne d'arrêt.
+    expect(row.result!.startsWith(`${REPORT}\n\n[stopped: declared deliverable not verified`)).toBe(
+      true,
+    );
+    expect(row.result).not.toContain('Checked.');
+  });
+});
+
+describe('F2 — un job qui répond par son RÉSULTAT n’est pas livré par un envoi en passant @cap:organiser-equipe/moteur', () => {
+  const narreTravailleEnvoie = (fichier: string): MockTurn[] => [
+    { text: NARRATION, toolCalls: [write(fichier, GOOD)] },
+    { toolCalls: [write(fichier, GOOD)] },
+    { toolCalls: [sendTo4242('Preview sent.')] },
+    { toolCalls: [done()] },
+  ];
+
+  it('tête lue comme get_task la lit : le rappel, puis la réponse écrite', async () => {
+    const jobId = await insertJob({ agentId: chatAgent, channel: 'mcp' });
+    const { client, prompts } = makeMockLlmClient([
+      ...narreTravailleEnvoie('g1.html'),
+      { text: FINAL },
+    ]);
+
+    const outcome = await executeJob(jobId as JobId, makeDeps(client), testEnv);
+
+    expect(prompts[4]).toContain('aucun texte écrit depuis ton dernier appel');
+    expect(outcome.status).toBe('completed');
+    expect((await rowOf(jobId)).result).toBe(FINAL);
+  });
+
+  it('tête sans réponse après le rappel : empty_deliverable, jamais un succès VIDE', async () => {
+    const jobId = await insertJob({ agentId: chatAgent, channel: 'mcp' });
+    const { client } = makeMockLlmClient([
+      ...narreTravailleEnvoie('g2.html'),
+      { toolCalls: [done()] },
+    ]);
+
+    const outcome = await executeJob(jobId as JobId, makeDeps(client), testEnv);
+
+    expect(outcome.status).toBe('failed');
+    const row = await rowOf(jobId);
+    expect(row.status).toBe('failed');
+    expect(row.error).toBe('empty_deliverable');
+  });
+
+  it('délégué : le parent reçoit le FAIT de l’envoi (#824), jamais la narration', async () => {
+    // Un délégué rend compte à son parent, et `withDeliveryNotice` remet au
+    // parent le fait de l'envoi : le contrat de #824 (un délégué chargé de
+    // « dire à la personne que c'est fait » finit sur ce seul fait). Le parent
+    // n'a donc pas un résultat vide ; il n'a pas non plus la narration.
+    const rootId = await insertJob();
+    const { client, prompts } = makeMockLlmClient([
+      { toolCalls: [{ toolName: assignChatter, args: { task: 'Make the one-page document' } }] },
+      ...narreTravailleEnvoie('g3.html'),
+      rootEnds,
+    ]);
+
+    await executeJob(rootId as JobId, makeDeps(client), testEnv);
+
+    const child = await childOf(rootId);
+    expect(child.status).toBe('completed');
+    const resume = resumeOf(prompts);
+    expect(resume).toContain('[livraison effectuée : telegram_send_message');
+    expect(resume).not.toContain('I’ll tighten the text');
+    // Pas de rappel : le lecteur de ce job a reçu le fait de l'envoi.
+    expect(prompts.join('')).not.toContain('aucun texte écrit depuis ton dernier appel');
+  });
+
+  it('un job de chat qui a LIVRÉ par son outil d’envoi n’est pas relancé', async () => {
+    const jobId = await insertJob({
+      agentId: chatAgent,
+      channel: 'telegram',
+      chatId: '4242',
+      chatChannel: 'telegram',
+    });
+    const { client, prompts } = makeMockLlmClient([
+      { text: NARRATION, toolCalls: [write('g4.html', GOOD)] },
+      { toolCalls: [write('g4.html', GOOD)] },
+      { toolCalls: [{ toolName: 'telegram_send_message', args: { text: REPORT } }, done()] },
+    ]);
+
+    const outcome = await executeJob(jobId as JobId, makeDeps(client), testEnv);
+
+    expect(outcome.status).toBe('completed');
+    expect(prompts).toHaveLength(3);
+    expect(prompts.join('')).not.toContain('aucun texte écrit depuis ton dernier appel');
+    expect(envois.map((e) => e.text)).toEqual([REPORT]);
+  });
+});
+
+describe('F3 — un seul endroit décide si un reason compte : les replis ne le promeuvent jamais @cap:organiser-equipe/moteur', () => {
+  it('le remplissage de completeJob ne transforme pas un reason en résultat', async () => {
+    // Le cas de la revue : la porte, qui tient la livraison, a écarté ce
+    // reason (un job de chat) ; le remplissage, qui ne la tient pas, ne doit
+    // pas l'écrire à sa place.
+    const jobId = await insertJob({ status: 'processing' });
+    const messages = [
+      { role: 'user', content: 'Prépare le document d’une page, prêt à imprimer' },
+      {
+        role: 'assistant',
+        content: [
+          { type: 'text', text: NARRATION },
+          { type: 'tool-call', toolCallId: 'w1', toolName: 'file_write', input: {} },
+        ],
+      },
+      { role: 'tool', content: [] },
+      {
+        role: 'assistant',
+        content: [{ type: 'tool-call', toolCallId: 'w2', toolName: 'file_write', input: {} }],
+      },
+      { role: 'tool', content: [] },
+      {
+        role: 'assistant',
+        content: [
+          {
+            type: 'tool-call',
+            toolCallId: 'rr',
+            toolName: 'return_result',
+            input: { status: 'success', reason: 'Sent the report.' },
+          },
+        ],
+      },
+    ];
+
+    await completeJob(db as never, jobId, '', ['return_result'], undefined, messages, 'prose');
+
+    const row = await rowOf(jobId);
+    expect(row.status).toBe('completed');
+    expect(row.result ?? '').toBe('');
   });
 });

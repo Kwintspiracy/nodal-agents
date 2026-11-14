@@ -58,8 +58,6 @@ const END_SIGNAL = 'return_result';
 /** La réponse publiée explicitement : ce sont les mots de son pas. */
 const PUBLISH = 'dashboard_publish';
 
-const SEND_TOOLS: ReadonlySet<string> = new Set(DELIVERY_TOOL_NAMES);
-
 /** Les appels qui DISENT : ils ne périment aucun texte. */
 const SAYING: ReadonlySet<string> = new Set([END_SIGNAL, PUBLISH, ...DELIVERY_TOOL_NAMES]);
 
@@ -184,14 +182,14 @@ export function answerOfRun(turnMessages: readonly unknown[], repliesGoBySend: b
 }
 
 /**
- * La lecture de REPLI de « les réponses de ce job partent par un envoi », pour
- * les portes qui ne tiennent pas la livraison du job (le remplissage de
- * `completeJob`, le repli de `finalizeJobSuccess`) : un envoi est dans la
- * transcription. Elles ne sont atteintes qu'après la porte d'`execute.ts`, qui
- * lit, elle, la livraison (`replyTo`) et passe déjà la réponse quand le
- * résultat est vide ; elles ne voient donc que des runs sans réponse, où ce
- * drapeau ne change rien.
+ * La réponse ÉCRITE du run, sans jamais promouvoir un `reason` : la lecture des
+ * portes de repli qui ne tiennent pas la livraison du job (le remplissage de
+ * `completeJob`, le repli de `finalizeJobSuccess`). Un `reason` ne devient la
+ * réponse que là où la livraison est connue — la porte d'`execute.ts`, qui le
+ * passe déjà quand le résultat est vide. Ainsi un seul endroit décide si un
+ * `reason` compte (revue Nodal de #1087, F3) : les replis ne lisent pas la
+ * livraison dans la transcription, ils ne la lisent pas du tout.
  */
-export function repliesWentBySend(turnMessages: readonly unknown[]): boolean {
-  return turnMessages.some((m) => (stepOf(m)?.calls ?? []).some((c) => SEND_TOOLS.has(c.name)));
+export function writtenAnswerOfRun(turnMessages: readonly unknown[]): string {
+  return answerOfRun(turnMessages, true);
 }

@@ -3876,9 +3876,10 @@ async function runJobTracked(
    */
   const echouerSurDeclaration = async (items: DeclarationItem[]): Promise<ExecuteJobResult> => {
     const line = deliverableNotVerifiedLine(items);
-    // Le texte que le run aurait livré — la réponse de l'agent (#1083), la
-    // même que la porte de succès écrit, sinon ce qu'un outil de livraison a
-    // déjà écrit —, puis la ligne. Il REMPLACE le résultat dans la transaction
+    // Le texte que le run aurait livré — ce qu'un outil a déjà écrit
+    // (`dashboard_publish`), qui n'est jamais écrasé, comme à la porte de
+    // succès et dans `finalizeJobSuccess` ; sinon la réponse de l'agent
+    // (#1083) —, puis la ligne. Il REMPLACE le résultat dans la transaction
     // qui pose l'échec : une seconde écriture après coup laissait, sur une
     // panne entre les deux, un échec dont le résultat ne disait que « livré »
     // (revue Codex de #509, passe 3).
@@ -3887,7 +3888,7 @@ async function runJobTracked(
       .from(agentJobs)
       .where(eq(agentJobs.id, jobId as string))
       .limit(1);
-    const texte = reponseDuRun() || (dejaEcrit?.result ?? '').trim();
+    const texte = (dejaEcrit?.result ?? '').trim() || reponseDuRun();
     const livrable = [texte, line].filter((t) => t !== '').join('\n\n');
     trace(DELIVERABLE_NOT_VERIFIED, { paths: items.map((i) => i.path) });
     await failJobWithHarnessNotice(
@@ -6859,7 +6860,17 @@ async function runJobTracked(
         if (reponseRetour === '' && lastAssistantTextSeen !== '') {
           trace('answer_predates_work', { turn, lastTextLen: lastAssistantTextSeen.length });
         }
-        if (taskRows.length === 0 && !toolDelivered && reponseRetour === '') {
+        // « Déjà livré » veut dire : CELUI QUI LIT ce job a reçu quelque chose
+        // de l'envoi (revue de #1087, F2). Deux lecteurs le reçoivent, par les
+        // mécanismes qui existent déjà : la personne, quand les réponses du job
+        // partent par un envoi (sa livraison, #649) ; le parent d'un job
+        // délégué, à qui `withDeliveryNotice` remet le fait de l'envoi (#824).
+        // Un job de TÊTE qui répond par son résultat (MCP, API, tableau de
+        // bord) ne transmet rien de l'envoi à qui lit son résultat : un envoi
+        // en passant ne le livre pas, et son résultat vide est un livrable vide.
+        const dejaLivreParEnvoi =
+          toolDelivered && (requiresToolDelivery || Boolean(job.parentJobId));
+        if (taskRows.length === 0 && !dejaLivreParEnvoi && reponseRetour === '') {
           const [deliverableRow] = await db
             .select({ result: agentJobs.result })
             .from(agentJobs)

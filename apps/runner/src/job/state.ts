@@ -19,7 +19,7 @@ import {
   runnerNotesValue,
   toDbSafeString,
 } from './transcript-text.ts';
-import { answerOfRun, repliesWentBySend } from './final-answer.ts';
+import { writtenAnswerOfRun } from './final-answer.ts';
 
 // ─── JobState ─────────────────────────────────────────────────────────────────
 
@@ -427,8 +427,7 @@ export function answerOfJobRun(messages: unknown, task: string): string {
   if (!Array.isArray(messages)) return '';
   const debut = findTaskBoundary(messages, task);
   if (debut === -1) return '';
-  const tour = messages.slice(debut);
-  return answerOfRun(tour, repliesWentBySend(tour));
+  return writtenAnswerOfRun(messages.slice(debut));
 }
 
 /**
@@ -464,7 +463,7 @@ async function fillResultFromFinalTextIfEmpty(
     );
   }
   const tour = Array.isArray(messages) ? currentTurnMessages(messages, row?.task ?? '') : [];
-  const text = answerOfRun(tour, repliesWentBySend(tour));
+  const text = writtenAnswerOfRun(tour);
   if (!text) return;
   await db
     .update(agentJobs)
