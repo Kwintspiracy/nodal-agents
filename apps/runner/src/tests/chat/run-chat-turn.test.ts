@@ -21,8 +21,9 @@ import {
   conversations,
   chatMessages,
   entities,
+  mcpServers,
 } from '@nodal-agents/db';
-import { formatLocalTime, projectKey } from '@nodal-agents/shared';
+import { formatLocalTime, projectKey, wrapUntrusted } from '@nodal-agents/shared';
 import type { RunnerDeps } from '../../deps.ts';
 import { chatSurfaceToolNames } from '@nodal-agents/catalog';
 import {
@@ -1488,5 +1489,161 @@ describe('runChatTurn — chaque tour rejoué porte sa date (#650) @cap:reprendr
     } finally {
       await db.update(entities).set({ timezone: null }).where(eq(entities.id, seed.entityId));
     }
+  });
+});
+
+describe('runChatTurn — the launched job carries the record of what its tools did (#1075) @cap:reprendre-conversation/moteur', () => {
+  // The same record as a channel thread (exchange-record.test.ts), in the
+  // place a chat conversation keeps a launched job: its `run_task` result.
+  const SUBMIT = 'requests_srv__submit_request';
+  const GET = 'requests_srv__get_request';
+  const RECORD = [
+    `[Actions performed in this exchange: file_read, file_write, ${GET}, ${SUBMIT}, return_result]`,
+    'file_write → {"path":"out/flyer.md","bytes":1834,"written":true}',
+    `${SUBMIT} → Request 4521 submitted. Status: pending, waiting for the owner to confirm.`,
+  ];
+
+  beforeAll(async () => {
+    await db.insert(mcpServers).values({
+      entityId: seed.entityId,
+      name: 'Requests',
+      slug: 'requests-srv',
+      transport: 'http',
+      url: 'http://127.0.0.1:1/mcp',
+      availableTools: [
+        { name: 'submit_request', description: 'Submit a request; it stays pending.' },
+        { name: 'get_request', annotations: { readOnlyHint: true } },
+      ],
+    });
+  });
+
+  function flyerTranscript(task: string): unknown[] {
+    const steps: Array<[string, unknown]> = [
+      [
+        'file_read',
+        {
+          type: 'text',
+          value: wrapUntrusted('file_read', '# Flyer draft\nThree pages, two pictures, one map.'),
+        },
+      ],
+      ['file_write', { type: 'json', value: { written: true, path: 'out/flyer.md', bytes: 1834 } }],
+      [GET, { type: 'text', value: 'No request for out/flyer.md yet.' }],
+      [
+        SUBMIT,
+        {
+          type: 'text',
+          value: wrapUntrusted(
+            SUBMIT,
+            'Request 4521 submitted.\n\nStatus: pending, waiting for the owner to confirm.\nPages: 3',
+          ),
+        },
+      ],
+      ['return_result', { type: 'json', value: { acknowledged: true } }],
+    ];
+    return [
+      { role: 'user', content: task },
+      ...steps.flatMap(([name, output], i) => [
+        {
+          role: 'assistant',
+          content: [{ type: 'tool-call', toolCallId: `c${i}`, toolName: name, input: {} }],
+        },
+        {
+          role: 'tool',
+          content: [{ type: 'tool-result', toolCallId: `c${i}`, toolName: name, output }],
+        },
+      ]),
+    ];
+  }
+
+  async function turnAfterFlyerJob(channel: 'dashboard' | 'device'): Promise<ModelMessage[]> {
+    const [conv] = await db
+      .insert(conversations)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel,
+        chatId: channel === 'device' ? 'device-hall' : null,
+        title: 'Flyer',
+      })
+      .returning();
+    if (!conv) throw new Error('conversation insert failed');
+    const task = 'Prepare the flyer and submit it';
+    const [job] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel,
+        conversationId: conv.id,
+        task,
+        status: 'completed',
+        result: 'Done: the flyer is ready and the request is pending your confirmation.',
+        messages: flyerTranscript(task) as never,
+        toolsUsed: ['file_read', 'file_write', GET, SUBMIT, 'return_result'],
+      })
+      .returning({ id: agentJobs.id });
+    if (!job) throw new Error('job insert failed');
+    const at = (minutesAgo: number) => new Date(Date.now() - minutesAgo * 60_000);
+    await db.insert(chatMessages).values([
+      {
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        conversationId: conv.id,
+        role: 'user',
+        content: task,
+        createdAt: at(7),
+      },
+      {
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        conversationId: conv.id,
+        role: 'assistant',
+        content: 'On it.',
+        jobId: job.id,
+        createdAt: at(6),
+      },
+    ]);
+    const capturedCalls: ModelMessage[][] = [];
+    setActiveLlmClient(makeMockLlmClient('Here it is.', capturedCalls));
+    const result = await runChatTurn({
+      deps,
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      conversationId: conv.id,
+      message: 'Show me the flyer',
+    });
+    expect(result.ok).toBe(true);
+    return capturedCalls[0]!;
+  }
+
+  /** The text of the `run_task` result the model is given for the launched job. */
+  function runTaskResult(messages: ModelMessage[]): string {
+    for (const m of messages) {
+      if (m.role !== 'tool' || !Array.isArray(m.content)) continue;
+      for (const p of m.content) {
+        if (p.type === 'tool-result' && p.toolName === 'run_task' && p.output.type === 'text') {
+          return p.output.value;
+        }
+      }
+    }
+    throw new Error('no run_task result in the request');
+  }
+
+  it('dashboard: the run_task result ends with the record of the job, line for line', async () => {
+    const seen = await turnAfterFlyerJob('dashboard');
+    const output = runTaskResult(seen);
+    expect(output).toBe(
+      'Completed.\nDone: the flyer is ready and the request is pending your confirmation.' +
+        `\n\n${RECORD.join('\n')}`,
+    );
+    // Nothing of it in the agent's own words (#562).
+    expect(flattenText(seen.filter((m) => m.role === 'assistant'))).not.toContain(
+      'Actions performed',
+    );
+  });
+
+  it('device: the same record, by the same path', async () => {
+    const output = runTaskResult(await turnAfterFlyerJob('device'));
+    expect(output.endsWith(`\n\n${RECORD.join('\n')}`)).toBe(true);
   });
 });

@@ -66,8 +66,8 @@ describe('return_result', () => {
     }
   });
 
-  it('has riskLevel write', () => {
-    expect(returnResultTool.riskLevel).toBe('write');
+  it('has riskLevel read: it changes nothing outside the job (#1075)', () => {
+    expect(returnResultTool.riskLevel).toBe('read');
   });
 });
 

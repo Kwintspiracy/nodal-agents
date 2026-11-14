@@ -12,10 +12,9 @@ import { agentJobs, agentTasks } from '@nodal-agents/db';
 import {
   loadTaskLedger,
   formatTaskLedgerEntry,
-  formatTaskLedgerLines,
   MAX_TASKS_PER_EXCHANGE,
   loadInlineDelegationLedger,
-  formatInlineDelegationLines,
+  formatInlineDelegationEntry,
 } from '../../job/task-ledger.ts';
 
 let db: TestDb;
@@ -33,7 +32,10 @@ beforeEach(async () => {
 });
 
 /** Insert a task-board child job (the one that actually ran the delegated work). */
-async function insertChildJob(opts: { toolsUsed?: string[] }): Promise<string> {
+async function insertChildJob(opts: {
+  toolsUsed?: string[];
+  messages?: unknown[];
+}): Promise<string> {
   const [row] = await db
     .insert(agentJobs)
     .values({
@@ -43,6 +45,7 @@ async function insertChildJob(opts: { toolsUsed?: string[] }): Promise<string> {
       task: 'do the delegated work',
       status: 'completed',
       ...(opts.toolsUsed !== undefined ? { toolsUsed: opts.toolsUsed } : {}),
+      ...(opts.messages !== undefined ? { messages: opts.messages as never } : {}),
     })
     .returning({ id: agentJobs.id });
   if (!row) throw new Error('insert returned no row');
@@ -106,6 +109,7 @@ describe('loadTaskLedger @cap:suivre-execution/moteur', () => {
       title: 'Research Law & Order and send to Mathilde',
       status: 'done',
       toolsUsed: ['web_search', 'telegram_send_message'],
+      calls: [],
       result: 'Sent a summary to Mathilde via Telegram.',
     });
 
@@ -116,9 +120,21 @@ describe('loadTaskLedger @cap:suivre-execution/moteur', () => {
     );
   });
 
-  it('collapses repeated tool calls to a ×N count', async () => {
+  it('collapses repeated tool calls to a ×N count, counted on the child transcript', async () => {
+    // `tools_used` names each tool once; how many times it was called is read
+    // on the child's own transcript (#1075).
+    const call = (id: string, name: string) => ({
+      role: 'assistant',
+      content: [{ type: 'tool-call', toolCallId: id, toolName: name, input: {} }],
+    });
     const childJobId = await insertChildJob({
-      toolsUsed: ['telegram_send_message', 'telegram_send_message', 'web_search'],
+      toolsUsed: ['telegram_send_message', 'web_search'],
+      messages: [
+        { role: 'user', content: 'do the delegated work' },
+        call('a', 'telegram_send_message'),
+        call('b', 'web_search'),
+        call('c', 'telegram_send_message'),
+      ],
     });
     const rootJobId = crypto.randomUUID();
     await insertTask({
@@ -131,8 +147,7 @@ describe('loadTaskLedger @cap:suivre-execution/moteur', () => {
 
     const ledger = await loadTaskLedger(db, [rootJobId]);
     const line = formatTaskLedgerEntry(ledger.get(rootJobId)![0]!);
-    expect(line).toContain('telegram_send_message ×2');
-    expect(line).toContain('web_search');
+    expect(line).toContain('actions — telegram_send_message ×2, web_search;');
   });
 
   it('does NOT surface a still-running (todo/in_progress) task', async () => {
@@ -226,11 +241,11 @@ describe('loadTaskLedger @cap:suivre-execution/moteur', () => {
     expect(ledger.get(rootB)?.map((e) => e.title)).toEqual(['in B']);
   });
 
-  it('formatTaskLedgerLines maps a full entry list to formatted lines', () => {
-    const lines = formatTaskLedgerLines([
-      { title: 'a', status: 'done', toolsUsed: ['web_search'], result: 'ok' },
-      { title: 'b', status: 'blocked', toolsUsed: [], result: null },
-    ]);
+  it('formatTaskLedgerEntry renders a done and a blocked task', () => {
+    const lines = [
+      { title: 'a', status: 'done' as const, toolsUsed: ['web_search'], calls: [], result: 'ok' },
+      { title: 'b', status: 'blocked' as const, toolsUsed: [], calls: [], result: null },
+    ].map(formatTaskLedgerEntry);
     expect(lines).toEqual([
       '[Task "a" completed: actions — web_search; result: ok]',
       '[Task "b" failed: error: (no result)]',
@@ -314,7 +329,7 @@ describe('loadInlineDelegationLedger', () => {
     await insertInlineChild(parent, { toolsUsed: [] });
 
     const ledger = await loadInlineDelegationLedger(db, [parent]);
-    const line = formatInlineDelegationLines(ledger.get(parent) ?? [])[0]!;
+    const line = formatInlineDelegationEntry(ledger.get(parent)![0]!);
     expect(line).toContain('no tool used');
   });
 
@@ -329,7 +344,7 @@ describe('loadInlineDelegationLedger', () => {
     const parent = await insertParent();
     await insertInlineChild(parent, { toolsUsed: ['file_write'], status: 'failed' });
     const ledger = await loadInlineDelegationLedger(db, [parent]);
-    const line = formatInlineDelegationLines(ledger.get(parent) ?? [])[0]!;
+    const line = formatInlineDelegationEntry(ledger.get(parent)![0]!);
     expect(line).toContain('failed');
   });
 
@@ -349,7 +364,7 @@ describe('loadInlineDelegationLedger', () => {
     const parent = await insertParent();
     await insertInlineChild(parent, { toolsUsed: ['file_write', 'file_edit', 'review_verdict'] });
     const ledger = await loadInlineDelegationLedger(db, [parent]);
-    const line = formatInlineDelegationLines(ledger.get(parent) ?? [])[0]!;
+    const line = formatInlineDelegationEntry(ledger.get(parent)![0]!);
     expect(line.length, `ligne trop longue : ${line}`).toBeLessThan(140);
     expect(line).not.toContain('result:');
   });

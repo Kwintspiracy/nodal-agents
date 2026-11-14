@@ -206,16 +206,27 @@ async function insertDelegatedTask(opts: {
 
 /** Build a minimal `messages` array matching what a Conciergus-style Telegram
  *  reply looks like at runtime: a user task, then an assistant tool-call to
- *  `telegram_send_message` carrying the user-visible `text`. */
+ *  `telegram_send_message` carrying the user-visible `text`, and the result the
+ *  tool returns (`{ sent: true }`) — the shape the runner stores. */
 function tgReply(userTask: string, ...sends: string[]): unknown[] {
   return [
     { role: 'user', content: userTask },
     {
       role: 'assistant',
-      content: sends.map((text) => ({
+      content: sends.map((text, i) => ({
         type: 'tool-call',
+        toolCallId: `send-${i}`,
         toolName: 'telegram_send_message',
         input: { text },
+      })),
+    },
+    {
+      role: 'tool',
+      content: sends.map((_, i) => ({
+        type: 'tool-result',
+        toolCallId: `send-${i}`,
+        toolName: 'telegram_send_message',
+        output: { type: 'json', value: { sent: true } },
       })),
     },
   ];
@@ -488,6 +499,11 @@ describe('loadThreadHistory @cap:reprendre-conversation/moteur', () => {
     expect(summarize(history)).toEqual([
       { role: 'user', text: 'combien font 7 * 52' },
       { role: 'assistant', text: '7 × 52 = **364**' },
+      // The runner's record of the send (#1075): every tool is named.
+      {
+        role: 'user',
+        text: '[système]\n[Actions performed in this exchange: telegram_send_message]\ntelegram_send_message → {"sent":true}',
+      },
     ]);
   });
 
@@ -509,8 +525,12 @@ describe('loadThreadHistory @cap:reprendre-conversation/moteur', () => {
     });
 
     const s = summarize(history);
-    expect(s).toHaveLength(2);
+    expect(s).toHaveLength(3);
     expect(s[1]?.text).toBe('Premier point.\n\nDeuxième point.');
+    expect(s[2]?.text).toBe(
+      '[système]\n[Actions performed in this exchange: telegram_send_message ×2]\n' +
+        'telegram_send_message → {"sent":true}\ntelegram_send_message → {"sent":true}',
+    );
   });
 
   it('falls back to the last assistant text content when no send-message tool call is present', async () => {
@@ -562,8 +582,11 @@ describe('loadThreadHistory @cap:reprendre-conversation/moteur', () => {
     });
 
     const s = summarize(history);
-    expect(s).toHaveLength(2);
+    expect(s).toHaveLength(3);
     expect(s[1]?.text).toBe('Le rapport canonique vit dans result.');
+    expect(s[2]?.text).toBe(
+      '[système]\n[Actions performed in this exchange: telegram_send_message]\ntelegram_send_message → {"sent":true}',
+    );
   });
 
   it('isolates threads by chat_id — other chats do not leak in', async () => {
@@ -781,11 +804,16 @@ describe('loadThreadHistory @cap:reprendre-conversation/moteur', () => {
       timezone: 'UTC',
     });
 
-    // Raw shape — 3 messages: user TEXT, assistant tool-call, tool tool-result.
-    expect(history).toHaveLength(3);
+    // Raw shape — 3 messages: user TEXT, assistant tool-call, tool tool-result;
+    // then the runner's record of the exchange (#562, #1075), after it.
+    expect(history).toHaveLength(4);
     expect(history[0]?.role).toBe('user');
     expect(history[1]?.role).toBe('assistant');
     expect(history[2]?.role).toBe('tool');
+    expect(recordLines(history)).toEqual([
+      '[Actions performed in this exchange: telegram_send_message]',
+      'telegram_send_message → {"sent":true}',
+    ]);
 
     const assistantContent = history[1]?.content;
     expect(Array.isArray(assistantContent)).toBe(true);
@@ -873,7 +901,13 @@ describe('loadThreadHistory @cap:reprendre-conversation/moteur', () => {
     });
 
     const s = summarize(history);
-    expect(s).toHaveLength(2);
+    expect(s).toHaveLength(3);
+    // The record counts the job's OWN call only, never the injected one (#1075):
+    // one send, and its result was never stored in this fixture.
+    expect(recordLines(history)).toEqual([
+      '[Actions performed in this exchange: telegram_send_message]',
+      'telegram_send_message → (no result recorded)',
+    ]);
     expect(s[0]).toEqual({
       role: 'user',
       text: 'donne-moi le solde de mon compte Stripe',
@@ -887,9 +921,9 @@ describe('loadThreadHistory @cap:reprendre-conversation/moteur', () => {
     expect(s[1]?.text).not.toContain('Cortex');
   });
 
-  // ─── Action ledger (Layer 1, 2026-07-11 incident) ──────────────────────────
+  // ─── Action ledger (Layer 1, 2026-07-11 incident; every tool since #1075) ──
 
-  it('appends an action ledger line when the prior job used a state-changing tool', async () => {
+  it('names every tool the prior job used, and quotes what the acting calls returned', async () => {
     await insertCompletedJob({
       chatId: '12345',
       task: 'peux-tu poster une annonce Discord à chaque release ?',
@@ -910,13 +944,14 @@ describe('loadThreadHistory @cap:reprendre-conversation/moteur', () => {
       timezone: 'UTC',
     });
 
-    expect(recordLines(history)).toContain(
+    expect(recordLines(history)).toEqual([
       '[Actions performed in this exchange: create_schedule, telegram_send_message]',
-    );
+      'telegram_send_message → {"sent":true}',
+    ]);
     expect(assistantTexts(history)).toEqual(['Fait, une automation est en place.']);
   });
 
-  it('does NOT append a ledger line when the prior job only used send tools', async () => {
+  it('an exchange that only used a send tool is recorded too: no hand-kept list decides (#1075)', async () => {
     await insertCompletedJob({
       chatId: '12345',
       task: 'dis bonjour',
@@ -934,11 +969,13 @@ describe('loadThreadHistory @cap:reprendre-conversation/moteur', () => {
       timezone: 'UTC',
     });
 
-    const s = summarize(history);
-    expect(s.some((m) => m.text.includes('Actions performed'))).toBe(false);
+    expect(recordLines(history)).toEqual([
+      '[Actions performed in this exchange: telegram_send_message]',
+      'telegram_send_message → {"sent":true}',
+    ]);
   });
 
-  it('does NOT append a ledger line when tools_used is null/empty', async () => {
+  it('does NOT append a ledger line when the job called no tool', async () => {
     await insertCompletedJob({
       chatId: '12345',
       task: 'dis bonjour',
@@ -1050,7 +1087,7 @@ describe('loadThreadHistory @cap:reprendre-conversation/moteur', () => {
     expect(taskLines).toHaveLength(3);
   });
 
-  it('combines the state-changing ledger AND the delegated-task ledger on the same exchange', async () => {
+  it('combines the action ledger AND the delegated-task ledger on the same exchange', async () => {
     const rootJobId = await insertCompletedJob({
       chatId: '12345',
       task: 'automate the newsletter and send the first one',

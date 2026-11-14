@@ -71,7 +71,16 @@ export const returnResultTool: ToolDefinition<typeof ReturnResultInputSchema, Re
     'error — and the concrete next step the user can take. Write it from scratch for this ' +
     'situation; never copy a generic example. The user sees this reason verbatim.',
   inputSchema: ReturnResultInputSchema,
-  riskLevel: 'write',
+  // 'read': it changes nothing outside the job. It is the job's end, which
+  // the runner writes, and its result is an acknowledgement. Declared 'write'
+  // until #1075, where it made the runner's record of every past exchange
+  // quote `return_result → {"acknowledged":true}`: noise on every turn. The
+  // record cites the result of every tool not declared read-only, so the
+  // declaration is what decides, not a name kept in the history code. Nothing
+  // else reads it here: the autonomy template auto-approves 'read' and 'write'
+  // alike, the tool cannot be blocked (UNBLOCKABLE_TOOLS), the runner takes it
+  // out of the calls it runs, and it never goes through the intent mark.
+  riskLevel: 'read',
   egress: 'none',
   loading: 'eager',
   card: 'text',
