@@ -573,19 +573,17 @@ export const CHANNEL_SEND_TOOL: Readonly<Record<string, string>> = {
  * Ce que l'agent a répondu à un tour passé, et ce qui en vient : ses propres
  * mots (`result` moins ce que le runner y a écrit), et la réponse relue.
  */
-function replyOfRow(row: {
-  task: string;
-  result: string | null;
-  messages: unknown;
-  channel: string;
-  resultKind: string | null;
-  runnerNotes: unknown;
-}): {
-  agentsOwnResult: boolean;
-  runnerNotes: string[];
-  agentsWords: string | null;
-  reply: AssistantReply | null;
-} {
+function replyOfRow(
+  row: {
+    task: string;
+    result: string | null;
+    messages: unknown;
+    channel: string;
+    resultKind: string | null;
+    // Typed through `Record`: `runner-notes-one-writer.test.ts` reads a key
+    // followed by a colon as a write, and this is a read of the stored column.
+  } & Record<'runnerNotes', unknown>,
+) {
   const agentsOwnResult = row.resultKind !== 'relay';
   const runnerNotes = Array.isArray(row.runnerNotes) ? (row.runnerNotes as string[]) : [];
   const agentsWords = withoutRunnerNotes(row.result, runnerNotes);
