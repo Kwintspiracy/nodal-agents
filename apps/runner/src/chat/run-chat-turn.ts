@@ -36,6 +36,8 @@ import {
   truncate as truncateHeadTail,
 } from '../job/thread-history.ts';
 import { loadExchangeRecords } from '../job/exchange-record.ts';
+import { conversationMoments, taskEndedAt } from '../job/conversation-moments.ts';
+import { quotedLines } from '../job/tool-acts.ts';
 import { loadConversationContext } from '../job/conversation-id.ts';
 import { TITLE_SYSTEM_PROMPT, cleanTitle, titlePrompt } from './conversation-title.ts';
 import type { ChatSurfaceToolName } from '@nodal-agents/catalog';
@@ -46,8 +48,10 @@ import type { RunnerDeps } from '../deps.ts';
 import { cutReplyNote, stoppedReplyNote } from './turn-stop.ts';
 import { LLMOutputLimitError, LLMTimeoutError, type LlmTimeoutReason } from '@nodal-agents/llm';
 import {
+  formatLocalTime,
   handoffNote,
   openingMessages,
+  runnerRecordMessage,
   type BrakeStop,
   type ReplyRendering,
 } from '@nodal-agents/shared';
@@ -186,6 +190,32 @@ export type ChatTurnResult =
     };
 
 /**
+ * The words the runner says of a launched job's outcome, by status: the ONE
+ * source of them, for the `run_task` result of a job still under its launch
+ * and for the record of a job's end (#1078). `null` while the job runs.
+ */
+function outcomeStatusLine(status: string | null): string | null {
+  if (status === 'completed') return 'Completed.';
+  if (status === 'failed') {
+    return 'FAILED — report this to the user with the reason; do not silently retry.';
+  }
+  if (status === 'cancelled') return 'Cancelled by the user.';
+  return null;
+}
+
+/** What a finished job produced: its result, or its failure reason. A cancel has none. */
+function outcomeBody(
+  status: string | null,
+  result: string | null,
+  error: string | null,
+): string | null {
+  const r = (result ?? '').trim();
+  if (status === 'completed') return r || '(no textual output was recorded)';
+  if (status === 'failed') return r || error || 'unknown error';
+  return null;
+}
+
+/**
  * Build the run_task tool-result for a PRIOR chat escalation, reflecting the
  * job's REAL outcome at read time. This replaces a static "Task dispatched."
  * that left the orchestrator permanently blind to completion: it could never
@@ -195,23 +225,35 @@ export type ChatTurnResult =
  * `result` is the single source of truth — `completeJob`/`failJob` already fill
  * it from the delegated children when the parent didn't re-publish, so there is
  * nothing to recompile here.
+ *
+ * Since #1078 this is the result of a job that has NO end to place: still
+ * running, or finished with no stored end time. A job that ended is told at
+ * the time it ended (`taskEndRecord`).
  */
 function buildDispatchOutput(
   status: string | null,
   result: string | null,
   error: string | null,
 ): string {
-  const r = (result ?? '').trim();
-  if (status === 'completed') {
-    return `Completed.\n${r || '(no textual output was recorded)'}`;
-  }
-  if (status === 'failed') {
-    return `FAILED — report this to the user with the reason; do not silently retry.\n${r || error || 'unknown error'}`;
-  }
-  if (status === 'cancelled') return 'Cancelled by the user.';
+  const line = outcomeStatusLine(status);
   // pending / processing / awaiting_approval / awaiting_delegation
-  return 'Still running — no result yet. Do NOT dispatch it again; wait for it to finish.';
+  if (line === null) {
+    return 'Still running — no result yet. Do NOT dispatch it again; wait for it to finish.';
+  }
+  const body = outcomeBody(status, result, error);
+  return body === null
+    ? line
+    : `${line}
+${body}`;
 }
+
+/**
+ * The `run_task` result under the turn that launched a job which has ENDED
+ * (#1078): its outcome is not here, it is a moment of its own, at the time the
+ * job ended (`taskEndRecord`).
+ */
+export const LAUNCHED_OUTPUT =
+  'Launched. Its outcome is recorded further down, at the time it ended.';
 
 /**
  * Sum of text length across all history blocks (F-12, audit #2) — a char
@@ -261,13 +303,24 @@ interface HistoryRow {
   jobStatus: string | null;
   jobResult: string | null;
   jobError: string | null;
+  /** When the launched job was created: the launch the record of its end names (#1078). */
+  jobCreatedAt: Date | null;
+  /** When the launched job ended, as stored at its end (`agent_jobs.completed_at`, #1078). */
+  jobCompletedAt: Date | null;
+}
+
+/** When the job this row launched ended, if it has an end to place (#1078, `taskEndedAt`). */
+function endOf(r: HistoryRow): Date | null {
+  return r.jobId ? taskEndedAt({ status: r.jobStatus, completedAt: r.jobCompletedAt }) : null;
 }
 
 /**
  * Build one "block" (1 or 2 ModelMessages) for a single history row. Nothing
  * the runner wrote lands in an assistant part (#562): ledger lines and the
  * stop note travel in the `run_task` result, the notes on a plain reply in a
- * `[système]` message after it.
+ * `[système]` message after it. For a job that ENDED (#1078), the `run_task`
+ * result only says it was launched: its outcome, ledger lines and stop note
+ * are the record of its end (`taskEndRecord`), at the time it ended.
  * `truncateFn` is a parameter — NOT always `truncateHeadTail` — so the caller
  * controls whether per-message truncation applies (F-12, audit #2 round 2:
  * it's a last resort when the budget is exceeded even after dropping older
@@ -297,13 +350,18 @@ function buildHistoryBlock(
   if (r.role === 'assistant' && r.jobId) {
     const toolCallId = `hist-${r.jobId}`;
     const ackText = r.content ? truncateFn(r.content) : '';
-    const dispatchOutput = truncateFn(buildDispatchOutput(r.jobStatus, r.jobResult, r.jobError));
-    const withLedger =
-      ledgerLines.length > 0 ? `${dispatchOutput}\n\n${ledgerLines.join('\n')}` : dispatchOutput;
-    // Un Stop après l'escalade (#456) marque l'accusé `stopped` et annule le
-    // job : sans la note, le modèle suivant lirait une annulation ordinaire,
-    // pas la personne qui a arrêté (revue Codex de #459, passe 4).
-    const outputValue = r.stopped === true ? `${withLedger}\n\n${stoppedReplyNote()}` : withLedger;
+    let outputValue = LAUNCHED_OUTPUT;
+    // A job that ended is told at the time it ended (#1078, `taskEndRecord`):
+    // its outcome, its record and the stop note go there, not here.
+    if (endOf(r) === null) {
+      const dispatchOutput = truncateFn(buildDispatchOutput(r.jobStatus, r.jobResult, r.jobError));
+      const withLedger =
+        ledgerLines.length > 0 ? `${dispatchOutput}\n\n${ledgerLines.join('\n')}` : dispatchOutput;
+      // Un Stop après l'escalade (#456) marque l'accusé `stopped` et annule le
+      // job : sans la note, le modèle suivant lirait une annulation ordinaire,
+      // pas la personne qui a arrêté (revue Codex de #459, passe 4).
+      outputValue = r.stopped === true ? `${withLedger}\n\n${stoppedReplyNote()}` : withLedger;
+    }
     return [
       {
         role: 'assistant',
@@ -360,6 +418,45 @@ function buildHistoryBlock(
 function sentAt(r: HistoryRow): Date {
   if (!r.createdAt) throw new Error('chat history: a chat_messages row has no created_at');
   return r.createdAt;
+}
+
+/**
+ * The END of a launched job, as a moment of the conversation (#1078): a runner
+ * record (#562) placed at the time the job ended, never in the agent's mouth.
+ *
+ *   [<end time>] The task launched at <launch time> ended. <status line>
+ *   > <its result, or its failure reason, line by line>
+ *   <its record (#1075), one line per entry>
+ *   <the stop note, when the person stopped the reply that launched it>
+ *
+ * The first line is the runner's, dated as a message of the person is
+ * (`datedTurn`), with the status words of `outcomeStatusLine`. The result is
+ * DATA: every line of it starts with the quote mark (`quotedLines`), which no
+ * line the runner writes starts with, so stored text cannot open a line that
+ * reads as the runner's. The last-resort truncation applies to it as it did in
+ * the `run_task` result.
+ */
+function taskEndRecord(
+  r: HistoryRow,
+  endedAt: Date,
+  truncateFn: (s: string) => string,
+  ledgerLines: readonly string[],
+  timezone: string,
+): ModelMessage {
+  if (!r.jobCreatedAt) throw new Error(`chat history: agent_jobs ${r.jobId} has no created_at`);
+  const status = outcomeStatusLine(r.jobStatus);
+  if (status === null) throw new Error(`chat history: agent_jobs ${r.jobId} has not ended`);
+  const body = outcomeBody(r.jobStatus, r.jobResult, r.jobError);
+  return runnerRecordMessage([
+    datedTurn(
+      `The task launched at ${formatLocalTime(timezone, r.jobCreatedAt)} ended. ${status}`,
+      endedAt,
+      timezone,
+    ),
+    ...(body === null ? [] : quotedLines(truncateFn(body))),
+    ...ledgerLines,
+    ...(r.stopped === true ? [stoppedReplyNote()] : []),
+  ]) as ModelMessage;
 }
 
 /**
@@ -682,6 +779,8 @@ export async function runChatTurn(opts: {
       jobStatus: agentJobs.status,
       jobResult: agentJobs.result,
       jobError: agentJobs.error,
+      jobCreatedAt: agentJobs.createdAt,
+      jobCompletedAt: agentJobs.completedAt,
     })
     .from(chatMessages)
     .leftJoin(agentJobs, eq(chatMessages.jobId, agentJobs.id))
@@ -701,6 +800,11 @@ export async function runChatTurn(opts: {
   // which the budget does not count (`totalHistoryChars`): the trim is the
   // same with or without it, so the records are read AFTER it, for the turns
   // it keeps only.
+  //
+  // The END of a launched job (#1078) is not counted either: the trim runs on
+  // the rows alone, exactly as before the end moved out of the `run_task`
+  // result, and an end is built only for a launching row the trim kept. A
+  // trimmed launch takes its end with it.
   const chronologicalRows = rows.reverse();
   let remainingRows = chronologicalRows;
   let blocks = remainingRows.map((r) => buildHistoryBlock(r, (s) => s, [], deployment.timezone));
@@ -730,10 +834,26 @@ export async function runChatTurn(opts: {
   // however large a single message is.
   const truncateFn =
     totalHistoryChars(blocks) > HISTORY_BUDGET_CHARS ? truncateHeadTail : (s: string) => s;
-  blocks = remainingRows.map((r) =>
-    buildHistoryBlock(r, truncateFn, records.get(r.jobId ?? '') ?? [], deployment.timezone),
-  );
-  const messages: ModelMessage[] = blocks.flatMap((b) => b);
+  // The moments of the conversation in the order they happened (#1078,
+  // conversation-moments.ts): each kept row at the time it was written, and the
+  // end of each job a kept row launched at the time it ended. The message being
+  // answered is the last row, written by this turn (step 1b): it is not a
+  // moment of the history, it stays LAST, and a job that ended after it was
+  // written comes just before it.
+  const ledgerOf = (r: HistoryRow) => records.get(r.jobId ?? '') ?? [];
+  const answered = remainingRows.slice(-1);
+  const moments = conversationMoments(remainingRows.slice(0, -1), (r) => ({
+    writtenAt: r.createdAt,
+    endedAt: endOf(r),
+  }));
+  const messages: ModelMessage[] = [
+    ...moments.flatMap((m) =>
+      m.kind === 'row'
+        ? buildHistoryBlock(m.row, truncateFn, ledgerOf(m.row), deployment.timezone)
+        : [taskEndRecord(m.row, m.endedAt, truncateFn, ledgerOf(m.row), deployment.timezone)],
+    ),
+    ...answered.flatMap((r) => buildHistoryBlock(r, truncateFn, ledgerOf(r), deployment.timezone)),
+  ];
   onPhase?.('historyLoaded');
 
   // 5. One LLM call. The agent may reply in text (pure conversation) and/or call

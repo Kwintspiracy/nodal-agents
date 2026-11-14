@@ -167,6 +167,9 @@ async function job(opts: {
       messages: (opts.steps ? transcript(opts.task, opts.steps) : (opts.messages ?? [])) as never,
       toolsUsed: opts.toolsUsed ?? [],
       createdAt: new Date(Date.now() - opts.minutesAgo * 60_000),
+      // A finished job carries the time it ended, as the runner stores it: a
+      // chat conversation replays its outcome at that time (#1078).
+      completedAt: new Date(Date.now() - opts.minutesAgo * 60_000 + 30_000),
       ...(opts.conversationId ? { conversationId: opts.conversationId } : {}),
       ...(opts.parentJobId ? { parentJobId: opts.parentJobId } : {}),
       ...(opts.chatId ? { chatId: opts.chatId, chatChannel: opts.chatChannel ?? null } : {}),
