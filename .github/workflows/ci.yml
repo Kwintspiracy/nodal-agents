@@ -533,12 +533,17 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
+      # `stack.log` is the CLI's own output. What Next printed (every request
+      # with its compile and render time) goes to `web.log` beside the runner's.
       - name: Upload the stack log
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: stack-log
-          path: ${{ runner.temp }}/stack.log
+          path: |
+            ${{ runner.temp }}/stack.log
+            ~/.nodalai/logs/web.log
+            ~/.nodalai/logs/runner.log
           retention-days: 7
           if-no-files-found: ignore
 
