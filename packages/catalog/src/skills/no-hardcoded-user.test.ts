@@ -90,8 +90,10 @@ describe('print-request skill', () => {
     // The only sentence that mentions the Print button is conditional on the preview mode.
     const button = sentenceWith(c, 'Print button');
     expect(button).toHaveLength(1);
-    expect(button[0]).toMatch(/with a preview, [^;]*Print button/);
-    expect(button[0]).toMatch(/with direct printing, the job status the print tool returned/);
+    expect(button[0]).toMatch(/with a preview still waiting, [^;]*Print button/);
+    expect(button[0]).toMatch(
+      /with a job the print tool cannot follow, the status it returned \(accepted, failed\), and that accepted is not printed yet/,
+    );
     expect(c).not.toMatch(/A preview is shown/);
   });
 
@@ -122,13 +124,104 @@ describe('print-request skill', () => {
     );
   });
 
-  it('never says it printed before the print tool reports the job, in either mode', () => {
-    const never = sentenceWith(skill?.content ?? '', 'Never say it printed');
-    expect(never).toHaveLength(1);
-    expect(never[0]).toBe(
-      'Never say it printed before the print tool reports the job as accepted or completed, whichever mode you used.',
+  // #1071: "accepted" is not "printed". The skill says it printed only once the
+  // tool reports the job COMPLETED, and follows a submitted job to its end when
+  // the print tool can, without naming any tool, parameter or printer.
+  it('says it printed only once the tool reports the job completed: accepted or submitted is not printed', () => {
+    const c = skill?.content ?? '';
+    const only = sentenceWith(c, 'Say it printed only once');
+    expect(only).toEqual([
+      '- Say it printed only once the print tool reports the job completed: accepted or submitted is not printed, whichever mode you used.',
+    ]);
+    // No sentence lets "accepted" stand for printed any more.
+    expect(c).not.toMatch(/printed before the print tool reports the job as accepted/);
+    expect(c).not.toMatch(/accepted or completed/);
+    expect(c).toContain('With direct printing there is no pending request to replace');
+  });
+
+  it('follows a submitted job to its end when the print tool can, and says whether the pages came out', () => {
+    const c = skill?.content ?? '';
+    const follow = sentenceWith(c, 'Follow a submitted job to its end');
+    expect(follow).toHaveLength(1);
+    expect(follow[0]).toBe(
+      '- **Follow a submitted job to its end when the print tool can** (its description or its answer says so, such as a status call that waits): follow it before you answer, and once more if it is still in progress when the wait ends.',
     );
-    expect(skill?.content).toContain('With direct printing there is no pending request to replace');
+    expect(sentenceWith(c, 'whether the pages came out')).toEqual([
+      'Then say in one sentence whether the pages came out, how many, or why not; still in progress after that, that it is still printing.',
+    ]);
+    // A capability, not a product: the rule sits in section 4 and names no
+    // wait parameter (the guard above already refuses tool names).
+    const section4 = c.slice(c.indexOf('## 4.'));
+    expect(section4).toContain('Follow a submitted job to its end');
+    expect(section4).not.toMatch(/wait_?seconds|waitSeconds|timeout_?s|get_\w+/i);
+  });
+
+  // #1073 follow-up: a print the PERSON cancelled (or declined) on the preview
+  // card is not a failure to report. The spoken end-of-task announcement is
+  // condensed from the agent's final answer, so the guidance lives here (agent
+  // layer), for every print connector, mode and channel.
+  it("acknowledges a person's cancel in one short sentence, offers to change the page, never resubmits on its own", () => {
+    const c = skill?.content ?? '';
+    // The whole bullet (one line of the skill), not a sentence of it.
+    const cancel = c.split(/\r?\n/).filter((l) => l.includes('cancelled or declined'));
+    expect(cancel).toHaveLength(1);
+    const bullet = cancel[0] ?? '';
+    // Their choice, not a failure.
+    expect(bullet).toContain('it is their choice, not a failure.');
+    // The case where the tool reports no change they asked for.
+    expect(bullet).toContain('If it reports no change they asked for:');
+    // Acknowledge briefly, in the person's language.
+    expect(bullet).toContain('acknowledge it in one short sentence in their language');
+    // Offer a change, in the same answer.
+    expect(bullet).toContain(
+      'in that same answer ask whether they want something changed on the page',
+    );
+    // Do not repeat the tool's status or tell them nothing printed.
+    expect(bullet).toContain("Do not quote the tool's status or message");
+    expect(bullet).toContain('do not say that nothing printed (they know).');
+    // No resubmission on its own, with this tool or another.
+    expect(bullet).toContain('Do not submit again, with this tool or another, unless they ask.');
+    // The cancel case is read BEFORE the generic "where things stand" case, so
+    // a cancel never falls under the status report.
+    expect(c.indexOf('cancelled or declined')).toBeGreaterThan(c.indexOf('## 4.'));
+    expect(c.indexOf('cancelled or declined')).toBeLessThan(c.indexOf('Otherwise tell the person'));
+    // A capability, not a product: no tool, parameter, printer or device named.
+    expect(bullet).not.toMatch(CONNECTOR_TOOL);
+    expect(bullet).not.toMatch(PRINTER_BRAND);
+    expect(bullet).not.toMatch(/get_\w+|request_\w+|print_\w+/);
+  });
+
+  // The other half of a cancel: the print tool passes on what the person wants
+  // changed (in their own words). That IS a request, so the agent makes the
+  // changes and sends a new page in the same task: not a resubmission on its own.
+  it('makes the changes the person asked for and sends the new page in the same task, saying so in one sentence', () => {
+    const c = skill?.content ?? '';
+    const asked = c.split(/\r?\n/).filter((l) => l.includes('changes the person asked for'));
+    expect(asked).toHaveLength(1);
+    const bullet = asked[0] ?? '';
+    expect(bullet).toContain(
+      '(in the preview or in their answer, in their words), that is a request, not a failure.',
+    );
+    // Make them, and send the new page to the print tool in the same task.
+    expect(bullet).toContain('Do not ask whether they want changes: they just said which ones.');
+    expect(bullet).toContain(
+      'Make them, and send the new page to the print tool in this same task, REPLACING the pending or declined request where the tool allows it, so they see a new preview to approve.',
+    );
+    // One short sentence saying so.
+    expect(bullet).toContain('Say in one short sentence that you are changing it.');
+    // The person's changes are not the agent's own corrections.
+    expect(bullet).toContain('These changes do not count among the 2 corrections.');
+    // Read right after the no-change case and before the generic status case.
+    const cancelAt = c.indexOf('cancelled or declined');
+    const askedAt = c.indexOf('changes the person asked for');
+    expect(askedAt).toBeGreaterThan(cancelAt);
+    expect(askedAt).toBeLessThan(c.indexOf('Otherwise tell the person'));
+    // The two cases are told apart: only the no-change one forbids resubmitting.
+    expect(bullet).not.toMatch(/Do not submit again/);
+    // A capability, not a product.
+    expect(bullet).not.toMatch(CONNECTOR_TOOL);
+    expect(bullet).not.toMatch(PRINTER_BRAND);
+    expect(bullet).not.toMatch(/get_\w+|request_\w+|print_\w+/);
   });
 
   it('names no connector-specific print tool', () => {

@@ -7,6 +7,7 @@
 //                                            la matrice : chaque scénario sur chaque modèle, dans la même instance
 //   pnpm bench:campaign --models a,b --dry-run   le plan et son coût estimé, sans rien démarrer
 //   pnpm bench:campaign --keys <fichier>     le fichier de clés (défaut ~/.nodal-bench/keys.json)
+//   pnpm bench:campaign --config <fichier>   une autre configuration que campaign/banc.json
 //   pnpm bench:campaign check                la configuration et le fichier de clés, validés ; l'empreinte
 //   pnpm bench:campaign rehearsal            tout le cycle sans aucun essai : démarrer, appliquer, vérifier, effacer
 //   pnpm bench:campaign erase                efface les campagnes qu'un banc mort a laissées
