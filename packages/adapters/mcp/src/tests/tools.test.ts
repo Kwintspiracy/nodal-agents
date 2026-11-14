@@ -53,6 +53,17 @@ describe('mcpToolToToolDefinition', () => {
     expect(def.riskLevel).toBe('write');
   });
 
+  it('keeps the server readOnlyHint as given, apart from the risk level (#1075)', () => {
+    const client = clientWithCallTool(() => ({ content: [] }));
+    expect(mcpToolToToolDefinition(client, descriptor, 'c').readOnlyHint).toBe(true);
+    expect(
+      mcpToolToToolDefinition(client, { ...descriptor, annotations: { readOnlyHint: false } }, 'c')
+        .readOnlyHint,
+    ).toBe(false);
+    const { annotations: _none, ...bare } = descriptor;
+    expect(mcpToolToToolDefinition(client, bare, 'c')).not.toHaveProperty('readOnlyHint');
+  });
+
   it('frames the server-supplied description as untrusted (SKILL-001)', () => {
     const def = mcpToolToToolDefinition(
       clientWithCallTool(() => ({ content: [] })),
