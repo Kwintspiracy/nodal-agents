@@ -488,6 +488,8 @@ jobs:
       # budget; 10 here leaves it time to print before the step is cut.
       - name: Boot the stack
         timeout-minutes: 10
+        env:
+          NODAL_WEB_DEV_FS_CACHE: '0'
         run: node scripts/boot-stack.mjs --log "$RUNNER_TEMP/stack.log"
 
       # Les autres parcours ne sont pas ici pour une raison de COÛT, pas de

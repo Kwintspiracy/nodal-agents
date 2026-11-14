@@ -103,6 +103,7 @@ const nextConfig: NextConfig = {
   // via tsconfig moduleResolution: Bundler. No resolver alias needed.
   turbopack: {},
   experimental: {
+    turbopackFileSystemCacheForDev: process.env['NODAL_WEB_DEV_FS_CACHE'] !== '0',
     // Restore a 30-second TTL so sidebar links don't spam the server on every request.
     staleTimes: {
       dynamic: 30,
