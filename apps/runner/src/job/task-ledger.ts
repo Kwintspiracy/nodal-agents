@@ -14,9 +14,9 @@
 // happen to mention "sent via Telegram" reads as silence. The agent denied
 // sending it — sincerely, because nothing in its context said otherwise.
 //
-// This is the delegation-boundary extension of thread-history.ts's Layer 1
-// (STATE_CHANGING_TOOLS ledger): that ledger covers a job's OWN tools_used;
-// this one covers the tools_used of jobs it DELEGATED to via create_task,
+// This is the delegation-boundary extension of the runner's record of an
+// exchange (exchange-record.ts, #1075): that record covers a job's OWN tools;
+// this one covers the tools of jobs it DELEGATED to via create_task,
 // keyed by `agent_tasks.root_job_id` — the exact link create_task stamps
 // (task-tools.ts: `rootJobId: ctx.jobId`) and execute-ready.ts resolves to a
 // child `agent_jobs` row (`agent_tasks.job_id`).
@@ -28,12 +28,19 @@
 import { eq, ne, and, inArray, desc } from '@nodal-agents/db';
 import { agentTasks, agentJobs, agents } from '@nodal-agents/db';
 import type { RunnerDeps } from '../deps.ts';
+import { jobActs, recordField, toolNames, NAME_MAX_CHARS, type JobActs } from './tool-acts.ts';
 
 /** Max ledger entries surfaced per root job — keeps a busy fan-out bounded. */
 export const MAX_TASKS_PER_EXCHANGE = 3;
 
 /** Task result/error text is truncated to this many chars in the ledger line. */
 const RESULT_TRUNCATE_CHARS = 200;
+
+/** A task's title in the ledger line, at most (#1075: every stored text has its bound). */
+const TITLE_MAX_CHARS = 120;
+
+/** A child job's status in the ledger line, at most. */
+const STATUS_MAX_CHARS = 32;
 
 const TERMINAL_TASK_STATUSES = ['done', 'blocked'] as const;
 
@@ -43,10 +50,12 @@ const TERMINAL_JOB_STATUSES = ['completed', 'failed'] as const;
 /** Le canal des jobs que pose `create_task` (execute-ready.ts). */
 const TASK_BOARD_CHANNEL = 'task-board';
 
-export interface TaskLedgerEntry {
+/** A delegated task, and what its OWN child job did with its tools (#1075). */
+export interface TaskLedgerEntry extends JobActs {
+  /** The child job that ran the task: the declarations of its calls are read on it. */
+  jobId: string | null;
   title: string;
   status: 'done' | 'blocked';
-  toolsUsed: string[];
   result: string | null;
 }
 
@@ -74,7 +83,10 @@ export async function loadTaskLedger(
       title: agentTasks.title,
       status: agentTasks.status,
       result: agentTasks.result,
+      childJobId: agentJobs.id,
       toolsUsed: agentJobs.toolsUsed,
+      childTask: agentJobs.task,
+      childMessages: agentJobs.messages,
     })
     .from(agentTasks)
     .leftJoin(agentJobs, eq(agentJobs.id, agentTasks.jobId))
@@ -91,9 +103,10 @@ export async function loadTaskLedger(
     const list = ledger.get(row.rootJobId) ?? [];
     if (list.length >= MAX_TASKS_PER_EXCHANGE) continue; // newest-first from ORDER BY — bounded here
     list.push({
+      jobId: row.childJobId,
       title: row.title,
       status: row.status as 'done' | 'blocked',
-      toolsUsed: Array.isArray(row.toolsUsed) ? (row.toolsUsed as string[]) : [],
+      ...jobActs({ task: row.childTask, messages: row.childMessages, toolsUsed: row.toolsUsed }),
       result: row.result,
     });
     ledger.set(row.rootJobId, list);
@@ -106,17 +119,9 @@ export async function loadTaskLedger(
   return ledger;
 }
 
-/** Collapse repeated tool names to `name ×N` — "web_search, telegram_send_message ×2". */
-function formatTools(tools: readonly string[]): string {
-  const counts = new Map<string, number>();
-  for (const t of tools) counts.set(t, (counts.get(t) ?? 0) + 1);
-  return [...counts.entries()].map(([name, n]) => (n > 1 ? `${name} ×${n}` : name)).join(', ');
-}
-
 function truncateResult(s: string | null): string {
-  const text = (s ?? '').trim();
-  if (!text) return '(no result)';
-  return text.length > RESULT_TRUNCATE_CHARS ? `${text.slice(0, RESULT_TRUNCATE_CHARS)}…` : text;
+  const text = recordField(s ?? '', RESULT_TRUNCATE_CHARS);
+  return text === '' ? '(no result)' : text;
 }
 
 /**
@@ -125,16 +130,12 @@ function truncateResult(s: string | null): string {
  * from its OWN child job's `tools_used`, never from the creating job's prose.
  */
 export function formatTaskLedgerEntry(entry: TaskLedgerEntry): string {
-  const toolsStr = formatTools(entry.toolsUsed);
+  const toolsStr = toolNames(entry);
   const actionsPart = toolsStr ? `actions — ${toolsStr}; ` : '';
+  const title = recordField(entry.title, TITLE_MAX_CHARS);
   return entry.status === 'blocked'
-    ? `[Task "${entry.title}" failed: ${actionsPart}error: ${truncateResult(entry.result)}]`
-    : `[Task "${entry.title}" completed: ${actionsPart}result: ${truncateResult(entry.result)}]`;
-}
-
-/** Format every entry for one root job into ready-to-append ledger lines. */
-export function formatTaskLedgerLines(entries: readonly TaskLedgerEntry[]): string[] {
-  return entries.map(formatTaskLedgerEntry);
+    ? `[Task "${title}" failed: ${actionsPart}error: ${truncateResult(entry.result)}]`
+    : `[Task "${title}" completed: ${actionsPart}result: ${truncateResult(entry.result)}]`;
 }
 
 // ─── Délégation EN LIGNE (`assign_*`) ────────────────────────────────────────
@@ -146,10 +147,11 @@ export function formatTaskLedgerLines(entries: readonly TaskLedgerEntry[]): stri
 //
 // POURQUOI les deux registres existants l'ont laissé passer :
 //
-//   * celui de `thread-history` ne se déclenche que sur STATE_CHANGING_TOOLS,
-//     où les outils de délégation ne peuvent pas figurer — ils s'appellent
-//     `assign_<slug>`, et écrire un slug d'agent dans le runtime est
-//     exactement ce que l'invariant #1 interdit ;
+//   * celui de `thread-history` ne se déclenchait alors que sur une liste de
+//     21 noms (STATE_CHANGING_TOOLS, retirée par #1075), où les outils de
+//     délégation ne pouvaient pas figurer — ils s'appellent `assign_<slug>`,
+//     et écrire un slug d'agent dans le runtime est exactement ce que
+//     l'invariant #1 interdit ;
 //   * celui du dessus ne lit que `agent_tasks`, la table du tableau de tâches
 //     que pose `create_task`. La délégation EN LIGNE crée un `agent_jobs`
 //     enfant via `parent_job_id` et ne touche jamais `agent_tasks`.
@@ -162,13 +164,17 @@ export function formatTaskLedgerLines(entries: readonly TaskLedgerEntry[]): stri
 // déjà dans la prose du parent — le redire coûterait cher pour rien. Mesuré sur
 // une install réelle : la ligne complète pesait 531 caractères par tour
 // concerné, soit 27 % du budget de `thread-history` sur huit tours ; réduite
-// aux actions, elle tient en ~75.
+// aux actions, elle tient en ~75. Depuis #1075, les appels de l'enfant qui
+// AGISSENT sont cités sous la ligne, comme ceux du job de tête et sous la même
+// borne (exchange-record.ts) : le début de ce que l'outil a rendu, pas le
+// compte rendu entier.
 
 /** Une délégation en ligne, telle que la base l'a enregistrée. */
-export interface InlineDelegationEntry {
+export interface InlineDelegationEntry extends JobActs {
+  /** The child job: the declarations of its calls are read on it. */
+  jobId: string | null;
   agentName: string;
   status: string;
-  toolsUsed: string[];
 }
 
 /**
@@ -198,9 +204,12 @@ export async function loadInlineDelegationLedger(
   const rows = await db
     .select({
       parentJobId: agentJobs.parentJobId,
+      jobId: agentJobs.id,
       agentName: agents.name,
       status: agentJobs.status,
       toolsUsed: agentJobs.toolsUsed,
+      task: agentJobs.task,
+      messages: agentJobs.messages,
     })
     .from(agentJobs)
     .leftJoin(agents, eq(agents.id, agentJobs.agentId))
@@ -218,11 +227,12 @@ export async function loadInlineDelegationLedger(
     const list = ledger.get(row.parentJobId) ?? [];
     if (list.length >= MAX_TASKS_PER_EXCHANGE) continue; // newest-first — borné ici
     list.push({
+      jobId: row.jobId,
       agentName: row.agentName ?? 'an agent',
       // `status` est nullable en base ; un statut absent n'est pas « terminé ».
       // Le dire plutôt que de laisser croire à une réussite (invariant #4).
       status: row.status ?? 'unknown',
-      toolsUsed: Array.isArray(row.toolsUsed) ? (row.toolsUsed as string[]) : [],
+      ...jobActs(row),
     });
     ledger.set(row.parentJobId, list);
   }
@@ -239,11 +249,8 @@ export async function loadInlineDelegationLedger(
  * là où la prose du parent peut affirmer le contraire.
  */
 export function formatInlineDelegationEntry(entry: InlineDelegationEntry): string {
-  const tools = formatTools(entry.toolsUsed);
-  return `[Delegated to ${entry.agentName} (${entry.status}) — actions: ${tools || 'no tool used'}]`;
-}
-
-/** Format every in-line delegation of one parent job into ledger lines. */
-export function formatInlineDelegationLines(entries: readonly InlineDelegationEntry[]): string[] {
-  return entries.map(formatInlineDelegationEntry);
+  const tools = toolNames(entry);
+  const agent = recordField(entry.agentName, NAME_MAX_CHARS);
+  const status = recordField(entry.status, STATUS_MAX_CHARS);
+  return `[Delegated to ${agent} (${status}) — actions: ${tools || 'no tool used'}]`;
 }
