@@ -26,6 +26,7 @@ export const GENERATED_FILE = fileURLToPath(
 export const PROTOCOL_TYPES = [
   'DeviceCapability',
   'DeviceCardChoice',
+  'DeviceCardImage',
   'DeviceRunState',
   'DeviceDeliverable',
   'DeviceEvent',

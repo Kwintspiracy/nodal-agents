@@ -14,13 +14,20 @@
 // never to an agent. The sink refuses a device outside it — a job of
 // workspace X never reaches a device of workspace Y, even by naming its id.
 //
+// A device answers every card through `POST /api/approve`, with a decision
+// and, for a choice, the option: its cards are CHOICES (`sendApprovalCard`,
+// `sendQuestionCard`, and `sendChoiceCard` for the question of an MCP server
+// that a list of choices answers, #1067). The images of such a card travel
+// INSIDE it, as pointers the device reads with its key: the sink names them,
+// the bytes never ride the stream.
+//
 // What a device does NOT get through this adapter, said here once:
-//   - media (`capabilities.media` false): no file pointer exists for a device
-//     yet; a question's images stay on the dashboard, and the card says so;
-//   - free-button cards (`sendCard`, a server's form, 0145): the device
-//     answers a card through `POST /api/approve`, which takes a decision or an
-//     option, not a callback; a form is answered on the dashboard, and the
-//     question that reaches the device says so;
+//   - media (`capabilities.media` false): a file sent on its own, outside a
+//     card, has no pointer for a device;
+//   - free-button cards (`sendCard`, a server's form filled gesture by
+//     gesture, 0145): `POST /api/approve` takes a decision or an option, not
+//     a callback; a form no list of choices answers is answered on the
+//     dashboard, and the question that reaches the device says why;
 //   - a finished job's RESULT: the device reads it on its stream (`job.finished`),
 //     like the dashboard — `CHANNEL_REACH` says `stream` (transport-channel.ts).
 
@@ -30,6 +37,7 @@ import type {
   BotIdentity,
   ChannelAdapter,
   ChannelCredentials,
+  ChoiceCard,
   EditResult,
   QuestionCard,
   SendResult,
@@ -46,6 +54,7 @@ export type DeviceOutbound =
   | { kind: 'text'; text: string }
   | { kind: 'approval_card'; card: ApprovalCard }
   | { kind: 'question_card'; card: QuestionCard }
+  | { kind: 'choice_card'; card: ChoiceCard }
   | { kind: 'card_edit'; messageId: string; text: string };
 
 /**
@@ -115,7 +124,7 @@ export const deviceAdapter: ChannelAdapter = {
   async sendMedia(): Promise<SendResult> {
     throw new DeliveryError(
       'device_media_unsupported',
-      'device_media_unsupported: a device has no file pointer yet; the file stays on the dashboard',
+      'device_media_unsupported: a file sent outside a card has no pointer for a device; it stays on the dashboard',
     );
   },
 
@@ -131,6 +140,10 @@ export const deviceAdapter: ChannelAdapter = {
       kind: 'question_card',
       card,
     });
+  },
+
+  async sendChoiceCard(creds, conversationId, card): Promise<SendResult> {
+    return sinkOrFail().deliver(addressOf(creds, conversationId), { kind: 'choice_card', card });
   },
 
   async editMessageText(creds, conversationId, messageId, text, buttons): Promise<EditResult> {
