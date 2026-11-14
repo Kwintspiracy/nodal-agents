@@ -36,7 +36,7 @@ import {
   truncate as truncateHeadTail,
 } from '../job/thread-history.ts';
 import { loadExchangeRecords } from '../job/exchange-record.ts';
-import { conversationMoments, reachedThePerson, taskEndedAt } from '../job/conversation-moments.ts';
+import { conversationMoments, taskEndedAt } from '../job/conversation-moments.ts';
 import { quotedLines } from '../job/tool-acts.ts';
 import { loadConversationContext } from '../job/conversation-id.ts';
 import { TITLE_SYSTEM_PROMPT, cleanTitle, titlePrompt } from './conversation-title.ts';
@@ -307,8 +307,6 @@ interface HistoryRow {
   jobCreatedAt: Date | null;
   /** When the launched job ended, as stored at its end (`agent_jobs.completed_at`, #1078). */
   jobCompletedAt: Date | null;
-  /** What was announced to the person when the job ended (#967), if anything. */
-  jobSpokenAnnouncement: string | null;
 }
 
 /** When the job this row launched ended, if it has an end to place (#1078, `taskEndedAt`). */
@@ -430,8 +428,6 @@ function sentAt(r: HistoryRow): Date {
  *   > <its result, or its failure reason, line by line>
  *   <its record (#1075), one line per entry>
  *   <the stop note, when the person stopped the reply that launched it>
- *   [Announced to the person when it ended]   (when a stored fact says so)
- *   > <what was announced, line by line>
  *
  * The first line is the runner's, dated as a message of the person is
  * (`datedTurn`), with the status words of `outcomeStatusLine`. The result is
@@ -460,7 +456,6 @@ function taskEndRecord(
     ...(body === null ? [] : quotedLines(truncateFn(body))),
     ...ledgerLines,
     ...(r.stopped === true ? [stoppedReplyNote()] : []),
-    ...reachedThePerson(r.jobSpokenAnnouncement, truncateFn),
   ]) as ModelMessage;
 }
 
@@ -786,7 +781,6 @@ export async function runChatTurn(opts: {
       jobError: agentJobs.error,
       jobCreatedAt: agentJobs.createdAt,
       jobCompletedAt: agentJobs.completedAt,
-      jobSpokenAnnouncement: agentJobs.spokenAnnouncement,
     })
     .from(chatMessages)
     .leftJoin(agentJobs, eq(chatMessages.jobId, agentJobs.id))
