@@ -284,11 +284,15 @@ export async function loadThreadHistory(opts: LoadThreadHistoryOptions): Promise
       { role: 'user', content: datedTurn(truncate(row.task), row.createdAt, opts.timezone) },
       ...followUps,
     ];
+    // Un tour sans aucune trace n'est pas relu. Ce que ses outils ont fait en
+    // est une (#1075) : un tour dont le seul envoi est parti vers une autre
+    // personne n'a pas de réponse relue, mais il a agi, et il ne disparaît pas.
     if (
       assistant === null &&
       runnerResult === '' &&
       runnerNotes.length === 0 &&
-      followUps.length === 0
+      followUps.length === 0 &&
+      !records.has(row.id)
     ) {
       continue;
     }

@@ -481,17 +481,25 @@ describe('the record says each thing once, and never repeats the reply (#1075) @
     return replay(conv, 'telegram', current);
   }
 
-  it('identical quotations collapse into one line with their count, where the last one falls', async () => {
-    // Nine acknowledgements of sends that are NOT the reply (the job's reply is
-    // its `result`), around two distinct writes.
+  it('when the reply is the `result`, the sends were not replayed: they stay in the record, nine in one line', async () => {
+    // Nine sends to the conversation, around two distinct writes. The job's
+    // reply is its `result` (`extractAssistantReply` reads it first), so the
+    // sends' words are replayed nowhere: they are actions of the exchange, and
+    // their identical acknowledgements collapse where the last one falls.
+    const progress = (i: number): Step => ({
+      name: 'telegram_send_message',
+      input: { text: `Working on it (${i}).` },
+      output: sent,
+    });
     const steps: Step[] = [
-      ...Array.from({ length: 4 }, () => ({ name: 'telegram_send_message', output: sent })),
+      ...Array.from({ length: 4 }, (_, i) => progress(i + 1)),
       { name: 'file_write', output: json({ path: 'a.md' }) },
-      ...Array.from({ length: 5 }, () => ({ name: 'telegram_send_message', output: sent })),
+      ...Array.from({ length: 5 }, (_, i) => progress(i + 5)),
       { name: 'file_write', output: json({ path: 'b.md' }) },
     ];
     const { conv, current } = await telegramThread(steps, ['telegram_send_message', 'file_write']);
-    expect(records(await replay(conv, 'telegram', current))).toEqual([
+    const history = await replay(conv, 'telegram', current);
+    expect(records(history)).toEqual([
       [
         '[Actions performed in this exchange: telegram_send_message ×9, file_write ×2]',
         'file_write → {"path":"a.md"}',
@@ -499,6 +507,9 @@ describe('the record says each thing once, and never repeats the reply (#1075) @
         'file_write → {"path":"b.md"}',
       ],
     ]);
+    const spoken = JSON.stringify(history.filter((m) => m.role === 'assistant'));
+    expect(spoken).toContain('Done: the flyer is ready');
+    expect(spoken).not.toContain('Working on it');
   });
 
   it('the bound counts distinct lines: repeated acknowledgements no longer push a result out', async () => {
@@ -584,10 +595,37 @@ describe('the record says each thing once, and never repeats the reply (#1075) @
         'send_image → {"kind":"image","sent":true}',
       ],
     ]);
-    // Only the send to the conversation is replayed as the agent's reply.
-    const spoken = JSON.stringify(history.filter((m) => m.role === 'assistant'));
-    expect(spoken).toContain('Done, I told them.');
-    expect(spoken).not.toContain('Your flyer is ready.');
+    // Only the send to the conversation is replayed as the agent's reply: the
+    // synthetic send call carries its words, and nothing else.
+    const assistantCalls = history
+      .filter((m) => m.role === 'assistant')
+      .flatMap((m) => (Array.isArray(m.content) ? m.content : []))
+      .map((p) => (p as { input?: { text?: unknown } }).input?.text);
+    expect(assistantCalls).toEqual(['Done, I told them.']);
+    const replayed = JSON.stringify(history);
+    expect(replayed).not.toContain('Your flyer is ready.');
+    expect(replayed).not.toContain('Flyer posted.');
+  });
+
+  it('a turn whose only send went to another person is still replayed: the request, then its record', async () => {
+    const history = await sentThread(
+      [
+        {
+          name: 'telegram_send_message',
+          input: { text: 'Your flyer is ready.', chatId: '777' },
+          output: sent,
+        },
+      ],
+      ['telegram_send_message'],
+    );
+    expect(history.map((m) => m.role)).toEqual(['user', 'user']);
+    expect(records(history)).toEqual([
+      [
+        '[Actions performed in this exchange: telegram_send_message]',
+        'telegram_send_message → {"sent":true}',
+      ],
+    ]);
+    expect(JSON.stringify(history)).not.toContain('Your flyer is ready.');
   });
 });
 
