@@ -6,6 +6,10 @@
 
 import { describe, it, expect } from 'vitest';
 import { answerOfRun } from '../../job/final-answer.ts';
+
+/** Un job qui répond par son résultat, sauf quand le test dit le contraire (#649). */
+const answer = (messages: readonly unknown[], repliesGoBySend = false): string =>
+  answerOfRun(messages, repliesGoBySend);
 import { REPAIR_BRIEF_MARK, buildRepairBrief } from '../../verification/repair-brief.ts';
 
 type Call = { name: string; input?: Record<string, unknown> };
@@ -52,7 +56,7 @@ const NOTE = 'Closed the div at line 68; only the HTML changed.';
 describe('answerOfRun — la réponse est celle de la fin @cap:organiser-equipe/moteur', () => {
   it('forme B : un texte suivi de travail, puis return_result(reason) seul → le reason', () => {
     expect(
-      answerOfRun([
+      answer([
         user('task'),
         step(NARRATION, write('doc.html')),
         tool(),
@@ -67,7 +71,7 @@ describe('answerOfRun — la réponse est celle de la fin @cap:organiser-equipe/
 
   it('forme B sans reason : aucune réponse, jamais la narration', () => {
     expect(
-      answerOfRun([
+      answer([
         user('task'),
         step(NARRATION),
         step('', write('doc.html')),
@@ -81,12 +85,10 @@ describe('answerOfRun — la réponse est celle de la fin @cap:organiser-equipe/
     // La forme de 81 jobs relus : un rapport écrit avec l'appel qui enregistre
     // son verdict, puis `return_result` seul.
     const verdict = { name: 'record_review_verdict', input: { ok: true } };
-    expect(answerOfRun([user('task'), step(REPORT, verdict), tool(), step('', done())])).toBe(
-      REPORT,
-    );
+    expect(answer([user('task'), step(REPORT, verdict), tool(), step('', done())])).toBe(REPORT);
     // Un pas ultérieur qui agit, lui, le périme.
     expect(
-      answerOfRun([
+      answer([
         user('task'),
         step(REPORT, verdict),
         tool(),
@@ -98,32 +100,32 @@ describe('answerOfRun — la réponse est celle de la fin @cap:organiser-equipe/
   });
 
   it('un reason écrit APRÈS un texte qui partageait son pas avec des appels le SUIT', () => {
-    expect(
-      answerOfRun([user('task'), step(REPORT, write('a')), tool(), step('', done(REASON))]),
-    ).toBe([REPORT, REASON].join('\n\n'));
+    expect(answer([user('task'), step(REPORT, write('a')), tool(), step('', done(REASON))])).toBe(
+      [REPORT, REASON].join('\n\n'),
+    );
     // Un texte seul dans son pas a tout vu : le reason qui suit n'ajoute rien.
-    expect(answerOfRun([user('task'), step(REPORT, done()), tool(), step('', done(REASON))])).toBe(
+    expect(answer([user('task'), step(REPORT, done()), tool(), step('', done(REASON))])).toBe(
       REPORT,
     );
   });
 
   it('inchangé : un rapport et return_result dans le même pas (même avec un reason)', () => {
-    expect(answerOfRun([user('task'), step(REPORT, done('done'))])).toBe(REPORT);
+    expect(answer([user('task'), step(REPORT, done('done'))])).toBe(REPORT);
     // Ses outils frères du pas qui finit ne périment pas le rapport.
-    expect(answerOfRun([user('task'), step(REPORT, write('doc.html'), done())])).toBe(REPORT);
+    expect(answer([user('task'), step(REPORT, write('doc.html'), done())])).toBe(REPORT);
   });
 
   it('inchangé : un rapport, puis return_result seul au pas suivant, sans travail entre', () => {
-    expect(answerOfRun([user('task'), step(REPORT), step('', done('Report above.'))])).toBe(REPORT);
+    expect(answer([user('task'), step(REPORT), step('', done('Report above.'))])).toBe(REPORT);
   });
 
   it('inchangé : une réponse sans appel d’outil', () => {
-    expect(answerOfRun([user('task'), step('', write('a')), tool(), step(REPORT)])).toBe(REPORT);
+    expect(answer([user('task'), step('', write('a')), tool(), step(REPORT)])).toBe(REPORT);
   });
 
   it('un reason de BLOCAGE n’est jamais une réponse de succès', () => {
     expect(
-      answerOfRun([
+      answer([
         user('task'),
         step(NARRATION, write('a')),
         tool(),
@@ -136,7 +138,7 @@ describe('answerOfRun — la réponse est celle de la fin @cap:organiser-equipe/
 
   it('dashboard_publish donne les mots de son pas', () => {
     expect(
-      answerOfRun([
+      answer([
         user('task'),
         step(NARRATION, write('a')),
         tool(),
@@ -146,26 +148,63 @@ describe('answerOfRun — la réponse est celle de la fin @cap:organiser-equipe/
   });
 
   it('quand un outil d’envoi porte les réponses (#649), le reason n’est pas la réponse', () => {
-    expect(
-      answerOfRun([
-        user('task'),
-        step('Let me check.', { name: 'web_search' }),
-        tool(),
-        step('', { name: 'telegram_send_message', input: { text: REPORT } }, done('Sent.')),
-      ]),
-    ).toBe('');
+    const narrated = [
+      user('task'),
+      step('Let me check.', { name: 'web_search' }),
+      tool(),
+      step('', { name: 'web_search' }),
+      tool(),
+      step('', { name: 'telegram_send_message', input: { text: REPORT } }, done('Sent.')),
+    ];
+    expect(answer(narrated, true)).toBe('');
+    // Le fait est la LIVRAISON du job, pas la présence d'un envoi : le même
+    // run sur un job qui répond par son résultat rend son reason.
+    expect(answer(narrated, false)).toBe('Sent.');
     // … et un texte écrit dans le pas qui finit reste lu comme avant.
     expect(
-      answerOfRun([
-        user('task'),
-        step('Voici.', { name: 'telegram_send_message', input: { text: REPORT } }, done('Sent.')),
-      ]),
+      answer(
+        [
+          user('task'),
+          step('Voici.', { name: 'telegram_send_message', input: { text: REPORT } }, done('Sent.')),
+        ],
+        true,
+      ),
     ).toBe('Voici.');
+  });
+
+  it('un envoi DIT, il ne travaille pas : il ne périme pas le texte d’avant', () => {
+    const send = { name: 'telegram_send_message', input: { text: REPORT } };
+    // Le chat : le texte seul, puis l'envoi et la fin au pas suivant.
+    expect(answer([user('task'), step(REPORT), step('', send, done())], true)).toBe(REPORT);
+    // Le job qui répond par son résultat et envoie une image en passant.
+    expect(
+      answer([
+        user('task'),
+        step(REPORT, write('a')),
+        tool(),
+        step('', { name: 'send_image', input: { path: 'a.png' } }),
+        tool(),
+        step('', done()),
+      ]),
+    ).toBe(REPORT);
+    // Forme B avec un envoi au milieu du travail : toujours le reason.
+    expect(
+      answer([
+        user('task'),
+        step(NARRATION, write('doc.html')),
+        tool(),
+        step('', write('doc.html')),
+        tool(),
+        step('', { name: 'send_image', input: { path: 'preview.png' } }),
+        tool(),
+        step('', done(REASON)),
+      ]),
+    ).toBe(REASON);
   });
 
   it('forme A : la réponse d’avant la preuve, PUIS la note de réparation', () => {
     expect(
-      answerOfRun([
+      answer([
         user('task'),
         step('', write('doc.html')),
         tool(),
@@ -181,7 +220,7 @@ describe('answerOfRun — la réponse est celle de la fin @cap:organiser-equipe/
 
   it('forme A, deux réparations, fins différentes : chaque section ajoute ce qu’elle a dit', () => {
     expect(
-      answerOfRun([
+      answer([
         user('task'),
         step(REPORT, done()),
         tool(),
@@ -202,7 +241,7 @@ describe('answerOfRun — la réponse est celle de la fin @cap:organiser-equipe/
 
   it('une réparation qui ne dit rien laisse la réponse d’avant, et une redite n’est pas doublée', () => {
     expect(
-      answerOfRun([
+      answer([
         user('task'),
         step(REPORT, done()),
         tool(),
@@ -213,7 +252,7 @@ describe('answerOfRun — la réponse est celle de la fin @cap:organiser-equipe/
       ]),
     ).toBe(REPORT);
     expect(
-      answerOfRun([user('task'), step(REPORT, done()), tool(), user(brief), step(REPORT, done())]),
+      answer([user('task'), step(REPORT, done()), tool(), user(brief), step(REPORT, done())]),
     ).toBe(REPORT);
   });
 
@@ -221,7 +260,7 @@ describe('answerOfRun — la réponse est celle de la fin @cap:organiser-equipe/
     expect(brief.startsWith(REPAIR_BRIEF_MARK)).toBe(true);
     // Un message de la personne qui cite le brief sans la marque ne sépare rien.
     expect(
-      answerOfRun([
+      answer([
         user('task'),
         step(REPORT, done()),
         user(brief.slice(REPAIR_BRIEF_MARK.length)),

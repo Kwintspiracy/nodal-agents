@@ -192,6 +192,8 @@ let worker: string;
 let assignWorker: string;
 /** Un agent de chat : un jeton de bot, donc l'outil d'envoi. */
 let chatAgent: string;
+/** Son outil de délégation, chez l'orchestrateur : un délégué qui PEUT envoyer. */
+let assignChatter: string;
 let ws: string;
 
 beforeAll(async () => {
@@ -224,13 +226,14 @@ beforeAll(async () => {
   const w = await insertAgent('worker', {});
   worker = w.id;
   assignWorker = `assign_${w.slug.replace(/-/g, '_')}`;
-  chatAgent = (await insertAgent('chatter', { telegramBotToken: 'bot-de-test' })).id;
+  const c = await insertAgent('chatter', { telegramBotToken: 'bot-de-test' });
+  chatAgent = c.id;
+  assignChatter = `assign_${c.slug.replace(/-/g, '_')}`;
 
-  await db
-    .insert(agentAssignments)
-    .values([
-      { orchestratorId: seed.agentId, subAgentId: worker, entityId: seed.entityId },
-    ] as never);
+  await db.insert(agentAssignments).values([
+    { orchestratorId: seed.agentId, subAgentId: worker, entityId: seed.entityId },
+    { orchestratorId: seed.agentId, subAgentId: chatAgent, entityId: seed.entityId },
+  ] as never);
 
   // `file_write`, et un dossier : le travail que la narration précède.
   const [skill] = await db
@@ -735,6 +738,7 @@ describe('les autres fins lisent la même réponse (#1083) @cap:verifier-un-livr
     });
     const { client } = makeMockLlmClient([
       { text: 'Je regarde, une seconde.', toolCalls: [write('c2.html', GOOD)] },
+      { toolCalls: [write('c2.html', GOOD)] },
       {
         toolCalls: [
           { toolName: 'telegram_send_message', args: { text: REPORT } },
@@ -769,5 +773,90 @@ describe('les autres fins lisent la même réponse (#1083) @cap:verifier-un-livr
     expect(row.result).toContain(REASON);
     expect(row.result).toContain('[stopped: declared deliverable not verified');
     expect(row.result).not.toContain('I’ll tighten the text');
+  });
+});
+
+// ─── Un envoi DIT, il ne travaille pas (relecture, P2) ──────────────────────
+//
+// Relu par l'orchestrateur sur les 2 217 jobs de l'installation du
+// propriétaire : 116 jobs qui avaient appelé un outil de livraison voyaient leur
+// résultat VIDÉ (86 Telegram, 16 cron, 13 MCP, 1 Discord) — l'envoi d'un pas
+// ultérieur périmait le texte. Le résultat que lisent `get_task`, la page des
+// runs et les listes était vide, sans rappel ni échec.
+
+const sendTo4242 = (text: string) => ({
+  toolName: 'telegram_send_message',
+  args: { text, chatId: '4242' },
+});
+
+describe('un envoi ne périme pas le texte qui le précède (#1083, P2) @cap:parler-par-canal-externe/moteur', () => {
+  it('chat : le texte seul, le rappel de livraison, puis envoi + fin : le résultat est le texte', async () => {
+    const jobId = await insertJob({
+      agentId: chatAgent,
+      channel: 'telegram',
+      chatId: '4242',
+      chatChannel: 'telegram',
+    });
+    const { client } = makeMockLlmClient([
+      { text: REPORT },
+      { toolCalls: [{ toolName: 'telegram_send_message', args: { text: REPORT } }, done()] },
+    ]);
+
+    const outcome = await executeJob(jobId as JobId, makeDeps(client), testEnv);
+
+    expect(outcome.status).toBe('completed');
+    expect(envois.map((e) => e.text)).toEqual([REPORT]);
+    expect((await rowOf(jobId)).result).toBe(REPORT);
+  });
+
+  it('tête qui répond par son RÉSULTAT (lu comme get_task le lit) : texte, puis un envoi seul, puis fin', async () => {
+    const jobId = await insertJob({ agentId: chatAgent, channel: 'mcp' });
+    const { client } = makeMockLlmClient([
+      { text: REPORT, toolCalls: [write('s2.html', GOOD)] },
+      { toolCalls: [sendTo4242('The report is ready.')] },
+      { toolCalls: [done()] },
+    ]);
+
+    const outcome = await executeJob(jobId as JobId, makeDeps(client), testEnv);
+
+    expect(outcome.status).toBe('completed');
+    if (outcome.status !== 'completed') throw new Error('unreachable');
+    expect(envois.map((e) => e.text)).toEqual(['The report is ready.']);
+    expect((await rowOf(jobId)).result).toBe(REPORT);
+    expect(outcome.result).toContain(REPORT);
+  });
+
+  it('délégué : texte, puis un envoi seul, puis fin : le parent reçoit le texte', async () => {
+    const rootId = await insertJob();
+    const { client, prompts } = makeMockLlmClient([
+      { toolCalls: [{ toolName: assignChatter, args: { task: 'Make the one-page document' } }] },
+      { text: REPORT, toolCalls: [write('s3.html', GOOD)] },
+      { toolCalls: [sendTo4242('The report is ready.')] },
+      { toolCalls: [done()] },
+      rootEnds,
+    ]);
+
+    await executeJob(rootId as JobId, makeDeps(client), testEnv);
+
+    const child = await childOf(rootId);
+    expect(child.status).toBe('completed');
+    expect(child.result).toContain(REPORT);
+    expect(resumeOf(prompts)).toContain('Sources: NIST CODATA 2022.');
+  });
+
+  it('forme B avec un envoi au milieu du travail, sur un job qui répond par son résultat : le reason', async () => {
+    const jobId = await insertJob({ agentId: chatAgent, channel: 'mcp' });
+    const { client } = makeMockLlmClient([
+      { text: NARRATION, toolCalls: [write('s4.html', GOOD)] },
+      { toolCalls: [write('s4.html', GOOD)] },
+      { toolCalls: [sendTo4242('Preview sent.')] },
+      { toolCalls: [done({ reason: REASON })] },
+    ]);
+
+    await executeJob(jobId as JobId, makeDeps(client), testEnv);
+
+    // La livraison de ce job est son résultat : l'envoi en passant ne fait pas
+    // de lui un job « qui répond par un envoi », et son reason n'est pas jeté.
+    expect((await rowOf(jobId)).result).toBe(REASON);
   });
 });

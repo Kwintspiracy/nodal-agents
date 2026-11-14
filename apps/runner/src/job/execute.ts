@@ -4483,7 +4483,11 @@ async function runJobTracked(
   // transcription du tour courant, donc la même après une reprise. Sans
   // frontière, tout est relu, comme `lastAssistantTextSeen` au-dessus (et
   // c'est tracé là).
-  const reponseDuRun = (): string => answerOfRun(currentTurnMessages(messages, job.task));
+  // « Les réponses de ce job partent par un envoi » se lit dans SA livraison
+  // (#649, `replyTo`), pas dans la présence d'un envoi : un job qui répond par
+  // son résultat peut envoyer une image en passant.
+  const reponseDuRun = (): string =>
+    answerOfRun(currentTurnMessages(messages, job.task), requiresToolDelivery);
   // ONE nudge, as Hermes does: ask for the deliverable, then fail loud.
   const MAX_EMPTY_DELIVERABLE_NUDGES = 1;
   // Le compteur de rappels vit en mémoire, donc il repart à zéro à chaque
@@ -7033,13 +7037,16 @@ async function runJobTracked(
           });
         }
 
-        // Brique 33, inchangée : VIDE ici. `completeJob` garde un `result` qu'un
-        // outil a déjà écrit (`dashboard_publish`), sinon il le remplit de la
-        // réponse du job (#1083, `answerOfRun` — la même lecture que la garde
-        // ci-dessus et que la branche texte), puis compile les enfants. Passer
-        // la réponse ici remplaçait un texte publié par un texte écrit plus
-        // tard dans le run, ce que main ne faisait pas.
-        const finalResult = '';
+        // Brique 33, inchangée : un `result` qu'un outil a déjà écrit
+        // (`dashboard_publish`) est GARDÉ — rien ne l'écrase, comme sur main.
+        // Sinon, la réponse du job (#1083), lue ici parce que c'est ici que la
+        // livraison du job est connue ; vide, `completeJob` compile les enfants.
+        const [dejaPublie] = await db
+          .select({ result: agentJobs.result })
+          .from(agentJobs)
+          .where(eq(agentJobs.id, jobId as string))
+          .limit(1);
+        const finalResult = (dejaPublie?.result ?? '').trim() !== '' ? '' : reponseRetour;
         toolsUsed = [...new Set([...toolsUsed, 'return_result'])];
 
         toolResultBlocks.push({

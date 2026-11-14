@@ -15,8 +15,12 @@
 // La règle, une seule pour toutes les portes de fin (texte sans outil,
 // `return_result`, l'échec sur un livrable promis non vérifié) :
 //
-//  1. Un texte n'est périmé que par un travail d'un pas ULTÉRIEUR (tout appel
-//     d'outil autre que le signal de fin). Les appels écrits dans le MÊME pas
+//  1. Un texte n'est périmé que par un TRAVAIL d'un pas ULTÉRIEUR. Les appels
+//     qui DISENT au lieu de faire ne sont pas un travail : le signal de fin, la
+//     publication explicite (`dashboard_publish`) et les outils de livraison
+//     (`DELIVERY_TOOL_NAMES`, l'ensemble que la plateforme tient déjà) ne
+//     changent pas le produit de la tâche — 116 jobs relus écrivaient leur
+//     réponse, puis l'envoyaient au pas suivant. Les appels écrits dans le MÊME pas
 //     que lui ne le périment pas : un rapport complet écrit avec l'appel qui
 //     enregistre son verdict, puis `return_result` seul, est une réponse —
 //     81 des 2 217 jobs relus sur l'installation du propriétaire ont cette
@@ -28,15 +32,19 @@
 //     écrit seul dans son pas, il n'ajoute rien (le texte a tout vu). Sauf
 //     quand ce sont les outils d'envoi qui portent les réponses du job
 //     (#649) : là, la réponse est ce qui est parti, et la relecture du fil la
-//     lit dans les envois (#1075), jamais dans une phrase de signal.
+//     lit dans les envois (#1075), jamais dans une phrase de signal. Ce fait
+//     est celui de la LIVRAISON du job (`replyTo`, la ligne `delivery:`), que
+//     l'appelant passe : un job qui répond par son résultat et envoie une image
+//     en passant ne répond pas par un envoi.
 //  3. Un tour de réparation répare un livrable ; il ne remplace pas la réponse.
 //     La réponse d'un job passé par N réparations est celle d'avant la preuve,
 //     SUIVIE de ce que chaque réparation a dit — composée ici, sans un mot du
 //     runner entre les deux (invariant #2).
 //
-// La règle parle de PAS, jamais d'outils : aucun outil n'est exempté d'être un
-// travail. `dashboard_publish` dit seulement QUELS sont les mots de son pas :
-// le texte qu'il pose comme résultat (« Set this job's RESULT »).
+// La règle parle de PAS, et ne nomme aucun outil à la main : ce qui DIT est le
+// signal de fin, la publication et l'ensemble des outils de livraison de la
+// plateforme. `dashboard_publish` donne aussi les mots de son pas : le texte
+// qu'il pose comme résultat (« Set this job's RESULT »).
 //
 // Ce module ne lit QUE la transcription. Une transcription relue après une
 // reprise (approbation, délégation) dit la même chose qu'en mémoire : aucun
@@ -51,6 +59,9 @@ const END_SIGNAL = 'return_result';
 const PUBLISH = 'dashboard_publish';
 
 const SEND_TOOLS: ReadonlySet<string> = new Set(DELIVERY_TOOL_NAMES);
+
+/** Les appels qui DISENT : ils ne périment aucun texte. */
+const SAYING: ReadonlySet<string> = new Set([END_SIGNAL, PUBLISH, ...DELIVERY_TOOL_NAMES]);
 
 interface ToolCallPart {
   name: string;
@@ -121,7 +132,7 @@ function answerOfSection(steps: readonly Step[], repliesGoBySend: boolean): stri
   // Le `reason` du dernier signal de fin APRÈS ces mots, `''` s'il n'en a pas.
   let reasonAfter = '';
   for (const step of steps) {
-    const works = step.calls.some((c) => c.name !== END_SIGNAL);
+    const works = step.calls.some((c) => !SAYING.has(c.name));
     const stepWords = publishedText(step) || step.text;
     // Un travail périme les mots des pas d'AVANT lui, pas ceux de son pas.
     if (works) {
@@ -153,9 +164,8 @@ function answerOfSection(steps: readonly Step[], repliesGoBySend: boolean): stri
  * une section qui n'a rien dit n'ajoute rien, et une réponse identique à la
  * précédente n'est pas répétée. `''` : le job n'a donné aucune réponse.
  */
-export function answerOfRun(turnMessages: readonly unknown[]): string {
+export function answerOfRun(turnMessages: readonly unknown[], repliesGoBySend: boolean): string {
   const sections: Step[][] = [[]];
-  let repliesGoBySend = false;
   for (const m of turnMessages) {
     if (isRepairBrief(m)) {
       sections.push([]);
@@ -163,7 +173,6 @@ export function answerOfRun(turnMessages: readonly unknown[]): string {
     }
     const step = stepOf(m);
     if (!step) continue;
-    if (step.calls.some((c) => SEND_TOOLS.has(c.name))) repliesGoBySend = true;
     sections[sections.length - 1]!.push(step);
   }
   const answers: string[] = [];
@@ -172,4 +181,17 @@ export function answerOfRun(turnMessages: readonly unknown[]): string {
     if (answer !== '' && answer !== answers[answers.length - 1]) answers.push(answer);
   }
   return answers.join('\n\n');
+}
+
+/**
+ * La lecture de REPLI de « les réponses de ce job partent par un envoi », pour
+ * les portes qui ne tiennent pas la livraison du job (le remplissage de
+ * `completeJob`, le repli de `finalizeJobSuccess`) : un envoi est dans la
+ * transcription. Elles ne sont atteintes qu'après la porte d'`execute.ts`, qui
+ * lit, elle, la livraison (`replyTo`) et passe déjà la réponse quand le
+ * résultat est vide ; elles ne voient donc que des runs sans réponse, où ce
+ * drapeau ne change rien.
+ */
+export function repliesWentBySend(turnMessages: readonly unknown[]): boolean {
+  return turnMessages.some((m) => (stepOf(m)?.calls ?? []).some((c) => SEND_TOOLS.has(c.name)));
 }
