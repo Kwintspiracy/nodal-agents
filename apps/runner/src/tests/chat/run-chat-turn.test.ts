@@ -21,7 +21,7 @@ import {
   conversations,
   chatMessages,
   entities,
-  mcpServers,
+  toolCalls,
 } from '@nodal-agents/db';
 import { formatLocalTime, projectKey, wrapUntrusted } from '@nodal-agents/shared';
 import type { RunnerDeps } from '../../deps.ts';
@@ -1503,19 +1503,17 @@ describe('runChatTurn — the launched job carries the record of what its tools 
     `${SUBMIT} → Request 4521 submitted. Status: pending, waiting for the owner to confirm.`,
   ];
 
-  beforeAll(async () => {
-    await db.insert(mcpServers).values({
-      entityId: seed.entityId,
-      name: 'Requests',
-      slug: 'requests-srv',
-      transport: 'http',
-      url: 'http://127.0.0.1:1/mcp',
-      availableTools: [
-        { name: 'submit_request', description: 'Submit a request; it stays pending.' },
-        { name: 'get_request', annotations: { readOnlyHint: true } },
-      ],
-    });
-  });
+  /**
+   * What each call DECLARED when it ran, as the runner stores it on its
+   * `tool_calls` row: `risk_level`, and an MCP server's `read_only_hint` (an
+   * MCP tool is never below `write`). `return_result` has no row.
+   */
+  const DECLARED: Array<[string, 'read' | 'write', boolean | null]> = [
+    ['file_read', 'read', null],
+    ['file_write', 'write', null],
+    [GET, 'write', true],
+    [SUBMIT, 'write', null],
+  ];
 
   function flyerTranscript(task: string): unknown[] {
     const steps: Array<[string, unknown]> = [
@@ -1591,6 +1589,19 @@ describe('runChatTurn — the launched job carries the record of what its tools 
       })
       .returning({ id: agentJobs.id });
     if (!job) throw new Error('job insert failed');
+    if (!onlyFinished) {
+      await db.insert(toolCalls).values(
+        DECLARED.map(([toolName, riskLevel, readOnlyHint], i) => ({
+          entityId: seed.entityId,
+          jobId: job.id,
+          toolName,
+          toolCallId: `c${i}`,
+          riskLevel,
+          readOnlyHint,
+          executionStarted: true,
+        })),
+      );
+    }
     const at = (minutesAgo: number) => new Date(Date.now() - minutesAgo * 60_000);
     await db.insert(chatMessages).values([
       {

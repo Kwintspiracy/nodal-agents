@@ -28,13 +28,19 @@
 import { eq, ne, and, inArray, desc } from '@nodal-agents/db';
 import { agentTasks, agentJobs, agents } from '@nodal-agents/db';
 import type { RunnerDeps } from '../deps.ts';
-import { jobActs, toolNames, type JobActs } from './tool-acts.ts';
+import { jobActs, recordField, toolNames, NAME_MAX_CHARS, type JobActs } from './tool-acts.ts';
 
 /** Max ledger entries surfaced per root job — keeps a busy fan-out bounded. */
 export const MAX_TASKS_PER_EXCHANGE = 3;
 
 /** Task result/error text is truncated to this many chars in the ledger line. */
 const RESULT_TRUNCATE_CHARS = 200;
+
+/** A task's title in the ledger line, at most (#1075: every stored text has its bound). */
+const TITLE_MAX_CHARS = 120;
+
+/** A child job's status in the ledger line, at most. */
+const STATUS_MAX_CHARS = 32;
 
 const TERMINAL_TASK_STATUSES = ['done', 'blocked'] as const;
 
@@ -46,6 +52,8 @@ const TASK_BOARD_CHANNEL = 'task-board';
 
 /** A delegated task, and what its OWN child job did with its tools (#1075). */
 export interface TaskLedgerEntry extends JobActs {
+  /** The child job that ran the task: the declarations of its calls are read on it. */
+  jobId: string | null;
   title: string;
   status: 'done' | 'blocked';
   result: string | null;
@@ -75,6 +83,7 @@ export async function loadTaskLedger(
       title: agentTasks.title,
       status: agentTasks.status,
       result: agentTasks.result,
+      childJobId: agentJobs.id,
       toolsUsed: agentJobs.toolsUsed,
       childTask: agentJobs.task,
       childMessages: agentJobs.messages,
@@ -94,6 +103,7 @@ export async function loadTaskLedger(
     const list = ledger.get(row.rootJobId) ?? [];
     if (list.length >= MAX_TASKS_PER_EXCHANGE) continue; // newest-first from ORDER BY — bounded here
     list.push({
+      jobId: row.childJobId,
       title: row.title,
       status: row.status as 'done' | 'blocked',
       ...jobActs({ task: row.childTask, messages: row.childMessages, toolsUsed: row.toolsUsed }),
@@ -110,9 +120,8 @@ export async function loadTaskLedger(
 }
 
 function truncateResult(s: string | null): string {
-  const text = (s ?? '').trim();
-  if (!text) return '(no result)';
-  return text.length > RESULT_TRUNCATE_CHARS ? `${text.slice(0, RESULT_TRUNCATE_CHARS)}…` : text;
+  const text = recordField(s ?? '', RESULT_TRUNCATE_CHARS);
+  return text === '' ? '(no result)' : text;
 }
 
 /**
@@ -123,9 +132,10 @@ function truncateResult(s: string | null): string {
 export function formatTaskLedgerEntry(entry: TaskLedgerEntry): string {
   const toolsStr = toolNames(entry);
   const actionsPart = toolsStr ? `actions — ${toolsStr}; ` : '';
+  const title = recordField(entry.title, TITLE_MAX_CHARS);
   return entry.status === 'blocked'
-    ? `[Task "${entry.title}" failed: ${actionsPart}error: ${truncateResult(entry.result)}]`
-    : `[Task "${entry.title}" completed: ${actionsPart}result: ${truncateResult(entry.result)}]`;
+    ? `[Task "${title}" failed: ${actionsPart}error: ${truncateResult(entry.result)}]`
+    : `[Task "${title}" completed: ${actionsPart}result: ${truncateResult(entry.result)}]`;
 }
 
 // ─── Délégation EN LIGNE (`assign_*`) ────────────────────────────────────────
@@ -161,6 +171,8 @@ export function formatTaskLedgerEntry(entry: TaskLedgerEntry): string {
 
 /** Une délégation en ligne, telle que la base l'a enregistrée. */
 export interface InlineDelegationEntry extends JobActs {
+  /** The child job: the declarations of its calls are read on it. */
+  jobId: string | null;
   agentName: string;
   status: string;
 }
@@ -192,6 +204,7 @@ export async function loadInlineDelegationLedger(
   const rows = await db
     .select({
       parentJobId: agentJobs.parentJobId,
+      jobId: agentJobs.id,
       agentName: agents.name,
       status: agentJobs.status,
       toolsUsed: agentJobs.toolsUsed,
@@ -214,6 +227,7 @@ export async function loadInlineDelegationLedger(
     const list = ledger.get(row.parentJobId) ?? [];
     if (list.length >= MAX_TASKS_PER_EXCHANGE) continue; // newest-first — borné ici
     list.push({
+      jobId: row.jobId,
       agentName: row.agentName ?? 'an agent',
       // `status` est nullable en base ; un statut absent n'est pas « terminé ».
       // Le dire plutôt que de laisser croire à une réussite (invariant #4).
@@ -236,5 +250,7 @@ export async function loadInlineDelegationLedger(
  */
 export function formatInlineDelegationEntry(entry: InlineDelegationEntry): string {
   const tools = toolNames(entry);
-  return `[Delegated to ${entry.agentName} (${entry.status}) — actions: ${tools || 'no tool used'}]`;
+  const agent = recordField(entry.agentName, NAME_MAX_CHARS);
+  const status = recordField(entry.status, STATUS_MAX_CHARS);
+  return `[Delegated to ${agent} (${status}) — actions: ${tools || 'no tool used'}]`;
 }

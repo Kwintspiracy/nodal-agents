@@ -417,6 +417,12 @@ function buildMcpToolDefinition(
     description: frameMcpDescription(mcpTool.description, slug, originalName),
     inputSchema,
     riskLevel: riskFromAnnotations(mcpTool.annotations),
+    // The server's own hint, kept as it gave it and stored with each call
+    // (#1075): never a downgrade of the level above, only what the runner's
+    // record of a past exchange quotes.
+    ...(typeof mcpTool.annotations?.readOnlyHint === 'boolean'
+      ? { readOnlyHint: mcpTool.annotations.readOnlyHint }
+      : {}),
     // Un outil tiers ne sait pas comment Nodal montre les résultats : `generic`
     // affiche son entrée et sa sortie brutes, en le disant. C'est une carte
     // honnête, pas une devinette (P1, `cardForTool`).

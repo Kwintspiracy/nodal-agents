@@ -14,13 +14,18 @@
 // LA RÈGLE, pour tout outil et sans liste tenue à la main :
 //   [Actions performed in this exchange: tool_a, tool_b ×2, tool_c]
 //   tool_b → <les deux premières lignes non vides de ce que l'appel a rendu>
-// Chaque outil appelé est nommé. Chaque appel d'un outil qui n'est PAS DÉCLARÉ
-// en lecture seule est cité (une ligne `nom → début`). « Déclaré » se lit sur
-// la déclaration de l'outil et nulle part ailleurs : le `riskLevel` d'un outil
-// du produit, le `risk` de l'opération d'un connecteur, le `readOnlyHint`
-// d'un outil MCP. Un outil qui ne déclare rien, ou que plus rien ne connaît,
-// agit : le relevé en montre plus, jamais moins. Des citations identiques se
-// disent une fois avec leur compte (`nom ×N → début`).
+// Chaque outil appelé est nommé. Chaque appel qui n'était pas DÉCLARÉ en
+// lecture seule AU MOMENT DE L'APPEL est cité (une ligne `nom → début`). Des
+// citations identiques se disent une fois avec leur compte (`nom ×N → début`).
+//
+// « Déclaré » est un fait de l'APPEL, rangé quand il a tourné, jamais relu sur
+// les déclarations du jour : la ligne `tool_calls` de l'appel porte le
+// `risk_level` que l'outil déclarait (`read` pour un outil du produit ou une
+// opération de connecteur en lecture seule) et, depuis 0166, le `readOnlyHint`
+// qu'un serveur MCP donnait à son outil. Un appel sans ligne, ou dont la ligne
+// ne dit pas « lecture seule », agit : le relevé en montre plus, jamais moins.
+// Un `readOnlyHint` ajouté ou retiré après coup, un serveur supprimé, un second
+// serveur du même nom ne changent donc rien au relevé d'un échange passé.
 //
 // CE QUI N'EST PAS UNE ACTION DE L'ÉCHANGE n'y figure pas : les appels qui ont
 // livré la réponse que l'historique redonne déjà comme le tour de l'agent
@@ -34,29 +39,31 @@
 // du tour de chat lui-même, tableau de bord et appareils (run-chat-turn.ts).
 // Le travail d'un job délégué suit la même règle, sous la même borne.
 //
-// BORNES DITES (invariant #4) : RESULT_HEAD_MAX_CHARS par citation, au plus
-// MAX_QUOTED_RESULTS citations par échange, les DERNIÈRES ; celles qui
-// tombent sont comptées sur une ligne.
+// BORNES DITES (invariant #4) : au plus MAX_TOOL_NAMES noms par liste (le reste
+// compté), NAME_MAX_CHARS par nom, RESULT_HEAD_MAX_CHARS par citation, au plus
+// MAX_QUOTED_RESULTS citations distinctes par échange, les DERNIÈRES (celles
+// qui tombent sont comptées), au plus 3 tâches et 3 délégations en ligne
+// (task-ledger.ts), chaque texte de la base coupé à sa borne. Un relevé tient
+// donc sous MAX_RECORD_CHARS, prouvé par le test du pire échange.
 //
 // PRÉFIXE STABLE : le relevé d'un échange passé est le même, octet pour octet,
 // d'un tour au suivant (cache de prompt). Il ne vient que de ce que le job a
-// rangé et des déclarations, dans un ordre déterministe : un job terminé ne
-// range plus rien, son relevé ne bouge plus. Celui d'un job encore en cours dit
-// ce qu'il a fait jusque-là, comme son résultat ; ce qu'un tour sait d'un
-// travail qui tourne est un autre sujet.
+// rangé, dans un ordre déterministe : un job terminé ne range plus rien, son
+// relevé ne bouge plus. Celui d'un job encore en cours dit ce qu'il a fait
+// jusque-là, comme son résultat ; ce qu'un tour sait d'un travail qui tourne
+// est un autre sujet.
 //
-// UNE CITATION EST UNE DONNÉE. Les premiers caractères du résultat d'un outil
-// web ou MCP peuvent être écrits par un tiers. La citation tient sur UNE ligne
-// qui commence toujours par le nom de l'outil et la flèche : elle ne peut ni
-// ouvrir une ligne du relevé à elle, ni se faire passer pour une entrée du
-// runner. Le cadre de la plateforme est retiré, les secrets masqués
-// (tool-acts.ts, `resultHead`).
+// UNE LIGNE, TOUJOURS. Les premiers caractères du résultat d'un outil web ou
+// MCP, un nom d'outil, le titre d'une tâche, le nom d'un agent viennent de la
+// base et peuvent être écrits par un tiers. Chaque ligne du relevé passe par
+// `oneLine` (tool-acts.ts) : tout séparateur de ligne ou de paragraphe Unicode
+// et tout caractère de contrôle y devient une espace. Une citation commence
+// toujours par le nom de l'outil et la flèche : elle ne peut ni ouvrir une
+// ligne du relevé à elle, ni se faire passer pour une entrée du runner. Le
+// cadre de la plateforme est retiré, les secrets masqués (`resultHead`).
 
-import { eq, inArray } from '@nodal-agents/db';
-import { agentJobs, mcpServers } from '@nodal-agents/db';
-import { servedToolDefinitions } from '@nodal-agents/orchestration';
-import { ADAPTER_REGISTRY } from '@nodal-agents/runner-adapters';
-import { mcpToolNamespace } from '@nodal-agents/shared';
+import { and, inArray, isNotNull } from '@nodal-agents/db';
+import { agentJobs, toolCalls } from '@nodal-agents/db';
 import type { RunnerDeps } from '../deps.ts';
 import {
   formatInlineDelegationEntry,
@@ -66,17 +73,37 @@ import {
   type InlineDelegationEntry,
   type TaskLedgerEntry,
 } from './task-ledger.ts';
-import { jobActs, resultHead, toolNames, type JobActs } from './tool-acts.ts';
+import {
+  jobActs,
+  oneLine,
+  recordField,
+  resultHead,
+  toolNames,
+  NAME_MAX_CHARS,
+  type JobActs,
+} from './tool-acts.ts';
 
-/** Au plus ce nombre de résultats cités par échange : les derniers. */
+/** Au plus ce nombre de citations distinctes par échange : les dernières. */
 export const MAX_QUOTED_RESULTS = 8;
 
-/** Vrai quand l'outil de ce nom se DÉCLARE en lecture seule. */
-export type DeclaredReadOnly = (toolName: string) => boolean;
+/**
+ * La taille maximale du relevé d'un échange (ses entrées jointes par un saut
+ * de ligne), toutes bornes atteintes à la fois. Le test du pire échange
+ * (exchange-record.test.ts) la vérifie ; avec un message de la personne et une
+ * réponse à leur borne (2 × PER_TURN_MAX_CHARS), le tour tient sous le budget
+ * du fil (BUDGET_CHARS) : il n'est jamais jeté pour son relevé.
+ */
+export const MAX_RECORD_CHARS = 9_000;
+
+/** L'appel `callId` du job `jobId` était-il déclaré en lecture seule quand il a tourné ? */
+export type DeclaredReadOnly = (jobId: string, callId: string | null) => boolean;
+
+/** Un job dont le relevé dit les actes : son id (les déclarations rangées s'y lisent). */
+type Acting = JobActs & { jobId: string | null };
 
 /** Ce que le relevé d'un échange dit : le job de tête, et ce qu'il a délégué. */
 export interface ExchangeFacts {
-  own: JobActs;
+  own: Acting;
   tasks: readonly TaskLedgerEntry[];
   inline: readonly InlineDelegationEntry[];
 }
@@ -88,7 +115,7 @@ export interface ExchangeFacts {
  */
 export function exchangeRecordLines(facts: ExchangeFacts, readOnly: DeclaredReadOnly): string[] {
   const ownNames = toolNames(facts.own);
-  const sections: Array<{ header: string | null; acts: JobActs }> = [
+  const sections: Array<{ header: string | null; acts: Acting }> = [
     {
       header: ownNames === '' ? null : `[Actions performed in this exchange: ${ownNames}]`,
       acts: facts.own,
@@ -98,7 +125,9 @@ export function exchangeRecordLines(facts: ExchangeFacts, readOnly: DeclaredRead
   ];
   const quoted = sections.map((s) =>
     collapseRepeats(
-      s.acts.calls.filter((c) => !readOnly(c.name)).map((c) => [c.name, resultHead(c.output)]),
+      s.acts.calls
+        .filter((c) => s.acts.jobId === null || !readOnly(s.acts.jobId, c.id))
+        .map((c) => [recordField(c.name, NAME_MAX_CHARS), resultHead(c.output)] as const),
     ),
   );
   const total = quoted.reduce((n, q) => n + q.length, 0);
@@ -116,7 +145,8 @@ export function exchangeRecordLines(facts: ExchangeFacts, readOnly: DeclaredRead
       lines.push(line);
     }
   });
-  return lines;
+  // Le seul passage obligé : quoi qu'une ligne contienne, elle reste UNE ligne.
+  return lines.map(oneLine);
 }
 
 /**
@@ -143,8 +173,8 @@ function collapseRepeats(heads: ReadonlyArray<readonly [string, string]>): strin
 
 /**
  * Les relevés d'une série d'échanges, par id de job : le job, ses délégations
- * terminées, et la déclaration de chaque outil dans l'espace du job. Un job
- * sans appel ni délégation n'a pas de relevé.
+ * terminées, et ce que chaque appel déclarait quand il a tourné. Un job sans
+ * appel ni délégation n'a pas de relevé.
  *
  * `replyCallIds` : par job, les appels qui ont livré la réponse que
  * l'historique redonne déjà comme le tour de l'agent (`extractAssistantReply`,
@@ -163,7 +193,6 @@ export async function loadExchangeRecords(
   const jobs = await db
     .select({
       id: agentJobs.id,
-      entityId: agentJobs.entityId,
       task: agentJobs.task,
       messages: agentJobs.messages,
       toolsUsed: agentJobs.toolsUsed,
@@ -172,16 +201,15 @@ export async function loadExchangeRecords(
     .where(inArray(agentJobs.id, ids));
   const taskLedger = await loadTaskLedger(db, ids);
   const inlineLedger = await loadInlineDelegationLedger(db, ids);
-  const declarations = new Map<string | null, DeclaredReadOnly>();
+  const childIds = [...taskLedger.values(), ...inlineLedger.values()]
+    .flat()
+    .map((e) => e.jobId)
+    .filter((id): id is string => id !== null);
+  const readOnly = await loadCallDeclarations(db, [...ids, ...childIds]);
   for (const job of jobs) {
-    let readOnly = declarations.get(job.entityId);
-    if (!readOnly) {
-      readOnly = await loadDeclaredReadOnly(db, job.entityId);
-      declarations.set(job.entityId, readOnly);
-    }
     const lines = exchangeRecordLines(
       {
-        own: jobActs(job, replyCallIds.get(job.id)),
+        own: { ...jobActs(job, replyCallIds.get(job.id)), jobId: job.id },
         tasks: taskLedger.get(job.id) ?? [],
         inline: inlineLedger.get(job.id) ?? [],
       },
@@ -193,56 +221,33 @@ export async function loadExchangeRecords(
 }
 
 /**
- * La déclaration des outils que la plateforme sert sans base : ceux du
- * produit (`servedToolDefinitions`, le catalogue complet que lisent déjà le
- * test `egress` et le banc) et les opérations des connecteurs
- * (`ADAPTER_REGISTRY`, d'où chaque outil de connecteur tient son risque). Lue
- * une fois : ce sont des déclarations de code.
- */
-let platformReadOnly: ReadonlySet<string> | null = null;
-function platformDeclaredReadOnly(): ReadonlySet<string> {
-  if (platformReadOnly) return platformReadOnly;
-  const names = new Set<string>();
-  for (const tool of servedToolDefinitions()) if (tool.riskLevel === 'read') names.add(tool.name);
-  for (const adapter of Object.values(ADAPTER_REGISTRY)) {
-    for (const op of adapter.operations) if (op.risk === 'read') names.add(op.slug);
-  }
-  platformReadOnly = names;
-  return names;
-}
-
-/**
- * Qui se déclare en lecture seule dans l'espace `entityId` : les outils de la
- * plateforme, et les outils MCP de ses serveurs par leur `readOnlyHint`. Un
- * nom que plusieurs serveurs de l'espace prêtent n'est en lecture seule que si
- * TOUS le déclarent : le relevé en montre plus, jamais moins.
- *
- * Le `readOnlyHint` d'un serveur n'abaisse jamais la porte d'approbation
+ * Ce que chaque appel de ces jobs DÉCLARAIT quand il a tourné, lu sur ses
+ * lignes `tool_calls` (par `job_id` et `tool_call_id`). Lecture seule si TOUTES
+ * ses lignes le disent : `risk_level` `read` (un outil du produit, une opération
+ * de connecteur) ou `read_only_hint` vrai (un outil MCP, 0166). Le
+ * `readOnlyHint` d'un serveur n'abaisse jamais la porte d'approbation
  * (adapter-mcp, MCP-001) ; ici il ne décide que de ce que le relevé cite.
  */
-export async function loadDeclaredReadOnly(
+async function loadCallDeclarations(
   db: RunnerDeps['db'],
-  entityId: string | null,
+  jobIds: readonly string[],
 ): Promise<DeclaredReadOnly> {
-  const platform = platformDeclaredReadOnly();
-  const mcp = new Map<string, boolean>();
-  if (entityId) {
-    const servers = await db
-      .select({ slug: mcpServers.slug, availableTools: mcpServers.availableTools })
-      .from(mcpServers)
-      .where(eq(mcpServers.entityId, entityId));
-    for (const server of servers) {
-      const tools = Array.isArray(server.availableTools)
-        ? (server.availableTools as unknown[])
-        : [];
-      for (const t of tools) {
-        const tool = t as { name?: unknown; annotations?: { readOnlyHint?: unknown } | null };
-        if (typeof tool?.name !== 'string') continue;
-        const name = mcpToolNamespace(server.slug) + tool.name;
-        const declared = tool.annotations?.readOnlyHint === true;
-        mcp.set(name, (mcp.get(name) ?? true) && declared);
-      }
+  const declared = new Map<string, boolean>();
+  if (jobIds.length > 0) {
+    const rows = await db
+      .select({
+        jobId: toolCalls.jobId,
+        toolCallId: toolCalls.toolCallId,
+        riskLevel: toolCalls.riskLevel,
+        readOnlyHint: toolCalls.readOnlyHint,
+      })
+      .from(toolCalls)
+      .where(and(inArray(toolCalls.jobId, [...new Set(jobIds)]), isNotNull(toolCalls.toolCallId)));
+    for (const row of rows) {
+      const key = `${row.jobId}\u0000${row.toolCallId}`;
+      const readOnly = row.riskLevel === 'read' || row.readOnlyHint === true;
+      declared.set(key, (declared.get(key) ?? true) && readOnly);
     }
   }
-  return (toolName) => mcp.get(toolName) ?? platform.has(toolName);
+  return (jobId, callId) => callId !== null && declared.get(`${jobId}\u0000${callId}`) === true;
 }

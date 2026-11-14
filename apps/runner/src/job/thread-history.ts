@@ -96,6 +96,8 @@ import {
   runnerRecordMessage,
 } from '@nodal-agents/shared';
 import { messageText } from './state.ts';
+import { jobChatOn } from '@nodal-agents/delivery';
+import type { ChannelKind, JobChat } from '@nodal-agents/delivery';
 
 /**
  * Channels that represent ongoing conversations. Others (`api`, `cron`,
@@ -183,6 +185,8 @@ export async function loadThreadHistory(opts: LoadThreadHistoryOptions): Promise
       result: agentJobs.result,
       messages: agentJobs.messages,
       channel: agentJobs.channel,
+      chatId: agentJobs.chatId,
+      chatChannel: agentJobs.chatChannel,
       createdAt: agentJobs.createdAt,
       completedAt: agentJobs.completedAt,
       resultKind: agentJobs.resultKind,
@@ -583,6 +587,8 @@ function replyOfRow(
     result: string | null;
     messages: unknown;
     channel: string;
+    chatId: string | null;
+    chatChannel: string | null;
     resultKind: string | null;
     // Typed through `Record`: `runner-notes-one-writer.test.ts` reads a key
     // followed by a colon as a write, and this is a read of the stored column.
@@ -596,6 +602,7 @@ function replyOfRow(
     result: agentsOwnResult ? agentsWords : null,
     messages: row.messages,
     channel: row.channel,
+    chat: { id: row.chatId, channel: row.chatChannel },
   });
   return { agentsOwnResult, runnerNotes, agentsWords, reply };
 }
@@ -611,23 +618,32 @@ interface AssistantReply {
 }
 
 /**
- * Un appel d'envoi qui RÉPOND à la conversation, lu sur le schéma de l'outil :
- * sans `chatId` (« omit to reply to the chat that triggered this job ») ni
- * `channel` (« omit to reply on the current conversation's channel »). Un envoi
- * qui nomme sa cible part ailleurs (une autre personne, un autre canal) : ce
- * n'est pas la réponse de ce tour, c'est une action, que le relevé nomme et
- * cite (#1075). Avant, tout envoi par l'outil du canal était relu comme la
- * réponse, sa cible ignorée.
+ * Un appel d'envoi qui s'adresse à CETTE conversation (#1075), comme le garde
+ * de livraison le résout pour l'envoi réel (`resolveRecipient`,
+ * @nodal-agents/tools) : sa cible est le chat de la tâche sur son canal. Une
+ * cible absente (absente, `null` ou vide) est celle-là : le schéma de l'outil
+ * le dit (« omit to reply to the chat that triggered this job », « omit to
+ * reply on the current conversation's channel »). Une cible écrite en clair
+ * l'est aussi quand elle EST le chat de la tâche sur ce canal (`jobChatOn`, la
+ * même lecture que le garde). Tout autre envoi part ailleurs : une autre
+ * personne, un autre canal. Ce n'est pas la réponse de ce tour, c'est une
+ * action, que le relevé nomme et cite.
  */
-function repliesToConversation(input: unknown): input is { text: string } {
+function repliesToConversation(
+  input: unknown,
+  job: { channel: string; chat: JobChat },
+): input is { text: string } {
   if (!input || typeof input !== 'object') return false;
   const i = input as { text?: unknown; chatId?: unknown; channel?: unknown };
-  return (
-    typeof i.text === 'string' &&
-    i.text.trim() !== '' &&
-    i.chatId === undefined &&
-    i.channel === undefined
-  );
+  if (typeof i.text !== 'string' || i.text.trim() === '') return false;
+  const named = (v: unknown): string | null =>
+    v === undefined || v === null || String(v).trim() === '' ? null : String(v).trim();
+  const chatId = named(i.chatId);
+  const channel = named(i.channel);
+  if (chatId === null && channel === null) return true;
+  const target = channel ?? job.channel;
+  const own = jobChatOn(job.chat, target as ChannelKind);
+  return own !== null && (chatId ?? own) === own;
 }
 
 function extractAssistantReply(row: {
@@ -635,6 +651,8 @@ function extractAssistantReply(row: {
   result: string | null;
   messages: unknown;
   channel: string;
+  /** The job's chat (`agent_jobs.chat_id` and the channel it was resolved on). */
+  chat: JobChat;
 }): AssistantReply | null {
   // 1. result column.
   if (row.result !== null && row.result !== undefined && row.result.trim() !== '') {
@@ -663,7 +681,7 @@ function extractAssistantReply(row: {
           input?: unknown;
         };
         if (part.type !== 'tool-call' || part.toolName !== sendTool) continue;
-        if (!repliesToConversation(part.input)) continue;
+        if (!repliesToConversation(part.input, row)) continue;
         parts.push(part.input.text);
         if (typeof part.toolCallId === 'string') callIds.add(part.toolCallId);
       }

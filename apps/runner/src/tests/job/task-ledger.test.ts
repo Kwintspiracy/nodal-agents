@@ -106,6 +106,7 @@ describe('loadTaskLedger @cap:suivre-execution/moteur', () => {
     const entries = ledger.get(rootJobId) ?? [];
     expect(entries).toHaveLength(1);
     expect(entries[0]).toEqual({
+      jobId: childJobId,
       title: 'Research Law & Order and send to Mathilde',
       status: 'done',
       toolsUsed: ['web_search', 'telegram_send_message'],
@@ -243,8 +244,22 @@ describe('loadTaskLedger @cap:suivre-execution/moteur', () => {
 
   it('formatTaskLedgerEntry renders a done and a blocked task', () => {
     const lines = [
-      { title: 'a', status: 'done' as const, toolsUsed: ['web_search'], calls: [], result: 'ok' },
-      { title: 'b', status: 'blocked' as const, toolsUsed: [], calls: [], result: null },
+      {
+        jobId: null,
+        title: 'a',
+        status: 'done' as const,
+        toolsUsed: ['web_search'],
+        calls: [],
+        result: 'ok',
+      },
+      {
+        jobId: null,
+        title: 'b',
+        status: 'blocked' as const,
+        toolsUsed: [],
+        calls: [],
+        result: null,
+      },
     ].map(formatTaskLedgerEntry);
     expect(lines).toEqual([
       '[Task "a" completed: actions — web_search; result: ok]',

@@ -22,9 +22,41 @@ import { toolResultOutputText, toolResultShape } from './tool-result-shape.ts';
 export const RESULT_HEAD_MAX_CHARS = 200;
 /** Au plus ce nombre de lignes non vides par résultat cité. */
 const RESULT_HEAD_LINES = 2;
+/** Au plus ce nombre de caractères par nom d'outil (les fournisseurs n'en acceptent pas plus). */
+export const NAME_MAX_CHARS = 64;
+/** Au plus ce nombre de noms distincts par liste d'outils ; les autres sont comptés. */
+export const MAX_TOOL_NAMES = 8;
 
-/** Un appel d'outil d'un job : son nom, et ce qu'il a rendu (`undefined` : aucun résultat rangé). */
+/**
+ * Ce qui coupe une ligne, par classe Unicode : tout séparateur de ligne (Zl) ou
+ * de paragraphe (Zp), et tout caractère de contrôle (Cc) — `\n`, `\r`, VT, FF,
+ * NEL (U+0085) compris. La tabulation est un contrôle aussi : `oneLine` en fait
+ * une espace, mais elle ne sépare pas deux lignes d'un résultat.
+ */
+const LINE_BREAK = /(?:(?!\t)[\p{Zl}\p{Zp}\p{Cc}])+/u;
+const NOT_ON_ONE_LINE = /[\p{Zl}\p{Zp}\p{Cc}]+/gu;
+
+/**
+ * Un texte sur UNE ligne : chaque suite de séparateurs de ligne ou de
+ * paragraphe et de caractères de contrôle devient une espace. Le seul passage
+ * de tout ce que le relevé imprime (exchange-record.ts).
+ */
+export function oneLine(text: string): string {
+  return text.replace(NOT_ON_ONE_LINE, ' ');
+}
+
+/** Un champ venu de la base, sur une ligne et à sa borne : la coupe est marquée `…`. */
+export function recordField(text: string, max: number): string {
+  const line = oneLine(text).trim();
+  return line.length > max ? `${line.slice(0, max - 1)}…` : line;
+}
+
+/**
+ * Un appel d'outil d'un job : son id, son nom, et ce qu'il a rendu
+ * (`undefined` : aucun résultat rangé).
+ */
 export interface ToolCallFact {
+  id: string | null;
   name: string;
   output: unknown;
 }
@@ -82,14 +114,11 @@ export function jobActs(
     (t): t is string =>
       typeof t === 'string' && t !== returnResultTool.name && (!called.has(t) || kept.has(t)),
   );
-  return { toolsUsed, calls: calls.map(({ name, output }) => ({ name, output })) };
+  return { toolsUsed, calls };
 }
 
 /** Every call of the job's own transcript, with its id and its stored result. */
-function jobCalls(job: {
-  task: string | null;
-  messages: unknown;
-}): Array<ToolCallFact & { id: string | null }> {
+function jobCalls(job: { task: string | null; messages: unknown }): ToolCallFact[] {
   const own = ownTranscript(job.messages, job.task ?? '');
   const results = new Map<string, unknown>();
   for (const m of own) {
@@ -101,7 +130,7 @@ function jobCalls(job: {
       }
     }
   }
-  const calls: Array<ToolCallFact & { id: string | null }> = [];
+  const calls: ToolCallFact[] = [];
   for (const m of own) {
     if (m.role !== 'assistant' || !Array.isArray(m.content)) continue;
     for (const p of m.content as unknown[]) {
@@ -124,12 +153,21 @@ function jobCalls(job: {
  * exécuté), puis ceux que la transcription montre appelés sans les avoir
  * exécutés (un appel refusé). Le compte vient de la transcription ; un outil
  * que seule `tools_used` connaît compte pour un.
+ *
+ * Bornée (invariant #4) : au plus MAX_TOOL_NAMES noms, les premiers dans cet
+ * ordre, chacun à NAME_MAX_CHARS ; les autres sont comptés à la fin,
+ * `(+N other tools)`.
  */
 export function toolNames(acts: JobActs): string {
   const counts = new Map<string, number>();
   for (const name of acts.toolsUsed) counts.set(name, 0);
   for (const call of acts.calls) counts.set(call.name, (counts.get(call.name) ?? 0) + 1);
-  return [...counts.entries()].map(([name, n]) => (n > 1 ? `${name} ×${n}` : name)).join(', ');
+  const all = [...counts.entries()];
+  const shown = all
+    .slice(0, MAX_TOOL_NAMES)
+    .map(([name, n]) => `${recordField(name, NAME_MAX_CHARS)}${n > 1 ? ` ×${n}` : ''}`);
+  const others = all.length - MAX_TOOL_NAMES;
+  return others > 0 ? `${shown.join(', ')} (+${others} other tools)` : shown.join(', ');
 }
 
 /**
@@ -148,15 +186,12 @@ export function resultHead(output: unknown): string {
   if (output === undefined) return '(no result recorded)';
   if (toolResultShape(output) === 'elided') return '(result no longer in the transcript)';
   const lines = redactSecretsInText(unframedText(output))
-    .split(/\r?\n/)
-    .map((l) => l.trim())
+    .split(LINE_BREAK)
+    .map((l) => oneLine(l).trim())
     .filter((l) => l !== '')
     .slice(0, RESULT_HEAD_LINES);
-  const head = lines.join(' ');
-  if (head === '') return '(empty result)';
-  return head.length > RESULT_HEAD_MAX_CHARS
-    ? `${head.slice(0, RESULT_HEAD_MAX_CHARS - 1)}…`
-    : head;
+  const head = recordField(lines.join(' '), RESULT_HEAD_MAX_CHARS);
+  return head === '' ? '(empty result)' : head;
 }
 
 /**
