@@ -1682,10 +1682,11 @@ export async function buildSystemPrompt(
       'the end user directly. **Your final written reply IS your deliverable: it is exactly ' +
       'what the orchestrator receives, and it is the only thing it receives.** When you have ' +
       'finished, write that reply — the outcomes, not your intentions: what you found, what ' +
-      'you changed, the values and paths that matter, and anything that failed. Write it AFTER ' +
-      'your last action: a text you wrote before acting again was a step, and it is never ' +
-      'handed back as your deliverable. Then call `return_result` to signal you are done (if ' +
-      'you finish with `return_result` alone, its `reason` is taken as your reply). Signalling ' +
+      'you changed, the values and paths that matter, and anything that failed. A text ' +
+      'followed by more actions in later steps was a step, and it is never handed back as ' +
+      'your deliverable. Then call `return_result` to signal you are done (if you finish ' +
+      'with `return_result` alone after more actions, its `reason` is taken as your reply). ' +
+      'Signalling ' +
       'success with no reply hands the orchestrator an empty delegation, and the ' +
       'run is failed rather than accepted. The orchestrator collects your reply and sends the ' +
       'ONE final message to the user on their original channel. Do NOT contact the user ' +

@@ -58,6 +58,8 @@ describe('answerOfRun — la réponse est celle de la fin @cap:organiser-equipe/
         tool(),
         step('', write('doc.html')),
         tool(),
+        step('', write('doc.html')),
+        tool(),
         step('', done(REASON)),
       ]),
     ).toBe(REASON);
@@ -75,10 +77,34 @@ describe('answerOfRun — la réponse est celle de la fin @cap:organiser-equipe/
     ).toBe('');
   });
 
-  it('un texte dans un pas qui AGIT sans finir est écrit avant ses appels : périmé', () => {
+  it('les appels du MÊME pas ne périment pas le texte : seul un pas ultérieur qui agit le fait', () => {
+    // La forme de 81 jobs relus : un rapport écrit avec l'appel qui enregistre
+    // son verdict, puis `return_result` seul.
+    const verdict = { name: 'record_review_verdict', input: { ok: true } };
+    expect(answerOfRun([user('task'), step(REPORT, verdict), tool(), step('', done())])).toBe(
+      REPORT,
+    );
+    // Un pas ultérieur qui agit, lui, le périme.
     expect(
-      answerOfRun([user('task'), step(NARRATION, write('doc.html')), tool(), step('', done())]),
+      answerOfRun([
+        user('task'),
+        step(REPORT, verdict),
+        tool(),
+        step('', write('a')),
+        tool(),
+        step('', done()),
+      ]),
     ).toBe('');
+  });
+
+  it('un reason écrit APRÈS un texte qui partageait son pas avec des appels le SUIT', () => {
+    expect(
+      answerOfRun([user('task'), step(REPORT, write('a')), tool(), step('', done(REASON))]),
+    ).toBe([REPORT, REASON].join('\n\n'));
+    // Un texte seul dans son pas a tout vu : le reason qui suit n'ajoute rien.
+    expect(answerOfRun([user('task'), step(REPORT, done()), tool(), step('', done(REASON))])).toBe(
+      REPORT,
+    );
   });
 
   it('inchangé : un rapport et return_result dans le même pas (même avec un reason)', () => {
@@ -101,12 +127,14 @@ describe('answerOfRun — la réponse est celle de la fin @cap:organiser-equipe/
         user('task'),
         step(NARRATION, write('a')),
         tool(),
+        step('', write('a')),
+        tool(),
         step('', { name: 'return_result', input: { status: 'blocked', reason: 'no key' } }),
       ]),
     ).toBe('');
   });
 
-  it('dashboard_publish est une réponse écrite, pas un travail', () => {
+  it('dashboard_publish donne les mots de son pas', () => {
     expect(
       answerOfRun([
         user('task'),
@@ -159,6 +187,8 @@ describe('answerOfRun — la réponse est celle de la fin @cap:organiser-equipe/
         tool(),
         user(brief),
         step('Trying again.', write('doc.html')),
+        tool(),
+        step('', write('doc.html')),
         tool(),
         step('', done('First repair: closed one div.')),
         tool(),

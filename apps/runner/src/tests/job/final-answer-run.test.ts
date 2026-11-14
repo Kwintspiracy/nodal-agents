@@ -364,6 +364,7 @@ describe('ce que reçoit l’agent qui délègue : la réponse de la FIN (#1083,
       delegate(),
       { text: NARRATION, toolCalls: [write('b1.html', GOOD)] },
       { toolCalls: [write('b1.html', GOOD)] },
+      { toolCalls: [write('b1.html', GOOD)] },
       { toolCalls: [done({ reason: REASON })] },
       rootEnds,
     ]);
@@ -386,6 +387,7 @@ describe('ce que reçoit l’agent qui délègue : la réponse de la FIN (#1083,
     const { client, prompts } = makeMockLlmClient([
       delegate(),
       { text: NARRATION, toolCalls: [write('b2.html', GOOD)] },
+      { toolCalls: [write('b2.html', GOOD)] },
       { toolCalls: [done()] },
       { text: FINAL },
       rootEnds,
@@ -397,7 +399,7 @@ describe('ce que reçoit l’agent qui délègue : la réponse de la FIN (#1083,
     expect(child.status).toBe('completed');
     expect(child.result).toBe(FINAL);
     // Le spécialiste a reçu le rappel AVANT d'écrire sa réponse.
-    expect(prompts[3]).toContain('aucun texte écrit APRÈS');
+    expect(prompts[4]).toContain('aucun texte écrit depuis ton dernier appel');
     expect(resumeOf(prompts)).toContain(FINAL);
     expect(resumeOf(prompts)).not.toContain('I’ll tighten the text');
   });
@@ -407,6 +409,7 @@ describe('ce que reçoit l’agent qui délègue : la réponse de la FIN (#1083,
     const { client, prompts } = makeMockLlmClient([
       delegate(),
       { text: NARRATION, toolCalls: [write('b3.html', GOOD)] },
+      { toolCalls: [write('b3.html', GOOD)] },
       { toolCalls: [done()] },
       { toolCalls: [done()] },
       rootEnds,
@@ -419,6 +422,90 @@ describe('ce que reçoit l’agent qui délègue : la réponse de la FIN (#1083,
     expect(child.error).toBe('empty_deliverable');
     expect(resumeOf(prompts)).toContain('empty_deliverable');
     expect(resumeOf(prompts)).not.toContain('I’ll tighten the text');
+  });
+});
+
+// ─── Le rapport écrit avec un appel de son propre pas (relecture, P1) ──────
+//
+// Relu par l'orchestrateur sur les 2 217 jobs de l'installation du
+// propriétaire : 81 jobs écrivent leur rapport complet dans le même pas qu'un
+// appel (le verdict d'une revue, une mémoire, un vote, un fichier…) et ne font
+// plus rien après, puis finissent par `return_result` seul. La première règle
+// les privait de leur rapport.
+
+describe('un rapport écrit AVEC un appel de son pas reste la réponse @cap:organiser-equipe/moteur', () => {
+  it('délégué : rapport + appel, puis return_result seul : le parent reçoit le rapport', async () => {
+    const rootId = await insertJob();
+    const { client, prompts } = makeMockLlmClient([
+      delegate(),
+      { text: REPORT, toolCalls: [write('r1.html', GOOD)] },
+      { toolCalls: [done()] },
+      rootEnds,
+    ]);
+
+    await executeJob(rootId as JobId, makeDeps(client), testEnv);
+
+    const child = await childOf(rootId);
+    expect(child.status).toBe('completed');
+    expect(child.result).toBe(REPORT);
+    expect(resumeOf(prompts)).toContain('Sources: NIST CODATA 2022.');
+    // Aucun rappel : le rapport tenait.
+    expect(prompts.join('')).not.toContain('aucun texte écrit depuis ton dernier appel');
+  });
+
+  it('tête : rapport + appel, puis return_result seul : le résultat est le rapport', async () => {
+    const jobId = await insertJob({ agentId: worker });
+    const { client, prompts } = makeMockLlmClient([
+      { text: REPORT, toolCalls: [write('r2.html', GOOD)] },
+      { toolCalls: [done()] },
+    ]);
+
+    const outcome = await executeJob(jobId as JobId, makeDeps(client), testEnv);
+
+    expect(outcome.status).toBe('completed');
+    if (outcome.status !== 'completed') throw new Error('unreachable');
+    expect((await rowOf(jobId)).result).toBe(REPORT);
+    expect(outcome.result).toBe(REPORT);
+    expect(prompts).toHaveLength(2);
+  });
+
+  it('le reason d’un return_result ULTÉRIEUR suit le rapport, sans un mot du runner', async () => {
+    const rootId = await insertJob();
+    const { client, prompts } = makeMockLlmClient([
+      delegate(),
+      { text: REPORT, toolCalls: [write('r3.html', GOOD)] },
+      { toolCalls: [done({ reason: REASON })] },
+      rootEnds,
+    ]);
+
+    await executeJob(rootId as JobId, makeDeps(client), testEnv);
+
+    const child = await childOf(rootId);
+    expect(child.result).toBe(`${REPORT}\n\n${REASON}`);
+    const resume = resumeOf(prompts);
+    expect(resume.indexOf('Sources: NIST')).toBeLessThan(resume.indexOf('page_count 1, page size'));
+  });
+
+  it('un rapport puis un pas ULTÉRIEUR qui agit, puis return_result seul : le rappel dit pourquoi, et la réponse réécrite part', async () => {
+    const rootId = await insertJob();
+    const { client, prompts } = makeMockLlmClient([
+      delegate(),
+      { text: REPORT, toolCalls: [write('r4.html', GOOD)] },
+      { toolCalls: [write('r4-check.html', GOOD)] },
+      { toolCalls: [done()] },
+      { text: FINAL },
+      rootEnds,
+    ]);
+
+    await executeJob(rootId as JobId, makeDeps(client), testEnv);
+
+    // Le coût : UN tour de plus, et le rappel dit au modèle pourquoi son texte
+    // n'est pas repris et qu'il doit le redire en entier, pas y renvoyer.
+    expect(prompts[4]).toContain('n’est pas repris, parce qu’il ne connaissait pas la suite');
+    expect(prompts[4]).toContain('pas de « voir plus haut »');
+    const child = await childOf(rootId);
+    expect(child.result).toBe(FINAL);
+    expect(resumeOf(prompts)).toContain(FINAL);
   });
 });
 
@@ -516,7 +603,7 @@ describe('un job de TÊTE rend la même réponse à la personne (#1083) @cap:par
         ],
       },
       { toolCalls: [write('h3.html', GOOD)] },
-      { toolCalls: [done({ deliverables: ['h3.html'], reason: NOTE })] },
+      { text: NOTE },
     ]);
 
     const outcome = await executeJob(jobId as JobId, makeDeps(client), testEnv);
@@ -525,6 +612,18 @@ describe('un job de TÊTE rend la même réponse à la personne (#1083) @cap:par
     if (outcome.status !== 'completed') throw new Error('unreachable');
     expect((await rowOf(jobId)).result).toBe(`${REPORT}\n\n${NOTE}`);
     expect(outcome.result).toBe(`${REPORT}\n\n${NOTE}`);
+  });
+
+  it('un texte PUBLIÉ puis un texte plus tard et return_result : le texte publié reste, comme sur main', async () => {
+    const jobId = await insertJob({ agentId: worker });
+    const { client } = makeMockLlmClient([
+      { toolCalls: [{ toolName: 'dashboard_publish', args: { text: REPORT } }] },
+      { text: 'Published the report on the dashboard.', toolCalls: [done()] },
+    ]);
+
+    await executeJob(jobId as JobId, makeDeps(client), testEnv);
+
+    expect((await rowOf(jobId)).result).toBe(REPORT);
   });
 
   it('forme B : le résultat du job est le reason de la fin, pas la narration', async () => {
@@ -657,6 +756,7 @@ describe('les autres fins lisent la même réponse (#1083) @cap:verifier-un-livr
     const jobId = await insertJob({ agentId: worker });
     const { client } = makeMockLlmClient([
       { text: NARRATION, toolCalls: [write('d1.html', GOOD)] },
+      { toolCalls: [write('d1.html', GOOD)] },
       { toolCalls: [done({ deliverables: [dehors], reason: REASON })] },
       { toolCalls: [done({ deliverables: [dehors], reason: REASON })] },
     ]);

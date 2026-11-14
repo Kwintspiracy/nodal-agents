@@ -1,11 +1,12 @@
 // Built-in: return_result
 // State-machine signal: tells the runner the task is complete or blocked.
-// The answer is the agent's written reply written AFTER its last action, or a
-// send tool's message when the job's reply goes to a chat (#649). A text
-// written before later actions is a step, not the answer (#1083). When the
-// agent finishes with return_result alone after working, its `reason` with
-// status='success' IS the answer (two models did it three times on 2026-11-14:
-// the runner used to drop it and promote the stale text instead).
+// The answer is the agent's written reply, or a send tool's message when the
+// job's reply goes to a chat (#649). A text followed by actions in LATER steps
+// is a step, not the answer (#1083). A `reason` given with status='success' in
+// a later step is what the agent says after its last action: the answer when
+// no text stands, added after a text written together with tool calls (two
+// models put their final summary there three times on 2026-11-14: the runner
+// used to drop it and promote the stale text instead).
 
 import { z } from 'zod';
 import type { ToolDefinition } from '../types';
@@ -24,8 +25,8 @@ export const ReturnResultInputSchema = z.object({
     .string()
     .optional()
     .describe(
-      'blocked: why, and what the user can do. success: your answer, used only when you ' +
-        'finish with no written reply after your last action.',
+      'blocked: why, and what the user can do. success: what you say after your last ' +
+        'action; it is your answer when no written reply stands after that action.',
     ),
   // The FILES this run delivers, named by the agent (issue #509). Each one is
   // checked before the run can end as a success: a missing or broken file is
@@ -55,14 +56,14 @@ export const returnResultTool: ToolDefinition<typeof ReturnResultInputSchema, Re
     'Report that a task succeeded or is blocked. It sends no answer by itself: the agent delivers its answer in the same step, through the right channel.',
   description:
     'Signal that the task is complete (status="success") or blocked (status="blocked"). ' +
-    'Your answer is your written reply, written AFTER your last action, unless the ' +
-    '`delivery:` line of your Job context says a send tool is the only way your replies reach ' +
-    'the user. A text you wrote before acting again is a step, not your answer: it is never ' +
-    'handed back as your result. On a DELEGATED sub-task you have no delivery tool: your written reply is the delivery, so ' +
+    'Your answer is your written reply, unless the `delivery:` line of your Job context says ' +
+    'a send tool is the only way your replies reach the user. A text followed by more ' +
+    'actions in LATER steps is a step, not your answer: it is never handed back as your ' +
+    'result. On a DELEGATED sub-task you have no delivery tool: your written reply is the delivery, so ' +
     'write your deliverable as your reply text in the same turn. If you finish with ' +
-    'return_result alone after working, put that answer in `reason`: with status="success" it ' +
-    'is used as your answer only then. Signalling success with no answer and no delivery ' +
-    'hands back an empty result and the run is failed, not accepted. ' +
+    'return_result alone after more actions, put that answer in `reason` (status="success"). ' +
+    'Signalling success with no answer and no delivery hands back an empty result and the ' +
+    'run is failed, not accepted. ' +
     'When a send tool carries your reply (the `delivery:` line says so), emit it and ' +
     '`return_result` **in the same assistant turn** (parallel tool calls). The runner handles delivery ' +
     'failures automatically (defers finalization if a sibling tool errors), so there is no need ' +

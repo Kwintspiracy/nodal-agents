@@ -15,21 +15,28 @@
 // La règle, une seule pour toutes les portes de fin (texte sans outil,
 // `return_result`, l'échec sur un livrable promis non vérifié) :
 //
-//  1. Un texte écrit AVANT un travail (un appel d'outil qui a tourné après lui,
-//     autre que le signal de fin) n'est pas la réponse du job. Un texte et ses
-//     appels du MÊME pas : le texte est écrit avant que les appels tournent ;
-//     il ne tient que si ce pas est celui qui finit (`return_result`).
-//  2. Sans texte frais, le `reason` d'un `return_result` en `success` EST la
-//     réponse — sauf quand ce sont les outils d'envoi qui portent les réponses
-//     du job (#649) : là, la réponse est ce qui est parti, et la relecture du
-//     fil la lit dans les envois (#1075), jamais dans une phrase de signal.
+//  1. Un texte n'est périmé que par un travail d'un pas ULTÉRIEUR (tout appel
+//     d'outil autre que le signal de fin). Les appels écrits dans le MÊME pas
+//     que lui ne le périment pas : un rapport complet écrit avec l'appel qui
+//     enregistre son verdict, puis `return_result` seul, est une réponse —
+//     81 des 2 217 jobs relus sur l'installation du propriétaire ont cette
+//     forme, et la règle d'abord écrite ici leur retirait leur rapport.
+//  2. Le `reason` d'un `return_result` en `success`, écrit dans un pas
+//     ultérieur, est ce que le job dit APRÈS son dernier travail : il n'est pas
+//     jeté. Sans texte frais, il EST la réponse ; après un texte écrit avec des
+//     appels (donc avant d'en voir les résultats), il le SUIT ; après un texte
+//     écrit seul dans son pas, il n'ajoute rien (le texte a tout vu). Sauf
+//     quand ce sont les outils d'envoi qui portent les réponses du job
+//     (#649) : là, la réponse est ce qui est parti, et la relecture du fil la
+//     lit dans les envois (#1075), jamais dans une phrase de signal.
 //  3. Un tour de réparation répare un livrable ; il ne remplace pas la réponse.
 //     La réponse d'un job passé par N réparations est celle d'avant la preuve,
 //     SUIVIE de ce que chaque réparation a dit — composée ici, sans un mot du
 //     runner entre les deux (invariant #2).
 //
-// `dashboard_publish` est la réponse ÉCRITE EXPLICITEMENT (« Set this job's
-// RESULT ») : elle compte comme les mots de son pas, et pas comme un travail.
+// La règle parle de PAS, jamais d'outils : aucun outil n'est exempté d'être un
+// travail. `dashboard_publish` dit seulement QUELS sont les mots de son pas :
+// le texte qu'il pose comme résultat (« Set this job's RESULT »).
 //
 // Ce module ne lit QUE la transcription. Une transcription relue après une
 // reprise (approbation, délégation) dit la même chose qu'en mémoire : aucun
@@ -40,7 +47,7 @@ import { isRepairBrief } from '../verification/repair-brief.ts';
 
 /** Le signal de fin : il ne porte pas de travail. */
 const END_SIGNAL = 'return_result';
-/** La réponse publiée explicitement : des mots, pas un travail. */
+/** La réponse publiée explicitement : ce sont les mots de son pas. */
 const PUBLISH = 'dashboard_publish';
 
 const SEND_TOOLS: ReadonlySet<string> = new Set(DELIVERY_TOOL_NAMES);
@@ -106,27 +113,36 @@ function successReason(step: Step): string | null {
  * brief de réparation) jusqu'à la section suivante.
  */
 function answerOfSection(steps: readonly Step[], repliesGoBySend: boolean): string {
+  // Les derniers mots qui ne sont suivis d'AUCUN travail d'un pas ultérieur.
   let words = '';
-  let fresh = false;
-  // Le `reason` du DERNIER signal de fin de la section, `null` sans signal.
-  let reason: string | null = null;
+  // Le pas qui les porte a-t-il aussi agi ? Ses mots précèdent alors les
+  // résultats de ses appels.
+  let wordsActed = false;
+  // Le `reason` du dernier signal de fin APRÈS ces mots, `''` s'il n'en a pas.
+  let reasonAfter = '';
   for (const step of steps) {
-    const ends = step.calls.some((c) => c.name === END_SIGNAL);
-    const works = step.calls.some((c) => c.name !== END_SIGNAL && c.name !== PUBLISH);
-    // Un travail périme les mots écrits AVANT lui.
-    if (works) fresh = false;
+    const works = step.calls.some((c) => c.name !== END_SIGNAL);
     const stepWords = publishedText(step) || step.text;
+    // Un travail périme les mots des pas d'AVANT lui, pas ceux de son pas.
+    if (works) {
+      words = '';
+      wordsActed = false;
+      reasonAfter = '';
+    }
     if (stepWords !== '') {
       words = stepWords;
-      // Les mots d'un pas qui agit sans finir sont écrits avant ses appels.
-      fresh = ends || !works;
+      wordsActed = works;
+      reasonAfter = '';
+      // Un `reason` du même pas que les mots est écrit avec eux : ils priment.
+      continue;
     }
     const r = successReason(step);
-    if (r !== null) reason = r;
+    if (r !== null) reasonAfter = r;
   }
-  if (words !== '' && fresh) return words;
-  if (!repliesGoBySend && reason) return reason;
-  return '';
+  const reason = repliesGoBySend ? '' : reasonAfter;
+  if (words === '') return reason;
+  if (wordsActed && reason !== '' && reason !== words) return [words, reason].join('\n\n');
+  return words;
 }
 
 /**

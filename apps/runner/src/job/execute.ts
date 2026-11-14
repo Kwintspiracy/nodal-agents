@@ -4523,10 +4523,12 @@ async function runJobTracked(
   const emptyDeliverableNudge =
     '[système] ' +
     EMPTY_DELIVERABLE_NUDGE_MARK +
-    ' Tu as signalé la fin de la tâche sans donner de réponse : aucun texte écrit APRÈS ' +
-    'ton dernier travail (un texte écrit avant d’agir encore n’est qu’une étape), et aucun ' +
-    '`reason` : ta réponse écrite EST le livrable. Écris maintenant ton livrable (ce que tu ' +
-    'as trouvé ou fait, en résultats, pas en intentions) comme réponse, puis arrête-toi.';
+    ' Tu as signalé la fin de la tâche sans donner de réponse : aucun texte écrit depuis ' +
+    'ton dernier appel d’outil, et aucun `reason` : ta réponse écrite EST le livrable. Un ' +
+    'texte écrit AVANT un pas qui a encore agi n’est pas repris, parce qu’il ne connaissait ' +
+    'pas la suite. Écris maintenant ton livrable EN ENTIER (ce que tu as trouvé ou fait, en ' +
+    'résultats, pas en intentions), en reprenant ce qui reste vrai de ce texte : pas de ' +
+    '« voir plus haut », personne ne le lira. Puis arrête-toi.';
 
   // A return_result(status='blocked') MUST carry a user-facing reason. If the
   // agent omits it, nudge (bounded) for one before finalizing — never leave the
@@ -6844,11 +6846,11 @@ async function runJobTracked(
         // already wrote a result (dashboard_publish, an earlier resume) has a
         // deliverable — neither is empty.
         //
-        // EMPTY means no ANSWER (#1083), not no text: a text written before work
-        // that followed it is a step, not the deliverable, and promoting it
-        // handed a delegating agent « je relance le rendu » for a document that
-        // was finished. A `reason` given with the success signal is the answer
-        // when no written reply follows the work (`answerOfRun`).
+        // EMPTY means no ANSWER (#1083), not no text: a text followed by work in
+        // a LATER step is a step, not the deliverable, and promoting it handed a
+        // delegating agent « je relance le rendu » for a document that was
+        // finished. A `reason` given with the success signal is the answer when
+        // no written reply follows the work (`answerOfRun`).
         const reponseRetour = reponseDuRun();
         if (reponseRetour === '' && lastAssistantTextSeen !== '') {
           trace('answer_predates_work', { turn, lastTextLen: lastAssistantTextSeen.length });
@@ -6913,8 +6915,8 @@ async function runJobTracked(
                 output: toResultOutput({
                   error:
                     'deferred: tu signales la fin de la tâche sans réponse : aucun texte écrit ' +
-                    'après ton dernier travail, et aucun `reason`. Écris ton livrable comme ' +
-                    'réponse, puis signale à nouveau.',
+                    'depuis ton dernier appel d’outil, et aucun `reason`. Écris ton livrable en ' +
+                    'entier comme réponse, puis signale à nouveau.',
                 }),
               });
               messages = [...messages, turnToolMessage()];
@@ -7031,13 +7033,13 @@ async function runJobTracked(
           });
         }
 
-        // La réponse du job (#1083) : sa réponse écrite après son dernier travail
-        // (un `dashboard_publish` compte comme réponse écrite), sinon le
-        // `reason` de ce signal ; précédée, après des tours de réparation, de la
-        // réponse d'avant la preuve. Vide — rien n'a été répondu, ou les outils
-        // d'envoi portent les réponses (#649) —, `completeJob` garde le `result`
-        // déjà écrit (brique 33) puis compile les enfants.
-        const finalResult = reponseRetour;
+        // Brique 33, inchangée : VIDE ici. `completeJob` garde un `result` qu'un
+        // outil a déjà écrit (`dashboard_publish`), sinon il le remplit de la
+        // réponse du job (#1083, `answerOfRun` — la même lecture que la garde
+        // ci-dessus et que la branche texte), puis compile les enfants. Passer
+        // la réponse ici remplaçait un texte publié par un texte écrit plus
+        // tard dans le run, ce que main ne faisait pas.
+        const finalResult = '';
         toolsUsed = [...new Set([...toolsUsed, 'return_result'])];
 
         toolResultBlocks.push({
@@ -7083,11 +7085,12 @@ async function runJobTracked(
           {
             jobId: jobId as string,
             result: finalResult,
-            // Les MOTS DE L'AGENT (#154, #210) : sa réponse, ou son `reason`.
-            // Quand `finalResult` est vide, rien n'est écrit et cette marque
-            // n'est pas posée : celle de l'outil de livraison qui a rempli
-            // `result` plus tôt, ou celle des remplissages de `completeJob`,
-            // reste en place.
+            // `finalResult` est VIDE ici (brique 33), donc rien n'est écrit et
+            // cette marque n'est pas posée : celle de l'outil de livraison qui a
+            // rempli `result` plus tôt, ou celle des remplissages de
+            // `completeJob`, reste en place. Elle est nommée quand même — la
+            // primitive exige que chaque porte DISE de quel genre est le texte
+            // qu'elle passe.
             resultKind: 'prose',
             // Même boucle, même reprise possible (issue #375).
             repairTurn: 'supported',
