@@ -88,6 +88,8 @@ describe('migration 0160_voice_transcription @cap:parler-a-un-agent/moteur', () 
         source: 'openrouter',
         model: 'google/gemini-3.8-flash-tts',
         voice: 'Kore',
+        // 0165 (#1048), applied with every migration, names the ear's source.
+        transcriptionSource: 'openrouter',
         transcriptionModel: 'x-ai/grok-stt-1.0',
       });
     } finally {

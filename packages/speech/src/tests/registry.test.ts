@@ -52,8 +52,14 @@ describe('registry — fail loud, never a default provider', () => {
     // MiniMax synthesises without transcribing. One merged list would offer a
     // listening provider that cannot listen — the exact bug this separation
     // prevents.
-    expect([...speechProviders()]).toEqual(['google', 'minimax', 'openrouter']);
-    expect([...transcriptionProviders()]).toEqual(['google', 'openrouter']);
+    // `openai-compatible` (#1048) does both: a server the user runs, at its address.
+    expect([...speechProviders()]).toEqual([
+      'google',
+      'minimax',
+      'openrouter',
+      'openai-compatible',
+    ]);
+    expect([...transcriptionProviders()]).toEqual(['google', 'openrouter', 'openai-compatible']);
   });
 
   it('only the adapters that really stream declare streamOutput', () => {

@@ -14,7 +14,9 @@
 // `audio_malformed` 400, 409 quand l'espace n'a pas d'oreille (le code de la
 // résolution : `voice_key_missing` avec `source`, `voice_setting_missing`,
 // `voice_setting_unreadable`…, #976), `transcription_failed` 502 (avec
-// `detail`, les mots du fournisseur, masqués). Chaque refus est écrit au
+// `reason`, le code de packages/speech — `speech_unreachable` quand rien ne
+// répond à l'adresse d'un serveur de la personne, #1048 — et `detail`, les
+// mots du fournisseur, masqués). Jamais une autre oreille à la place. Chaque refus est écrit au
 // journal du runner avec son code. Rien n'est rangé. Sinon la
 // réponse est `text/event-stream`, et ses événements sont, dans cet ordre :
 //
@@ -223,7 +225,11 @@ export async function voiceTurnEndRoute(
   const heard = await hearVoiceTurn(deps, u);
   if (heard.outcome === 'failed') {
     return c.json(
-      { error: heard.error, ...(heard.detail ? { detail: heard.detail } : {}) },
+      {
+        error: heard.error,
+        ...(heard.reason ? { reason: heard.reason } : {}),
+        ...(heard.detail ? { detail: heard.detail } : {}),
+      },
       heard.status,
     );
   }

@@ -155,7 +155,7 @@ async function post(path: string, body: unknown, connection: SpeechConnection): 
     });
   } catch (err) {
     throw new SpeechError(
-      'speech_provider_error',
+      'speech_unreachable',
       `minimax ${path}: request failed — ${err instanceof Error ? err.message : String(err)}`,
     );
   }
@@ -229,6 +229,7 @@ function hexToBytes(hex: string): Uint8Array {
 
 export const minimaxSpeechAdapter: SpeechAdapter = {
   provider: 'minimax',
+  requiresKey: true,
   capabilities: {
     outputs: ['audio/mpeg'],
     // The catalogue is fetched, not hardcoded: MiniMax carries 332 system

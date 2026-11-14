@@ -27,7 +27,9 @@ import {
   voiceTurnStartRoute,
 } from './routes/voice-turn.ts';
 import {
+  voiceCheckRoute,
   voiceSampleRoute,
+  voiceServerModelsRoute,
   voiceSettingReadRoute,
   voiceSettingWriteRoute,
 } from './routes/voice-setting.ts';
@@ -294,6 +296,9 @@ export function createApp(
   // raison — un module les appelle comme le tableau de bord.
   app.use('/api/voice/setting', requireRunnerAuth);
   app.use('/api/voice/sample', requireRunnerAuth);
+  // L'état d'une part et les modèles d'un serveur de la personne (#1048).
+  app.use('/api/voice/check', requireRunnerAuth);
+  app.use('/api/voice/server/models', requireRunnerAuth);
   // La voix de la réponse d'un job lancé par la voix (#967) : la même garde.
   app.use('/api/voice/replies/*', requireRunnerAuth);
   // #944 — le flux poussé des événements de job. Même garde que /api/chat*.
@@ -353,6 +358,8 @@ export function createApp(
   app.get('/api/voice/setting', (c) => voiceSettingReadRoute(c, deps));
   app.put('/api/voice/setting', (c) => voiceSettingWriteRoute(c, deps));
   app.post('/api/voice/sample', (c) => voiceSampleRoute(c, deps));
+  app.post('/api/voice/check', (c) => voiceCheckRoute(c, deps));
+  app.post('/api/voice/server/models', (c) => voiceServerModelsRoute(c, deps));
   app.get('/api/voice/replies/:audioId', (c) => voiceReplyRoute(c, deps));
 
   app.post('/api/approve', (c) => approveRoute(c, deps, runnerEnv));

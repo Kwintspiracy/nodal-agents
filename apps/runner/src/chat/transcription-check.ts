@@ -70,15 +70,28 @@ export function heardTheProbe(text: string): boolean {
 
 export interface EarRefusal {
   error: string;
-  source: 'openrouter';
+  /** The source of the ear that was tried (#1048: OpenRouter, or a server the user runs). */
+  source: string;
   detail: string;
+  /** What the ear wrote instead of the probe (`transcription_not_faithful`), so a screen can quote it (#1048). */
+  heard?: string;
 }
 
-/** Does the candidate ear write down what the voice said? `null`: yes. */
-export async function earProbeRefusal(
-  ear: WorkspaceEar,
-  audio: ProbeAudio,
-): Promise<EarRefusal | null> {
+/** What the candidate ear wrote for the probe, and how long it took. */
+export type EarProbe =
+  | { ok: true; heard: string; latencyMs: number }
+  | { ok: false; refusal: EarRefusal };
+
+/**
+ * Does the candidate ear write down what the voice said? The same trial for
+ * every source: OpenRouter's endpoint and a server the user runs (#1048).
+ */
+export async function earProbe(ear: WorkspaceEar, audio: ProbeAudio): Promise<EarProbe> {
+  const refused = (error: string, detail: string, heard?: string): EarProbe => ({
+    ok: false,
+    refusal: { error, source: ear.source, detail, ...(heard !== undefined ? { heard } : {}) },
+  });
+  const t0 = Date.now();
   let heard: string;
   try {
     ({ text: heard } = await ear.transcription.transcribe({
@@ -88,24 +101,33 @@ export async function earProbeRefusal(
     }));
   } catch (err) {
     if (err instanceof SpeechError && err.code === 'speech_nothing_heard') {
-      return {
-        error: 'transcription_not_faithful',
-        source: 'openrouter',
-        detail: `${ear.model} wrote nothing for the voice saying "OK."`,
-      };
+      return refused(
+        'transcription_not_faithful',
+        `${ear.model} wrote nothing for the voice saying "OK."`,
+        '',
+      );
     }
-    return {
-      error: err instanceof SpeechError ? err.code : 'transcription_failed',
-      source: 'openrouter',
-      detail: err instanceof Error ? err.message : String(err),
-    };
+    return refused(
+      err instanceof SpeechError ? err.code : 'transcription_failed',
+      err instanceof Error ? err.message : String(err),
+    );
   }
+  const latencyMs = Date.now() - t0;
   if (!heardTheProbe(heard)) {
-    return {
-      error: 'transcription_not_faithful',
-      source: 'openrouter',
-      detail: `${ear.model} wrote "${heard.slice(0, 160)}" for the voice saying "OK."`,
-    };
+    return refused(
+      'transcription_not_faithful',
+      `${ear.model} wrote "${heard.slice(0, 160)}" for the voice saying "OK."`,
+      heard.slice(0, 160),
+    );
   }
-  return null;
+  return { ok: true, heard, latencyMs };
+}
+
+/** Does the candidate ear write down what the voice said? `null`: yes. */
+export async function earProbeRefusal(
+  ear: WorkspaceEar,
+  audio: ProbeAudio,
+): Promise<EarRefusal | null> {
+  const probed = await earProbe(ear, audio);
+  return probed.ok ? null : probed.refusal;
 }
