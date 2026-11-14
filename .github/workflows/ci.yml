@@ -518,32 +518,20 @@ jobs:
           tests/e2e/activity-runs.spec.ts
           tests/e2e/edrow-narrow.spec.ts
 
-      # The evidence of a test that passed only on its retry (#748). The job is
-      # green then, so a `failure()` upload never ran, and the journey failed its
-      # first try in every run of main for weeks without anyone able to read why.
-      # `test-results/` holds the trace and the screenshot of each failed attempt
-      # (`trace: on-first-retry`); with the CI's `github` reporter there is no
-      # `playwright-report/` at all, which the old upload pointed at.
-      - name: Upload the traces and screenshots of failed attempts
-        if: always()
+      - name: Upload the report on failure
+        if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-test-results
-          path: apps/web/test-results/
+          name: playwright-report
+          path: apps/web/playwright-report/
           retention-days: 7
-          if-no-files-found: ignore
 
-      # `stack.log` is the CLI's own output. What Next printed (every request
-      # with its compile and render time) goes to `web.log` beside the runner's.
-      - name: Upload the stack log
-        if: always()
+      - name: Upload the stack log on failure
+        if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: stack-log
-          path: |
-            ${{ runner.temp }}/stack.log
-            ~/.nodalai/logs/web.log
-            ~/.nodalai/logs/runner.log
+          path: ${{ runner.temp }}/stack.log
           retention-days: 7
           if-no-files-found: ignore
 

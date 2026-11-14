@@ -29,7 +29,6 @@ import { chromium, type FullConfig, type Page } from '@playwright/test';
 import path from 'path';
 import { mkdirSync } from 'fs';
 import { fileURLToPath } from 'url';
-import { warmRoutes } from './warm-routes.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -139,8 +138,9 @@ async function completeOnboardingIfNeeded(page: Page): Promise<void> {
   console.log('[global-setup] fresh install — walked onboarding to create the first agent');
 }
 
-/** Make sure a session exists for every journey: detect the auth mode, sign in, save the state. */
-async function openSession(baseURL: string): Promise<void> {
+async function globalSetup(config: FullConfig): Promise<void> {
+  const baseURL: string = config.projects[0]?.use.baseURL ?? 'http://localhost:3000';
+
   // ── 1. Ensure stack is reachable ────────────────────────────────────────────
   try {
     const health = await fetch(`${baseURL}/api/health`, {
@@ -270,23 +270,6 @@ async function openSession(baseURL: string): Promise<void> {
   await browser.close();
 
   console.log(`[global-setup] session state saved → ${AUTH_STATE_PATH}`);
-}
-
-async function globalSetup(config: FullConfig): Promise<void> {
-  const baseURL: string = config.projects[0]?.use.baseURL ?? 'http://localhost:3000';
-  await openSession(baseURL);
-
-  // The dev stack compiles a route on its first request. Pay for all of them
-  // here, once, so no journey's wait is spent on a compile (#748).
-  const report = await warmRoutes({
-    baseURL,
-    appDir: path.join(__dirname, '..', '..', 'src', 'app'),
-    storageState: AUTH_STATE_PATH,
-  });
-  console.log(
-    `[global-setup] warmed ${report.routes} routes in ${Math.round(report.elapsedMs / 1000)}s ` +
-      `(slowest: ${report.slowest.map((r) => `${r.route} ${(r.ms / 1000).toFixed(1)}s`).join(', ')})`,
-  );
 }
 
 export default globalSetup;
