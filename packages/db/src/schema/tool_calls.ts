@@ -51,12 +51,6 @@ export const toolCalls = pgTable(
     // lignes antérieures à 0095 et sur les lignes `cli:*` (écrites hors
     // registre) : l'écran dit « incertain » plutôt que de deviner.
     riskLevel: text('risk_level'),
-    // 0166 (#1075) : l'indice de lecture seule qu'un serveur MCP donnait à son
-    // outil AU MOMENT de l'appel (`annotations.readOnlyHint`), tel quel. Un
-    // indice, jamais une décision de sécurité : `risk_level` d'un outil MCP ne
-    // descend jamais sous `write`. Seul le relevé d'un échange passé le lit
-    // (ce qu'il cite). NULL : pas d'indice, ou une ligne d'avant 0166.
-    readOnlyHint: boolean('read_only_hint'),
     // 0133 (#443) : cette ligne enregistre-t-elle une exécution qui a
     // COMMENCÉ ? true = marque d'intention ou exécution faite ; false = appel
     // refusé par la porte, jamais lancé ; NULL = ligne antérieure ou `cli:*`.

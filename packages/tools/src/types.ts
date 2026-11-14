@@ -490,15 +490,6 @@ export interface ToolDefinition<TInput extends z.ZodTypeAny, TOutput> {
   inputSchema: TInput;
   riskLevel: OperationRiskLevel;
   /**
-   * The read-only hint a third-party server gives its tool (MCP
-   * `annotations.readOnlyHint`), as it gave it. A HINT, never a security
-   * decision: it never lowers `riskLevel` nor the approval gate (adapter-mcp,
-   * MCP-001). Stored with the call (`tool_calls.read_only_hint`, 0166), it
-   * decides only what the runner's record of a past exchange quotes (#1075).
-   * Absent for a tool that declares its posture through `riskLevel` alone.
-   */
-  readOnlyHint?: boolean;
-  /**
    * What this tool, BY ITSELF, reaches beyond Nodal's own database and disk,
    * besides the job's model call (`ToolEgress`). A DECLARATION, like
    * `riskLevel` and `mutatesWorkspace`: no scanner can prove what a function

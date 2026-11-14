@@ -212,37 +212,6 @@ describe('executeTool', () => {
     expect(detruite?.riskLevel).toBe('destructive');
   });
 
-  it("0166 (#1075) : la ligne porte l'indice de lecture seule d'un outil MCP tel qu'à l'appel, NULL sans indice", async () => {
-    // Un outil MCP est `write` (MCP-001) : il passe par la MARQUE d'intention,
-    // l'autre chemin d'écriture de la ligne. Un outil sans indice : NULL.
-    const indique = `hint-true-${Date.now()}`;
-    const dementi = `hint-false-${Date.now()}`;
-    const muet = `hint-none-${Date.now()}`;
-    await executeTool(
-      makeSimpleTool({ name: 'srv__reader', riskLevel: 'write', readOnlyHint: true }),
-      { value: indique },
-      makeCtx(),
-      makeOpts(),
-    );
-    await executeTool(
-      makeSimpleTool({ name: 'srv__writer', riskLevel: 'write', readOnlyHint: false }),
-      { value: dementi },
-      makeCtx(),
-      makeOpts(),
-    );
-    await executeTool(
-      makeSimpleTool({ name: 'plain_reader', riskLevel: 'read' }),
-      { value: muet },
-      makeCtx(),
-      makeOpts(),
-    );
-    const rows = await db.select().from(toolCalls).where(eq(toolCalls.jobId, seed.jobId));
-    const of = (v: string) => rows.find((c) => (c.toolInput as { value?: string })?.value === v);
-    expect(of(indique)).toMatchObject({ riskLevel: 'write', readOnlyHint: true });
-    expect(of(dementi)).toMatchObject({ riskLevel: 'write', readOnlyHint: false });
-    expect(of(muet)).toMatchObject({ riskLevel: 'read', readOnlyHint: null });
-  });
-
   it('P1 : carte text sans present() → la sortie en texte ; erreur de validation → carte posée, charge NULL', async () => {
     const tool = makeSimpleTool({ name: 'text_tool', card: 'text' });
     const uniqueVal = `text-${Date.now()}`;

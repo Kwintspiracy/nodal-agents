@@ -35,7 +35,12 @@ import {
   datedTurn,
   truncate as truncateHeadTail,
 } from '../job/thread-history.ts';
-import { loadExchangeRecords } from '../job/exchange-record.ts';
+import {
+  loadTaskLedger,
+  formatTaskLedgerLines,
+  loadInlineDelegationLedger,
+  formatInlineDelegationLines,
+} from '../job/task-ledger.ts';
 import { loadConversationContext } from '../job/conversation-id.ts';
 import { TITLE_SYSTEM_PROMPT, cleanTitle, titlePrompt } from './conversation-title.ts';
 import type { ChatSurfaceToolName } from '@nodal-agents/catalog';
@@ -274,15 +279,14 @@ interface HistoryRow {
  * turns, never an unconditional per-turn cap; pass the identity function to
  * keep a turn fully intact).
  *
- * `ledgerLines` — the runner's record of the launched job (#1075,
- * exchange-record.ts): every tool it called, the head of each result of a
- * tool not declared read-only, and its delegations with their own acting
- * calls (2026-07-12 incident — see task-ledger.ts). The job's own `result` is
- * the agent's PROSE, not a structural record of what it did; these lines are
- * appended after that prose so a later turn can't be told "no, I never did
- * it" when the job's tools say otherwise. Appended AFTER truncation of the
- * dispatch output itself so the bounded record can never be the part that
- * gets chopped.
+ * `ledgerLines` (2026-07-12 incident — see task-ledger.ts) — the REAL tool
+ * calls made by any tasks this exchange's job delegated via `create_task`.
+ * The job's own `result` (from deliverCompletedRoots' compileTaskResults) is
+ * the delegated agent's PROSE, not a structural record of what it did; these
+ * lines are appended after that prose so a later turn can't be told "no, I
+ * never sent it" when a child job's tools_used says otherwise. Appended
+ * AFTER truncation of the dispatch output itself so the bounded, already-
+ * short ledger can never be the part that gets chopped.
  *
  * `timezone` — the one the system prompt states "now" in: each message of the
  * person carries its own date in it (#650, `datedTurn`, the same form as the
@@ -689,6 +693,29 @@ export async function runChatTurn(opts: {
     .orderBy(desc(chatMessages.createdAt))
     .limit(HISTORY_CANDIDATE_LIMIT);
 
+  // Delegated-task visibility (2026-07-12 incident — see task-ledger.ts): one
+  // batched query for every escalated job's own create_task fan-out, keyed by
+  // jobId (= agent_tasks.root_job_id).
+  const jobIds = rows.map((r) => r.jobId);
+  const taskLedger = await loadTaskLedger(db, jobIds);
+  // Et la délégation EN LIGNE (`assign_*`), qui ne passe PAS par `agent_tasks`.
+  //
+  // Le registre a d'abord été branché sur `loadThreadHistory` seulement, donc
+  // sur Telegram, Slack et Discord — pas ici (revue Codex, 27/08). Or un tour
+  // de chat dans le tableau de bord escalade par le même chemin : sans cette
+  // ligne, un compte rendu de délégation inventé y restait indiscernable d'un
+  // vrai. Exactement la panne que ce registre existe pour fermer, laissée
+  // ouverte sur la surface où le propriétaire parle le plus à ses agents.
+  const inlineLedger = await loadInlineDelegationLedger(db, jobIds);
+  const ledgerLinesByJobId = new Map<string, string[]>();
+  for (const jobId of new Set(jobIds.filter((id): id is string => !!id))) {
+    const lines = [
+      ...formatTaskLedgerLines(taskLedger.get(jobId) ?? []),
+      ...formatInlineDelegationLines(inlineLedger.get(jobId) ?? []),
+    ];
+    if (lines.length > 0) ledgerLinesByJobId.set(jobId, lines);
+  }
+
   // Build one "block" (1 or 2 ModelMessages) per row, so the budget trim
   // below can drop a whole block at a time — never split an escalation's
   // tool-call from its tool-result. `truncateFn` is a parameter (not always
@@ -696,14 +723,16 @@ export async function runChatTurn(opts: {
   // is a LAST RESORT, not an unconditional per-turn cap (F-12, audit #2
   // round 2 — an unconditional cap chopped a single large paste mid-turn
   // even when the whole conversation fit comfortably under budget).
-  //
-  // The runner's record of each launched job rides in its `run_task` result,
-  // which the budget does not count (`totalHistoryChars`): the trim is the
-  // same with or without it, so the records are read AFTER it, for the turns
-  // it keeps only.
   const chronologicalRows = rows.reverse();
   let remainingRows = chronologicalRows;
-  let blocks = remainingRows.map((r) => buildHistoryBlock(r, (s) => s, [], deployment.timezone));
+  let blocks = remainingRows.map((r) =>
+    buildHistoryBlock(
+      r,
+      (s) => s,
+      ledgerLinesByJobId.get(r.jobId ?? '') ?? [],
+      deployment.timezone,
+    ),
+  );
 
   // Drop the OLDEST blocks (front of the chronological array) until the
   // total size is under budget — the same char-budget-as-token-proxy
@@ -715,24 +744,20 @@ export async function runChatTurn(opts: {
     remainingRows = remainingRows.slice(1);
   }
 
-  // The record of each launched job (#1075, exchange-record.ts): its tools,
-  // what those that act returned, its delegations — `create_task` and in line
-  // (`assign_*`). The in-line ones were first wired on `loadThreadHistory`
-  // only, not here (revue Codex, 27/08): the surface where the owner talks to
-  // agents most. One builder for every replay path since #1075.
-  const records = await loadExchangeRecords(
-    db,
-    remainingRows.map((r) => r.jobId),
-  );
-  // Last resort: per-message head+tail truncation only if what's left STILL
-  // exceeds the budget (e.g. the single most recent turn is itself gigantic).
-  // A conversation that fits under budget as-is keeps every turn intact,
-  // however large a single message is.
-  const truncateFn =
-    totalHistoryChars(blocks) > HISTORY_BUDGET_CHARS ? truncateHeadTail : (s: string) => s;
-  blocks = remainingRows.map((r) =>
-    buildHistoryBlock(r, truncateFn, records.get(r.jobId ?? '') ?? [], deployment.timezone),
-  );
+  // Last resort: only rebuild with per-message head+tail truncation if
+  // what's left STILL exceeds the budget (e.g. the single most recent turn
+  // is itself gigantic). A conversation that fits under budget as-is keeps
+  // every turn intact, however large a single message is.
+  if (totalHistoryChars(blocks) > HISTORY_BUDGET_CHARS) {
+    blocks = remainingRows.map((r) =>
+      buildHistoryBlock(
+        r,
+        truncateHeadTail,
+        ledgerLinesByJobId.get(r.jobId ?? '') ?? [],
+        deployment.timezone,
+      ),
+    );
+  }
   const messages: ModelMessage[] = blocks.flatMap((b) => b);
   onPhase?.('historyLoaded');
 

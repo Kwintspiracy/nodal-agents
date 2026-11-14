@@ -1149,13 +1149,6 @@
       "when": 1786437100000,
       "tag": "0165_voice_listening_source",
       "breakpoints": true
-    },
-    {
-      "idx": 166,
-      "version": "7",
-      "when": 1786437200000,
-      "tag": "0166_tool_call_read_only_hint",
-      "breakpoints": true
     }
   ]
 }

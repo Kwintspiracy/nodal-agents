@@ -442,8 +442,6 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       -- 0095 (P7) : le niveau de risque declare par l'outil. NULL sur les
       -- lignes d'avant et sur les lignes cli:*, ecrites hors registre.
       risk_level text CHECK (risk_level IS NULL OR risk_level IN ('read','write','destructive')),
-      -- mirrors migration 0166 (#1075): the MCP server's read-only hint at the call
-      read_only_hint boolean,
       -- mirrors migration 0133 (#443)
       execution_started boolean,
       -- 0110 : l'ordre d'ECRITURE. Ni l'uuid, ni le tour, ni created_at ne
