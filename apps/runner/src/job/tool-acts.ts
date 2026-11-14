@@ -15,6 +15,7 @@
 
 import type { ModelMessage } from 'ai';
 import { isInboxMessage, redactSecretsInText, unwrapUntrusted } from '@nodal-agents/shared';
+import { returnResultTool } from '@nodal-agents/tools';
 import { toolResultOutputText, toolResultShape } from './tool-result-shape.ts';
 
 /** Au plus ce nombre de caractères par résultat cité. */
@@ -54,15 +55,41 @@ export function ownTranscript(messages: unknown, task: string): ModelMessage[] {
   return all;
 }
 
-/** Ce qu'un job a fait de ses outils, lu sur sa ligne `agent_jobs`. */
-export function jobActs(job: {
+/**
+ * Ce qu'un job a fait de ses outils, lu sur sa ligne `agent_jobs`.
+ *
+ * Ce qui n'est pas une action de l'échange n'en fait pas partie (#1075) :
+ *  - les appels qui ont LIVRÉ sa réponse (`replyCallIds`), quand l'historique
+ *    la redonne déjà comme le tour de l'agent. Qui les désigne : celui qui lit
+ *    cette réponse (`extractAssistantReply`, thread-history.ts), une seule
+ *    source ; le relevé ne les redit pas ;
+ *  - la fin du job (`return_result`, lu sur la déclaration de l'outil) : elle
+ *    est l'échange lui-même, pas une chose qu'il a faite.
+ * Un outil dont TOUS les appels sont ainsi écartés n'est pas nommé, même si
+ * `tools_used` le porte. Un envoi qui n'est pas la réponse reste une action.
+ */
+export function jobActs(
+  job: { task: string | null; messages: unknown; toolsUsed: unknown },
+  replyCallIds: ReadonlySet<string> = new Set(),
+): JobActs {
+  const all = jobCalls(job);
+  const calls = all.filter(
+    (c) => c.name !== returnResultTool.name && !(c.id !== null && replyCallIds.has(c.id)),
+  );
+  const called = new Set(all.map((c) => c.name));
+  const kept = new Set(calls.map((c) => c.name));
+  const toolsUsed = (Array.isArray(job.toolsUsed) ? (job.toolsUsed as unknown[]) : []).filter(
+    (t): t is string =>
+      typeof t === 'string' && t !== returnResultTool.name && (!called.has(t) || kept.has(t)),
+  );
+  return { toolsUsed, calls: calls.map(({ name, output }) => ({ name, output })) };
+}
+
+/** Every call of the job's own transcript, with its id and its stored result. */
+function jobCalls(job: {
   task: string | null;
   messages: unknown;
-  toolsUsed: unknown;
-}): JobActs {
-  const toolsUsed = Array.isArray(job.toolsUsed)
-    ? (job.toolsUsed as unknown[]).filter((t): t is string => typeof t === 'string')
-    : [];
+}): Array<ToolCallFact & { id: string | null }> {
   const own = ownTranscript(job.messages, job.task ?? '');
   const results = new Map<string, unknown>();
   for (const m of own) {
@@ -74,19 +101,21 @@ export function jobActs(job: {
       }
     }
   }
-  const calls: ToolCallFact[] = [];
+  const calls: Array<ToolCallFact & { id: string | null }> = [];
   for (const m of own) {
     if (m.role !== 'assistant' || !Array.isArray(m.content)) continue;
     for (const p of m.content as unknown[]) {
       const part = p as { type?: unknown; toolName?: unknown; toolCallId?: unknown };
       if (part?.type !== 'tool-call' || typeof part.toolName !== 'string') continue;
+      const id = typeof part.toolCallId === 'string' ? part.toolCallId : null;
       calls.push({
+        id,
         name: part.toolName,
-        output: typeof part.toolCallId === 'string' ? results.get(part.toolCallId) : undefined,
+        output: id === null ? undefined : results.get(id),
       });
     }
   }
-  return { toolsUsed, calls };
+  return calls;
 }
 
 /**

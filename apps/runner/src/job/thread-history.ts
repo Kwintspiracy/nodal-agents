@@ -215,6 +215,11 @@ export async function loadThreadHistory(opts: LoadThreadHistoryOptions): Promise
   // le budget les écarte.
   const chronological = [...rows].reverse();
 
+  // Ce que l'agent a répondu à chaque tour, lu AVANT le relevé : les appels
+  // qui ont livré cette réponse sont déjà redonnés comme son tour, le relevé
+  // ne les redit pas (#1075). Une seule lecture, ici, pour les deux.
+  const replies = new Map(chronological.map((row) => [row.id, replyOfRow(row)]));
+
   // Le relevé de chaque tour (#1075, exchange-record.ts) : ses outils, ce que
   // ceux qui agissent ont rendu, et ses délégations — `create_task` comme EN
   // LIGNE (`assign_*`, incident du 26/08) : sans elles, un tour où
@@ -223,6 +228,7 @@ export async function loadThreadHistory(opts: LoadThreadHistoryOptions): Promise
   const records = await loadExchangeRecords(
     opts.db,
     chronological.map((r) => r.id),
+    new Map([...replies].map(([id, r]) => [id, r.reply?.callIds ?? new Set<string>()])),
   );
 
   // Each "block" is a contiguous slice of messages we keep or drop together
@@ -252,16 +258,9 @@ export async function loadThreadHistory(opts: LoadThreadHistoryOptions): Promise
     // lignes plus anciennes sans marque, et une vraie réponse d'avant n'existe
     // parfois que dans `result`. Elle reste lue comme avant cette PR — la
     // réponse de l'agent, moins ce que `runner_notes` reconnaît (revue Codex de
-    // #576, passe 2).
-    const agentsOwnResult = row.resultKind !== 'relay';
-    const runnerNotes = Array.isArray(row.runnerNotes) ? row.runnerNotes : [];
-    const agentsWords = withoutRunnerNotes(row.result, runnerNotes);
-    const assistant = extractAssistantReply({
-      task: row.task,
-      result: agentsOwnResult ? agentsWords : null,
-      messages: row.messages,
-      channel: row.channel,
-    });
+    // #576, passe 2). Voir `replyOfRow`.
+    const { agentsOwnResult, runnerNotes, agentsWords, reply } = replies.get(row.id)!;
+    const assistant = reply?.text ?? null;
     // Un texte que l'agent a lui-même envoyé n'est pas redit par le relevé.
     const unmarked = agentsOwnResult ? '' : (agentsWords ?? '').trim();
     const runnerResult = unmarked === (assistant ?? '').trim() ? '' : unmarked;
@@ -551,8 +550,10 @@ export const CHANNEL_SEND_TOOL: Readonly<Record<string, string>> = {
  * fallback chain (rationale in the file header):
  *   1. `result` column when populated — long-form return_result with text.
  *   2. Concatenated `text` from every `<channel>_send_message` tool call in
- *      the messages array (the actual user-visible reply for conversational
- *      channels).
+ *      the messages array that replies to the conversation (no explicit
+ *      target, `repliesToConversation`) — the actual user-visible reply for
+ *      conversational channels. Their call ids come back with it: the runner
+ *      record does not repeat them (#1075).
  *   3. Last assistant message's text content — covers exotic flows that
  *      neither populated `result` nor used the channel send tool.
  *   4. `null` to signal "skip this job".
@@ -568,15 +569,74 @@ export const CHANNEL_SEND_TOOL: Readonly<Record<string, string>> = {
  * 9c22d5b3 (2026-05-26) where 3 Stripe-related prior jobs all returned
  * the same stale MCP pre-amble before this fix.
  */
+/**
+ * Ce que l'agent a répondu à un tour passé, et ce qui en vient : ses propres
+ * mots (`result` moins ce que le runner y a écrit), et la réponse relue.
+ */
+function replyOfRow(row: {
+  task: string;
+  result: string | null;
+  messages: unknown;
+  channel: string;
+  resultKind: string | null;
+  runnerNotes: unknown;
+}): {
+  agentsOwnResult: boolean;
+  runnerNotes: string[];
+  agentsWords: string | null;
+  reply: AssistantReply | null;
+} {
+  const agentsOwnResult = row.resultKind !== 'relay';
+  const runnerNotes = Array.isArray(row.runnerNotes) ? (row.runnerNotes as string[]) : [];
+  const agentsWords = withoutRunnerNotes(row.result, runnerNotes);
+  const reply = extractAssistantReply({
+    task: row.task,
+    result: agentsOwnResult ? agentsWords : null,
+    messages: row.messages,
+    channel: row.channel,
+  });
+  return { agentsOwnResult, runnerNotes, agentsWords, reply };
+}
+
+/**
+ * La réponse relue d'un tour, et les appels qui l'ont LIVRÉE (#1075) : ceux-là
+ * sont déjà redonnés comme le tour de l'agent, le relevé ne les redit pas.
+ * Vide quand la réponse vient de `result` ou d'un texte de l'assistant.
+ */
+interface AssistantReply {
+  text: string;
+  callIds: ReadonlySet<string>;
+}
+
+/**
+ * Un appel d'envoi qui RÉPOND à la conversation, lu sur le schéma de l'outil :
+ * sans `chatId` (« omit to reply to the chat that triggered this job ») ni
+ * `channel` (« omit to reply on the current conversation's channel »). Un envoi
+ * qui nomme sa cible part ailleurs (une autre personne, un autre canal) : ce
+ * n'est pas la réponse de ce tour, c'est une action, que le relevé nomme et
+ * cite (#1075). Avant, tout envoi par l'outil du canal était relu comme la
+ * réponse, sa cible ignorée.
+ */
+function repliesToConversation(input: unknown): input is { text: string } {
+  if (!input || typeof input !== 'object') return false;
+  const i = input as { text?: unknown; chatId?: unknown; channel?: unknown };
+  return (
+    typeof i.text === 'string' &&
+    i.text.trim() !== '' &&
+    i.chatId === undefined &&
+    i.channel === undefined
+  );
+}
+
 function extractAssistantReply(row: {
   task: string;
   result: string | null;
   messages: unknown;
   channel: string;
-}): string | null {
+}): AssistantReply | null {
   // 1. result column.
   if (row.result !== null && row.result !== undefined && row.result.trim() !== '') {
-    return row.result;
+    return { text: row.result, callIds: new Set() };
   }
 
   // The boundary between injected history and the job's own turns — the same
@@ -587,22 +647,26 @@ function extractAssistantReply(row: {
   const sendTool = CHANNEL_SEND_TOOL[row.channel];
   if (sendTool) {
     const parts: string[] = [];
+    const callIds = new Set<string>();
     for (const msg of messages) {
       if (msg.role !== 'assistant') continue;
       const content = msg.content;
       if (!Array.isArray(content)) continue;
       for (const p of content) {
         if (!p || typeof p !== 'object') continue;
-        const part = p as { type?: unknown; toolName?: unknown; input?: unknown };
+        const part = p as {
+          type?: unknown;
+          toolName?: unknown;
+          toolCallId?: unknown;
+          input?: unknown;
+        };
         if (part.type !== 'tool-call' || part.toolName !== sendTool) continue;
-        const input = part.input;
-        if (input && typeof input === 'object' && 'text' in input) {
-          const text = (input as { text: unknown }).text;
-          if (typeof text === 'string' && text.trim() !== '') parts.push(text);
-        }
+        if (!repliesToConversation(part.input)) continue;
+        parts.push(part.input.text);
+        if (typeof part.toolCallId === 'string') callIds.add(part.toolCallId);
       }
     }
-    if (parts.length > 0) return parts.join('\n\n');
+    if (parts.length > 0) return { text: parts.join('\n\n'), callIds };
   }
 
   // 3. last assistant text content (within current-job slice).
@@ -610,7 +674,9 @@ function extractAssistantReply(row: {
     const msg = messages[i];
     if (!msg || msg.role !== 'assistant') continue;
     const content = msg.content;
-    if (typeof content === 'string' && content.trim() !== '') return content;
+    if (typeof content === 'string' && content.trim() !== '') {
+      return { text: content, callIds: new Set() };
+    }
     if (Array.isArray(content)) {
       const textParts: string[] = [];
       for (const p of content) {
@@ -619,7 +685,7 @@ function extractAssistantReply(row: {
         if (part.type === 'text' && typeof part.text === 'string') textParts.push(part.text);
       }
       const joined = textParts.join('');
-      if (joined.trim() !== '') return joined;
+      if (joined.trim() !== '') return { text: joined, callIds: new Set() };
     }
   }
 

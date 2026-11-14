@@ -1498,7 +1498,7 @@ describe('runChatTurn — the launched job carries the record of what its tools 
   const SUBMIT = 'requests_srv__submit_request';
   const GET = 'requests_srv__get_request';
   const RECORD = [
-    `[Actions performed in this exchange: file_read, file_write, ${GET}, ${SUBMIT}, return_result]`,
+    `[Actions performed in this exchange: file_read, file_write, ${GET}, ${SUBMIT}]`,
     'file_write → {"path":"out/flyer.md","bytes":1834,"written":true}',
     `${SUBMIT} → Request 4521 submitted. Status: pending, waiting for the owner to confirm.`,
   ];
@@ -1555,7 +1555,10 @@ describe('runChatTurn — the launched job carries the record of what its tools 
     ];
   }
 
-  async function turnAfterFlyerJob(channel: 'dashboard' | 'device'): Promise<ModelMessage[]> {
+  async function turnAfterFlyerJob(
+    channel: 'dashboard' | 'device',
+    onlyFinished = false,
+  ): Promise<ModelMessage[]> {
     const [conv] = await db
       .insert(conversations)
       .values({
@@ -1578,8 +1581,13 @@ describe('runChatTurn — the launched job carries the record of what its tools 
         task,
         status: 'completed',
         result: 'Done: the flyer is ready and the request is pending your confirmation.',
-        messages: flyerTranscript(task) as never,
-        toolsUsed: ['file_read', 'file_write', GET, SUBMIT, 'return_result'],
+        // `onlyFinished`: a job that answered in words and ended, nothing else.
+        messages: (onlyFinished
+          ? [flyerTranscript(task)[0], ...flyerTranscript(task).slice(-2)]
+          : flyerTranscript(task)) as never,
+        toolsUsed: onlyFinished
+          ? ['return_result']
+          : ['file_read', 'file_write', GET, SUBMIT, 'return_result'],
       })
       .returning({ id: agentJobs.id });
     if (!job) throw new Error('job insert failed');
@@ -1645,5 +1653,14 @@ describe('runChatTurn — the launched job carries the record of what its tools 
   it('device: the same record, by the same path', async () => {
     const output = runTaskResult(await turnAfterFlyerJob('device'));
     expect(output.endsWith(`\n\n${RECORD.join('\n')}`)).toBe(true);
+  });
+
+  it('a job that only answered and ended has no record: the result alone, as before #1075', async () => {
+    for (const channel of ['dashboard', 'device'] as const) {
+      const output = runTaskResult(await turnAfterFlyerJob(channel, true));
+      expect(output).toBe(
+        'Completed.\nDone: the flyer is ready and the request is pending your confirmation.',
+      );
+    }
   });
 });

@@ -19,7 +19,15 @@
 // la déclaration de l'outil et nulle part ailleurs : le `riskLevel` d'un outil
 // du produit, le `risk` de l'opération d'un connecteur, le `readOnlyHint`
 // d'un outil MCP. Un outil qui ne déclare rien, ou que plus rien ne connaît,
-// agit : le relevé en montre plus, jamais moins.
+// agit : le relevé en montre plus, jamais moins. Des citations identiques se
+// disent une fois avec leur compte (`nom ×N → début`).
+//
+// CE QUI N'EST PAS UNE ACTION DE L'ÉCHANGE n'y figure pas : les appels qui ont
+// livré la réponse que l'historique redonne déjà comme le tour de l'agent
+// (désignés par celui qui la lit, `extractAssistantReply`), et la fin du job
+// (`return_result`). Un échange qui n'a fait que répondre n'a aucun relevé. Un
+// envoi qui n'est pas cette réponse (une image, un fichier, un message vers une
+// autre personne ou un autre canal) reste une action, nommée et citée.
 //
 // UN CONSTRUCTEUR, TROIS LECTEURS : le fil d'un canal et l'historique d'un job
 // lancé depuis une conversation de chat (thread-history.ts), et l'historique
@@ -89,7 +97,9 @@ export function exchangeRecordLines(facts: ExchangeFacts, readOnly: DeclaredRead
     ...facts.inline.map((d) => ({ header: formatInlineDelegationEntry(d), acts: d })),
   ];
   const quoted = sections.map((s) =>
-    s.acts.calls.filter((c) => !readOnly(c.name)).map((c) => `${c.name} → ${resultHead(c.output)}`),
+    collapseRepeats(
+      s.acts.calls.filter((c) => !readOnly(c.name)).map((c) => [c.name, resultHead(c.output)]),
+    ),
   );
   const total = quoted.reduce((n, q) => n + q.length, 0);
   let skip = Math.max(0, total - MAX_QUOTED_RESULTS);
@@ -110,13 +120,42 @@ export function exchangeRecordLines(facts: ExchangeFacts, readOnly: DeclaredRead
 }
 
 /**
+ * Des citations identiques (même outil, même début) se disent UNE fois, avec
+ * leur compte, là où tombe la dernière : `telegram_send_message ×9 →
+ * {"sent":true}`. La borne compte ensuite des lignes distinctes : neuf accusés
+ * identiques ne chassent plus un résultat qui dit quelque chose. Pour tout
+ * outil, sans liste.
+ */
+function collapseRepeats(heads: ReadonlyArray<readonly [string, string]>): string[] {
+  const key = ([name, head]: readonly [string, string]) => `${name}\u0000${head}`;
+  const count = new Map<string, number>();
+  const last = new Map<string, number>();
+  heads.forEach((h, i) => {
+    count.set(key(h), (count.get(key(h)) ?? 0) + 1);
+    last.set(key(h), i);
+  });
+  return heads.flatMap((h, i) => {
+    if (last.get(key(h)) !== i) return [];
+    const n = count.get(key(h))!;
+    return [`${h[0]}${n > 1 ? ` ×${n}` : ''} → ${h[1]}`];
+  });
+}
+
+/**
  * Les relevés d'une série d'échanges, par id de job : le job, ses délégations
  * terminées, et la déclaration de chaque outil dans l'espace du job. Un job
  * sans appel ni délégation n'a pas de relevé.
+ *
+ * `replyCallIds` : par job, les appels qui ont livré la réponse que
+ * l'historique redonne déjà comme le tour de l'agent (`extractAssistantReply`,
+ * le seul à les désigner). Ils ne sont ni nommés ni cités (`jobActs`). Un
+ * chemin dont la réponse est le résultat du job (tableau de bord, appareil, tour
+ * de chat) n'en passe aucun : aucun appel n'y a livré la réponse.
  */
 export async function loadExchangeRecords(
   db: RunnerDeps['db'],
   jobIds: readonly (string | null)[],
+  replyCallIds: ReadonlyMap<string, ReadonlySet<string>> = new Map(),
 ): Promise<Map<string, string[]>> {
   const records = new Map<string, string[]>();
   const ids = [...new Set(jobIds.filter((id): id is string => !!id))];
@@ -142,7 +181,7 @@ export async function loadExchangeRecords(
     }
     const lines = exchangeRecordLines(
       {
-        own: jobActs(job),
+        own: jobActs(job, replyCallIds.get(job.id)),
         tasks: taskLedger.get(job.id) ?? [],
         inline: inlineLedger.get(job.id) ?? [],
       },
