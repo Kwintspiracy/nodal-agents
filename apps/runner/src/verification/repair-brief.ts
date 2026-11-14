@@ -32,6 +32,27 @@ import type { ProofCommandRecord } from './types.ts';
  */
 export const REPAIR_BRIEF_TAIL_CHARS = 2_000;
 
+/**
+ * La marque du brief de réparation, pour le RECONNAÎTRE dans une transcription
+ * relue (#1083) : la réponse d'un job réparé est celle d'avant la preuve, suivie
+ * de ce que chaque réparation a dit, et c'est ce brief qui sépare les deux
+ * (`answerOfRun`, job/final-answer.ts). Elle porte un caractère de CONTRÔLE,
+ * comme les marques des rappels d'`execute.ts` : ni une personne ni le modèle
+ * ne la produisent par accident.
+ */
+export const REPAIR_BRIEF_MARK = '[système:réparation:\u0001]';
+
+/** Ce message de la transcription est-il un brief de réparation ? */
+export function isRepairBrief(message: unknown): boolean {
+  const m = message as { role?: unknown; content?: unknown } | null;
+  return (
+    !!m &&
+    m.role === 'user' &&
+    typeof m.content === 'string' &&
+    m.content.startsWith(REPAIR_BRIEF_MARK)
+  );
+}
+
 /** Une commande rouge, telle que la finalisation l'a vue tourner. */
 export interface RepairBriefCommand {
   /** L'adresse du livrable (`display_path_snapshot`), ou sa clé à défaut. */
@@ -129,7 +150,7 @@ export function buildRepairBrief(commands: readonly RepairBriefCommand[]): strin
         ? 'This is your last repair turn: the verdict of that proof is final.'
         : `If it fails again, you get at most ${restes[0]} more repair turn${restes[0] === 1 ? '' : 's'}.`;
   return [
-    tete,
+    `${REPAIR_BRIEF_MARK} ${tete}`,
     '',
     commands.map(bloc).join('\n\n'),
     '',
@@ -141,6 +162,13 @@ export function buildRepairBrief(commands: readonly RepairBriefCommand[]): strin
       `Once ${unSeul ? 'it is' : 'they are'} repaired, finish as you finish any task — reply ` +
       `without calling a tool, or call return_result — and the proof runs again on ` +
       `${unSeul ? 'it' : 'them'}. ` +
+      // #1083 : la réponse d'avant la preuve RESTE la réponse du job ; ce que
+      // le modèle écrit maintenant s'y ajoute. Le lui dire, sinon il réécrit
+      // un rapport entier (et peut en changer les faits) ou croit son rapport
+      // perdu.
+      'The answer you already gave stands and is kept as it is: what you write when you ' +
+      'finish this turn is added after it, so say what the repair changed and do not ' +
+      'rewrite that answer. ' +
       fin,
   ].join('\n');
 }
