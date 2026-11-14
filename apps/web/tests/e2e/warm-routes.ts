@@ -58,7 +58,12 @@ export interface WarmReport {
 }
 
 /**
- * Ask every route once, `concurrency` at a time, with the session of `state`.
+ * Ask every route once, `concurrency` at a time (ONE by default), with the session of
+ * `storageState`.
+ *
+ * One at a time on purpose: it is how the journeys compile routes, so the stack
+ * meets no load shape it does not meet anyway. Four at once was measured on the
+ * CI runner (#748): the runner itself was shut down in three runs of four.
  *
  * The STATUS of an answer is not judged: a placeholder id is a 404 by design,
  * and a page that redirects has still compiled. What is judged is the absence
@@ -75,7 +80,7 @@ export async function warmRoutes(opts: {
   timeoutMs?: number;
 }): Promise<WarmReport> {
   const routes = appRoutes(opts.appDir);
-  const concurrency = opts.concurrency ?? 4;
+  const concurrency = opts.concurrency ?? 1;
   const timeoutMs = opts.timeoutMs ?? 120_000;
   const api = await request.newContext({
     baseURL: opts.baseURL,
