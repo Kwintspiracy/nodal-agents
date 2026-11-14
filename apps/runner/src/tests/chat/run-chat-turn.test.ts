@@ -23,12 +23,18 @@ import {
   entities,
   toolCalls,
 } from '@nodal-agents/db';
-import { formatLocalTime, projectKey, wrapUntrusted } from '@nodal-agents/shared';
+import {
+  formatLocalTime,
+  projectKey,
+  runnerRecordEntries,
+  wrapUntrusted,
+} from '@nodal-agents/shared';
 import type { RunnerDeps } from '../../deps.ts';
 import { chatSurfaceToolNames } from '@nodal-agents/catalog';
 import {
   CHAT_TOOLS,
   CHAT_TURN_PHASES,
+  LAUNCHED_OUTPUT,
   runChatTurn,
   type ChatTurnPhase,
 } from '../../chat/run-chat-turn.ts';
@@ -1492,9 +1498,10 @@ describe('runChatTurn — chaque tour rejoué porte sa date (#650) @cap:reprendr
   });
 });
 
-describe('runChatTurn — the launched job carries the record of what its tools did (#1075) @cap:reprendre-conversation/moteur', () => {
+describe('runChatTurn — the launched job carries the record of what its tools did (#1075, at its end since #1078) @cap:reprendre-conversation/moteur', () => {
   // The same record as a channel thread (exchange-record.test.ts), in the
-  // place a chat conversation keeps a launched job: its `run_task` result.
+  // place a chat conversation keeps a launched job that ended: the runner's
+  // record of its end (#1078).
   const SUBMIT = 'requests_srv__submit_request';
   const GET = 'requests_srv__get_request';
   const RECORD = [
@@ -1579,6 +1586,9 @@ describe('runChatTurn — the launched job carries the record of what its tools 
         task,
         status: 'completed',
         result: 'Done: the flyer is ready and the request is pending your confirmation.',
+        // It ended before the next message: its end is a moment of its own (#1078).
+        createdAt: new Date(Date.now() - 6.5 * 60_000),
+        completedAt: new Date(Date.now() - 5 * 60_000),
         // `onlyFinished`: a job that answered in words and ended, nothing else.
         messages: (onlyFinished
           ? [flyerTranscript(task)[0], ...flyerTranscript(task).slice(-2)]
@@ -1648,13 +1658,22 @@ describe('runChatTurn — the launched job carries the record of what its tools 
     throw new Error('no run_task result in the request');
   }
 
-  it('dashboard: the run_task result ends with the record of the job, line for line', async () => {
+  /** The entries of the record of the job's end (#1078): the runner's dated line first. */
+  function endRecord(messages: ModelMessage[]): string[] {
+    const ends = messages
+      .map((m) => runnerRecordEntries(m))
+      .filter((e): e is string[] => e !== null);
+    expect(ends).toHaveLength(1);
+    expect(ends[0]![0]).toMatch(/^\[[^\]]+\] The task launched at [^\]]+ ended\. Completed\.$/);
+    return ends[0]!.slice(1);
+  }
+
+  const RESULT = '> Done: the flyer is ready and the request is pending your confirmation.';
+
+  it('dashboard: the record of the job comes with its end, line for line, after its result', async () => {
     const seen = await turnAfterFlyerJob('dashboard');
-    const output = runTaskResult(seen);
-    expect(output).toBe(
-      'Completed.\nDone: the flyer is ready and the request is pending your confirmation.' +
-        `\n\n${RECORD.join('\n')}`,
-    );
+    expect(runTaskResult(seen)).toBe(LAUNCHED_OUTPUT);
+    expect(endRecord(seen)).toEqual([RESULT, ...RECORD]);
     // Nothing of it in the agent's own words (#562).
     expect(flattenText(seen.filter((m) => m.role === 'assistant'))).not.toContain(
       'Actions performed',
@@ -1662,16 +1681,14 @@ describe('runChatTurn — the launched job carries the record of what its tools 
   });
 
   it('device: the same record, by the same path', async () => {
-    const output = runTaskResult(await turnAfterFlyerJob('device'));
-    expect(output.endsWith(`\n\n${RECORD.join('\n')}`)).toBe(true);
+    const seen = await turnAfterFlyerJob('device');
+    expect(runTaskResult(seen)).toBe(LAUNCHED_OUTPUT);
+    expect(endRecord(seen)).toEqual([RESULT, ...RECORD]);
   });
 
-  it('a job that only answered and ended has no record: the result alone, as before #1075', async () => {
+  it('a job that only answered and ended has no record: its result alone, as before #1075', async () => {
     for (const channel of ['dashboard', 'device'] as const) {
-      const output = runTaskResult(await turnAfterFlyerJob(channel, true));
-      expect(output).toBe(
-        'Completed.\nDone: the flyer is ready and the request is pending your confirmation.',
-      );
+      expect(endRecord(await turnAfterFlyerJob(channel, true))).toEqual([RESULT]);
     }
   });
 });
