@@ -298,8 +298,6 @@ export {
   createSendVoiceTool,
   DELIVERY_TOOL_NAMES,
 } from './communication';
-// The send's own reading of its target, for the replay of a stored send (#1075).
-export { readSendTarget, type ConversationArgument } from './communication/delivery-guard';
 
 // Channel discovery — capability-driven, same registration gate as the
 // communication tools above (see builtin/list-conversations.ts).
