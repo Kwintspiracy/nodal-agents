@@ -491,7 +491,7 @@ async function loadDashboardHistory(opts: LoadThreadHistoryOptions): Promise<Mod
   const recordOf = (row: Row, out: ReturnType<typeof outcome> | null): string[] => [
     ...(records.get(row.jobId!) ?? []),
     ...(out && out.relay !== '' ? [truncate(out.relay)] : []),
-    ...(out ? out.runnerNotes : []),
+    ...(out?.runnerNotes ?? []),
   ];
 
   const messagesOf = (m: (typeof moments)[number]): ModelMessage[] => {
