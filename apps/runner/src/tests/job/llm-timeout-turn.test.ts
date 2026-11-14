@@ -886,6 +886,9 @@ describe('un tour coupé EN PLEINE ÉCRITURE est repris, jamais rejoué (#441) @
           PREMIER_TOUR,
           { cutAfterToolCall: '' },
           {
+            // La réponse est écrite APRÈS le travail (#1083) : le texte du premier
+            // tour précède son `save_memory`, il n'est pas la réponse du job.
+            text: 'Scanner relu : il laisse passer les jonctions.',
             toolCalls: [
               { toolCallId: 'rr-10', toolName: 'return_result', args: { status: 'success' } },
             ],

@@ -19,6 +19,7 @@ import {
   runnerNotesValue,
   toDbSafeString,
 } from './transcript-text.ts';
+import { answerOfRun } from './final-answer.ts';
 
 // ─── JobState ─────────────────────────────────────────────────────────────────
 
@@ -398,9 +399,11 @@ function lastAssistantText(messages: unknown): string {
 }
 
 /**
- * Le dernier texte que l'agent a écrit dans CE tour — la même lecture que le
- * remplissage de `completeJob`, exportée pour la porte qui échoue un run sur un
- * livrable déclaré non vérifié (#509) : elle rend ce texte, suivi de sa ligne.
+ * Le dernier texte que l'agent a écrit dans CE tour, quel qu'il soit : ce que
+ * livre un run ARRÊTÉ avant sa fin (le runner redémarré, `reclaim-jobs.ts`),
+ * toujours suivi de la ligne qui dit qu'il a été arrêté. Un run arrêté n'a pas
+ * donné de réponse ; ce texte est ce qu'il avait écrit quand on l'a coupé, et
+ * la ligne le dit. Un run qui FINIT livre sa réponse, `answerOfJobRun`.
  *
  * SANS REPLI (revue Codex de #491, passe 3). Quand la frontière du tour est
  * introuvable, la transcription entière n'est PAS relue : ce serait rendre un
@@ -415,7 +418,23 @@ export function lastTextOfRun(messages: unknown, task: string): string {
 }
 
 /**
- * Le livrable d'un agent : son dernier texte écrit, relu dans la transcription.
+ * La réponse que CE tour a donnée en finissant (#1083, `answerOfRun`) — la
+ * lecture de la porte qui échoue un run sur un livrable déclaré non vérifié
+ * (#509) : elle rend cette réponse, suivie de sa ligne. Même frontière, et
+ * même absence de repli, que `lastTextOfRun`.
+ */
+export function answerOfJobRun(messages: unknown, task: string): string {
+  if (!Array.isArray(messages)) return '';
+  const debut = findTaskBoundary(messages, task);
+  if (debut === -1) return '';
+  return answerOfRun(messages.slice(debut));
+}
+
+/**
+ * Le livrable d'un agent : la réponse qu'il a donnée en finissant, relue dans
+ * la transcription (#1083, `answerOfRun`) — jamais un texte écrit avant un
+ * travail qui a suivi, et, après un tour de réparation, sa réponse d'avant la
+ * preuve suivie de ce que la réparation a dit.
  *
  * Appelé AVANT la compilation des enfants, et non après comme ces lignes le
  * disaient : un agent qui délègue une étape puis écrit sa synthèse voyait la
@@ -423,7 +442,7 @@ export function lastTextOfRun(messages: unknown, task: string): string {
  * constat 4). Garantit qu'une production substantielle n'est jamais perdue
  * parce que l'agent a oublié d'appeler un outil de livraison — le texte capturé
  * part ensuite vers les dépendants, la mémoire de run et la livraison. Sans
- * effet s'il n'y a aucun texte utilisable.
+ * effet s'il n'y a aucune réponse.
  */
 async function fillResultFromFinalTextIfEmpty(
   db: AnyDrizzleDb,
@@ -443,15 +462,15 @@ async function fillResultFromFinalTextIfEmpty(
       `[job ${jobId}] task not found in the transcript — the result fallback reads the whole transcript, replayed history included`,
     );
   }
-  const text = lastAssistantText(
-    Array.isArray(messages) ? currentTurnMessages(messages, row?.task ?? '') : messages,
-  );
+  const text = Array.isArray(messages)
+    ? answerOfRun(currentTurnMessages(messages, row?.task ?? ''))
+    : '';
   if (!text) return;
   await db
     .update(agentJobs)
-    // `prose` (#154, #210) : c'est le dernier texte que l'AGENT a écrit,
-    // repris parce qu'il n'a appelé aucun outil de livraison. Sa forme ne
-    // change rien — du JSON écrit par l'agent reste sa réponse.
+    // `prose` (#154, #210) : c'est la réponse que l'AGENT a écrite, reprise
+    // parce qu'il n'a appelé aucun outil de livraison. Sa forme ne change
+    // rien — du JSON écrit par l'agent reste sa réponse.
     .set({ result: text, resultKind: 'prose', updatedAt: new Date() })
     .where(
       and(ownJobRow(jobId, ['completed']), or(isNull(agentJobs.result), eq(agentJobs.result, ''))),
