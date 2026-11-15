@@ -45,6 +45,34 @@ export function oneLine(text: string): string {
   return text.replace(NOT_ON_ONE_LINE, ' ');
 }
 
+/** La classe de `oneLine`, le saut de ligne excepté : il sépare les lignes citées. */
+const BREAKS_A_QUOTED_LINE = /(?:(?!\n)[\p{Zl}\p{Zp}\p{Cc}])+/gu;
+
+/**
+ * La marque que le runner pose en tête de chaque ligne d'un texte qu'il CITE
+ * dans un relevé (#1078). Aucune ligne qu'il y écrit lui-même ne commence par
+ * elle : elles commencent par `[` (sa marque `[système]`, l'en-tête daté d'une
+ * fin de tâche, `[Actions performed…]`, `[Task …]`, `[Delegated …]`) ou par le
+ * nom d'un outil (`nom → début`).
+ */
+export const QUOTE_MARK = '>';
+
+/**
+ * Un texte venu de la base, cité ligne à ligne dans un relevé du runner
+ * (#1078) : chaque ligne commence par `QUOTE_MARK`, que le runner écrit, et
+ * toute autre coupure de ligne ou caractère de contrôle (la classe de
+ * `oneLine`, le saut de ligne excepté) y devient une espace. Une ligne citée ne
+ * peut donc jamais commencer comme une ligne du runner, quoi que le texte porte :
+ * `[système]`, une ligne de relevé imitée, un en-tête daté, un séparateur
+ * Unicode, un retour chariot.
+ */
+export function quotedLines(text: string): string[] {
+  return text
+    .replace(BREAKS_A_QUOTED_LINE, ' ')
+    .split('\n')
+    .map((line) => (line === '' ? QUOTE_MARK : `${QUOTE_MARK} ${line}`));
+}
+
 /** Un champ venu de la base, sur une ligne et à sa borne : la coupe est marquée `…`. */
 export function recordField(text: string, max: number): string {
   const line = oneLine(text).trim();

@@ -297,6 +297,7 @@ import { isValidAvatarUrl } from './avatar-catalog.ts';
 import {
   MCP_CATALOG,
   AgentSlugSchema,
+  CARD_NOTES_MAX,
   FREE_ANSWER_MAX,
   type CardWordsHandOff,
   readElicitationToolInput,
@@ -6479,7 +6480,7 @@ export async function listApprovalsAction(
 const ResolveApprovalSchema = z.object({
   approvalRequestId: z.string().guid(),
   decision: z.enum(['approve', 'reject']),
-  notes: z.string().max(5000).optional(),
+  notes: z.string().max(CARD_NOTES_MAX).optional(),
   /**
    * P10a — l'option choisie sur une QUESTION. Le libellé, jamais l'index. Le
    * runner la valide contre les options de la ligne : cette action ne fait que

@@ -24,6 +24,7 @@
 // agent's reply as it is stored.
 
 import { z } from 'zod';
+import { CARD_NOTES_MAX } from './card-notes';
 
 /** Bumped only when an existing field changes meaning; adding one does not. */
 export const DEVICE_PROTOCOL_VERSION = 1;
@@ -47,6 +48,35 @@ export const DeviceCardChoiceSchema = z.object({
   answer: z.string().optional(),
 });
 export type DeviceCardChoice = z.infer<typeof DeviceCardChoiceSchema>;
+
+/**
+ * The most characters of the person's own words that go with an answer
+ * (`DeviceAnswerOptions.notes`): the one bound every surface shares
+ * (`CARD_NOTES_MAX`, the dashboard's included). Nodal refuses a longer text
+ * with `notes_too_long`; the reference client refuses it before any request.
+ */
+export const DEVICE_CARD_NOTES_MAX = CARD_NOTES_MAX;
+
+/**
+ * What the person said, besides the choice, when answering ANY card: an
+ * approval, a question, an MCP server's question, approved or refused. Sent as
+ * `notes` of `POST /api/approve` (DEVICE_GESTURES `answer`), stored on the
+ * request, and handed to the agent as the person's own word. Absent, or only
+ * whitespace: no words, and nothing is sent. At most `DEVICE_CARD_NOTES_MAX`
+ * characters. Adding it changes no existing field: the protocol version stays.
+ */
+export const DeviceAnswerOptionsSchema = z
+  .object({
+    notes: z.string().optional(),
+  })
+  .strict();
+/**
+ * The keys of `DeviceAnswerOptions`, for a client that cannot run the schema:
+ * it refuses any other key (a typo) instead of dropping it. A test keeps this
+ * list equal to the schema's keys.
+ */
+export const DEVICE_ANSWER_OPTION_KEYS = ['notes'] as const;
+export type DeviceAnswerOptions = z.infer<typeof DeviceAnswerOptionsSchema>;
 
 /**
  * An image that comes with a card (an MCP server's question shows what it is

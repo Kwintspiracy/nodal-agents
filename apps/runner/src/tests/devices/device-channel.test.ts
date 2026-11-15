@@ -27,12 +27,16 @@
 // channel: without the device's own target, a device job's question went
 // there too (the walk found the bot, then swapped in the owner's chat).
 
-import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { MockLanguageModelV3 } from 'ai/test';
 import { generateText } from 'ai';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { and, eq } from '@nodal-agents/db';
+import { and, eq, inArray, sql } from '@nodal-agents/db';
 import {
   agentJobs,
   agents,
@@ -63,6 +67,8 @@ import { speakFinishedJob } from '../../chat/job-reply-voice.ts';
 import { jobEvents } from '../../events/job-events.ts';
 import { readSse, type SseEvent } from '../chat/_sse-reader.ts';
 import { drawDeviceToken } from '../../devices/device-secrets.ts';
+// @ts-expect-error — a plain .mjs build script, no declarations
+import { buildClient } from '../../../../../packages/device-client/scripts/build.mjs';
 
 vi.setConfig({ testTimeout: 30_000 });
 
@@ -887,6 +893,7 @@ describe('a question an MCP server asks during a call reaches the device as a ca
     app: ReturnType<typeof createApp>,
     dev: string,
     over: Partial<UserInputRequest> = {},
+    how: { timeoutMs?: number; deps?: RunnerDeps } = {},
   ): Promise<{
     job: string;
     withdraw: () => void;
@@ -903,9 +910,9 @@ describe('a question an MCP server asks during a call reaches the device as a ca
     });
     const ctl = new AbortController();
     const ask = createRequestUserInput(
-      makeDeps(),
+      how.deps ?? makeDeps(),
       { jobId: job, agentId: x.agentId, entityId: x.entityId },
-      { isLost: async () => false, timeoutMs: 60_000, pollMs: 10 },
+      { isLost: async () => false, timeoutMs: how.timeoutMs ?? 60_000, pollMs: 10 },
     );
     const reply = ask({
       serverSlug: 'preview-server',
@@ -1088,6 +1095,319 @@ describe('a question an MCP server asks during a call reaches the device as a ca
     const res = await get(app, `/api/devices/${dev}/cards/${request!.id}/images/0`, as(dev));
     expect(res.status).toBe(404);
     expect(await res.json()).toEqual({ error: 'image_not_found' });
+  });
+
+  const imageOf = (dev: string, id: string, n: string | number): string =>
+    `/api/devices/${dev}/cards/${id}/images/${n}`;
+
+  type Asked = Awaited<ReturnType<typeof serverAsks>>;
+  type Closing = (
+    app: ReturnType<typeof createApp>,
+    dev: string,
+    asked: Asked,
+    id: string,
+  ) => Promise<void>;
+
+  // THE rule of what a device may see of a request is the cards list's: a
+  // request still waiting for a person. Once it is answered, withdrawn or
+  // expired, its images are gone from the device exactly like an image that
+  // never existed — the stored rows are still there, the route must not serve
+  // them (the bytes of a question that was answered stay the server's business).
+  it.each<[string, 'approved' | 'expired', Closing, { timeoutMs?: number }]>([
+    [
+      'answered from the device',
+      'approved',
+      async (app, dev, asked, id) => {
+        const res = await approve(app, dev, { approvalRequestId: id, decision: 'approve' });
+        expect(res.status).toBe(200);
+        await asked.reply;
+      },
+      {},
+    ],
+    [
+      'withdrawn by the server',
+      'expired',
+      async (_app, _dev, asked) => {
+        asked.withdraw();
+        await asked.reply;
+      },
+      {},
+    ],
+    [
+      'expired with nobody answering',
+      'expired',
+      async (_app, _dev, asked) => {
+        await asked.reply;
+      },
+      { timeoutMs: 1_500 },
+    ],
+  ])('a request no longer open serves no image: %s', async (_name, finalStatus, close, how) => {
+    const dev = await ownDevice('Pantry');
+    const app = createApp(makeDeps(), testEnv);
+    const asked = await serverAsks(app, dev, {}, how);
+    const id = await asked.requestId();
+    // A second question of the same device stays open all along.
+    const stays = await serverAsks(app, dev);
+    const stillOpen = await stays.requestId();
+
+    // Open: both images are served, with their type and bytes.
+    const open0 = await get(app, imageOf(dev, id, 0), as(dev));
+    expect(open0.status).toBe(200);
+    expect(open0.headers.get('content-type')).toBe('image/png');
+    expect(Buffer.from(await open0.arrayBuffer())).toEqual(Buffer.from(PNG, 'base64'));
+    expect((await get(app, imageOf(dev, id, 1), as(dev))).status).toBe(200);
+
+    await close(app, dev, asked, id);
+    const [row] = await db.select().from(approvalRequests).where(eq(approvalRequests.id, id));
+    expect(row!.status).toBe(finalStatus);
+    // The bytes are still stored: it is the route that no longer serves them.
+    const kept = await db
+      .select({ position: approvalRequestAttachments.position })
+      .from(approvalRequestAttachments)
+      .where(eq(approvalRequestAttachments.approvalRequestId, id));
+    expect(kept.map((k) => k.position).sort()).toEqual([0, 1]);
+
+    for (const n of [0, 1]) {
+      const res = await get(app, imageOf(dev, id, n), as(dev));
+      expect(res.status).toBe(404);
+      expect(await res.json()).toEqual({ error: 'image_not_found' });
+    }
+    // Not the same as a closed route: the other open question is served.
+    const other = await get(app, imageOf(dev, stillOpen, 0), as(dev));
+    expect(other.status).toBe(200);
+    expect(Buffer.from(await other.arrayBuffer())).toEqual(Buffer.from(PNG, 'base64'));
+  });
+
+  it.each(['-1', 'abc', '01', '00', '0000', '1000', '1.5', '0x1', '%20', '2', '999'])(
+    'an image index that is not a place among the images (%s): the same 404 as a missing image',
+    async (n) => {
+      const dev = await ownDevice('Closet');
+      const app = createApp(makeDeps(), testEnv);
+      const asked = await serverAsks(app, dev);
+      const id = await asked.requestId();
+      // The request is open and has images 0 and 1: only the index is wrong.
+      expect((await get(app, imageOf(dev, id, 0), as(dev))).status).toBe(200);
+      expect((await get(app, imageOf(dev, id, 1), as(dev))).status).toBe(200);
+      const res = await get(app, imageOf(dev, id, n), as(dev));
+      expect(res.status).toBe(404);
+      expect(await res.json()).toEqual({ error: 'image_not_found' });
+    },
+  );
+
+  it('a stored type outside the four image types is never served, whatever intake did', async () => {
+    const dev = await ownDevice('Loft');
+    const app = createApp(makeDeps(), testEnv);
+    const asked = await serverAsks(app, dev);
+    const id = await asked.requestId();
+    // Intake (and a CHECK on the column) refuse any other type; the route must
+    // not rest on them alone. Lift the CHECK to put such rows where only the
+    // route stands between them and the device, then put it back.
+    const check = sql`approval_request_attachments_mime_check`;
+    const checkOf = sql`approval_request_attachments_mime_type_check`;
+    await db.execute(
+      sql`ALTER TABLE approval_request_attachments DROP CONSTRAINT IF EXISTS ${check}`,
+    );
+    await db.execute(
+      sql`ALTER TABLE approval_request_attachments DROP CONSTRAINT IF EXISTS ${checkOf}`,
+    );
+    try {
+      const html = Buffer.from('<script>alert(1)</script>').toString('base64');
+      await db.insert(approvalRequestAttachments).values([
+        {
+          approvalRequestId: id,
+          position: 2,
+          mimeType: 'text/html',
+          data: html,
+          byteSize: 25,
+          caption: null,
+        },
+        {
+          approvalRequestId: id,
+          position: 3,
+          mimeType: 'image/svg+xml',
+          data: html,
+          byteSize: 25,
+          caption: null,
+        },
+      ]);
+      for (const n of [2, 3]) {
+        const res = await get(app, imageOf(dev, id, n), as(dev));
+        expect(res.status).toBe(404);
+        expect(await res.json()).toEqual({ error: 'image_not_found' });
+      }
+      // The images of the four types are still served as stored.
+      for (const n of [0, 1]) {
+        expect((await get(app, imageOf(dev, id, n), as(dev))).status).toBe(200);
+      }
+    } finally {
+      await db
+        .delete(approvalRequestAttachments)
+        .where(
+          and(
+            eq(approvalRequestAttachments.approvalRequestId, id),
+            inArray(approvalRequestAttachments.position, [2, 3]),
+          ),
+        );
+      await db.execute(
+        sql`ALTER TABLE approval_request_attachments ADD CONSTRAINT approval_request_attachments_mime_check CHECK (mime_type IN ('image/png','image/jpeg','image/webp','image/gif'))`,
+      );
+    }
+  });
+
+  it('a card that could not be recorded at send time: the device got it, cannot answer it, and it is never closed there', async () => {
+    const dev = await ownDevice('Shed');
+    // A database that refuses to record a card (the send itself works).
+    const base = makeDeps();
+    const failing = {
+      ...base,
+      db: new Proxy(base.db, {
+        get(target, prop) {
+          const value = Reflect.get(target, prop, target) as unknown;
+          if (prop === 'insert') {
+            return (table: unknown) => {
+              if (table === approvalCardMessages) throw new Error('cards table unavailable');
+              return (target.insert as (t: unknown) => unknown)(table);
+            };
+          }
+          return typeof value === 'function' ? (value as () => unknown).bind(target) : value;
+        },
+      }),
+    } as RunnerDeps;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const app = createApp(failing, testEnv);
+      const onDev = await device(app, dev);
+      const asked = await serverAsks(app, dev, {}, { deps: failing });
+      const id = await asked.requestId();
+      // The card was sent: the device holds it as an event.
+      await waitFor(() => onDev.gestures().some((e) => e.event === 'card'));
+      expect(await cardsOf(id)).toEqual([]);
+      // Said in the log, with what it costs.
+      expect(
+        warn.mock.calls.some(
+          (c) =>
+            String(c[0]).includes(`card for ${id} was sent`) &&
+            String(c[0]).includes('could not be recorded'),
+        ),
+      ).toBe(true);
+      // The device cannot answer a card it was not recorded as holding: the
+      // request is untouched, still waiting.
+      const res = await approve(app, dev, { approvalRequestId: id, decision: 'approve' });
+      expect(res.status).toBe(404);
+      expect(await res.json()).toEqual({ error: 'approval_not_found' });
+      const [still] = await db.select().from(approvalRequests).where(eq(approvalRequests.id, id));
+      expect(still!.status).toBe('pending');
+      // Its images are still the device's (it is its open request).
+      expect((await get(app, imageOf(dev, id, 0), as(dev))).status).toBe(200);
+      // Settled elsewhere (the server withdraws), nothing closes it on the
+      // device: no record, nothing to redraw.
+      asked.withdraw();
+      await asked.reply;
+      await settle();
+      expect(onDev.gestures().some((e) => e.event === 'card.closed')).toBe(false);
+      expect((await get(app, imageOf(dev, id, 0), as(dev))).status).toBe(404);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('the images of a question the device got as a bubble are not offered: a form it cannot fill is no card', async () => {
+    const dev = await ownDevice('Stairs');
+    const app = createApp(makeDeps(), testEnv);
+    const onDev = await device(app, dev);
+    const asked = await serverAsks(app, dev, {
+      requestedSchema: { type: 'object', properties: { name: { type: 'string', title: 'Name' } } },
+    });
+    const id = await asked.requestId();
+    await waitFor(() => onDev.gestures().some((e) => e.event === 'bubble'));
+    // The request is open, it is the device's, its images are stored: the
+    // cards list does not hold it, so neither does the route.
+    expect((await getCards(app, dev)).cards).toEqual([]);
+    const res = await get(app, imageOf(dev, id, 0), as(dev));
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ error: 'image_not_found' });
+  });
+
+  it('two choices whose labels read the same once trimmed: the form stays a bubble, no card', async () => {
+    const dev = await ownDevice('Porch2');
+    const app = createApp(makeDeps(), testEnv);
+    const onDev = await device(app, dev);
+    const asked = await serverAsks(app, dev, {
+      attachments: [],
+      requestedSchema: {
+        type: 'object',
+        properties: {
+          size: {
+            type: 'string',
+            title: 'Size',
+            enum: ['a', 'b'],
+            enumNames: ['Small', ' Small '],
+          },
+        },
+      },
+    });
+    const id = await asked.requestId();
+    await waitFor(() => onDev.gestures().some((e) => e.event === 'bubble'));
+    expect(onDev.gestures().some((e) => e.event === 'card')).toBe(false);
+    expect(await cardsOf(id)).toEqual([]);
+    expect((await getCards(app, dev)).cards).toEqual([]);
+    const res = await approve(app, dev, {
+      approvalRequestId: id,
+      decision: 'approve',
+      answer: 'Small',
+    });
+    expect(res.status).toBe(404);
+  });
+
+  it('labels that differ only by case: each tap selects exactly the option tapped', async () => {
+    const dev = await ownDevice('Porch3');
+    const app = createApp(makeDeps(), testEnv);
+    const onDev = await device(app, dev);
+    const form = {
+      type: 'object',
+      properties: {
+        size: { type: 'string', title: 'Size', enum: ['a', 'b'], enumNames: ['Small', 'small'] },
+      },
+      required: ['size'],
+    };
+    // Each question is tapped on its own option: the second one's `small`
+    // must read `b`, the first one's `Small` must read `a`, never the other.
+    for (const [tapped, value] of [
+      ['small', 'b'],
+      ['Small', 'a'],
+    ] as const) {
+      const asked = await serverAsks(app, dev, { attachments: [], requestedSchema: form });
+      const id = await asked.requestId();
+      await waitFor(() =>
+        onDev
+          .gestures()
+          .some((e) => e.event === 'card' && (e.data as { cardId: string }).cardId === id),
+      );
+      const card = DeviceEventSchema.parse(
+        onDev
+          .gestures()
+          .find((e) => e.event === 'card' && (e.data as { cardId: string }).cardId === id)!.data,
+      );
+      expect(card.type === 'card' ? card.choices : []).toEqual([
+        { label: 'Size: Small', decision: 'approve', answer: 'Small' },
+        { label: 'Size: small', decision: 'approve', answer: 'small' },
+        { label: 'Cancel', decision: 'reject' },
+      ]);
+      // An answer in a case no option has is none of the choices.
+      const wrong = await approve(app, dev, {
+        approvalRequestId: id,
+        decision: 'approve',
+        answer: 'SMALL',
+      });
+      expect(await wrong.json()).toEqual({ error: 'answer_not_an_option' });
+      const ok = await approve(app, dev, {
+        approvalRequestId: id,
+        decision: 'approve',
+        answer: tapped,
+      });
+      expect(ok.status).toBe(200);
+      expect(await asked.reply).toEqual({ action: 'accept', content: { size: value } });
+    }
   });
 
   it('declined from the device: the server gets decline, and the card closes', async () => {
@@ -1610,5 +1930,351 @@ describe('every gesture of the protocol is a route of the runner (#945) @cap:par
       routes.map((r) => `${r.method} ${r.path}`),
     );
     expect(named.filter((r) => !served.has(r))).toEqual([]);
+  });
+});
+
+// ─── 7. The person's own words, sent by the reference client (#1099) ─────────
+
+/** The built client, as a device maker copies it: only the part this test calls. */
+interface BuiltClient {
+  connect(
+    url: string,
+    session: { deviceId: string; token: string; conversationId: string },
+    options: { fetch: typeof fetch; hearAnnouncements: boolean },
+  ): {
+    on(
+      type: 'card',
+      handler: (card: {
+        cardId: string;
+        kind: string;
+        choices: { label: string; decision: 'approve' | 'reject'; answer?: string }[];
+      }) => void,
+    ): () => void;
+    answer(
+      cardId: string,
+      choice: { label: string; decision: 'approve' | 'reject'; answer?: string },
+      options?: { notes?: string },
+    ): Promise<void>;
+    close(): void;
+  };
+  NodalDeviceError: new (...args: never[]) => Error & { code: string };
+  DEVICE_CARD_NOTES_MAX: number;
+}
+
+describe('a device answers a card with what the person said (#1099) @cap:approuver-une-action/moteur', () => {
+  let built: BuiltClient;
+  let buildDir = '';
+  const NO_FIELD = { type: 'object', properties: {} };
+  const WORDS = 'Use the second tray, and print it in grey.';
+
+  beforeAll(async () => {
+    buildDir = mkdtempSync(join(tmpdir(), 'nodal-device-notes-'));
+    const { js } = (await buildClient(buildDir)) as { js: string };
+    built = (await import(pathToFileURL(js).href)) as BuiltClient;
+  }, 120_000);
+  afterAll(() => {
+    if (buildDir) rmSync(buildDir, { recursive: true, force: true });
+  });
+
+  /** Every question withdrawn and every client closed at the end of its test: nothing polls on. */
+  const withdrawals: AbortController[] = [];
+  const clients: { close: () => void }[] = [];
+  afterEach(() => {
+    for (const ctl of withdrawals.splice(0)) ctl.abort();
+    for (const cl of clients.splice(0)) cl.close();
+  });
+
+  const approve = (
+    app: ReturnType<typeof createApp>,
+    dev: string,
+    body: Record<string, unknown>,
+  ): Promise<Response> =>
+    Promise.resolve(
+      app.fetch(
+        new Request('http://localhost/api/approve', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...as(dev) },
+          body: JSON.stringify(body),
+        }),
+      ),
+    );
+
+  async function ownDevice(name: string): Promise<string> {
+    const [d] = await db
+      .insert(devices)
+      .values({ entityId: x.entityId, name, capabilities: ['screen', 'buttons'] })
+      .returning({ id: devices.id });
+    const { token, tokenHash } = drawDeviceToken();
+    await db.update(devices).set({ tokenHash }).where(eq(devices.id, d!.id));
+    keyOf.set(d!.id, token);
+    return d!.id;
+  }
+
+  /** The device, through the BUILT client, on the real app: what the runner receives is recorded. */
+  async function clientOf(app: ReturnType<typeof createApp>, dev: string) {
+    const conv = String((await postConversation(app, dev)).json['conversationId']);
+    const cards: Parameters<Parameters<ReturnType<BuiltClient['connect']>['on']>[1]>[0][] = [];
+    const received: { body: Record<string, unknown>; text: string }[] = [];
+    const fetchApp = ((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(typeof input === 'string' ? input : input.toString());
+      if (url.pathname === '/api/approve' && typeof init?.body === 'string') {
+        received.push({ body: JSON.parse(init.body) as Record<string, unknown>, text: init.body });
+      }
+      return Promise.resolve(app.fetch(new Request(url, init)));
+    }) as typeof fetch;
+    const client = built.connect(
+      'http://localhost/',
+      { deviceId: dev, token: keyOf.get(dev)!, conversationId: conv },
+      { fetch: fetchApp, hearAnnouncements: false },
+    );
+    client.on('card', (c) => cards.push(c));
+    clients.push(client);
+    return {
+      client,
+      conv,
+      received,
+      card: async (id: string) => {
+        await waitFor(() => cards.some((c) => c.cardId === id));
+        return cards.find((c) => c.cardId === id)!;
+      },
+    };
+  }
+
+  const rowOf = async (id: string) => {
+    const [row] = await db
+      .select({
+        status: approvalRequests.status,
+        notes: approvalRequests.notes,
+        answer: approvalRequests.answer,
+      })
+      .from(approvalRequests)
+      .where(eq(approvalRequests.id, id));
+    return row!;
+  };
+
+  /** An approval card: a gated action of a job of the device, announced to it. */
+  async function approvalCard(dev: string) {
+    const job = await deviceJob({
+      entityId: x.entityId,
+      agentId: x.agentId,
+      deviceId: dev,
+      conversationId: null,
+      status: 'awaiting_approval',
+    });
+    const toolInput = { command: 'rm -rf /tmp/x', purpose: 'Clear the scratch folder first' };
+    const [request] = await db
+      .insert(approvalRequests)
+      .values({
+        entityId: x.entityId,
+        jobId: job,
+        agentId: x.agentId,
+        toolName: 'run_command',
+        toolInput,
+        kind: 'approval',
+      })
+      .returning({ id: approvalRequests.id });
+    await notifyApprovalCreated(makeDeps(), {
+      approvalRequestId: request!.id,
+      toolName: 'run_command',
+      toolInput,
+      jobId: job,
+      agentId: x.agentId,
+      entityId: x.entityId,
+      kind: 'approval',
+    });
+    return { id: request!.id, settled: async (): Promise<unknown> => undefined };
+  }
+
+  /** A question card: `ask_user` of a job of the device, run to its suspension. */
+  async function questionCard(dev: string, conv: string) {
+    const deps = makeDeps(askUser());
+    const job = await deviceJob({
+      entityId: x.entityId,
+      agentId: x.agentId,
+      deviceId: dev,
+      conversationId: conv,
+    });
+    expect((await executeJob(job as JobId, deps, testEnv)).status).toBe('awaiting_approval');
+    const [request] = await db
+      .select({ id: approvalRequests.id })
+      .from(approvalRequests)
+      .where(and(eq(approvalRequests.jobId, job), eq(approvalRequests.kind, 'question')));
+    return { id: request!.id, settled: async (): Promise<unknown> => undefined };
+  }
+
+  /** A server's question card, asked as the MCP adapter asks it. */
+  async function serverQuestionCard(dev: string, conv: string) {
+    const job = await deviceJob({
+      entityId: x.entityId,
+      agentId: x.agentId,
+      deviceId: dev,
+      conversationId: conv,
+      status: 'processing',
+    });
+    const ctl = new AbortController();
+    withdrawals.push(ctl);
+    const ask = createRequestUserInput(
+      makeDeps(),
+      { jobId: job, agentId: x.agentId, entityId: x.entityId },
+      { isLost: async () => false, timeoutMs: 60_000, pollMs: 10 },
+    );
+    const reply = ask({
+      serverSlug: 'preview-server',
+      toolName: 'preview-server__run',
+      toolCallId: `call-${job}`,
+      message: 'Confirm the job shown in the preview?',
+      requestedSchema: NO_FIELD,
+      attachments: [],
+      actions: { accept: 'Confirm', decline: 'Cancel' },
+      signal: ctl.signal,
+    });
+    void reply.catch(() => undefined);
+    let id = '';
+    await waitFor(() => {
+      void db
+        .select({ id: approvalRequests.id })
+        .from(approvalRequests)
+        .where(eq(approvalRequests.jobId, job))
+        .then(([r]) => {
+          if (r) id = r.id;
+        });
+      return id !== '';
+    }, 5_000);
+    return { id, settled: async (): Promise<unknown> => reply };
+  }
+
+  const KINDS = [
+    { name: 'an approval', make: approvalCard, wantAnswer: false },
+    { name: 'a question', make: questionCard, wantAnswer: true },
+    { name: 'a server’s question', make: serverQuestionCard, wantAnswer: false },
+  ] as const;
+
+  for (const kind of KINDS) {
+    for (const side of ['approve', 'reject'] as const) {
+      it(`${kind.name}, ${side === 'approve' ? 'approved' : 'refused'} from the device: the person’s words reach the runner and the stored row`, async () => {
+        const dev = await ownDevice(`Notes ${kind.name} ${side}`);
+        const app = createApp(makeDeps(), testEnv);
+        const c = await clientOf(app, dev);
+        const made = await kind.make(dev, c.conv);
+        const card = await c.card(made.id);
+        // A question's card offers its options only; declining it is still a
+        // gesture the route takes (`[REJECTED]` for the agent), so a device
+        // that lets the person decline builds that choice itself.
+        const choice = card.choices.find((ch) => ch.decision === side) ?? {
+          label: 'Decline',
+          decision: side,
+        };
+
+        await c.client.answer(made.id, choice, { notes: WORDS });
+
+        // What the runner received: the decision, the choice, and the words.
+        expect(c.received).toHaveLength(1);
+        expect(c.received[0]!.body).toEqual({
+          approvalRequestId: made.id,
+          decision: side,
+          ...(choice.answer !== undefined ? { answer: choice.answer } : {}),
+          notes: WORDS,
+        });
+        // What it stored.
+        expect(await rowOf(made.id)).toEqual({
+          status: side === 'approve' ? 'approved' : 'rejected',
+          notes: WORDS,
+          answer: side === 'approve' && kind.wantAnswer ? choice.answer : null,
+        });
+        await made.settled();
+      });
+    }
+  }
+
+  it('no words, or only whitespace: the row keeps no notes, and the body is the one without options', async () => {
+    const dev = await ownDevice('Notes none');
+    const app = createApp(makeDeps(), testEnv);
+    const c = await clientOf(app, dev);
+    const one = await approvalCard(dev);
+    const two = await approvalCard(dev);
+    const cardOne = await c.card(one.id);
+    const cardTwo = await c.card(two.id);
+    await c.client.answer(one.id, cardOne.choices[0]!);
+    await c.client.answer(two.id, cardTwo.choices[1]!, { notes: ' \n\t ' });
+    expect(c.received.map((r) => r.text)).toEqual([
+      JSON.stringify({ approvalRequestId: one.id, decision: 'approve' }),
+      JSON.stringify({ approvalRequestId: two.id, decision: 'reject' }),
+    ]);
+    expect((await rowOf(one.id)).notes).toBeNull();
+    expect((await rowOf(two.id)).notes).toBeNull();
+  });
+
+  it('past the bound the client refuses before any request; the same text beside the client is refused by the route with notes_too_long; the bound itself is taken', async () => {
+    const dev = await ownDevice('Notes bound');
+    const app = createApp(makeDeps(), testEnv);
+    const c = await clientOf(app, dev);
+    const made = await approvalCard(dev);
+    const card = await c.card(made.id);
+    const tooLong = 'x'.repeat(built.DEVICE_CARD_NOTES_MAX + 1);
+
+    // The client: refused locally, nothing reached the runner, the card still waits.
+    const refused = await c.client
+      .answer(made.id, card.choices[0]!, { notes: tooLong })
+      .catch((e: unknown) => e);
+    expect(refused).toBeInstanceOf(built.NodalDeviceError);
+    expect((refused as { code: string }).code).toBe('invalid_argument');
+    expect(c.received).toEqual([]);
+    expect(await rowOf(made.id)).toEqual({ status: 'pending', notes: null, answer: null });
+
+    // The route, called beside the client: a named code, the row untouched.
+    const direct = await approve(app, dev, {
+      approvalRequestId: made.id,
+      decision: 'approve',
+      notes: tooLong,
+    });
+    expect(direct.status).toBe(400);
+    expect(await direct.json()).toEqual({ error: 'notes_too_long' });
+    expect(await rowOf(made.id)).toEqual({ status: 'pending', notes: null, answer: null });
+
+    // The same route takes exactly the bound.
+    const atBound = 'y'.repeat(built.DEVICE_CARD_NOTES_MAX);
+    const ok = await approve(app, dev, {
+      approvalRequestId: made.id,
+      decision: 'approve',
+      notes: atBound,
+    });
+    expect(ok.status).toBe(200);
+    expect((await rowOf(made.id)).notes).toBe(atBound);
+  });
+
+  it('the bound is the route’s, whoever calls it: the dashboard’s path (trusted caller) is refused the same way', async () => {
+    const dev = await ownDevice('Notes dashboard');
+    const app = createApp(makeDeps(), testEnv);
+    const made = await approvalCard(dev);
+    const res = await app.fetch(
+      new Request('http://localhost/api/approve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          approvalRequestId: made.id,
+          decision: 'reject',
+          notes: 'z'.repeat(5001),
+          responderUserId: x.userId,
+        }),
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'notes_too_long' });
+    expect((await rowOf(made.id)).status).toBe('pending');
+    // And what the dashboard sends today (up to 5000) is still taken.
+    const ok = await app.fetch(
+      new Request('http://localhost/api/approve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          approvalRequestId: made.id,
+          decision: 'reject',
+          notes: 'z'.repeat(5000),
+          responderUserId: x.userId,
+        }),
+      }),
+    );
+    expect(ok.status).toBe(200);
+    expect((await rowOf(made.id)).notes).toHaveLength(5000);
   });
 });

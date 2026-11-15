@@ -87,6 +87,7 @@ import { agentJobs, chatMessages } from '@nodal-agents/db';
 import type { ModelMessage } from 'ai';
 import type { RunnerDeps } from '../deps.ts';
 import { loadExchangeRecords } from './exchange-record.ts';
+import { conversationMoments, isJobEnded, taskEndedAt } from './conversation-moments.ts';
 import { ownTranscript } from './tool-acts.ts';
 import {
   formatLocalTime,
@@ -384,8 +385,13 @@ const DASHBOARD_ROWS_LIMIT = 200;
  * égal) — il ouvre le job, il n'est pas de l'historique.
  *
  * Ce que le runner a écrit d'un job lancé — un résultat recompilé (`relay`),
- * ses notes, les délégations — va dans le relevé `[système]` après le tour,
- * jamais dans la bouche de l'agent (#562), comme pour un canal.
+ * ses notes, les délégations — va dans le relevé `[système]`, jamais dans la
+ * bouche de l'agent (#562), comme pour un canal.
+ *
+ * Depuis #1078, ce qu'un job lancé a produit (son résultat, puis ce relevé) est
+ * relu à l'heure où il a FINI, pas sous le tour qui l'a lancé : le même ordre
+ * que le tour de chat (conversation-moments.ts). Au lancement, les mots de
+ * l'agent de cette ligne.
  */
 async function loadDashboardHistory(opts: LoadThreadHistoryOptions): Promise<ModelMessage[]> {
   if (!opts.conversationId) return [];
@@ -402,6 +408,8 @@ async function loadDashboardHistory(opts: LoadThreadHistoryOptions): Promise<Mod
       content: chatMessages.content,
       createdAt: chatMessages.createdAt,
       jobId: chatMessages.jobId,
+      jobStatus: agentJobs.status,
+      jobCompletedAt: agentJobs.completedAt,
       result: agentJobs.result,
       resultKind: agentJobs.resultKind,
       runnerNotes: agentJobs.runnerNotes,
@@ -425,54 +433,110 @@ async function loadDashboardHistory(opts: LoadThreadHistoryOptions): Promise<Mod
     }
   }
 
-  // Un tour : un message de la personne, et ce que l'agent y a répondu. On
-  // garde ou on jette un tour entier, jamais une moitié. Seuls les MAX_TURNS
-  // derniers peuvent être relus : les relevés ne se lisent que pour eux.
-  const turns: Array<typeof chronological> = [];
-  for (const row of chronological) {
+  // LES MOMENTS de la conversation, dans l'ordre où ils ont eu lieu (#1078,
+  // conversation-moments.ts) — le même ordre que le tour de chat. La fin d'un
+  // job lancé est un moment, à l'heure où il a fini. « Ce qui précède le job, et
+  // lui seul » : un job lancé n'a fini, pour ce lecteur, que s'il a fini AVANT
+  // la création du job qu'on démarre. Sinon il est relu comme un travail encore
+  // en cours, et l'historique de ce job ne dépend pas de ce qui arrive après
+  // son départ.
+  type Row = (typeof chronological)[number];
+  const createdAt = current.createdAt;
+  const endOf = (r: Row): Date | null => {
+    if (!r.jobId) return null;
+    const endedAt = taskEndedAt({ status: r.jobStatus, completedAt: r.jobCompletedAt });
+    return endedAt !== null && endedAt < createdAt ? endedAt : null;
+  };
+  const moments = conversationMoments(chronological, (r) => ({
+    writtenAt: r.createdAt,
+    endedAt: endOf(r),
+  }));
+
+  // Un tour : un message de la personne, et ce qui suit jusqu'au suivant (les
+  // réponses de l'agent, les fins de job). On garde ou on jette un tour entier,
+  // jamais une moitié. Seuls les MAX_TURNS derniers peuvent être relus : les
+  // relevés ne se lisent que pour eux.
+  const turns: Array<typeof moments> = [];
+  for (const m of moments) {
     const last = turns[turns.length - 1];
-    if (row.role === 'user' || !last) turns.push([row]);
-    else last.push(row);
+    if ((m.kind === 'row' && m.row.role === 'user') || !last) turns.push([m]);
+    else last.push(m);
   }
-  const recent = turns.slice(-MAX_TURNS).flat();
+  const first = Math.max(0, turns.length - MAX_TURNS);
   const records = await loadExchangeRecords(
     opts.db,
-    recent.map((r) => r.jobId),
+    turns
+      .slice(first)
+      .flat()
+      .flatMap((m) => (m.kind === 'row' ? [m.row.jobId] : [])),
   );
 
-  const blocks: ModelMessage[][] = [];
-  for (const row of recent) {
+  /**
+   * Ce que le job lancé a produit, dans les formes de ce lecteur : son propre
+   * résultat comme les mots de l'agent, puis le relevé du runner (ses outils,
+   * un résultat recompilé, ses notes).
+   */
+  const outcome = (row: Row) => {
+    const runnerNotes = Array.isArray(row.runnerNotes) ? row.runnerNotes : [];
+    return {
+      own: row.resultKind !== 'relay' ? withoutRunnerNotes(row.result, runnerNotes) : null,
+      relay: row.resultKind === 'relay' ? (row.result ?? '').trim() : '',
+      runnerNotes,
+    };
+  };
+  const spokenAndRecord = (said: string, recordLines: readonly string[]): ModelMessage[] => [
+    ...(said !== '' ? [{ role: 'assistant', content: truncate(said) } as ModelMessage] : []),
+    ...(recordLines.length > 0 ? [runnerRecordMessage(recordLines) as ModelMessage] : []),
+  ];
+  const recordOf = (row: Row, out: ReturnType<typeof outcome> | null): string[] => [
+    ...(records.get(row.jobId!) ?? []),
+    ...(out && out.relay !== '' ? [truncate(out.relay)] : []),
+    ...(out?.runnerNotes ?? []),
+  ];
+
+  const messagesOf = (m: (typeof moments)[number]): ModelMessage[] => {
+    const row = m.row;
+    if (m.kind === 'end') {
+      // La fin du job, à l'heure où il a fini : ce qu'il a produit.
+      const out = outcome(row);
+      return spokenAndRecord((out.own ?? '').trim(), recordOf(row, out));
+    }
     if (row.role === 'user') {
       if (!row.createdAt) throw new Error('thread history: a chat_messages row has no created_at');
-      blocks.push([
+      return [
         { role: 'user', content: datedTurn(truncate(row.content), row.createdAt, opts.timezone) },
-      ]);
-      continue;
+      ];
     }
-    const runnerNotes = Array.isArray(row.runnerNotes) ? row.runnerNotes : [];
-    const own =
-      row.jobId && row.resultKind !== 'relay' ? withoutRunnerNotes(row.result, runnerNotes) : null;
-    const relay = row.jobId && row.resultKind === 'relay' ? (row.result ?? '').trim() : '';
-    const said = [row.content.trim(), (own ?? '').trim()].filter((t) => t !== '').join('\n\n');
-    const recordLines = row.jobId
-      ? [
-          ...(records.get(row.jobId) ?? []),
-          ...(relay !== '' ? [truncate(relay)] : []),
-          ...runnerNotes,
-        ]
-      : [];
-    const turn: ModelMessage[] = [
-      ...(said !== '' ? [{ role: 'assistant', content: truncate(said) } as ModelMessage] : []),
-      ...(recordLines.length > 0 ? [runnerRecordMessage(recordLines) as ModelMessage] : []),
-    ];
-    if (turn.length === 0) continue;
-    const last = blocks[blocks.length - 1];
-    if (last) last.push(...turn);
-    else blocks.push(turn);
-  }
+    if (!row.jobId) return spokenAndRecord(row.content.trim(), []);
+    // Un job fini SANS heure de fin rangée garde son issue sous son lancement,
+    // comme avant #1078 : il n'a pas de moment où la poser.
+    const unplaced = row.jobCompletedAt === null && isJobEnded(row.jobStatus);
+    // Une fin placée plus loin, ou un travail encore en cours pour ce lecteur :
+    // au lancement, les mots de l'agent et ce que ses outils ont fait.
+    const out = unplaced ? outcome(row) : null;
+    const said = [row.content.trim(), (out?.own ?? '').trim()].filter((t) => t !== '').join('\n\n');
+    return spokenAndRecord(said, endOf(row) !== null ? [] : recordOf(row, out));
+  };
 
-  let kept = blocks.slice(-MAX_TURNS);
-  while (kept.length > 0 && totalChars(kept) > BUDGET_CHARS) kept = kept.slice(1);
+  // Un tour jeté (au-delà de MAX_TURNS, ou par le budget) emporte la fin des
+  // jobs qu'il a lancés : une fin n'est jamais relue sans son lancement.
+  const assemble = (from: number): ModelMessage[][] => {
+    const dropped = new Set(
+      turns
+        .slice(0, from)
+        .flat()
+        .flatMap((m) => (m.kind === 'row' ? [m.row] : [])),
+    );
+    return turns
+      .slice(from)
+      .map((turn) =>
+        turn.filter((m) => !(m.kind === 'end' && dropped.has(m.row))).flatMap(messagesOf),
+      )
+      .filter((b) => b.length > 0);
+  };
+  let from = first;
+  let kept = assemble(from);
+  while (kept.length > 0 && totalChars(kept) > BUDGET_CHARS) kept = assemble(++from);
   return kept.flatMap((b) => b);
 }
 

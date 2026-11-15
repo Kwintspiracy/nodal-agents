@@ -13,7 +13,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { z } from 'zod';
 import type { ModelMessage } from 'ai';
-import { SYSTEM_PROMPT_CACHE_BOUNDARY } from '@nodal-agents/shared';
+import { SYSTEM_PROMPT_CACHE_BOUNDARY, requestNoteMessage } from '@nodal-agents/shared';
 
 import { createLlmClient } from '../client';
 import type { LlmCallObservation } from '../observe';
@@ -73,6 +73,7 @@ const MESSAGES: ModelMessage[] = [
     ],
   },
 ];
+const NOTE = '[Note from the runner, not said by the person: the form of this reply.]';
 const SYSTEM = `STABLE RULES${SYSTEM_PROMPT_CACHE_BOUNDARY}VOLATILE CLOCK 10:00`;
 const ARGS = { system: SYSTEM, messages: MESSAGES, tools: TOOLS };
 
@@ -156,6 +157,23 @@ describe('prompt-cache breakpoints by model @cap:voir-le-cout/moteur', () => {
       expect(count(bodies[0])).toBe(2);
     });
 
+    it('a note of this request only (#1088): the breakpoint stays on the message it follows, the note goes uncached', async () => {
+      stubFetch(chatCompletion('anthropic/claude-sonnet-5.5'));
+      await claude().generateText({
+        system: 'sys',
+        messages: [{ role: 'user', content: 'hello' }, requestNoteMessage(NOTE)],
+      });
+
+      const msgs = wireMessages();
+      expect(msgs.slice(1)).toEqual([
+        { role: 'user', content: [{ type: 'text', text: 'hello', cache_control: EPHEMERAL }] },
+        { role: 'user', content: NOTE },
+      ]);
+      // The runner's own namespace never reaches the wire.
+      expect(JSON.stringify(bodies[0])).not.toContain('requestNote');
+      expect(count(bodies[0])).toBe(2);
+    });
+
     it('cachingEnabled === false sends no breakpoint, and no boundary marker either', async () => {
       stubFetch(chatCompletion('anthropic/claude-sonnet-5.5'));
       await claude({ cachingEnabled: false }).generateText(ARGS);
@@ -210,6 +228,30 @@ describe('prompt-cache breakpoints by model @cap:voir-le-cout/moteur', () => {
         expect(system[1], model).not.toHaveProperty('cache_control');
         expect(count(bodies[0]), model).toBe(2);
       }
+    });
+
+    it('a note of this request only (#1088): the breakpoint stays on the message it follows, the note goes uncached', async () => {
+      stubFetch(anthropicReply);
+      await createLlmClient({
+        provider: 'anthropic',
+        model: 'claude-sonnet-5',
+        apiKey: 'k',
+      }).generateText({
+        system: 'sys',
+        messages: [{ role: 'user', content: 'hello' }, requestNoteMessage(NOTE)],
+      });
+
+      // Two user messages in a row travel as ONE Anthropic turn of two parts.
+      expect(bodies[0]!['messages']).toEqual([
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'hello', cache_control: EPHEMERAL },
+            { type: 'text', text: NOTE },
+          ],
+        },
+      ]);
+      expect(JSON.stringify(bodies[0])).not.toContain('requestNote');
     });
 
     it('cachingEnabled === false still opts out', async () => {
