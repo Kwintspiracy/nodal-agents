@@ -46,9 +46,10 @@ export type RecipeNeed = 'workspace' | 'code-runtime';
 /**
  * A posture the recipe applies through an EXISTING per-agent control, never a
  * new mechanism. `read-only` is the reviewer preset from the agent editor
- * (setReviewerReadOnlyPresetAction): it blocks the five writing tools listed
- * on the preset itself — file_write, file_edit, skill_file_write, run_command,
- * run_skill_script — so the agent can read and judge but never change.
+ * (setReviewerReadOnlyPresetAction): it blocks the writing tools of the preset,
+ * READONLY_PRESET_TOOLS (@nodal-agents/shared, readonly-preset.ts), the one list
+ * the screen and the server read, so the agent can read and judge but never
+ * change. The list is never copied here (#1109: a copy went stale).
  */
 export type RecipePreset = 'read-only';
 

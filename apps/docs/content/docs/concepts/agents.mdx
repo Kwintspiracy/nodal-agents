@@ -78,7 +78,7 @@ Tool calls with real-world side-effects (like `run_command`) can require approva
 
 The always-on built-ins are listed on the agent's **Approvals** tab under **Built-in tools**, with the same three settings as every other tool.
 
-Before this, they were on and unlisted, and the only way to restrain one was the read-only preset — which blocks five write tools at once. There was no way to say "may read files, may not search the web". Now there is.
+Before this, they were on and unlisted, and the only way to restrain one was the read-only preset — which blocks its write tools all at once. There was no way to say "may read files, may not search the web". Now there is.
 
 One tool cannot be blocked: **`return_result`**, which is how a job reports that it finished or got stuck. Blocking it would leave every job of that agent unable to end, with no way to tell you why. The dashboard says so on the row rather than simply refusing.
 

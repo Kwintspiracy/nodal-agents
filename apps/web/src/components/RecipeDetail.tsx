@@ -176,10 +176,10 @@ export default function RecipeDetail({
           {readOnly ? (
             <>
               <p className="text-body-13 text-ink-2">
-                <span className="text-medium-13 text-ink">Read-only agent: on.</span> The five write
-                tools are blocked — the agent still sees them, the call is refused. This is the
-                “Read-only agent” switch of the editor’s Autonomy tab, where each block also shows
-                per tool and can be turned off any time.
+                <span className="text-medium-13 text-ink">Read-only agent: on.</span> The write
+                tools listed below are blocked — the agent still sees them, the call is refused.
+                This is the “Read-only agent” switch of the editor’s Autonomy tab, where each block
+                also shows per tool and can be turned off any time.
               </p>
               <p className="text-mono-11 text-ink-3 mt-1.5">
                 blocked: {READONLY_PRESET_TOOLS.join(', ')}
