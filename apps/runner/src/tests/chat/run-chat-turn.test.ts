@@ -1668,12 +1668,21 @@ describe('runChatTurn — the launched job carries the record of what its tools 
     return ends[0]!.slice(1);
   }
 
-  const RESULT = '> Done: the flyer is ready and the request is pending your confirmation.';
+  /** The message right after the record of the job's end: the agent's report (#1088). */
+  function afterEndRecord(messages: ModelMessage[]): ModelMessage | undefined {
+    return messages[messages.findIndex((m) => runnerRecordEntries(m) !== null) + 1];
+  }
+
+  const REPORT = {
+    role: 'assistant',
+    content: 'Done: the flyer is ready and the request is pending your confirmation.',
+  };
 
   it('dashboard: the record of the job comes with its end, line for line, after its result', async () => {
     const seen = await turnAfterFlyerJob('dashboard');
     expect(runTaskResult(seen)).toBe(LAUNCHED_OUTPUT);
-    expect(endRecord(seen)).toEqual([RESULT, ...RECORD]);
+    expect(endRecord(seen)).toEqual(RECORD);
+    expect(afterEndRecord(seen)).toEqual(REPORT);
     // Nothing of it in the agent's own words (#562).
     expect(flattenText(seen.filter((m) => m.role === 'assistant'))).not.toContain(
       'Actions performed',
@@ -1683,12 +1692,15 @@ describe('runChatTurn — the launched job carries the record of what its tools 
   it('device: the same record, by the same path', async () => {
     const seen = await turnAfterFlyerJob('device');
     expect(runTaskResult(seen)).toBe(LAUNCHED_OUTPUT);
-    expect(endRecord(seen)).toEqual([RESULT, ...RECORD]);
+    expect(endRecord(seen)).toEqual(RECORD);
+    expect(afterEndRecord(seen)).toEqual(REPORT);
   });
 
-  it('a job that only answered and ended has no record: its result alone, as before #1075', async () => {
+  it('a job that only answered and ended has no record: its dated end, then its report alone', async () => {
     for (const channel of ['dashboard', 'device'] as const) {
-      expect(endRecord(await turnAfterFlyerJob(channel, true))).toEqual([RESULT]);
+      const seen = await turnAfterFlyerJob(channel, true);
+      expect(endRecord(seen)).toEqual([]);
+      expect(afterEndRecord(seen)).toEqual(REPORT);
     }
   });
 });
