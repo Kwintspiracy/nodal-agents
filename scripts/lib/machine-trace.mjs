@@ -378,9 +378,17 @@ export function gardien(dire) {
         return fn();
       } catch (err) {
         panne = { quoi, message: String(err?.message ?? err).split('\n')[0] };
-        dire(
-          `[machine] trace stopped: ${quoi} failed (${panne.message}); the command goes on and its exit code is the step's verdict`,
-        );
+        try {
+          dire(
+            `[machine] trace stopped: ${quoi} failed (${panne.message}); the command goes on and its exit code is the step's verdict`,
+          );
+        } catch {
+          // DIRE la panne a échoué aussi (revue de la PR #1107, passe 2) : la
+          // sortie de l'étape est partie, et le fichier vient de lâcher. Il ne
+          // reste aucun canal où l'écrire ; le silence est la seule issue
+          // honnête. Ce qui compte continue : la commande va au bout et son
+          // code est rendu.
+        }
         return undefined;
       }
     },

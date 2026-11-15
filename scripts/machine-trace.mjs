@@ -65,21 +65,59 @@ if (!sortie || commande.length === 0 || !Number.isFinite(pasSec) || pasSec <= 0)
  * ligne pour être lue.
  */
 function annoncer(genre, titre, texte) {
-  process.stdout.write(`\n${annotation(genre, titre, texte)}\n`);
+  versLeJournal(`\n${annotation(genre, titre, texte)}\n`);
 }
+
+// ── Rien de ce que le lanceur ÉCRIT ne peut le terminer ─────────────────────
+//
+// Revue de la PR #1107, passe 2 : le lanceur n'a qu'UN travail qui doit
+// survivre à tout, rendre le code de sortie de la commande. Ses sorties (le
+// journal de l'étape, les annotations, `--out`) se font au mieux. Une écriture
+// dans un tube dont le lecteur est parti ne jette pas toujours : Node émet un
+// événement `error` sur `process.stdout`, et un `error` sans écouteur tue le
+// processus hors de tout try/catch. D'où l'écouteur ci-dessous, et une seule
+// fonction pour écrire vers le journal.
+let sortieOuverte = true;
+
+/** Écrit dans le journal de l'étape, tant qu'il existe. Ne jette jamais. */
+function versLeJournal(texte) {
+  if (!sortieOuverte) return;
+  try {
+    process.stdout.write(texte);
+  } catch (err) {
+    journalFerme(err);
+  }
+}
+
+/**
+ * Le journal de l'étape est fermé. On le dit UNE fois, là où l'on peut encore :
+ * dans `--out`, si la trace vit. Si elle est déjà arrêtée, il ne reste aucun
+ * canal où l'écrire, et `essayer` se tait : c'est la seule issue honnête.
+ */
+function journalFerme(err) {
+  if (!sortieOuverte) return;
+  sortieOuverte = false;
+  trace.essayer("the note that the step's output is closed", () =>
+    appendFileSync(
+      sortie,
+      `[machine] the step's output is closed (${err?.code ?? err?.message ?? err}); the trace goes on in this file only\n`,
+    ),
+  );
+}
+process.stdout.on('error', journalFerme);
 
 // La panne de la trace va au journal et en annotation, JAMAIS dans `--out` :
 // c'est peut-être lui qui vient de lâcher.
 let minuterie = null;
 const trace = gardien((texte) => {
   if (minuterie) clearInterval(minuterie);
-  process.stdout.write(`${texte}\n`);
+  versLeJournal(`${texte}\n`);
   annoncer('warning', 'machine-trace: trace stopped', texte);
 });
 
-/** Une ligne : sur la sortie de l'étape, et ajoutée au fichier tout de suite. */
+/** Une ligne : dans le journal de l'étape (au mieux), et ajoutée au fichier tout de suite. */
 function ecrire(texte) {
-  process.stdout.write(`${texte}\n`);
+  versLeJournal(`${texte}\n`);
   appendFileSync(sortie, `${texte}\n`);
 }
 
@@ -166,7 +204,8 @@ function noyau() {
 
 enfant.on('error', (err) => {
   if (minuterie) clearInterval(minuterie);
-  process.stdout.write(`[machine] the command could not start: ${err.message}\n`);
+  // Dit au mieux ; 127 est rendu, dit ou non.
+  versLeJournal(`[machine] the command could not start: ${err.message}\n`);
   process.exit(127);
 });
 
