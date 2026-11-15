@@ -45,10 +45,15 @@
 
 import { RUNNER_RECORD_NAMESPACE } from './runner-record';
 import {
+  ELICITATION_ACTION_LABEL_MAX,
   ELICITATION_ACTIONS_META_KEY,
   ELICITATION_CLOSED_BY,
   elicitationActionLabels,
+  parseElicitationSchema,
+  quotableServerText,
   readElicitationActions,
+  type ElicitationField,
+  type ElicitationOption,
 } from './elicitation';
 
 /** Ce que le relevé lit d'une ligne `approval_requests` de `kind = 'elicitation'`. */
@@ -98,15 +103,13 @@ function when(at: Date | string): string {
   return `${iso.slice(0, 10)} at ${iso.slice(11, 16)} UTC`;
 }
 
+/** `on 2026-11-14 at 15:08 UTC`, ou que l'heure n'est pas rangée. */
 function resolvedWhen(row: PersonAnswerRow): string {
-  if (row.resolvedAt === null) {
-    // Les deux portes qui ferment une question posent son heure (transitions.ts) :
-    // une ligne fermée sans heure est un défaut, dit, jamais une heure devinée.
-    throw new Error(
-      `person answer: approval request ${row.id} is ${row.status} without resolved_at`,
-    );
-  }
-  return when(row.resolvedAt);
+  // Les deux portes qui ferment une question posent son heure (transitions.ts).
+  // Une ligne fermée sans heure (héritée, écrite à la main) le dit : jamais une
+  // heure devinée, et jamais un job qui échoue pour une heure absente — le
+  // relevé se pose à chaque tour, sur toutes les questions du job.
+  return row.resolvedAt === null ? 'at a time Nodal did not record' : `on ${when(row.resolvedAt)}`;
 }
 
 /** Le bouton pressé : le libellé du serveur dit comme le sien, le défaut de Nodal tel quel. */
@@ -119,10 +122,91 @@ function pressed(row: PersonAnswerRow, action: 'accept' | 'decline'): string {
     : `pressing the button the server labelled ${label}`;
 }
 
-function filledForm(response: unknown): string | null {
+// ─── Le formulaire : chaque texte dit à qui il est (revue Reviewer A de #1096, P2) ───
+//
+// Ce que la personne a TAPÉ (un texte, un nombre, un oui/non) est à elle : cité
+// tel quel. Ce que le SERVEUR a écrit (le nom d'un champ, le libellé d'une
+// option, le texte qu'il a prérempli) est à lui : dit comme le sien (« the
+// server labelled »), cité entre guillemets JSON et borné comme le libellé d'un
+// bouton (`quotableServerText`), ou NON COPIÉ au-delà de la borne. Une option
+// se dit par ce que la personne a VU (son libellé), jamais par la valeur cachée
+// (`const`, valeur d'`enum`) que le serveur reçoit : un serveur hostile ne fait
+// pas passer sa phrase pour les mots de la personne derrière un libellé « Yes ».
+// Le formulaire se lit par le lecteur de la plateforme (`parseElicitationSchema`),
+// celui qui a dessiné la carte.
+
+/** Ce qui remplace un texte du serveur trop long pour être cité. */
+const NOT_COPIED = `longer than ${ELICITATION_ACTION_LABEL_MAX} characters, not copied`;
+
+function fieldPhrase(field: ElicitationField, position: number): string {
+  const label = quotableServerText(field.label);
+  return label === null
+    ? `in field ${position} (its server label is ${NOT_COPIED})`
+    : `in the field the server labelled ${JSON.stringify(label)}`;
+}
+
+function optionPhrase(options: readonly ElicitationOption[], value: unknown): string {
+  const i = options.findIndex((o) => o.value === value);
+  if (i === -1) return 'a value that is not one of its options (not copied)';
+  const label = quotableServerText(options[i]!.label);
+  return label === null
+    ? `option ${i + 1} (its server label is ${NOT_COPIED})`
+    : `the option the server labelled ${JSON.stringify(label)}`;
+}
+
+function unreadable(): string {
+  return 'sent a value Nodal cannot read back (not copied)';
+}
+
+function valuePhrase(field: ElicitationField, value: unknown): string {
+  switch (field.kind) {
+    case 'boolean':
+      return typeof value === 'boolean' ? `answered ${value ? 'yes' : 'no'}` : unreadable();
+    case 'number':
+      return typeof value === 'number' && Number.isFinite(value)
+        ? `gave ${JSON.stringify(value)}`
+        : unreadable();
+    case 'text': {
+      if (typeof value !== 'string') return unreadable();
+      if (field.default !== null && value === field.default) {
+        // Le texte prérempli par le serveur, laissé tel quel : le sien.
+        const kept = quotableServerText(value);
+        return kept === null
+          ? `kept the text the server prefilled (${NOT_COPIED})`
+          : `kept the text the server prefilled, ${JSON.stringify(kept)}`;
+      }
+      return `typed ${JSON.stringify(value)}`;
+    }
+    case 'choice':
+      return `chose ${optionPhrase(field.options, value)}`;
+    case 'multi': {
+      if (!Array.isArray(value)) return unreadable();
+      if (value.length === 0) return 'chose none of its options';
+      return `chose ${value.map((v) => optionPhrase(field.options, v)).join(', ')}`;
+    }
+  }
+}
+
+function filledForm(row: PersonAnswerRow): string | null {
+  const response = row.response;
   if (typeof response !== 'object' || response === null || Array.isArray(response)) return null;
   if (Object.keys(response).length === 0) return null;
-  return `filled the form with: ${JSON.stringify(response)}`;
+  const form = parseElicitationSchema(
+    (row.toolInput as { requestedSchema?: unknown } | null)?.requestedSchema,
+  );
+  if (!form.ok) {
+    // La carte a été dessinée par ce lecteur ; une ligne qu'il ne relit plus
+    // ne dit pas à qui est chaque texte : rien n'en est copié.
+    return 'sent the form, whose fields Nodal cannot read back from the stored question (values not copied)';
+  }
+  const answers: string[] = [];
+  form.fields.forEach((field, i) => {
+    if (!Object.prototype.hasOwnProperty.call(response, field.key)) return;
+    const value = (response as Record<string, unknown>)[field.key];
+    answers.push(`${fieldPhrase(field, i + 1)}, ${valuePhrase(field, value)}`);
+  });
+  if (answers.length === 0) return null;
+  return `filled the form as follows: ${answers.join('; ')}`;
 }
 
 /**
@@ -141,7 +225,7 @@ export function personAnswerRecord(row: PersonAnswerRow): string {
         ? `they accepted, ${pressed(row, 'accept')}`
         : `they declined, ${pressed(row, 'decline')}`,
     ];
-    const form = row.status === 'approved' ? filledForm(row.response) : null;
+    const form = row.status === 'approved' ? filledForm(row) : null;
     if (form !== null) acts.push(form);
     if (row.notes !== null && row.notes.trim() !== '') {
       acts.push(`wrote: ${JSON.stringify(row.notes.trim())}`);
@@ -150,13 +234,13 @@ export function personAnswerRecord(row: PersonAnswerRow): string {
       acts.length === 1
         ? acts[0]!
         : `${acts.slice(0, -1).join(', ')}, and ${acts[acts.length - 1]}`;
-    return `${asked} The person answered it themselves on ${resolvedWhen(row)}: ${said}.`;
+    return `${asked} The person answered it themselves ${resolvedWhen(row)}: ${said}.`;
   }
   if (row.status === 'expired') {
     const why =
       (row.resolvedBy !== null ? CLOSED_WITHOUT_ANSWER[row.resolvedBy] : undefined) ??
       `it was closed (${row.resolvedBy ?? 'no reason recorded'})`;
-    return `${asked} Nobody answered it: ${why} on ${resolvedWhen(row)}.`;
+    return `${asked} Nobody answered it: ${why} ${resolvedWhen(row)}.`;
   }
   if (row.status === 'pending') {
     // L'appel a rendu son résultat avant que sa question ne se ferme : ce que
@@ -186,4 +270,78 @@ export function personAnswerRequestId(message: unknown): string | null {
   const mark = (ns as { personAnswer?: unknown } | undefined)?.personAnswer;
   const id = (mark as { approvalRequestId?: unknown } | null | undefined)?.approvalRequestId;
   return typeof id === 'string' ? id : null;
+}
+
+// ─── Où le relevé se pose (revue Reviewer A de #1096, P2) ─────────────────────
+//
+// La source de vérité est la LIGNE, jamais une liste tenue en mémoire par un
+// run : les questions du job (`approval_requests`, son `job_id`, le
+// `tool_call_id` de l'appel), et la transcription, qui dit par la marque quelles
+// questions ont déjà leur relevé. Une règle : derrière chaque message d'outils
+// qui porte le résultat d'un appel, le relevé de chaque question posée pendant
+// cet appel — où que ce message soit écrit, et par quelque run que ce soit.
+
+/** Les questions dont la transcription porte déjà le relevé. */
+export function recordedPersonAnswers(messages: readonly unknown[]): Set<string> {
+  const out = new Set<string>();
+  for (const m of messages) {
+    const id = personAnswerRequestId(m);
+    if (id !== null) out.add(id);
+  }
+  return out;
+}
+
+/** Les ids des appels dont ce message porte le résultat (un message d'outils), sinon aucun. */
+function resultCallIds(message: unknown): string[] {
+  const m = message as { role?: unknown; content?: unknown } | null;
+  if (!m || m.role !== 'tool' || !Array.isArray(m.content)) return [];
+  const ids: string[] = [];
+  for (const p of m.content as Array<{ type?: unknown; toolCallId?: unknown } | null>) {
+    if (p && p.type === 'tool-result' && typeof p.toolCallId === 'string') ids.push(p.toolCallId);
+  }
+  return ids;
+}
+
+/**
+ * Les relevés des questions posées pendant les appels `callIds`, dans l'ordre
+ * de `rows` (celui où elles ont été posées), sans celles de `recorded`.
+ */
+export function personAnswersOfCalls(
+  rows: readonly PersonAnswerRow[],
+  callIds: readonly string[],
+  recorded: ReadonlySet<string>,
+): PersonAnswerMessage[] {
+  const calls = new Set(callIds);
+  return rows
+    .filter((r) => r.toolCallId !== null && calls.has(r.toolCallId) && !recorded.has(r.id))
+    .map(personAnswerMessage);
+}
+
+/**
+ * La transcription où chaque message d'outils est suivi des relevés qui lui
+ * manquent, posés après ceux qui le suivent déjà. Idempotent : une
+ * transcription complète est rendue telle quelle. Une question dont l'appel n'a
+ * aucun résultat dans la transcription n'est pas posée : rien ne la précède.
+ */
+export function placePersonAnswers<T>(
+  messages: readonly T[],
+  rows: readonly PersonAnswerRow[],
+): Array<T | PersonAnswerMessage> {
+  if (rows.length === 0) return [...messages];
+  const recorded = recordedPersonAnswers(messages);
+  const out: Array<T | PersonAnswerMessage> = [];
+  for (let i = 0; i < messages.length; i++) {
+    out.push(messages[i]!);
+    const ids = resultCallIds(messages[i]);
+    if (ids.length === 0) continue;
+    while (i + 1 < messages.length && personAnswerRequestId(messages[i + 1]) !== null) {
+      i += 1;
+      out.push(messages[i]!);
+    }
+    for (const record of personAnswersOfCalls(rows, ids, recorded)) {
+      out.push(record);
+      recorded.add(record.providerOptions.nodal.personAnswer.approvalRequestId);
+    }
+  }
+  return out;
 }

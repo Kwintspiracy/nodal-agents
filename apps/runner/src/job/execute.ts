@@ -66,6 +66,8 @@ import {
   findMcpToolNameCollision,
   mcpToolNameCollisionMessage,
   openingMessages,
+  personAnswersOfCalls,
+  recordedPersonAnswers,
 } from '@nodal-agents/shared';
 import { ADAPTER_REGISTRY } from '@nodal-agents/runner-adapters';
 import {
@@ -261,7 +263,8 @@ import { notifyApprovalCreated } from '../approvals/notify.ts';
 import {
   createRequestUserInput,
   elicitationTimeoutMs,
-  personAnswerMessages,
+  personAnswerRowsOf,
+  withPersonAnswers,
 } from '../approvals/elicitation.ts';
 import { notifyCodeTransition } from '../notify/code-transitions.ts';
 import {
@@ -1681,7 +1684,13 @@ async function runJobTracked(
   // gardent leur vrai résultat, les autres disent qu'ils n'ont pas tourné.
   let tourOuvert: ((raison: string) => ModelMessage) | null = null;
   const RAISON_FIN_DU_RUN = 'the job ended before this call was handled';
-  const transcriptionFermee = (msgs: ModelMessage[]): ModelMessage[] => {
+  //
+  // #1084 — et chaque message d'outils qu'elle porte est suivi du relevé des
+  // questions posées pendant ses appels (`withPersonAnswers`, lu sur les
+  // lignes) : une fin de run en plein pas, une annulation pendant une
+  // délégation ou une reprise perdue écrivent les résultats réels de leurs
+  // appels, et la réponse de la personne avec eux.
+  const fermerLesAppels = (msgs: ModelMessage[]): ModelMessage[] => {
     const ouverts = unansweredToolCalls(msgs);
     if (ouverts.length === 0) return msgs;
     if (tourOuvert) return [...msgs, tourOuvert(RAISON_FIN_DU_RUN)];
@@ -1698,22 +1707,24 @@ async function runJobTracked(
       } as ModelMessage,
     ];
   };
-  const failJob: typeof failJobRow = (base, id, code, stats, msgs, userMessage, hint) =>
+  const transcriptionFermee = async (msgs: ModelMessage[]): Promise<ModelMessage[]> =>
+    (await withPersonAnswers(db, jobId as string, fermerLesAppels(msgs))) as ModelMessage[];
+  const failJob: typeof failJobRow = async (base, id, code, stats, msgs, userMessage, hint) =>
     failJobRow(
       base,
       id,
       code,
       stats,
-      msgs === undefined ? undefined : transcriptionFermee(msgs as ModelMessage[]),
+      msgs === undefined ? undefined : await transcriptionFermee(msgs as ModelMessage[]),
       userMessage,
       hint,
     );
-  const cancelJob: typeof cancelJobRow = (base, id, stats, msgs, partialResult) =>
+  const cancelJob: typeof cancelJobRow = async (base, id, stats, msgs, partialResult) =>
     cancelJobRow(
       base,
       id,
       stats,
-      msgs === undefined ? undefined : transcriptionFermee(msgs as ModelMessage[]),
+      msgs === undefined ? undefined : await transcriptionFermee(msgs as ModelMessage[]),
       partialResult,
     );
   // llmClient is resolved per-job from the agent's llmKeyId (Brique 24/25).
@@ -3209,18 +3220,6 @@ async function runJobTracked(
   // attendue SANS suspendre le job (le serveur garde son appel ouvert). Donnée
   // à chaque appel d'outil de ce run, appels approuvés rejoués compris : c'est
   // souvent là qu'un outil gaté pose sa question.
-  //
-  // #1084 — chaque question posée est RETENUE (`questionsPosees`) : la
-  // réponse de la personne, ou son absence, revient à l'agent comme le relevé
-  // du runner (`personAnswerMessages`), message de la personne posé APRÈS le
-  // message d'outils qui porte l'appel. Deux endroits seulement le posent, les
-  // deux qui exécutent des appels : la fin des appels d'un pas (`relevesDuPas`)
-  // et la reprise des appels approuvés (`executeResolvedApprovals`).
-  // Une question encore ouverte quand son appel a rendu son résultat est dite
-  // telle que sa ligne la porte à cet instant (`personAnswerRecord`).
-  const questionsPosees: string[] = [];
-  const relevesDesQuestions = async (): Promise<ModelMessage[]> =>
-    (await personAnswerMessages(db, questionsPosees.splice(0))) as unknown as ModelMessage[];
   const askPerson = createRequestUserInput(
     deps,
     { jobId: jobId as string, agentId: agentRow.id, entityId: job.entityId ?? '' },
@@ -3229,9 +3228,6 @@ async function runJobTracked(
       timeoutMs: elicitationTimeoutMs(
         runnerEnv?.NODALAI_ELICITATION_TIMEOUT_MS ?? process.env['NODALAI_ELICITATION_TIMEOUT_MS'],
       ),
-      onAsked: (id) => {
-        questionsPosees.push(id);
-      },
     },
   );
   // Le temps où la personne réfléchit n'est pas du temps travaillé.
@@ -3561,9 +3557,6 @@ async function runJobTracked(
       if (!close) await recordApprovalWithoutEffect(db, req.id, replacementOutput);
     }
 
-    // #1084 — ce que la personne a répondu aux questions posées pendant ces
-    // appels rejoués, après les messages qui portent leurs résultats.
-    msgs = [...msgs, ...(await relevesDesQuestions())];
     return { messages: msgs, catastrophicRefusalMessage, perdu: null };
   };
 
@@ -3847,7 +3840,7 @@ async function runJobTracked(
         jobId: jobId as string,
         errorCode,
         stats: runStats(),
-        messages: transcriptionFermee(messages),
+        messages: await transcriptionFermee(messages),
         ...(userMessage !== undefined ? { userMessage, replaceResult } : {}),
         ...(runnerNotes ? { runnerNotes } : {}),
         ...(notice
@@ -4642,6 +4635,12 @@ async function runJobTracked(
         return await lacherLeJob(perteEnTete, 'turn_start');
       }
       await lireLaFile('turn_start');
+      // #1084 — avant que le modèle relise la transcription : chaque message
+      // d'outils y est suivi du relevé des questions de ses appels. Ce qu'un
+      // autre chemin a écrit sans eux (la reprise d'appels approuvés, le
+      // message d'outils qu'une délégation reprise construit, un run
+      // précédent du job) les reçoit ici, depuis les lignes.
+      messages = (await withPersonAnswers(db, jobId as string, messages)) as ModelMessage[];
 
       // Invariant 8: hard turn cap. `turn` is cumulative across resumes (it's
       // seeded from job.turn), so a job that loops — or resumes — without ever
@@ -6251,10 +6250,6 @@ async function runJobTracked(
                 content: toolResultOutputText(b.output),
               }));
 
-              // #1084 — les questions posées pendant les appels de ce pas
-              // faits avant la délégation : leurs relevés suivront le message
-              // d'outils que la reprise construit.
-              const relevesAvantDelegation = await relevesDesQuestions();
               const delegation = await handleDelegation(
                 jobShape,
                 childSlug,
@@ -6266,7 +6261,6 @@ async function runJobTracked(
                 preAssignSideResults,
                 db,
                 prise,
-                relevesAvantDelegation,
               );
 
               // Drive the child synchronously, then resume the parent. In
@@ -6503,9 +6497,14 @@ async function runJobTracked(
       }
 
       // #1084 — tous les appels du pas sont faits : leurs questions sont
-      // closes (ou l'appel a fini avant, et la ligne le dit). Leurs relevés
-      // suivront le message d'outils, quelle que soit la sortie du pas.
-      relevesDuPas = await relevesDesQuestions();
+      // closes (ou l'appel a fini avant, et la ligne le dit). Leurs relevés,
+      // lus sur les lignes, suivront le message d'outils quelle que soit la
+      // sortie du pas.
+      relevesDuPas = personAnswersOfCalls(
+        await personAnswerRowsOf(db, jobId as string),
+        rawToolCalls.map((tc) => tc.toolCallId),
+        recordedPersonAnswers(messages),
+      ) as unknown as ModelMessage[];
 
       // j. Suspension states — approval gate.
       //

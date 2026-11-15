@@ -27,6 +27,7 @@ import {
   approvalRules,
   mcpServers,
   agentMcpServers,
+  toolCalls,
 } from '@nodal-agents/db';
 import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
 import { createEmbeddingClient } from '@nodal-agents/llm';
@@ -36,7 +37,12 @@ import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';
 import { executeJob } from '../../job/execute.ts';
 import { answerOfRun } from '../../job/final-answer.ts';
-import { currentTurnMessages } from '../../job/state.ts';
+import { currentTurnMessages, saveCheckpoint } from '../../job/state.ts';
+import {
+  reclaimJobsOfDeadRunners,
+  RESTART_AFTER_SIDE_EFFECT_CODE,
+  RUNNER_LIVENESS_WINDOW_MS,
+} from '../../cron/reclaim-jobs.ts';
 import { resolveApprovalDecision } from '../../approvals/resolve.ts';
 import type { AnsweredBy } from '../../approvals/responders.ts';
 import type { JobId } from '@nodal-agents/orchestration';
@@ -474,8 +480,10 @@ describe('la réponse de la personne à un serveur revient à l’agent par le r
 
     const [form] = personMessagesAfterTool(prompts[1]!, 'tc-form');
     expect(form).toContain(
-      'they accepted, pressing the button "✅ Confirm", and filled the form with: ' +
-        '{"color":"grayscale","copies":2,"duplex":true}.',
+      'they accepted, pressing the button "✅ Confirm", and filled the form as follows: ' +
+        'in the field the server labelled "Color", chose the option the server labelled "grayscale"; ' +
+        'in the field the server labelled "Copies", gave 2; ' +
+        'in the field the server labelled "Two-sided", answered yes.',
     );
     const [empty] = personMessagesAfterTool(prompts[2]!, 'tc-empty');
     expect(empty).toMatch(
@@ -583,7 +591,10 @@ describe('la réponse de la personne à un serveur revient à l’agent par le r
     expect(after[0]).toContain(ASKED('tc-twice'));
     expect(after[0]).toContain('they declined, pressing the button "Decline", and wrote: "first".');
     expect(after[1]).toContain(ASKED('tc-twice'));
-    expect(after[1]).toContain('filled the form with: {"color":"color","copies":1}.');
+    expect(after[1]).toContain(
+      'in the field the server labelled "Color", chose the option the server labelled "color"; ' +
+        'in the field the server labelled "Copies", gave 1.',
+    );
     expect(after[2]).toContain(ASKED('tc-other'));
     expect(after[2]).toContain('and wrote: "third".');
   }, 60_000);
@@ -757,4 +768,243 @@ describe('ce qui ne change pas @cap:approuver-une-action/moteur', () => {
     expect(answerOfRun(turn, false)).toBe(answerOfRun(without, false));
     expect(row!.result).toBe('The page was declined; I will change it as asked.');
   }, 60_000);
+});
+
+// Revue Reviewer A de #1096, P2-2 et P2-3 : le relevé se lit sur les LIGNES,
+// et il se pose derrière chaque message d'outils, où qu'il soit écrit — une
+// fin de run en plein pas, l'annulation d'un délégué, une reprise après
+// approbation arrêtée, un run qui reprend une transcription écrite sans lui.
+describe('le relevé suit le message d’outils à toute écriture de la transcription @cap:approuver-une-action/moteur', () => {
+  async function storedMessages(jobId: string): Promise<PromptMessage[]> {
+    const [row] = await db
+      .select({ messages: agentJobs.messages })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, jobId));
+    return row!.messages as PromptMessage[];
+  }
+
+  /** Le relevé de la question `q` dans la transcription rangée, et le message qui le précède. */
+  async function storedRecord(jobId: string, q: string) {
+    const msgs = await storedMessages(jobId);
+    const at = msgs.findIndex((m) => personAnswerRequestId(m) === q);
+    return { record: at === -1 ? null : msgs[at]!, before: at > 0 ? msgs[at - 1]! : null };
+  }
+
+  it('un run arrêté en plein pas : le message d’outils fermé garde le résultat réel de l’appel et son relevé', async () => {
+    const jobId = await createJob('review the page');
+    const { client } = scriptedModel([{ toolCalls: [order('tc-m1'), order('tc-m2')] }, FINISH]);
+    const run = executeJob(jobId as JobId, makeDeps(client), testEnv);
+    const q = await waitForQuestion(jobId);
+    // Arrêté pendant la PREMIÈRE question : le second appel ne tournera pas.
+    await db.update(agentJobs).set({ status: 'cancelled' }).where(eq(agentJobs.id, jobId));
+    expect((await run).status).toBe('cancelled');
+    expect(await questionsOf(jobId)).toHaveLength(1);
+    const { record, before } = await storedRecord(jobId, q);
+    expect(record?.content).toMatch(
+      new RegExp(
+        `${ASKED('tc-m1').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} Nobody answered it: the job was stopped`,
+      ),
+    );
+    expect(before?.role).toBe('tool');
+    const ids = (before!.content as Array<{ toolCallId: string }>).map((p) => p.toolCallId);
+    expect(ids).toEqual(['tc-m1', 'tc-m2']);
+  }, 60_000);
+
+  it('le délégué annulé : la tête, close avec lui, garde le relevé de la question posée dans le pas où elle a délégué', async () => {
+    const assign = `assign_${childSlug.replace(/-/g, '_')}`;
+    const jobId = await createJob('review the page with help', orchestratorId);
+    const { client } = scriptedModel([
+      {
+        toolCalls: [
+          order('tc-headc'),
+          { toolCallId: 'tc-assign-c', toolName: assign, args: { task: 'check it' } },
+        ],
+      },
+      { toolCalls: [order('tc-childc')] },
+      FINISH,
+    ]);
+    const run = executeJob(jobId as JobId, makeDeps(client), testEnv);
+    const head = await waitForQuestion(jobId);
+    await answer(head, 'reject', { notes: 'head words' });
+    const child = await waitForQuestionOfAgent(childSlug);
+    await db.update(agentJobs).set({ status: 'cancelled' }).where(eq(agentJobs.id, child.jobId));
+    expect((await run).status).toBe('cancelled');
+    const { record, before } = await storedRecord(jobId, head);
+    expect(record?.content).toContain(ASKED('tc-headc'));
+    expect(record?.content).toContain('and wrote: "head words".');
+    expect(before?.role).toBe('tool');
+  }, 90_000);
+
+  it('une reprise après approbation arrêtée pendant la question de l’appel rejoué : le relevé suit son résultat', async () => {
+    await setRule(seed.agentId, 'require_approval');
+    try {
+      const jobId = await createJob('review the page');
+      const { client } = scriptedModel([{ toolCalls: [order('tc-gstop')] }, FINISH]);
+      expect((await executeJob(jobId as JobId, makeDeps(client), testEnv)).status).toBe(
+        'awaiting_approval',
+      );
+      const [gate] = await db
+        .select()
+        .from(approvalRequests)
+        .where(and(eq(approvalRequests.jobId, jobId), eq(approvalRequests.kind, 'approval')));
+      await resolveApprovalDecision({ ...makeDeps(client) }, testEnv, {
+        answeredBy: DASHBOARD_USER,
+        approvalRequestId: gate!.id,
+        decision: 'approve',
+        resolvedBy: 'api',
+      });
+      const resumed = executeJob(jobId as JobId, makeDeps(client), testEnv);
+      const q = await waitForQuestion(jobId);
+      await db.update(agentJobs).set({ status: 'cancelled' }).where(eq(agentJobs.id, jobId));
+      expect((await resumed).status).toBe('cancelled');
+      const { record, before } = await storedRecord(jobId, q);
+      expect(record?.content).toContain(ASKED('tc-gstop'));
+      expect(record?.content).toContain('Nobody answered it: the job was stopped');
+      expect(before?.role).toBe('tool');
+    } finally {
+      await setRule(seed.agentId, 'auto_approve');
+    }
+  }, 60_000);
+
+  it('un run qui reprend une transcription écrite sans le relevé le retrouve sur la ligne', async () => {
+    // L'état que laisse un run arrêté entre le message d'outils et ses
+    // relevés : l'appel et son résultat sont rangés, la question répondue est
+    // sur sa ligne, le relevé n'est nulle part.
+    const jobId = await createJob('review the page');
+    await db
+      .update(agentJobs)
+      .set({
+        messages: [
+          { role: 'user', content: 'review the page' },
+          {
+            role: 'assistant',
+            content: [{ type: 'tool-call', toolCallId: 'tc-old', toolName: TOOL, input: {} }],
+          },
+          {
+            role: 'tool',
+            content: [
+              {
+                type: 'tool-result',
+                toolCallId: 'tc-old',
+                toolName: TOOL,
+                output: { type: 'text', value: '{"action":"decline","content":null}' },
+              },
+            ],
+          },
+        ],
+      })
+      .where(eq(agentJobs.id, jobId));
+    const [q] = await db
+      .insert(approvalRequests)
+      .values({
+        entityId: seed.entityId,
+        jobId,
+        agentId: seed.agentId,
+        toolName: TOOL,
+        toolCallId: 'tc-old',
+        toolInput: {
+          server: SERVER,
+          message: 'Ok?',
+          requestedSchema: { type: 'object', properties: {} },
+        },
+        kind: 'elicitation',
+        status: 'rejected',
+        notes: 'words given before the restart',
+        resolvedAt: new Date('2026-11-14T15:08:00Z'),
+        resolvedBy: 'api',
+        executedAt: new Date('2026-11-14T15:07:00Z'),
+      })
+      .returning({ id: approvalRequests.id });
+    const { client, prompts } = scriptedModel([FINISH]);
+    expect((await executeJob(jobId as JobId, makeDeps(client), testEnv)).status).toBe('completed');
+    expect(personMessagesAfterTool(prompts[0]!, 'tc-old')).toEqual([
+      `${ASKED('tc-old')} The person answered it themselves on 2026-11-14 at 15:08 UTC: ` +
+        'they declined, pressing the button "Decline", and wrote: "words given before the restart".',
+    ]);
+    expect((await storedRecord(jobId, q!.id)).before?.role).toBe('tool');
+  }, 60_000);
+
+  it('un runner qui meurt pendant l’appel qui a posé la question : aucun run ne repart sans elle, le job échoue', async () => {
+    // Ce qu'un appel qui pose une question laisse vraiment : la marque
+    // d'intention d'un outil qui ne fait pas que lire (un outil d'un serveur
+    // n'est jamais `read`, adaptateur MCP), écrite AVANT qu'il tourne.
+    const real = await createJob('review the page');
+    const r = scriptedModel([{ toolCalls: [order('tc-mark')] }, FINISH]);
+    const run = executeJob(real as JobId, makeDeps(r.client), testEnv);
+    await answer(await waitForQuestion(real), 'reject');
+    await run;
+    const [mark] = await db
+      .select({ riskLevel: toolCalls.riskLevel, started: toolCalls.executionStarted })
+      .from(toolCalls)
+      .where(and(eq(toolCalls.jobId, real), eq(toolCalls.toolName, TOOL)));
+    expect(mark!.riskLevel).not.toBe('read');
+    expect(mark!.started).toBe(true);
+
+    // Le même appel, coupé par un redémarrage : le dernier tour sauvegardé ne
+    // le porte pas, sa marque est après, une question répondue et une encore
+    // ouverte sont sur leurs lignes.
+    const jobId = await createJob('review the page');
+    await saveCheckpoint(db as never, jobId, {
+      messages: [{ role: 'user', content: 'review the page' }],
+      turn: 1,
+      chainCount: 0,
+      toolsUsed: [],
+    });
+    await db.insert(toolCalls).values({
+      entityId: seed.entityId,
+      jobId,
+      toolName: TOOL,
+      riskLevel: 'write',
+      toolInput: {},
+      toolOutput: null,
+      executionStarted: true,
+      turn: 2,
+      toolCallId: 'tc-cut',
+    });
+    const question = (status: 'rejected' | 'pending', notes: string | null) => ({
+      entityId: seed.entityId,
+      jobId,
+      agentId: seed.agentId,
+      toolName: TOOL,
+      toolCallId: 'tc-cut',
+      toolInput: {
+        server: SERVER,
+        message: 'Ok?',
+        requestedSchema: { type: 'object', properties: {} },
+      },
+      kind: 'elicitation',
+      status,
+      notes,
+      ...(status === 'pending' ? {} : { resolvedAt: new Date(), resolvedBy: 'api' }),
+      executedAt: new Date(),
+    });
+    await db.insert(approvalRequests).values(question('rejected', 'answered before the restart'));
+    const [open] = await db
+      .insert(approvalRequests)
+      .values(question('pending', null))
+      .returning({ id: approvalRequests.id });
+    await db
+      .update(agentJobs)
+      .set({
+        status: 'processing',
+        updatedAt: new Date(Date.now() - RUNNER_LIVENESS_WINDOW_MS - 60_000),
+      })
+      .where(eq(agentJobs.id, jobId));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const reclaimed = await reclaimJobsOfDeadRunners(db as never).finally(() => warn.mockRestore());
+
+    // Le tour coupé n'est pas rejoué : le job échoue, aucun run ne reprend
+    // une transcription où manquerait la réponse de la personne.
+    expect(reclaimed.resumedJobIds).not.toContain(jobId);
+    const [row] = await db
+      .select({ status: agentJobs.status, error: agentJobs.error })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, jobId));
+    expect(row).toEqual({ status: 'failed', error: RESTART_AFTER_SIDE_EFFECT_CODE });
+    const [closed] = await db
+      .select({ status: approvalRequests.status, resolvedBy: approvalRequests.resolvedBy })
+      .from(approvalRequests)
+      .where(eq(approvalRequests.id, open!.id));
+    expect(closed).toEqual({ status: 'expired', resolvedBy: 'system:runner_restarted' });
+  }, 90_000);
 });

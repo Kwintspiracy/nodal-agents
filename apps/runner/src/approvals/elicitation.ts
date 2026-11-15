@@ -27,6 +27,7 @@
 
 import {
   and,
+  asc,
   eq,
   inArray,
   approvalRequests,
@@ -37,8 +38,9 @@ import {
 import {
   ELICITATION_CLOSED_BY,
   ELICITATION_MESSAGE_MAX,
-  personAnswerMessage,
+  placePersonAnswers,
   type PersonAnswerMessage,
+  type PersonAnswerRow,
   parseElicitationSchema,
   validateElicitationContent,
   describeElicitationErrors,
@@ -73,13 +75,6 @@ export interface ElicitationWait {
   timeoutMs: number;
   /** Intervalle de sondage ; par défaut, au plus 1 s. */
   pollMs?: number;
-  /**
-   * La question est posée (sa ligne existe) : le run la retient pour en
-   * donner le relevé à l'agent après le message d'outils du pas (#1084,
-   * `personAnswerMessages`). Appelé avant toute attente, dans l'ordre des
-   * questions.
-   */
-  onAsked?: (approvalRequestId: string) => void;
 }
 
 /**
@@ -167,7 +162,6 @@ async function askDuringCall(
     }
     return row.id;
   });
-  wait.onAsked?.(id);
   console.warn(
     `[elicitation] ${req.serverSlug} asks during ${req.toolName} (job ${scope.jobId}): ` +
       `request ${id}, ${req.attachments.length} image(s), expires ${expiresAt.toISOString()}`,
@@ -308,17 +302,16 @@ export async function closeElicitationsOfLostJobs(
 }
 
 /**
- * Le relevé de chaque question `ids`, écrit depuis sa ligne, dans l'ordre où
- * elles ont été posées (#1084, `personAnswerRecord`) : ce que la personne a
- * répondu, ou qu'elle n'a pas répondu, et pourquoi. Un id sans ligne (la ligne
- * est partie avec son job) n'a pas de relevé : personne ne le lira plus.
+ * Les questions qu'un serveur a posées pendant les appels de ce job, dans
+ * l'ordre où elles l'ont été (#1084) : la source de vérité du relevé de la
+ * personne, qui survit au run qui les a posées (un redémarrage, une reprise
+ * après approbation ou après délégation la relisent telle quelle).
  */
-export async function personAnswerMessages(
+export async function personAnswerRowsOf(
   db: AnyDrizzleDb,
-  ids: readonly string[],
-): Promise<PersonAnswerMessage[]> {
-  if (ids.length === 0) return [];
-  const rows = await db
+  jobId: string,
+): Promise<PersonAnswerRow[]> {
+  return db
     .select({
       id: approvalRequests.id,
       toolName: approvalRequests.toolName,
@@ -331,10 +324,20 @@ export async function personAnswerMessages(
       resolvedBy: approvalRequests.resolvedBy,
     })
     .from(approvalRequests)
-    .where(and(inArray(approvalRequests.id, [...ids]), eq(approvalRequests.kind, 'elicitation')));
-  const byId = new Map(rows.map((r) => [r.id, r]));
-  return ids.flatMap((id) => {
-    const row = byId.get(id);
-    return row ? [personAnswerMessage(row)] : [];
-  });
+    .where(and(eq(approvalRequests.jobId, jobId), eq(approvalRequests.kind, 'elicitation')))
+    .orderBy(asc(approvalRequests.requestedAt), asc(approvalRequests.id));
+}
+
+/**
+ * `messages` où chaque message d'outils est suivi du relevé de chaque question
+ * posée pendant ses appels (`placePersonAnswers`), lu sur les lignes du job.
+ * Idempotent : appelée partout où une transcription est écrite ou relue pour
+ * le modèle, elle ne pose que ce qui manque.
+ */
+export async function withPersonAnswers<T>(
+  db: AnyDrizzleDb,
+  jobId: string,
+  messages: readonly T[],
+): Promise<Array<T | PersonAnswerMessage>> {
+  return placePersonAnswers(messages, await personAnswerRowsOf(db, jobId));
 }
