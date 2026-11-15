@@ -670,9 +670,9 @@ function replyRenderingLine(ctx: JobContext): string | null {
 export const REPLY_FORM_NOTES: { readonly [R in ReplyRendering]: string | null } = {
   text: null,
   spoken:
-    '[Note from the runner, not said by the person: this reply is heard. Answer this message, ' +
-    'in one sentence, two at most. Where earlier work stands is said only when this message ' +
-    'asks about it.]',
+    '[Note from the runner, not said by the person: this reply is heard. Whatever you do next, ' +
+    'what you say is one sentence, two at most. Where earlier work stands is said only when ' +
+    'this message asks about it.]',
 };
 
 function buildJobContextBlock(ctx: JobContext, availableTools: readonly string[]): string {
