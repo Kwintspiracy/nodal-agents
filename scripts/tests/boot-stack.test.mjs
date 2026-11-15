@@ -16,12 +16,18 @@
 // qu'un filet, et il le dit.
 
 import { describe, it, expect, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, readFileSync, existsSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync, existsSync, writeFileSync, mkdirSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { execFile } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { attendreLaStack, lancerEtAttendre, finDuJournal, estPrete } from '../lib/boot-stack.mjs';
+import {
+  attendreLaStack,
+  lancerEtAttendre,
+  finDuJournal,
+  estPrete,
+  refusSansBuild,
+} from '../lib/boot-stack.mjs';
 import { watchProcess } from '../../packages/test-kit/src/process-watch.ts';
 
 describe('attendreLaStack', () => {
@@ -266,4 +272,32 @@ describe('lancerEtAttendre, sur de VRAIS processus', () => {
     },
     60_000,
   );
+});
+
+// #748 : la stack des parcours sert le web CONSTRUIT (`next start`), comme chez
+// un utilisateur. Sans build, `next start` meurt et le CLI attendrait son délai
+// de santé (300 s) avant de le dire : le refus vient avant tout lancement.
+describe('refusSansBuild', () => {
+  let racine;
+  afterEach(() => racine && rmSync(racine, { recursive: true, force: true }));
+
+  it('refuse, en nommant le fichier manquant et la commande qui le produit, sans build', () => {
+    racine = mkdtempSync(join(tmpdir(), 'boot-stack-build-'));
+    const refus = refusSansBuild(racine);
+    expect(refus).toContain(join(racine, 'apps', 'web', '.next', 'BUILD_ID'));
+    expect(refus).toContain('pnpm turbo run build --filter=@nodal-agents/web');
+  });
+
+  it('laisse passer quand le build de production est là', () => {
+    racine = mkdtempSync(join(tmpdir(), 'boot-stack-build-'));
+    mkdirSync(join(racine, 'apps', 'web', '.next'), { recursive: true });
+    writeFileSync(join(racine, 'apps', 'web', '.next', 'BUILD_ID'), 'abc123');
+    expect(refusSansBuild(racine)).toBeNull();
+  });
+
+  it('un dossier .next sans BUILD_ID (celui que laisse next dev) ne compte pas comme un build', () => {
+    racine = mkdtempSync(join(tmpdir(), 'boot-stack-build-'));
+    mkdirSync(join(racine, 'apps', 'web', '.next', 'dev'), { recursive: true });
+    expect(refusSansBuild(racine)).not.toBeNull();
+  });
 });
