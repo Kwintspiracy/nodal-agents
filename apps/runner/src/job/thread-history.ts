@@ -37,19 +37,20 @@
 //
 // Action ledger (2026-07-11 incident, Layer 1 of the 3-layer fix — see
 // chain-counters.ts Guard 1g for the incident write-up): a prior job's OWN
-// prose is not a reliable record of what it actually did. When a prior job in
-// this thread used a STATE-CHANGING tool (create_schedule, attach_mcp, ...),
-// its exchange gets an `[Actions performed in this exchange: ...]` line naming
-// the REAL tool calls from `agent_jobs.tools_used` — a structural fact the LLM
-// can't override with confabulated prose on a later turn.
+// prose is not a reliable record of what it actually did. Its exchange gets
+// the runner's record of its REAL tool calls — a structural fact the LLM can't
+// override with confabulated prose on a later turn. Since #1075 that record
+// covers EVERY tool, without a hand-kept list: every tool named, and the head
+// of each result of a tool not declared read-only quoted
+// (`loadExchangeRecords`, exchange-record.ts). The 21 names of
+// `STATE_CHANGING_TOOLS` it replaces left every MCP, file and shell tool out,
+// and a rigorous model disowned real work it could not see.
 //
-// Delegated-task ledger (2026-07-12 incident — see task-ledger.ts): the line
-// above only covers the prior job's OWN tools_used. A prior job that instead
-// DELEGATED work via `create_task` (planner fan-out) never touched a tool
-// itself — the real action happened in a child task-board job the LLM has no
-// visibility into. Each prior job's delegated tasks (if any) get their own
-// `[Task "..." completed: actions — ...; result: ...]` line(s), sourced from
-// the CHILD job's tools_used, not the parent's prose summary.
+// Delegated-task ledger (2026-07-12 incident — see task-ledger.ts): a prior
+// job that DELEGATED work via `create_task` (planner fan-out) or in line
+// (`assign_*`) did the real action in a child job. Each delegation gets its
+// own line, sourced from the CHILD job's tools, not the parent's prose
+// summary, and the child's acting calls are quoted under the same rule.
 //
 // WHERE those lines go (#562): in a runner record AFTER the exchange — a user
 // message marked `[système]` (runnerRecord) — never in an assistant part. They
@@ -85,12 +86,8 @@ import { eq, and, ne, desc, inArray, isNull, lt } from '@nodal-agents/db';
 import { agentJobs, chatMessages } from '@nodal-agents/db';
 import type { ModelMessage } from 'ai';
 import type { RunnerDeps } from '../deps.ts';
-import {
-  loadTaskLedger,
-  formatTaskLedgerLines,
-  loadInlineDelegationLedger,
-  formatInlineDelegationLines,
-} from './task-ledger.ts';
+import { loadExchangeRecords } from './exchange-record.ts';
+import { ownTranscript } from './tool-acts.ts';
 import {
   formatLocalTime,
   inboxMessageReceivedAt,
@@ -135,48 +132,6 @@ export const BUDGET_CHARS = 16_000;
  * (F-12, audit #2) — reuse it instead of re-implementing it.
  */
 export const PER_TURN_MAX_CHARS = 2_400;
-
-/**
- * Built-in tools that create/mutate/delete a platform object — schedules,
- * agents, skills, MCP servers, connectors, memory — as opposed to read tools
- * (`list_schedules`, ...) or delivery tools (`telegram_send_message`, ...).
- * Gates the action ledger below: a prior job whose `tools_used` intersects
- * this set gets a ledger line naming ALL its tools_used (not just the
- * state-changing ones — the point is to show the FULL real action record).
- *
- * Maintained alongside the builtin tool registry
- * (packages/tools/src/builtin) — extend this set whenever a new tool
- * creates, mutates, or deletes a platform object.
- */
-export const STATE_CHANGING_TOOLS: ReadonlySet<string> = new Set([
-  // Schedules
-  'create_schedule',
-  'update_schedule',
-  'toggle_schedule',
-  'run_schedule',
-  // Agents
-  'create_agent',
-  'update_agent',
-  'attach_agent',
-  'detach_agent',
-  // Skills
-  'create_skill',
-  'update_skill',
-  'attach_skill',
-  'detach_skill',
-  // MCP servers
-  'create_mcp',
-  'attach_mcp',
-  'detach_mcp',
-  // Connectors
-  'create_connector',
-  'attach_connector',
-  'detach_connector',
-  // Memory
-  'save_memory',
-  'mark_memory_helpful',
-  'mark_memory_outdated',
-]);
 
 export interface LoadThreadHistoryOptions {
   db: RunnerDeps['db'];
@@ -230,7 +185,6 @@ export async function loadThreadHistory(opts: LoadThreadHistoryOptions): Promise
       channel: agentJobs.channel,
       createdAt: agentJobs.createdAt,
       completedAt: agentJobs.completedAt,
-      toolsUsed: agentJobs.toolsUsed,
       resultKind: agentJobs.resultKind,
       runnerNotes: agentJobs.runnerNotes,
     })
@@ -261,22 +215,20 @@ export async function loadThreadHistory(opts: LoadThreadHistoryOptions): Promise
   // le budget les écarte.
   const chronological = [...rows].reverse();
 
-  // Delegated-task visibility (2026-07-12 incident, see task-ledger.ts): one
-  // batched query for every prior job's own delegated tasks, keyed by job id
-  // (= agent_tasks.root_job_id when that job used create_task).
-  const taskLedger = await loadTaskLedger(
-    opts.db,
-    chronological.map((r) => r.id),
-  );
+  // Ce que l'agent a répondu à chaque tour, lu AVANT le relevé : les appels
+  // qui ont livré cette réponse sont déjà redonnés comme son tour, le relevé
+  // ne les redit pas (#1075). Une seule lecture, ici, pour les deux.
+  const replies = new Map(chronological.map((row) => [row.id, replyOfRow(row)]));
 
-  // Délégation EN LIGNE (`assign_*`, incident du 26/08 — voir task-ledger.ts).
-  // Le registre au-dessus ne couvre que le fan-out `create_task` ; celui-ci lit
-  // les `agent_jobs` enfants. Sans lui, un tour où l'orchestrateur a réellement
-  // délégué et un tour où il a inventé le compte rendu arrivent identiques dans
-  // l'historique — c'est ce qui laissait la confabulation se répéter.
-  const inlineLedger = await loadInlineDelegationLedger(
+  // Le relevé de chaque tour (#1075, exchange-record.ts) : ses outils, ce que
+  // ceux qui agissent ont rendu, et ses délégations — `create_task` comme EN
+  // LIGNE (`assign_*`, incident du 26/08) : sans elles, un tour où
+  // l'orchestrateur a réellement délégué et un tour où il a inventé le compte
+  // rendu arrivaient identiques dans l'historique.
+  const records = await loadExchangeRecords(
     opts.db,
     chronological.map((r) => r.id),
+    new Map([...replies].map(([id, r]) => [id, r.reply?.callIds ?? new Set<string>()])),
   );
 
   // Each "block" is a contiguous slice of messages we keep or drop together
@@ -306,16 +258,9 @@ export async function loadThreadHistory(opts: LoadThreadHistoryOptions): Promise
     // lignes plus anciennes sans marque, et une vraie réponse d'avant n'existe
     // parfois que dans `result`. Elle reste lue comme avant cette PR — la
     // réponse de l'agent, moins ce que `runner_notes` reconnaît (revue Codex de
-    // #576, passe 2).
-    const agentsOwnResult = row.resultKind !== 'relay';
-    const runnerNotes = Array.isArray(row.runnerNotes) ? row.runnerNotes : [];
-    const agentsWords = withoutRunnerNotes(row.result, runnerNotes);
-    const assistant = extractAssistantReply({
-      task: row.task,
-      result: agentsOwnResult ? agentsWords : null,
-      messages: row.messages,
-      channel: row.channel,
-    });
+    // #576, passe 2). Voir `replyOfRow`.
+    const { agentsOwnResult, runnerNotes, agentsWords, reply } = replies.get(row.id)!;
+    const assistant = reply?.text ?? null;
     // Un texte que l'agent a lui-même envoyé n'est pas redit par le relevé.
     const unmarked = agentsOwnResult ? '' : (agentsWords ?? '').trim();
     const runnerResult = unmarked === (assistant ?? '').trim() ? '' : unmarked;
@@ -339,35 +284,23 @@ export async function loadThreadHistory(opts: LoadThreadHistoryOptions): Promise
       { role: 'user', content: datedTurn(truncate(row.task), row.createdAt, opts.timezone) },
       ...followUps,
     ];
+    // Un tour sans aucune trace n'est pas relu. Ce que ses outils ont fait en
+    // est une (#1075) : un tour dont le seul envoi est parti vers une autre
+    // personne n'a pas de réponse relue, mais il a agi, et il ne disparaît pas.
     if (
       assistant === null &&
       runnerResult === '' &&
       runnerNotes.length === 0 &&
-      followUps.length === 0
+      followUps.length === 0 &&
+      !records.has(row.id)
     ) {
       continue;
     }
 
-    // Action ledger (see file header) — only when this job actually used a
-    // STATE-CHANGING tool. Lists the job's FULL tools_used (not just the
-    // state-changing subset) so the ledger reads as a complete action record,
-    // not a partial one.
-    const toolsUsedRow = Array.isArray(row.toolsUsed) ? (row.toolsUsed as string[]) : [];
-    const ledgerLine = toolsUsedRow.some((t) => STATE_CHANGING_TOOLS.has(t))
-      ? `[Actions performed in this exchange: ${toolsUsedRow.join(', ')}]`
-      : null;
-
-    // Delegated-task ledger (see file header) — this job's own create_task
-    // fan-out, if any, sourced from each child task's OWN job.tools_used.
-    const delegatedLedgerLines = formatTaskLedgerLines(taskLedger.get(row.id) ?? []);
-    // Les délégations EN LIGNE de ce tour — actions seulement, pas de résultat :
-    // il est déjà dans la prose du parent, et le redire coûtait 531 caractères
-    // par tour là où 75 suffisent (mesuré sur une install réelle).
-    const inlineLedgerLines = formatInlineDelegationLines(inlineLedger.get(row.id) ?? []);
+    // Le relevé de ses outils et de ses délégations (voir l'en-tête), puis ce
+    // que le runner a écrit de son résultat.
     const allLedgerLines = [
-      ...(ledgerLine ? [ledgerLine] : []),
-      ...delegatedLedgerLines,
-      ...inlineLedgerLines,
+      ...(records.get(row.id) ?? []),
       ...(runnerResult !== '' ? [truncate(runnerResult)] : []),
       ...runnerNotes,
     ];
@@ -492,14 +425,23 @@ async function loadDashboardHistory(opts: LoadThreadHistoryOptions): Promise<Mod
     }
   }
 
-  const jobIds = chronological.map((r) => r.jobId);
-  const taskLedger = await loadTaskLedger(opts.db, jobIds);
-  const inlineLedger = await loadInlineDelegationLedger(opts.db, jobIds);
-
-  // Un bloc par tour : un message de la personne, et ce que l'agent y a
-  // répondu. On garde ou on jette un tour entier, jamais une moitié.
-  const blocks: ModelMessage[][] = [];
+  // Un tour : un message de la personne, et ce que l'agent y a répondu. On
+  // garde ou on jette un tour entier, jamais une moitié. Seuls les MAX_TURNS
+  // derniers peuvent être relus : les relevés ne se lisent que pour eux.
+  const turns: Array<typeof chronological> = [];
   for (const row of chronological) {
+    const last = turns[turns.length - 1];
+    if (row.role === 'user' || !last) turns.push([row]);
+    else last.push(row);
+  }
+  const recent = turns.slice(-MAX_TURNS).flat();
+  const records = await loadExchangeRecords(
+    opts.db,
+    recent.map((r) => r.jobId),
+  );
+
+  const blocks: ModelMessage[][] = [];
+  for (const row of recent) {
     if (row.role === 'user') {
       if (!row.createdAt) throw new Error('thread history: a chat_messages row has no created_at');
       blocks.push([
@@ -514,8 +456,7 @@ async function loadDashboardHistory(opts: LoadThreadHistoryOptions): Promise<Mod
     const said = [row.content.trim(), (own ?? '').trim()].filter((t) => t !== '').join('\n\n');
     const recordLines = row.jobId
       ? [
-          ...formatTaskLedgerLines(taskLedger.get(row.jobId) ?? []),
-          ...formatInlineDelegationLines(inlineLedger.get(row.jobId) ?? []),
+          ...(records.get(row.jobId) ?? []),
           ...(relay !== '' ? [truncate(relay)] : []),
           ...runnerNotes,
         ]
@@ -614,7 +555,8 @@ export const CHANNEL_SEND_TOOL: Readonly<Record<string, string>> = {
  *   1. `result` column when populated — long-form return_result with text.
  *   2. Concatenated `text` from every `<channel>_send_message` tool call in
  *      the messages array (the actual user-visible reply for conversational
- *      channels).
+ *      channels), whatever its target (#1077). Their call ids come back with
+ *      it: the runner record does not repeat them (#1075).
  *   3. Last assistant message's text content — covers exotic flows that
  *      neither populated `result` nor used the channel send tool.
  *   4. `null` to signal "skip this job".
@@ -630,54 +572,93 @@ export const CHANNEL_SEND_TOOL: Readonly<Record<string, string>> = {
  * 9c22d5b3 (2026-05-26) where 3 Stripe-related prior jobs all returned
  * the same stale MCP pre-amble before this fix.
  */
+/**
+ * Ce que l'agent a répondu à un tour passé, et ce qui en vient : ses propres
+ * mots (`result` moins ce que le runner y a écrit), et la réponse relue.
+ */
+function replyOfRow(
+  row: {
+    task: string;
+    result: string | null;
+    messages: unknown;
+    channel: string;
+    resultKind: string | null;
+    // Typed through `Record`: `runner-notes-one-writer.test.ts` reads a key
+    // followed by a colon as a write, and this is a read of the stored column.
+  } & Record<'runnerNotes', unknown>,
+) {
+  const agentsOwnResult = row.resultKind !== 'relay';
+  const runnerNotes = Array.isArray(row.runnerNotes) ? (row.runnerNotes as string[]) : [];
+  const agentsWords = withoutRunnerNotes(row.result, runnerNotes);
+  const reply = extractAssistantReply({
+    task: row.task,
+    result: agentsOwnResult ? agentsWords : null,
+    messages: row.messages,
+    channel: row.channel,
+  });
+  return { agentsOwnResult, runnerNotes, agentsWords, reply };
+}
+
+/**
+ * La réponse relue d'un tour, et les appels qui l'ont LIVRÉE (#1075) : ceux-là
+ * sont déjà redonnés comme le tour de l'agent, le relevé ne les redit pas.
+ * Vide quand la réponse vient de `result` ou d'un texte de l'assistant.
+ *
+ * Tout appel de l'outil d'envoi du canal est lu comme la réponse, quelle que
+ * soit sa cible : la lecture d'avant #1075, inchangée. Un envoi vers une autre
+ * personne est donc relu comme des mots dits à celle-ci et n'est pas dans le
+ * relevé ; c'est le défaut que décrit #1077 (où un message est parti n'est
+ * rangé nulle part), ni créé ni aggravé ici.
+ */
+interface AssistantReply {
+  text: string;
+  callIds: ReadonlySet<string>;
+}
+
 function extractAssistantReply(row: {
   task: string;
   result: string | null;
   messages: unknown;
   channel: string;
-}): string | null {
+}): AssistantReply | null {
   // 1. result column.
   if (row.result !== null && row.result !== undefined && row.result.trim() !== '') {
-    return row.result;
+    return { text: row.result, callIds: new Set() };
   }
 
-  const allMessages = Array.isArray(row.messages) ? (row.messages as ModelMessage[]) : [];
-
-  // Locate the boundary between injected history and the job's own turns.
-  // Search backward from the end so we land on the LAST occurrence of the
-  // current task — defensive against duplicate user messages (rare).
-  let currentStart = 0;
-  for (let i = allMessages.length - 1; i >= 0; i--) {
-    const m = allMessages[i];
-    if (!m || m.role !== 'user') continue;
-    const c = m.content;
-    if (typeof c === 'string' && c === row.task) {
-      currentStart = i;
-      break;
-    }
-  }
-  const messages = allMessages.slice(currentStart);
+  // The boundary between injected history and the job's own turns — the same
+  // one its tool record reads (`ownTranscript`, tool-acts.ts).
+  const messages = ownTranscript(row.messages, row.task);
 
   // 2. channel-specific send-message tool calls (within current-job slice).
   const sendTool = CHANNEL_SEND_TOOL[row.channel];
   if (sendTool) {
     const parts: string[] = [];
+    const callIds = new Set<string>();
     for (const msg of messages) {
       if (msg.role !== 'assistant') continue;
       const content = msg.content;
       if (!Array.isArray(content)) continue;
       for (const p of content) {
         if (!p || typeof p !== 'object') continue;
-        const part = p as { type?: unknown; toolName?: unknown; input?: unknown };
+        const part = p as {
+          type?: unknown;
+          toolName?: unknown;
+          toolCallId?: unknown;
+          input?: unknown;
+        };
         if (part.type !== 'tool-call' || part.toolName !== sendTool) continue;
         const input = part.input;
         if (input && typeof input === 'object' && 'text' in input) {
           const text = (input as { text: unknown }).text;
-          if (typeof text === 'string' && text.trim() !== '') parts.push(text);
+          if (typeof text === 'string' && text.trim() !== '') {
+            parts.push(text);
+            if (typeof part.toolCallId === 'string') callIds.add(part.toolCallId);
+          }
         }
       }
     }
-    if (parts.length > 0) return parts.join('\n\n');
+    if (parts.length > 0) return { text: parts.join('\n\n'), callIds };
   }
 
   // 3. last assistant text content (within current-job slice).
@@ -685,7 +666,9 @@ function extractAssistantReply(row: {
     const msg = messages[i];
     if (!msg || msg.role !== 'assistant') continue;
     const content = msg.content;
-    if (typeof content === 'string' && content.trim() !== '') return content;
+    if (typeof content === 'string' && content.trim() !== '') {
+      return { text: content, callIds: new Set() };
+    }
     if (Array.isArray(content)) {
       const textParts: string[] = [];
       for (const p of content) {
@@ -694,7 +677,7 @@ function extractAssistantReply(row: {
         if (part.type === 'text' && typeof part.text === 'string') textParts.push(part.text);
       }
       const joined = textParts.join('');
-      if (joined.trim() !== '') return joined;
+      if (joined.trim() !== '') return { text: joined, callIds: new Set() };
     }
   }
 
