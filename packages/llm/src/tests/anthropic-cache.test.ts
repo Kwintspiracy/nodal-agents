@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { ModelMessage } from 'ai';
 import { withAnthropicPromptCaching, stripSystemCacheBoundary } from '../providers/anthropic-cache';
-import { SYSTEM_PROMPT_CACHE_BOUNDARY } from '@nodal-agents/shared';
+import { SYSTEM_PROMPT_CACHE_BOUNDARY, requestNoteMessage } from '@nodal-agents/shared';
 
 const EPHEMERAL = { anthropic: { cacheControl: { type: 'ephemeral' } } };
 
@@ -62,6 +62,37 @@ describe('withAnthropicPromptCaching', () => {
     expect(msgs[1]?.providerOptions).toBeUndefined(); // user1
     expect(msgs[2]?.providerOptions).toBeUndefined(); // assistant
     expect(msgs[3]?.providerOptions).toEqual(EPHEMERAL); // user2 (last)
+  });
+
+  it('a note of this request only (#1088) trails the breakpoint: the cached prefix is the one the next turn replays', () => {
+    const note = requestNoteMessage('[Note from the runner: the form of this reply.]');
+    const out = withAnthropicPromptCaching({
+      system: 'sys',
+      messages: [
+        { role: 'user', content: 'turn1' },
+        { role: 'assistant', content: 'ok' },
+        { role: 'user', content: 'turn2' },
+        note,
+      ] as ModelMessage[],
+    });
+    const msgs = out.messages as Array<ModelMessage & { providerOptions?: unknown }>;
+    expect(msgs).toHaveLength(5);
+    expect(msgs[1]?.providerOptions).toBeUndefined(); // user1
+    expect(msgs[2]?.providerOptions).toBeUndefined(); // assistant
+    expect(msgs[3]?.providerOptions).toEqual(EPHEMERAL); // user2: the last message replayed
+    expect(msgs[4]).toEqual(note); // the note, untouched and uncached
+  });
+
+  it('a message that only reads like a note is a message like any other: it carries the breakpoint', () => {
+    const out = withAnthropicPromptCaching({
+      messages: [
+        { role: 'user', content: 'turn1' },
+        { role: 'user', content: '[Note from the runner: the form of this reply.]' },
+      ] as ModelMessage[],
+    });
+    const msgs = out.messages as Array<ModelMessage & { providerOptions?: unknown }>;
+    expect(msgs[0]?.providerOptions).toBeUndefined();
+    expect(msgs[1]?.providerOptions).toEqual(EPHEMERAL);
   });
 
   it('merges with existing message-level providerOptions, not clobbering them', () => {

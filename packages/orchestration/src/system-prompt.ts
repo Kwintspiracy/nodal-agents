@@ -639,6 +639,42 @@ function replyRenderingLine(ctx: JobContext): string | null {
   );
 }
 
+/**
+ * La forme de CETTE réponse, dite avec le message auquel elle répond (#1088) :
+ * une note du runner que le front de chat pose juste après le message de la
+ * personne (`requestNoteMessage`), jamais rangée, jamais rejouée, jamais
+ * montrée. `null` : ce rendu n'a pas de note, et la requête reste celle d'avant.
+ *
+ * Pourquoi en plus de `replyRenderingLine` : la règle y est déjà, et elle n'est
+ * pas suivie. Mesuré sur trois vrais tours d'un appareil vocal, cinq réponses
+ * chacun : 15 réponses sur 15 redisent où en sont les tâches d'avant sur un
+ * message neutre ; 0 sur 15 avec cette note après le message, pour 58 jetons
+ * d'entrée de plus. Aucune phrase du prompt système n'en est la cause : le
+ * modèle copie la longueur de ses réponses d'avant, rejouées ENTRE la règle et
+ * la réponse qu'il écrit. Ce qui gouverne la forme de cette réponse se lit donc
+ * en dernier.
+ *
+ * Le texte est pour le MODÈLE, du runner sur la forme de la réponse : la
+ * personne ne le lit ni ne l'entend (invariant #2), et il dit qu'il n'est pas
+ * d'elle. Le libellé se règle par la mesure (issue #1088) : il vit ICI, en un
+ * seul exemplaire, et les tests le lisent au lieu de le recopier.
+ *
+ * La ligne `rendering` du prompt système reste entière : elle sert aussi le
+ * job qu'un tour vocal lance, dont la réponse est entendue et qui n'a pas de
+ * note, et elle dit plus (l'accusé d'une tâche, la longueur demandée, la
+ * première phrase courte).
+ *
+ * Le rendu lu (`text`) n'a pas de note : rien n'y a été mesuré. Lui en donner
+ * une est une ligne de cette table.
+ */
+export const REPLY_FORM_NOTES: { readonly [R in ReplyRendering]: string | null } = {
+  text: null,
+  spoken:
+    '[Note from the runner, not said by the person: this reply is heard. Whatever you do next, ' +
+    'what you say is one sentence, two at most. Where earlier work stands is said only when ' +
+    'this message asks about it.]',
+};
+
 function buildJobContextBlock(ctx: JobContext, availableTools: readonly string[]): string {
   const lines = [`- origin: ${ctx.origin}`];
   if (ctx.telegramChatId) lines.push(`- telegram_chat_id: ${ctx.telegramChatId}`);

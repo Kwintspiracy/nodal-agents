@@ -102,6 +102,42 @@ export interface ButtonCard {
   buttons: readonly (readonly CardButton[])[];
 }
 
+/**
+ * One way to answer a card of CHOICES: what the person picks is sent back as
+ * a decision, with the option chosen when there is one (`POST /api/approve`).
+ */
+export interface CardChoice {
+  label: string;
+  decision: 'approve' | 'reject';
+  answer?: string;
+}
+
+/**
+ * An image that comes with a card, NAMED, never carried: the adapter that
+ * draws the card decides how the person reaches it (a device gets a pointer
+ * it reads with its key). `position` is the image's place among the
+ * request's attachments.
+ */
+export interface CardImage {
+  position: number;
+  mimeType: string;
+  caption: string | null;
+}
+
+/**
+ * A card whose every button is a CHOICE answered through the decision route
+ * (#1067): the question of an MCP server that a list of choices answers, for
+ * a channel that draws choices and no free form. The card names its images
+ * itself (`images`): nothing is sent before it.
+ */
+export interface ChoiceCard {
+  text: string;
+  choices: readonly CardChoice[];
+  /** `apr:<request id>`, as on the other cards. */
+  callbackId: string;
+  images: readonly CardImage[];
+}
+
 export interface SendResult {
   messageId: string;
 }
@@ -242,6 +278,17 @@ export interface ChannelAdapter {
     creds: ChannelCredentials,
     conversationId: string,
     card: ButtonCard,
+  ): Promise<SendResult>;
+
+  /**
+   * Optional: a channel whose buttons answer through the decision route, and
+   * that has no free-button card (`sendCard`) to fill a form gesture by
+   * gesture (a device, #1067). It carries the card's images as it can.
+   */
+  sendChoiceCard?(
+    creds: ChannelCredentials,
+    conversationId: string,
+    card: ChoiceCard,
   ): Promise<SendResult>;
 
   /**

@@ -8,8 +8,8 @@ dashboard: a speaker, a desktop companion, a small board, a piece of software.
 Nodal knows no device by name. The device pairs from its own side, the owner
 confirms it, and from then on the device speaks, types and answers in its own
 conversation with the workspace's root agent. What a task it launched asks
-back (a question, an approval, the spoken announcement at the end) comes back
-to that device.
+back (a question, an approval, a question an MCP server asks during a call,
+the spoken announcement at the end) comes back to that device.
 
 This page is for the person who writes the device side. You need no Nodal
 code: one file, `nodal-device.mjs`, with no dependency.
@@ -109,6 +109,7 @@ leaves it for the dashboard. CI runs it against a real runner on every change.
 | `nodal.say(audio, 'audio/wav')`     | One spoken turn. `audio/pcm` needs `{ sampleRate }` (16-bit signed little-endian, mono). Resolves `{ transcript, reply, spawnedJobId, stopped, speechError }`; `transcript` is `null` when nothing was heard. |
 | `nodal.send(text)`                  | One typed turn. Resolves like `say`.                                                                                                                                                                          |
 | `nodal.answer(cardId, choice)`      | Answers a card with one of its `choices`.                                                                                                                                                                     |
+| `nodal.image(image)`                | Reads one of a card's `images` with the device's token. Resolves `{ mimeType, bytes }`.                                                                                                                       |
 | `nodal.cancel()`                    | Stops the current turn, spoken or typed.                                                                                                                                                                      |
 | `nodal.newConversation()`           | Starts a blank conversation, like `/new` on a channel.                                                                                                                                                        |
 | `nodal.close()`                     | Closes the connection.                                                                                                                                                                                        |
@@ -134,23 +135,71 @@ network's included (the original error is its `cause`):
 What Nodal sends to the device. A device only ever hears what its own requests
 produce and what is addressed to it.
 
-| Event          | When                                                                       | What it carries                                                                                                                                                                                                                                                                                                                                               |
-| -------------- | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `bubble`       | A task launched from the device answered, or a message was sent to it      | `text`, `jobId`, `conversationId`                                                                                                                                                                                                                                                                                                                             |
-| `card`         | A task asks the person: approve an action, or choose an option             | `cardId`, `kind` (`approval` or `question`), `text`, `choices`                                                                                                                                                                                                                                                                                                |
-| `card.closed`  | The card was settled: here, on the dashboard, or by expiry                 | `cardId`, `text` (what the card says now), `source` (`stream`, or `reread` with `text: null`)                                                                                                                                                                                                                                                                 |
-| `state`        | Where a task launched from the device stands                               | `jobId`, `state` (`working`, `waiting`, `done`, `cancelled`, `failed`), `waitingFor` (the cards it waits on), `deliverables` (the files it addressed), `reason`, `seq`. A state with a `seq` not above the last one shown for its job is older and is dropped by the client; after a `resync`, or a stream opened without a resume id, the count starts again |
-| `announce`     | A task launched by voice ended and its announcement is spoken              | `jobId`, `audioId`. Its voice follows as `speech`                                                                                                                                                                                                                                                                                                             |
-| `speech`       | The agent's voice: the reply to `say`, or an announcement                  | `audio` pieces in `seq` order, `sentence.end`, then `end`                                                                                                                                                                                                                                                                                                     |
-| `ready`        | The stream is live, after anything missed was replayed                     | `reconnected`                                                                                                                                                                                                                                                                                                                                                 |
-| `resync`       | Nodal could not replay what was missed; the waiting cards follow as `card` | `reason`                                                                                                                                                                                                                                                                                                                                                      |
-| `disconnected` | The stream dropped; the client retries by itself                           | `error`, `retryInMs`                                                                                                                                                                                                                                                                                                                                          |
-| `closed`       | The session ended for good                                                 | `error` (`revoked`, or `closed` by you)                                                                                                                                                                                                                                                                                                                       |
+| Event          | When                                                                                 | What it carries                                                                                                                                                                                                                                                                                                                                               |
+| -------------- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `bubble`       | A task launched from the device answered, or a message was sent to it                | `text`, `jobId`, `conversationId`                                                                                                                                                                                                                                                                                                                             |
+| `card`         | A task asks the person: approve an action, choose an option, or answer an MCP server | `cardId`, `kind` (`approval` or `question`), `text`, `choices`, and `images` when the question comes with some (each `{ path, mimeType, caption? }`, read with `nodal.image()`)                                                                                                                                                                               |
+| `card.closed`  | The card was settled: here, on the dashboard, or by expiry                           | `cardId`, `text` (what the card says now), `source` (`stream`, or `reread` with `text: null`)                                                                                                                                                                                                                                                                 |
+| `state`        | Where a task launched from the device stands                                         | `jobId`, `state` (`working`, `waiting`, `done`, `cancelled`, `failed`), `waitingFor` (the cards it waits on), `deliverables` (the files it addressed), `reason`, `seq`. A state with a `seq` not above the last one shown for its job is older and is dropped by the client; after a `resync`, or a stream opened without a resume id, the count starts again |
+| `announce`     | A task launched by voice ended and its announcement is spoken                        | `jobId`, `audioId`. Its voice follows as `speech`                                                                                                                                                                                                                                                                                                             |
+| `speech`       | The agent's voice: the reply to `say`, or an announcement                            | `audio` pieces in `seq` order, `sentence.end`, then `end`                                                                                                                                                                                                                                                                                                     |
+| `ready`        | The stream is live, after anything missed was replayed                               | `reconnected`                                                                                                                                                                                                                                                                                                                                                 |
+| `resync`       | Nodal could not replay what was missed; the waiting cards follow as `card`           | `reason`                                                                                                                                                                                                                                                                                                                                                      |
+| `disconnected` | The stream dropped; the client retries by itself                                     | `error`, `retryInMs`                                                                                                                                                                                                                                                                                                                                          |
+| `closed`       | The session ended for good                                                           | `error` (`revoked`, or `closed` by you)                                                                                                                                                                                                                                                                                                                       |
 
 A card's `text` is the platform's fixed frame with the agent's words quoted in
 it, the same as on Telegram. Play `speech` pieces end to end: `audio/pcm` plays
 as it comes; any other type (`audio/wav`, `audio/mpeg`) decodes per whole
 sentence, at its `sentence.end`, and is dropped when `complete` is false.
+
+### A question from an MCP server
+
+A server the agent calls can stop in the middle of a call and ask the person
+something: "here is what I am about to do, accept or decline", often with a
+preview image. It reaches the device as a `card` of `kind: 'question'` when a
+list of choices answers it:
+
+- a question with nothing to fill in: two choices, the server's own accept
+  (`decision: 'approve'`) and decline (`decision: 'reject'`) labels;
+- a question with one field to pick from (a list, or yes / no): one choice per
+  value (`decision: 'approve'`, its `answer` the value's label), then decline.
+
+```json
+{
+  "type": "card",
+  "cardId": "6f1c2a9e-0d4b-4e8a-9a51-2b7c3d4e5f60",
+  "kind": "question",
+  "text": "❓ The MCP server \"preview-server\" asks:\n\n│ Confirm the job shown in the preview?\n\nTap an option below, or answer from the dashboard.",
+  "choices": [
+    { "label": "Confirm", "decision": "approve" },
+    { "label": "Cancel", "decision": "reject" }
+  ],
+  "images": [
+    {
+      "path": "/api/devices/<deviceId>/cards/6f1c2a9e-0d4b-4e8a-9a51-2b7c3d4e5f60/images/0",
+      "mimeType": "image/jpeg",
+      "caption": "Page 1"
+    },
+    {
+      "path": "/api/devices/<deviceId>/cards/6f1c2a9e-0d4b-4e8a-9a51-2b7c3d4e5f60/images/1",
+      "mimeType": "image/jpeg"
+    }
+  ]
+}
+```
+
+The images are pointers: the stream never carries their bytes. Read each with
+`nodal.image(image)`, or with `GET <path>` and the device's token: it answers the
+bytes with their content type, and `404` for a card that was not asked on this
+device. Answer with `nodal.answer(card.cardId, choice)`, the choice exactly as
+the card gave it, as for any card. The server is told at once, and the card
+closes (`card.closed`) when the question is settled anywhere: here, on the
+dashboard, by expiry, or because the server withdrew it.
+
+A question with something to type (a number, a text, several fields) is not a
+card: the device gets a `bubble` that quotes the question and says why it is
+answered on the dashboard.
 
 ### Reconnecting, and never losing a card
 
@@ -190,9 +239,10 @@ requests, with `Authorization: Bearer <token>` on every one after pairing.
 | cards        | `GET /api/devices/:deviceId/cards`: the cards still waiting, read after a `resync`                                                            |
 | say          | `POST /api/voice/turns`, the audio in `POST /api/voice/turns/:turnId/chunks/:seq`, then `POST /api/voice/turns/:turnId/end` (an event stream) |
 | send         | `POST /api/chat/stream`                                                                                                                       |
-| answer       | `POST /api/approve` with `approvalRequestId` (the `cardId`), `decision` and, for a question, `answer`                                         |
+| answer       | `POST /api/approve` with `approvalRequestId` (the `cardId`), `decision` and, when the choice has one, `answer`                                |
 | cancel       | `DELETE /api/voice/turns/:turnId` during the upload, `POST /api/chat/stop` after                                                              |
 | hear         | `GET /api/voice/replies/:audioId?entityId=…` (an event stream)                                                                                |
+| see          | `GET /api/devices/:deviceId/cards/:cardId/images/:n`: one of a card's images (`images[].path`), its bytes with their content type             |
 
 Read the event stream with `fetch`, not `EventSource`: `EventSource` cannot send
 the `Authorization` header.
