@@ -6,11 +6,12 @@
 // à zéro pour un processus né entre deux relevés) y mentirait au pire moment.
 
 import { describe, it, expect, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import {
+  gardien,
   parseMeminfo,
   parseVmstat,
   parsePressure,
@@ -116,6 +117,17 @@ describe('etiquette', () => {
     expect(etiquette('node', ['node', '/w/apps/cli/node_modules/.bin/tsx', 'src/index.ts'])).toBe(
       'node:apps/cli',
     );
+  });
+  // Revue de la PR #1107 (constat 3) : la trace part dans le journal et dans un
+  // artefact gardé 7 jours, que GitHub ne masque pas. Une étiquette ne vient
+  // donc que d'une forme fermée, jamais d'un argument libre.
+  it('never takes a label from a free argument of the command line', () => {
+    expect(etiquette('bash', ['bash', '-c', 'curl -H MARKER-748-token https://x'])).toBe('bash');
+    expect(etiquette('node', ['node', '-e', 'console.log("MARKER-748")'])).toBe('node');
+    expect(etiquette('node', ['node', '--inspect-port', 'MARKER-748', '/srv/server.mjs'])).toBe(
+      'node:server.mjs',
+    );
+    expect(etiquette('sh', ['sh', 'MARKER-748/notes'])).toBe('sh');
   });
   it('calls node what Node 24 names "MainThread"', () => {
     expect(etiquette('MainThread', ['node', '/tmp/x/hog.mjs'])).toBe('node:hog.mjs');
@@ -267,6 +279,42 @@ describe('annotation', () => {
   });
 });
 
+// Revue de la PR #1107 (constats 1 et 4) : la trace OBSERVE, elle ne décide
+// jamais. Une panne de la trace (un relevé, l'en-tête, getconf, le fichier
+// --out, le journal du noyau, le bilan) est dite une fois, puis la trace
+// s'arrête ; la commande, elle, va au bout et son code est le seul verdict.
+describe('gardien', () => {
+  it('runs each piece and gives back what it returns', () => {
+    const dit = [];
+    const g = gardien((l) => dit.push(l));
+    expect(g.essayer('sample', () => 42)).toBe(42);
+    expect(g.panne).toBeNull();
+    expect(dit).toEqual([]);
+  });
+
+  it('says the first failure once, naming the piece, then runs no other piece', () => {
+    const dit = [];
+    const g = gardien((l) => dit.push(l));
+    expect(
+      g.essayer('the --out file', () => {
+        throw new Error('EACCES: permission denied');
+      }),
+    ).toBeUndefined();
+    let execute = false;
+    g.essayer('sample', () => {
+      execute = true;
+    });
+    g.essayer('summary', () => {
+      throw new Error('again');
+    });
+    expect(execute).toBe(false);
+    expect(g.panne).toEqual({ quoi: 'the --out file', message: 'EACCES: permission denied' });
+    expect(dit).toEqual([
+      "[machine] trace stopped: the --out file failed (EACCES: permission denied); the command goes on and its exit code is the step's verdict",
+    ]);
+  });
+});
+
 describe.runIf(process.platform === 'linux')('machine-trace.mjs on this machine', () => {
   let dir;
   afterEach(() => dir && rmSync(dir, { recursive: true, force: true }));
@@ -309,5 +357,104 @@ describe.runIf(process.platform === 'linux')('machine-trace.mjs on this machine'
     expect(tenu, relevés.join('\n')).toBeDefined();
     expect(fichier).toMatch(/^\[machine\] summary: \d+ samples; peak used /m);
     expect(fichier).toMatch(/^\[machine\] command ended \(exit 3\) after \d+s$/m);
+  }, 30_000);
+});
+
+// Le vrai lanceur, quand la trace tombe en panne (revue de la PR #1107,
+// constats 1, 3 et 4). Chaque cas prouve trois choses : la commande a
+// tourné (elle laisse un témoin), son code de sortie est rendu tel quel, et la
+// panne est dite UNE fois.
+describe.runIf(process.platform === 'linux')('machine-trace.mjs when the trace fails', () => {
+  let dir;
+  afterEach(() => dir && rmSync(dir, { recursive: true, force: true }));
+
+  /** Une commande qui laisse un témoin, attend `ms`, puis sort avec `code`. */
+  function commande({ code, ms = 3000, rendreIllisible }) {
+    const script = join(dir, 'cmd.mjs');
+    const temoin = join(dir, 'ran');
+    writeFileSync(
+      script,
+      [
+        "import { writeFileSync, chmodSync } from 'node:fs';",
+        `writeFileSync(${JSON.stringify(temoin)}, 'yes');`,
+        rendreIllisible
+          ? `setTimeout(() => chmodSync(${JSON.stringify(rendreIllisible)}, 0o444), 1500);`
+          : '',
+        `setTimeout(() => process.exit(${code}), ${ms});`,
+      ].join('\n'),
+    );
+    return { script, temoin };
+  }
+
+  function lancer(args, env = process.env) {
+    return new Promise((resolve) => {
+      execFile(
+        process.execPath,
+        [join(process.cwd(), 'scripts/machine-trace.mjs'), ...args],
+        { encoding: 'utf8', env, cwd: dir },
+        (err, stdout) => resolve({ code: err ? err.code : 0, stdout }),
+      );
+    });
+  }
+
+  const arrets = (stdout) =>
+    stdout.split('\n').filter((l) => l.startsWith('[machine] trace stopped:'));
+
+  it.each([0, 3])(
+    'a --out file that becomes unwritable mid-run stops the trace, and the command still ends with its own code (%i)',
+    async (code) => {
+      dir = mkdtempSync(join(tmpdir(), 'machine-trace-panne-'));
+      const out = join(dir, 'trace.log');
+      const { script, temoin } = commande({ code, ms: 4000, rendreIllisible: out });
+      const r = await lancer(['--out', out, '--every', '1', '--', process.execPath, script]);
+      expect(existsSync(temoin)).toBe(true);
+      expect(r.code).toBe(code);
+      expect(arrets(r.stdout)).toEqual([
+        expect.stringMatching(/^\[machine\] trace stopped: .*EACCES/),
+      ]);
+      expect(r.stdout.match(/^::warning title=machine-trace%3A trace stopped::/gm)).toHaveLength(1);
+    },
+    30_000,
+  );
+
+  it('a --out file unwritable from the start: the command runs and keeps a red code', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'machine-trace-panne-'));
+    const out = join(dir, 'missing-folder', 'trace.log');
+    const { script, temoin } = commande({ code: 3, ms: 500 });
+    const r = await lancer(['--out', out, '--', process.execPath, script]);
+    expect(existsSync(temoin)).toBe(true);
+    expect(r.code).toBe(3);
+    expect(arrets(r.stdout)).toEqual([expect.stringMatching(/ENOENT/)]);
+  }, 30_000);
+
+  it('getconf unavailable: the command runs and keeps a red code', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'machine-trace-panne-'));
+    const { script, temoin } = commande({ code: 3, ms: 500 });
+    // Seul le dossier de node reste dans le PATH : ni getconf ni sudo.
+    const env = { ...process.env, PATH: dirname(process.execPath) };
+    const r = await lancer(['--out', join(dir, 'trace.log'), '--', process.execPath, script], env);
+    expect(existsSync(temoin)).toBe(true);
+    expect(r.code).toBe(3);
+    expect(arrets(r.stdout)).toEqual([expect.stringMatching(/getconf/)]);
+  }, 30_000);
+
+  it('never writes an argument of the wrapped command, in the log or the file', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'machine-trace-args-'));
+    const { script } = commande({ code: 0, ms: 1500 });
+    const out = join(dir, 'trace.log');
+    const r = await lancer([
+      '--out',
+      out,
+      '--every',
+      '1',
+      '--',
+      process.execPath,
+      script,
+      'MARKER-748-SECRET',
+    ]);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toMatch(/^\[machine\] .* start: node with 2 arguments$/m);
+    expect(r.stdout).not.toContain('MARKER-748-SECRET');
+    expect(readFileSync(out, 'utf8')).not.toContain('MARKER-748-SECRET');
   }, 30_000);
 });

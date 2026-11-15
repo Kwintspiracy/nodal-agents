@@ -116,9 +116,18 @@ export function etiquette(nom, argv = [], cwd = '') {
   if (/playwright/.test(ligne)) return `${court}:playwright`;
   if (paquet) return `${court}:${paquet[1]}`;
   if (/[/\\]next[/\\]/.test(ligne)) return `${court}:next`;
-  const script = argv.slice(1).find((a) => !a.startsWith('-'));
-  return script ? `${court}:${script.split(/[/\\]/).pop()}` : court;
+  // Un NOM DE FICHIER de script, et rien d'autre : la trace part dans un
+  // artefact que GitHub ne masque pas (revue de la PR #1107). Un argument
+  // libre (`bash -c "<une ligne>"`, la valeur d'une option) n'y entre jamais.
+  const script = argv
+    .slice(1)
+    .map((a) => a.split(/[/\\]/).pop())
+    .find((nomDeFichier) => SCRIPT.test(nomDeFichier));
+  return script ? `${court}:${script}` : court;
 }
+
+/** Ce qu'est un nom de fichier de script : un nom simple et une extension connue. */
+const SCRIPT = /^[\w.-]+\.(?:mjs|cjs|js|mts|cts|ts|sh|py)$/;
 
 /**
  * Regroupe les processus par étiquette : RSS sommée et CPU (%) entre deux
@@ -340,4 +349,40 @@ export function annotation(genre, titre, texte) {
   const donnee = (t) => t.replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A');
   const propriete = (t) => donnee(t).replace(/:/g, '%3A').replace(/,/g, '%2C');
   return `::${genre} title=${propriete(titre)}::${donnee(texte)}`;
+}
+
+// ── La trace observe, elle ne décide jamais ─────────────────────────────────
+//
+// Revue de la PR #1107 (constats 1 et 4) : un relevé qui jetait dans la
+// minuterie, un `getconf` absent ou un fichier `--out` illisible terminaient le
+// lanceur. L'étape devenait rouge sur une panne de la TRACE, la commande
+// restait orpheline, ou ne démarrait pas. Règle unique : le code de sortie de
+// la commande est le seul verdict de l'étape. Toute partie de la trace passe
+// par `essayer` ; la première panne est dite UNE fois (invariant #4 : elle
+// nomme ce qui a lâché), puis la trace s'arrête et plus aucune partie ne tourne.
+// Les parseurs, eux, restent stricts : c'est le lanceur qui survit à leur refus.
+
+/**
+ * @param {(ligne: string) => void} dire  ce qui écrit la panne (le journal, une annotation)
+ * @returns {{ essayer: <T>(quoi: string, fn: () => T) => T | undefined, readonly panne: { quoi: string, message: string } | null }}
+ */
+export function gardien(dire) {
+  let panne = null;
+  return {
+    get panne() {
+      return panne;
+    },
+    essayer(quoi, fn) {
+      if (panne) return undefined;
+      try {
+        return fn();
+      } catch (err) {
+        panne = { quoi, message: String(err?.message ?? err).split('\n')[0] };
+        dire(
+          `[machine] trace stopped: ${quoi} failed (${panne.message}); the command goes on and its exit code is the step's verdict`,
+        );
+        return undefined;
+      }
+    },
+  };
 }
