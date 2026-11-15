@@ -34,7 +34,9 @@ import {
   DEVICE_GESTURES,
   DEVICE_PAIRING_GESTURES,
   DEVICE_POLL_STATUS,
+  DEVICE_CARD_NOTES_MAX,
   DEVICE_PROTOCOL_VERSION,
+  type DeviceAnswerOptions,
   type DeviceCapability,
   type DeviceCardChoice,
   type DeviceCardImage,
@@ -43,9 +45,11 @@ import {
 
 export {
   DEVICE_CAPABILITIES,
+  DEVICE_CARD_NOTES_MAX,
   DEVICE_GESTURES,
   DEVICE_PAIRING_GESTURES,
   DEVICE_PROTOCOL_VERSION,
+  type DeviceAnswerOptions,
   type DeviceCapability,
   type DeviceCardChoice,
   type DeviceCardImage,
@@ -72,7 +76,9 @@ export {
  *     before the answer);
  *   - `stream_cut`: an answer or a stream stopped before its end;
  *   - `aborted`: the call was aborted by the device's own `signal`;
- *   - `closed`: the session was closed (by `close()`, while a call was running).
+ *   - `closed`: the session was closed (by `close()`, while a call was running);
+ *   - `invalid_argument`: the call was refused here, before any request left,
+ *     because of what it was given (the person's words over their bound).
  */
 export type NodalDeviceErrorCode =
   | 'refused'
@@ -84,7 +90,8 @@ export type NodalDeviceErrorCode =
   | 'network'
   | 'stream_cut'
   | 'aborted'
-  | 'closed';
+  | 'closed'
+  | 'invalid_argument';
 
 export class NodalDeviceError extends Error {
   readonly code: NodalDeviceErrorCode;
@@ -615,8 +622,16 @@ export interface NodalDevice {
   ): Promise<TurnResult>;
   /** One typed turn. */
   send(text: string): Promise<TurnResult>;
-  /** Answer a card with one of its `choices`. */
-  answer(cardId: string, choice: DeviceCardChoice): Promise<void>;
+  /**
+   * Answer a card with one of its `choices`, for any kind of card, approved or
+   * refused. `options.notes` is what the person said besides the choice (a
+   * change to make, a reason): sent as `notes` of `POST /api/approve`, stored
+   * on the request and handed to the agent. Absent or only whitespace: no
+   * words, and the request is the same as without options. More than
+   * `DEVICE_CARD_NOTES_MAX` characters: refused here with `invalid_argument`,
+   * before any request leaves.
+   */
+  answer(cardId: string, choice: DeviceCardChoice, options?: DeviceAnswerOptions): Promise<void>;
   /**
    * Read one image of a card (`card.images`), with this device's token: its
    * bytes and their content type. Only a card's image route is read; any
@@ -1086,11 +1101,25 @@ export function connect(
     return readTurn(res, null, text);
   };
 
-  const answer: NodalDevice['answer'] = async (cardId, choice) => {
+  const answer: NodalDevice['answer'] = async (cardId, choice, options) => {
+    const notes = options?.notes;
+    // Whitespace is no words: nothing is sent for it. What is sent is the
+    // person's text as they wrote it, checked against the bound Nodal enforces.
+    if (notes !== undefined && typeof notes !== 'string') {
+      throw new NodalDeviceError('invalid_argument', 'invalid_argument: the words must be a text');
+    }
+    const words = notes !== undefined && notes.trim() !== '' ? notes : undefined;
+    if (words !== undefined && words.length > DEVICE_CARD_NOTES_MAX) {
+      throw new NodalDeviceError(
+        'invalid_argument',
+        `invalid_argument: the words are ${words.length} characters, Nodal takes at most ${DEVICE_CARD_NOTES_MAX}`,
+      );
+    }
     await request('POST', DEVICE_GESTURES.answer[0].path, {
       approvalRequestId: cardId,
       decision: choice.decision,
       ...(choice.answer !== undefined ? { answer: choice.answer } : {}),
+      ...(words !== undefined ? { notes: words } : {}),
     });
   };
 

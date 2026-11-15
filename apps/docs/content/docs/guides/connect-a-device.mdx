@@ -100,35 +100,36 @@ leaves it for the dashboard. CI runs it against a real runner on every change.
 
 ## The API
 
-| Call                                | What it does                                                                                                                                                                                                  |
-| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `pair(url, { name, capabilities })` | Asks to pair. Returns `{ userCode, expiresInSeconds, done() }`.                                                                                                                                               |
-| `pairing.done()`                    | Waits for the owner. Resolves `{ deviceId, token, conversationId }`, or throws `refused` / `expired`.                                                                                                         |
-| `connect(url, session)`             | Opens the device's event stream and returns `nodal`.                                                                                                                                                          |
-| `nodal.on(event, handler)`          | Listens to an event below. Returns a function that stops listening.                                                                                                                                           |
-| `nodal.say(audio, 'audio/wav')`     | One spoken turn. `audio/pcm` needs `{ sampleRate }` (16-bit signed little-endian, mono). Resolves `{ transcript, reply, spawnedJobId, stopped, speechError }`; `transcript` is `null` when nothing was heard. |
-| `nodal.send(text)`                  | One typed turn. Resolves like `say`.                                                                                                                                                                          |
-| `nodal.answer(cardId, choice)`      | Answers a card with one of its `choices`.                                                                                                                                                                     |
-| `nodal.image(image)`                | Reads one of a card's `images` with the device's token. Resolves `{ mimeType, bytes }`.                                                                                                                       |
-| `nodal.cancel()`                    | Stops the current turn, spoken or typed.                                                                                                                                                                      |
-| `nodal.newConversation()`           | Starts a blank conversation, like `/new` on a channel.                                                                                                                                                        |
-| `nodal.close()`                     | Closes the connection.                                                                                                                                                                                        |
+| Call                                       | What it does                                                                                                                                                                                                  |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pair(url, { name, capabilities })`        | Asks to pair. Returns `{ userCode, expiresInSeconds, done() }`.                                                                                                                                               |
+| `pairing.done()`                           | Waits for the owner. Resolves `{ deviceId, token, conversationId }`, or throws `refused` / `expired`.                                                                                                         |
+| `connect(url, session)`                    | Opens the device's event stream and returns `nodal`.                                                                                                                                                          |
+| `nodal.on(event, handler)`                 | Listens to an event below. Returns a function that stops listening.                                                                                                                                           |
+| `nodal.say(audio, 'audio/wav')`            | One spoken turn. `audio/pcm` needs `{ sampleRate }` (16-bit signed little-endian, mono). Resolves `{ transcript, reply, spawnedJobId, stopped, speechError }`; `transcript` is `null` when nothing was heard. |
+| `nodal.send(text)`                         | One typed turn. Resolves like `say`.                                                                                                                                                                          |
+| `nodal.answer(cardId, choice, { notes }?)` | Answers a card with one of its `choices`, and, when the person said something besides, their words as `notes` ([Say more than a button](#say-more-than-a-button)).                                            |
+| `nodal.image(image)`                       | Reads one of a card's `images` with the device's token. Resolves `{ mimeType, bytes }`.                                                                                                                       |
+| `nodal.cancel()`                           | Stops the current turn, spoken or typed.                                                                                                                                                                      |
+| `nodal.newConversation()`                  | Starts a blank conversation, like `/new` on a channel.                                                                                                                                                        |
+| `nodal.close()`                            | Closes the connection.                                                                                                                                                                                        |
 
 Every failure of the client is a `NodalDeviceError` with a `code`, the
 network's included (the original error is its `cause`):
 
-| `code`           | When                                                                                                                         |
-| ---------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `refused`        | The owner refused the pairing                                                                                                |
-| `expired`        | The code expired before the owner confirmed it                                                                               |
-| `revoked`        | Nodal refused the device's key (`device_token_invalid`, …): the device was removed, pair again                               |
-| `request_failed` | Nodal answered an error: its `status` and `serverCode`, for example `voice_key_missing` when the workspace has no speech key |
-| `turn_failed`    | A turn failed after it started (`serverCode`)                                                                                |
-| `network`        | Nodal could not be reached                                                                                                   |
-| `stream_cut`     | An answer or a stream stopped before its end                                                                                 |
-| `aborted`        | Your own `signal` aborted the call                                                                                           |
-| `protocol`       | Nodal answered something the client cannot read                                                                              |
-| `closed`         | The session was closed by `close()` while the call ran                                                                       |
+| `code`             | When                                                                                                                         |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------- |
+| `refused`          | The owner refused the pairing                                                                                                |
+| `expired`          | The code expired before the owner confirmed it                                                                               |
+| `revoked`          | Nodal refused the device's key (`device_token_invalid`, …): the device was removed, pair again                               |
+| `request_failed`   | Nodal answered an error: its `status` and `serverCode`, for example `voice_key_missing` when the workspace has no speech key |
+| `turn_failed`      | A turn failed after it started (`serverCode`)                                                                                |
+| `network`          | Nodal could not be reached                                                                                                   |
+| `stream_cut`       | An answer or a stream stopped before its end                                                                                 |
+| `aborted`          | Your own `signal` aborted the call                                                                                           |
+| `protocol`         | Nodal answered something the client cannot read                                                                              |
+| `closed`           | The session was closed by `close()` while the call ran                                                                       |
+| `invalid_argument` | The call was refused by the client, before any request, for what it was given: `notes` over the bound                        |
 
 ## Events
 
@@ -201,6 +202,30 @@ A question with something to type (a number, a text, several fields) is not a
 card: the device gets a `bubble` that quotes the question and says why it is
 answered on the dashboard.
 
+### Say more than a button
+
+A person can say more than a button: a change to make, a reason. `answer()`
+takes those words as a third argument and sends them as `notes` of
+`POST /api/approve`, for every kind of card (an approval, a question, a
+server's question), approved or refused. Nodal stores them on the request and
+hands them to the agent as the person's own word.
+
+```js
+await nodal.answer(card.cardId, choice, { notes: 'Use the second tray, in grey.' });
+```
+
+- The words go as the person wrote them. Absent, empty or only whitespace, there
+  are no words: nothing is sent, and the request is exactly the one without the
+  option.
+- One bound, for every surface (the dashboard's included): **5000 characters**
+  (`DEVICE_CARD_NOTES_MAX`, exported by the client). `answer()` refuses a longer
+  text with `invalid_argument` before any request leaves. Called beside the
+  client, `POST /api/approve` refuses it with `400 notes_too_long`.
+- The choice stays the person's: `notes` never replaces it, and a card is never
+  answered with words alone.
+
+Adding `notes` changes no existing field, so the protocol version stays at 1.
+
 ### Reconnecting, and never losing a card
 
 Every event carries a resume id. After a network drop, or a stream that stays
@@ -231,18 +256,18 @@ that shows a history re-reads it from its conversation.
 The client wraps these gestures. A device in another language makes the same
 requests, with `Authorization: Bearer <token>` on every one after pairing.
 
-| Gesture      | Request                                                                                                                                       |
-| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| pair         | `POST /api/devices/pair`, then `POST /api/devices/pair/poll` every `intervalSeconds`                                                          |
-| conversation | `POST /api/devices/:deviceId/conversation` gives `entityId`, `agentId` and `conversationId`                                                   |
-| listen       | `GET /api/devices/:deviceId/events` (Server-Sent Events, `Last-Event-ID` to resume)                                                           |
-| cards        | `GET /api/devices/:deviceId/cards`: the cards still waiting, read after a `resync`                                                            |
-| say          | `POST /api/voice/turns`, the audio in `POST /api/voice/turns/:turnId/chunks/:seq`, then `POST /api/voice/turns/:turnId/end` (an event stream) |
-| send         | `POST /api/chat/stream`                                                                                                                       |
-| answer       | `POST /api/approve` with `approvalRequestId` (the `cardId`), `decision` and, when the choice has one, `answer`                                |
-| cancel       | `DELETE /api/voice/turns/:turnId` during the upload, `POST /api/chat/stop` after                                                              |
-| hear         | `GET /api/voice/replies/:audioId?entityId=…` (an event stream)                                                                                |
-| see          | `GET /api/devices/:deviceId/cards/:cardId/images/:n`: one of a card's images (`images[].path`), its bytes with their content type             |
+| Gesture      | Request                                                                                                                                                                                                            |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| pair         | `POST /api/devices/pair`, then `POST /api/devices/pair/poll` every `intervalSeconds`                                                                                                                               |
+| conversation | `POST /api/devices/:deviceId/conversation` gives `entityId`, `agentId` and `conversationId`                                                                                                                        |
+| listen       | `GET /api/devices/:deviceId/events` (Server-Sent Events, `Last-Event-ID` to resume)                                                                                                                                |
+| cards        | `GET /api/devices/:deviceId/cards`: the cards still waiting, read after a `resync`                                                                                                                                 |
+| say          | `POST /api/voice/turns`, the audio in `POST /api/voice/turns/:turnId/chunks/:seq`, then `POST /api/voice/turns/:turnId/end` (an event stream)                                                                      |
+| send         | `POST /api/chat/stream`                                                                                                                                                                                            |
+| answer       | `POST /api/approve` with `approvalRequestId` (the `cardId`), `decision`, `answer` when the choice has one, and `notes` when the person said something besides (at most 5000 characters, else `400 notes_too_long`) |
+| cancel       | `DELETE /api/voice/turns/:turnId` during the upload, `POST /api/chat/stop` after                                                                                                                                   |
+| hear         | `GET /api/voice/replies/:audioId?entityId=…` (an event stream)                                                                                                                                                     |
+| see          | `GET /api/devices/:deviceId/cards/:cardId/images/:n`: one of a card's images (`images[].path`), its bytes with their content type                                                                                  |
 
 Read the event stream with `fetch`, not `EventSource`: `EventSource` cannot send
 the `Authorization` header.

@@ -20,6 +20,7 @@ import { approvalRequests, agentJobs, agents } from '@nodal-agents/db';
 import type { AnyDrizzleDb, RunHeadLookup } from '@nodal-agents/db';
 import { z } from 'zod';
 import {
+  CARD_NOTES_MAX,
   FREE_ANSWER_MAX,
   elicitationChoices,
   parseElicitationSchema,
@@ -148,6 +149,8 @@ export type ResolveApprovalResult =
         // #465 — une réponse libre vide ou trop longue.
         | 'answer_empty'
         | 'answer_too_long'
+        // Les mots joints à la réponse, au-delà de CARD_NOTES_MAX.
+        | 'notes_too_long'
         // 0145 — les refus propres aux élicitations.
         | 'content_required'
         | 'content_invalid'
@@ -180,6 +183,14 @@ export async function resolveApprovalDecision(
   runnerEnv: RunnerEnv,
   input: ResolveApprovalInput,
 ): Promise<ResolveApprovalResult> {
+  // Les mots de la personne ont UNE borne (CARD_NOTES_MAX), pour toute surface
+  // qui répond : la route, et tout canal qui en enverrait. Refusés avant de
+  // lire la ligne, jamais coupés : l'agent relirait une phrase qui n'est pas
+  // la leur (invariant #4).
+  if (typeof input.notes === 'string' && input.notes.length > CARD_NOTES_MAX) {
+    return { ok: false, code: 'notes_too_long' };
+  }
+
   const [approval] = await deps.db
     .select()
     .from(approvalRequests)

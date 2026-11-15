@@ -27,7 +27,11 @@
 // channel: without the device's own target, a device job's question went
 // there too (the walk found the bot, then swapped in the owner's chat).
 
-import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { MockLanguageModelV3 } from 'ai/test';
 import { generateText } from 'ai';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
@@ -63,6 +67,8 @@ import { speakFinishedJob } from '../../chat/job-reply-voice.ts';
 import { jobEvents } from '../../events/job-events.ts';
 import { readSse, type SseEvent } from '../chat/_sse-reader.ts';
 import { drawDeviceToken } from '../../devices/device-secrets.ts';
+// @ts-expect-error — a plain .mjs build script, no declarations
+import { buildClient } from '../../../../../packages/device-client/scripts/build.mjs';
 
 vi.setConfig({ testTimeout: 30_000 });
 
@@ -1924,5 +1930,351 @@ describe('every gesture of the protocol is a route of the runner (#945) @cap:par
       routes.map((r) => `${r.method} ${r.path}`),
     );
     expect(named.filter((r) => !served.has(r))).toEqual([]);
+  });
+});
+
+// ─── 7. The person's own words, sent by the reference client (#1099) ─────────
+
+/** The built client, as a device maker copies it: only the part this test calls. */
+interface BuiltClient {
+  connect(
+    url: string,
+    session: { deviceId: string; token: string; conversationId: string },
+    options: { fetch: typeof fetch; hearAnnouncements: boolean },
+  ): {
+    on(
+      type: 'card',
+      handler: (card: {
+        cardId: string;
+        kind: string;
+        choices: { label: string; decision: 'approve' | 'reject'; answer?: string }[];
+      }) => void,
+    ): () => void;
+    answer(
+      cardId: string,
+      choice: { label: string; decision: 'approve' | 'reject'; answer?: string },
+      options?: { notes?: string },
+    ): Promise<void>;
+    close(): void;
+  };
+  NodalDeviceError: new (...args: never[]) => Error & { code: string };
+  DEVICE_CARD_NOTES_MAX: number;
+}
+
+describe('a device answers a card with what the person said (#1099) @cap:approuver-une-action/moteur', () => {
+  let built: BuiltClient;
+  let buildDir = '';
+  const NO_FIELD = { type: 'object', properties: {} };
+  const WORDS = 'Use the second tray, and print it in grey.';
+
+  beforeAll(async () => {
+    buildDir = mkdtempSync(join(tmpdir(), 'nodal-device-notes-'));
+    const { js } = (await buildClient(buildDir)) as { js: string };
+    built = (await import(pathToFileURL(js).href)) as BuiltClient;
+  }, 120_000);
+  afterAll(() => {
+    if (buildDir) rmSync(buildDir, { recursive: true, force: true });
+  });
+
+  /** Every question withdrawn and every client closed at the end of its test: nothing polls on. */
+  const withdrawals: AbortController[] = [];
+  const clients: { close: () => void }[] = [];
+  afterEach(() => {
+    for (const ctl of withdrawals.splice(0)) ctl.abort();
+    for (const cl of clients.splice(0)) cl.close();
+  });
+
+  const approve = (
+    app: ReturnType<typeof createApp>,
+    dev: string,
+    body: Record<string, unknown>,
+  ): Promise<Response> =>
+    Promise.resolve(
+      app.fetch(
+        new Request('http://localhost/api/approve', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...as(dev) },
+          body: JSON.stringify(body),
+        }),
+      ),
+    );
+
+  async function ownDevice(name: string): Promise<string> {
+    const [d] = await db
+      .insert(devices)
+      .values({ entityId: x.entityId, name, capabilities: ['screen', 'buttons'] })
+      .returning({ id: devices.id });
+    const { token, tokenHash } = drawDeviceToken();
+    await db.update(devices).set({ tokenHash }).where(eq(devices.id, d!.id));
+    keyOf.set(d!.id, token);
+    return d!.id;
+  }
+
+  /** The device, through the BUILT client, on the real app: what the runner receives is recorded. */
+  async function clientOf(app: ReturnType<typeof createApp>, dev: string) {
+    const conv = String((await postConversation(app, dev)).json['conversationId']);
+    const cards: Parameters<Parameters<ReturnType<BuiltClient['connect']>['on']>[1]>[0][] = [];
+    const received: { body: Record<string, unknown>; text: string }[] = [];
+    const fetchApp = ((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(typeof input === 'string' ? input : input.toString());
+      if (url.pathname === '/api/approve' && typeof init?.body === 'string') {
+        received.push({ body: JSON.parse(init.body) as Record<string, unknown>, text: init.body });
+      }
+      return Promise.resolve(app.fetch(new Request(url, init)));
+    }) as typeof fetch;
+    const client = built.connect(
+      'http://localhost/',
+      { deviceId: dev, token: keyOf.get(dev)!, conversationId: conv },
+      { fetch: fetchApp, hearAnnouncements: false },
+    );
+    client.on('card', (c) => cards.push(c));
+    clients.push(client);
+    return {
+      client,
+      conv,
+      received,
+      card: async (id: string) => {
+        await waitFor(() => cards.some((c) => c.cardId === id));
+        return cards.find((c) => c.cardId === id)!;
+      },
+    };
+  }
+
+  const rowOf = async (id: string) => {
+    const [row] = await db
+      .select({
+        status: approvalRequests.status,
+        notes: approvalRequests.notes,
+        answer: approvalRequests.answer,
+      })
+      .from(approvalRequests)
+      .where(eq(approvalRequests.id, id));
+    return row!;
+  };
+
+  /** An approval card: a gated action of a job of the device, announced to it. */
+  async function approvalCard(dev: string) {
+    const job = await deviceJob({
+      entityId: x.entityId,
+      agentId: x.agentId,
+      deviceId: dev,
+      conversationId: null,
+      status: 'awaiting_approval',
+    });
+    const toolInput = { command: 'rm -rf /tmp/x', purpose: 'Clear the scratch folder first' };
+    const [request] = await db
+      .insert(approvalRequests)
+      .values({
+        entityId: x.entityId,
+        jobId: job,
+        agentId: x.agentId,
+        toolName: 'run_command',
+        toolInput,
+        kind: 'approval',
+      })
+      .returning({ id: approvalRequests.id });
+    await notifyApprovalCreated(makeDeps(), {
+      approvalRequestId: request!.id,
+      toolName: 'run_command',
+      toolInput,
+      jobId: job,
+      agentId: x.agentId,
+      entityId: x.entityId,
+      kind: 'approval',
+    });
+    return { id: request!.id, settled: async (): Promise<unknown> => undefined };
+  }
+
+  /** A question card: `ask_user` of a job of the device, run to its suspension. */
+  async function questionCard(dev: string, conv: string) {
+    const deps = makeDeps(askUser());
+    const job = await deviceJob({
+      entityId: x.entityId,
+      agentId: x.agentId,
+      deviceId: dev,
+      conversationId: conv,
+    });
+    expect((await executeJob(job as JobId, deps, testEnv)).status).toBe('awaiting_approval');
+    const [request] = await db
+      .select({ id: approvalRequests.id })
+      .from(approvalRequests)
+      .where(and(eq(approvalRequests.jobId, job), eq(approvalRequests.kind, 'question')));
+    return { id: request!.id, settled: async (): Promise<unknown> => undefined };
+  }
+
+  /** A server's question card, asked as the MCP adapter asks it. */
+  async function serverQuestionCard(dev: string, conv: string) {
+    const job = await deviceJob({
+      entityId: x.entityId,
+      agentId: x.agentId,
+      deviceId: dev,
+      conversationId: conv,
+      status: 'processing',
+    });
+    const ctl = new AbortController();
+    withdrawals.push(ctl);
+    const ask = createRequestUserInput(
+      makeDeps(),
+      { jobId: job, agentId: x.agentId, entityId: x.entityId },
+      { isLost: async () => false, timeoutMs: 60_000, pollMs: 10 },
+    );
+    const reply = ask({
+      serverSlug: 'preview-server',
+      toolName: 'preview-server__run',
+      toolCallId: `call-${job}`,
+      message: 'Confirm the job shown in the preview?',
+      requestedSchema: NO_FIELD,
+      attachments: [],
+      actions: { accept: 'Confirm', decline: 'Cancel' },
+      signal: ctl.signal,
+    });
+    void reply.catch(() => undefined);
+    let id = '';
+    await waitFor(() => {
+      void db
+        .select({ id: approvalRequests.id })
+        .from(approvalRequests)
+        .where(eq(approvalRequests.jobId, job))
+        .then(([r]) => {
+          if (r) id = r.id;
+        });
+      return id !== '';
+    }, 5_000);
+    return { id, settled: async (): Promise<unknown> => reply };
+  }
+
+  const KINDS = [
+    { name: 'an approval', make: approvalCard, wantAnswer: false },
+    { name: 'a question', make: questionCard, wantAnswer: true },
+    { name: 'a server’s question', make: serverQuestionCard, wantAnswer: false },
+  ] as const;
+
+  for (const kind of KINDS) {
+    for (const side of ['approve', 'reject'] as const) {
+      it(`${kind.name}, ${side === 'approve' ? 'approved' : 'refused'} from the device: the person’s words reach the runner and the stored row`, async () => {
+        const dev = await ownDevice(`Notes ${kind.name} ${side}`);
+        const app = createApp(makeDeps(), testEnv);
+        const c = await clientOf(app, dev);
+        const made = await kind.make(dev, c.conv);
+        const card = await c.card(made.id);
+        // A question's card offers its options only; declining it is still a
+        // gesture the route takes (`[REJECTED]` for the agent), so a device
+        // that lets the person decline builds that choice itself.
+        const choice = card.choices.find((ch) => ch.decision === side) ?? {
+          label: 'Decline',
+          decision: side,
+        };
+
+        await c.client.answer(made.id, choice, { notes: WORDS });
+
+        // What the runner received: the decision, the choice, and the words.
+        expect(c.received).toHaveLength(1);
+        expect(c.received[0]!.body).toEqual({
+          approvalRequestId: made.id,
+          decision: side,
+          ...(choice.answer !== undefined ? { answer: choice.answer } : {}),
+          notes: WORDS,
+        });
+        // What it stored.
+        expect(await rowOf(made.id)).toEqual({
+          status: side === 'approve' ? 'approved' : 'rejected',
+          notes: WORDS,
+          answer: side === 'approve' && kind.wantAnswer ? choice.answer : null,
+        });
+        await made.settled();
+      });
+    }
+  }
+
+  it('no words, or only whitespace: the row keeps no notes, and the body is the one without options', async () => {
+    const dev = await ownDevice('Notes none');
+    const app = createApp(makeDeps(), testEnv);
+    const c = await clientOf(app, dev);
+    const one = await approvalCard(dev);
+    const two = await approvalCard(dev);
+    const cardOne = await c.card(one.id);
+    const cardTwo = await c.card(two.id);
+    await c.client.answer(one.id, cardOne.choices[0]!);
+    await c.client.answer(two.id, cardTwo.choices[1]!, { notes: ' \n\t ' });
+    expect(c.received.map((r) => r.text)).toEqual([
+      JSON.stringify({ approvalRequestId: one.id, decision: 'approve' }),
+      JSON.stringify({ approvalRequestId: two.id, decision: 'reject' }),
+    ]);
+    expect((await rowOf(one.id)).notes).toBeNull();
+    expect((await rowOf(two.id)).notes).toBeNull();
+  });
+
+  it('past the bound the client refuses before any request; the same text beside the client is refused by the route with notes_too_long; the bound itself is taken', async () => {
+    const dev = await ownDevice('Notes bound');
+    const app = createApp(makeDeps(), testEnv);
+    const c = await clientOf(app, dev);
+    const made = await approvalCard(dev);
+    const card = await c.card(made.id);
+    const tooLong = 'x'.repeat(built.DEVICE_CARD_NOTES_MAX + 1);
+
+    // The client: refused locally, nothing reached the runner, the card still waits.
+    const refused = await c.client
+      .answer(made.id, card.choices[0]!, { notes: tooLong })
+      .catch((e: unknown) => e);
+    expect(refused).toBeInstanceOf(built.NodalDeviceError);
+    expect((refused as { code: string }).code).toBe('invalid_argument');
+    expect(c.received).toEqual([]);
+    expect(await rowOf(made.id)).toEqual({ status: 'pending', notes: null, answer: null });
+
+    // The route, called beside the client: a named code, the row untouched.
+    const direct = await approve(app, dev, {
+      approvalRequestId: made.id,
+      decision: 'approve',
+      notes: tooLong,
+    });
+    expect(direct.status).toBe(400);
+    expect(await direct.json()).toEqual({ error: 'notes_too_long' });
+    expect(await rowOf(made.id)).toEqual({ status: 'pending', notes: null, answer: null });
+
+    // The same route takes exactly the bound.
+    const atBound = 'y'.repeat(built.DEVICE_CARD_NOTES_MAX);
+    const ok = await approve(app, dev, {
+      approvalRequestId: made.id,
+      decision: 'approve',
+      notes: atBound,
+    });
+    expect(ok.status).toBe(200);
+    expect((await rowOf(made.id)).notes).toBe(atBound);
+  });
+
+  it('the bound is the route’s, whoever calls it: the dashboard’s path (trusted caller) is refused the same way', async () => {
+    const dev = await ownDevice('Notes dashboard');
+    const app = createApp(makeDeps(), testEnv);
+    const made = await approvalCard(dev);
+    const res = await app.fetch(
+      new Request('http://localhost/api/approve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          approvalRequestId: made.id,
+          decision: 'reject',
+          notes: 'z'.repeat(5001),
+          responderUserId: x.userId,
+        }),
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'notes_too_long' });
+    expect((await rowOf(made.id)).status).toBe('pending');
+    // And what the dashboard sends today (up to 5000) is still taken.
+    const ok = await app.fetch(
+      new Request('http://localhost/api/approve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          approvalRequestId: made.id,
+          decision: 'reject',
+          notes: 'z'.repeat(5000),
+          responderUserId: x.userId,
+        }),
+      }),
+    );
+    expect(ok.status).toBe(200);
+    expect((await rowOf(made.id)).notes).toHaveLength(5000);
   });
 });
