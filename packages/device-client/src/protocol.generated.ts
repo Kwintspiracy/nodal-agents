@@ -103,6 +103,10 @@ export const DEVICE_POLL_STATUS = {
 
 export const DEVICE_CARD_NOTES_MAX = 5000 as const;
 
+export const DEVICE_ANSWER_OPTION_KEYS = [
+  "notes"
+] as const;
+
 export type DeviceCapability = "microphone" | "speaker" | "screen" | "buttons";
 
 export type DeviceCardChoice = {

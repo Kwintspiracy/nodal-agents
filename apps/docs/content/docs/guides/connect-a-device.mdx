@@ -205,7 +205,8 @@ answered on the dashboard.
 ### Say more than a button
 
 A person can say more than a button: a change to make, a reason. `answer()`
-takes those words as a third argument and sends them as `notes` of
+takes those words in an options object, its third argument (`{ notes: '…' }`,
+never a bare string), and sends them as `notes` of
 `POST /api/approve`, for every kind of card (an approval, a question, a
 server's question), approved or refused. Nodal stores them on the request and
 hands them to the agent as the person's own word.
@@ -221,6 +222,10 @@ await nodal.answer(card.cardId, choice, { notes: 'Use the second tray, in grey.'
   (`DEVICE_CARD_NOTES_MAX`, exported by the client). `answer()` refuses a longer
   text with `invalid_argument` before any request leaves. Called beside the
   client, `POST /api/approve` refuses it with `400 notes_too_long`.
+- The third argument is an options object with only `notes`, or absent (`null`
+  counts as absent). A bare string, a number, an array, or an object with
+  another key (a mistyped `Notes`) is refused with `invalid_argument` before any
+  request leaves, so a card is never settled with the words dropped.
 - The choice stays the person's: `notes` never replaces it, and a card is never
   answered with words alone.
 

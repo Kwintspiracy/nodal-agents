@@ -65,9 +65,17 @@ export const DEVICE_CARD_NOTES_MAX = CARD_NOTES_MAX;
  * whitespace: no words, and nothing is sent. At most `DEVICE_CARD_NOTES_MAX`
  * characters. Adding it changes no existing field: the protocol version stays.
  */
-export const DeviceAnswerOptionsSchema = z.object({
-  notes: z.string().optional(),
-});
+export const DeviceAnswerOptionsSchema = z
+  .object({
+    notes: z.string().optional(),
+  })
+  .strict();
+/**
+ * The keys of `DeviceAnswerOptions`, for a client that cannot run the schema:
+ * it refuses any other key (a typo) instead of dropping it. A test keeps this
+ * list equal to the schema's keys.
+ */
+export const DEVICE_ANSWER_OPTION_KEYS = ['notes'] as const;
 export type DeviceAnswerOptions = z.infer<typeof DeviceAnswerOptionsSchema>;
 
 /**

@@ -31,6 +31,7 @@
 // session with a `NodalDeviceError` of code `revoked`: never an endless retry.
 
 import {
+  DEVICE_ANSWER_OPTION_KEYS,
   DEVICE_GESTURES,
   DEVICE_PAIRING_GESTURES,
   DEVICE_POLL_STATUS,
@@ -629,7 +630,9 @@ export interface NodalDevice {
    * on the request and handed to the agent. Absent or only whitespace: no
    * words, and the request is the same as without options. More than
    * `DEVICE_CARD_NOTES_MAX` characters: refused here with `invalid_argument`,
-   * before any request leaves.
+   * before any request leaves. So is any third argument that is not an options
+   * object with only `notes` (a bare string, a number, an array, a mistyped
+   * key): never read as "no words". `undefined` and `null` are no options.
    */
   answer(cardId: string, choice: DeviceCardChoice, options?: DeviceAnswerOptions): Promise<void>;
   /**
@@ -1102,6 +1105,30 @@ export function connect(
   };
 
   const answer: NodalDevice['answer'] = async (cardId, choice, options) => {
+    // The third argument is absent, `null` (no options), or a plain object
+    // with only the keys the protocol names. Anything else is refused BEFORE a
+    // request leaves: a string, a number, an array, a key that is a typo would
+    // otherwise be read as "no words", the card settled, the words lost.
+    if (options !== undefined && options !== null) {
+      const proto: unknown =
+        typeof options === 'object' ? Object.getPrototypeOf(options) : undefined;
+      const plain = typeof options === 'object' && (proto === Object.prototype || proto === null);
+      if (!plain) {
+        throw new NodalDeviceError(
+          'invalid_argument',
+          `invalid_argument: the third argument of answer() is an options object such as { notes: "…" }, not ${Array.isArray(options) ? 'an array' : typeof options}`,
+        );
+      }
+      const unknown = Object.keys(options).filter(
+        (k) => !(DEVICE_ANSWER_OPTION_KEYS as readonly string[]).includes(k),
+      );
+      if (unknown.length > 0) {
+        throw new NodalDeviceError(
+          'invalid_argument',
+          `invalid_argument: answer() takes only ${DEVICE_ANSWER_OPTION_KEYS.join(', ')}, not ${unknown.join(', ')}`,
+        );
+      }
+    }
     const notes = options?.notes;
     // Whitespace is no words: nothing is sent for it. What is sent is the
     // person's text as they wrote it, checked against the bound Nodal enforces.

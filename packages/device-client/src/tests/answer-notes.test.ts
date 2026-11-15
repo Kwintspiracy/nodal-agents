@@ -10,10 +10,16 @@
 //   - whitespace sent as words → "whitespace is no words";
 //   - the bound check removed → "refuses a longer text before any request";
 //   - the bound off by one (>= instead of >) → "the bound itself goes through";
-//   - the bound not the shared one (a second number) → "one bound".
+//   - the bound not the shared one (a second number) → "one bound";
+//   - the options-shape check removed → "the third argument is an options object or nothing".
 
 import { afterEach, describe, expect, it } from 'vitest';
-import { CARD_NOTES_MAX, DEVICE_GESTURES } from '@nodal-agents/shared';
+import {
+  CARD_NOTES_MAX,
+  DEVICE_ANSWER_OPTION_KEYS,
+  DEVICE_GESTURES,
+  DeviceAnswerOptionsSchema,
+} from '@nodal-agents/shared';
 import { connect, DEVICE_CARD_NOTES_MAX, NodalDeviceError } from '../nodal-device.ts';
 import { fakeNodal, liveStream } from './fake-nodal.ts';
 
@@ -151,6 +157,76 @@ describe('answer(): the person’s words go with the answer @cap:approuver-une-a
     await d.answer(CARD, KINDS.approval.approve, { notes: ' '.repeat(DEVICE_CARD_NOTES_MAX * 2) });
     expect(approves()).toHaveLength(1);
     expect(approves()[0]!.body).toEqual({ approvalRequestId: CARD, decision: 'approve' });
+  });
+
+  it('the third argument is an options object or nothing: any other shape is refused before a request, never read as no words', async () => {
+    class Opts {
+      notes = 'a reason';
+    }
+    const refused: Array<[string, unknown]> = [
+      ['a string', 'Use the second tray, in grey.'],
+      ['an empty string', ''],
+      ['a number', 42],
+      ['a boolean', true],
+      ['an array', [{ notes: 'a reason' }]],
+      ['a function', () => ({ notes: 'a reason' })],
+      ['a mistyped key', { Notes: 'a reason' }],
+      ['an unknown key beside notes', { notes: 'a reason', note: 'x' }],
+      ['an unknown key alone', { reason: 'a reason' }],
+      ['a class instance', new Opts()],
+    ];
+    for (const [shape, value] of refused) {
+      const { d, approves } = device();
+      const err = await d
+        .answer(CARD, KINDS.approval.approve, value as { notes?: string })
+        .catch((e: unknown) => e);
+      expect(err, shape).toBeInstanceOf(NodalDeviceError);
+      expect((err as NodalDeviceError).code, shape).toBe('invalid_argument');
+      expect(approves(), shape).toEqual([]);
+    }
+    // The message says what was expected.
+    const { d } = device();
+    const err = await d
+      .answer(CARD, KINDS.approval.approve, 'words' as unknown as { notes?: string })
+      .catch((e: unknown) => e);
+    expect((err as NodalDeviceError).message).toContain('{ notes:');
+    const typo = await d
+      .answer(CARD, KINDS.approval.approve, { Notes: 'x' } as unknown as { notes?: string })
+      .catch((e: unknown) => e);
+    expect((typo as NodalDeviceError).message).toContain('Notes');
+  });
+
+  it('the accepted shapes send what they sent: undefined, null, {}, notes undefined, an object with a null prototype', async () => {
+    const baseline = device();
+    await baseline.d.answer(CARD, KINDS.question.approve);
+    for (const ok of [
+      undefined,
+      null,
+      {},
+      { notes: undefined },
+      Object.assign(Object.create(null) as object, { notes: '' }),
+    ]) {
+      const again = device();
+      await again.d.answer(CARD, KINDS.question.approve, ok as { notes?: string } | undefined);
+      expect(again.raw).toEqual(baseline.raw);
+    }
+    const nullProto = device();
+    await nullProto.d.answer(
+      CARD,
+      KINDS.approval.approve,
+      Object.assign(Object.create(null) as object, { notes: 'words' }),
+    );
+    expect(nullProto.approves()[0]!.body).toEqual({
+      approvalRequestId: CARD,
+      decision: 'approve',
+      notes: 'words',
+    });
+  });
+
+  it('the client’s list of option keys is the protocol schema’s', () => {
+    expect([...DEVICE_ANSWER_OPTION_KEYS].sort()).toEqual(
+      Object.keys(DeviceAnswerOptionsSchema.shape).sort(),
+    );
   });
 
   it('words that are not a text are refused here, never dropped', async () => {
