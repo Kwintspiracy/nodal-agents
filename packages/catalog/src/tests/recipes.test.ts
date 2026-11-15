@@ -129,7 +129,7 @@ describe('the Dev team roles', () => {
     expect(codeReviewerRecipe.skills).not.toContain('dev');
     expect(codeReviewerRecipe.skills).toContain('code-review');
     // The posture is applied through the existing reviewer preset, which
-    // blocks the five writing tools. Declared on the recipe so the detail
+    // blocks its writing tools (READONLY_PRESET_TOOLS). Declared on the recipe so the detail
     // panel can SHOW it before the agent exists.
     expect(codeReviewerRecipe.presets).toContain('read-only');
     expect(developerRecipe.presets ?? []).not.toContain('read-only');

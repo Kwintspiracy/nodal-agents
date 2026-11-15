@@ -5,7 +5,7 @@
  *
  * The sixteen built-in tools every agent gets used to be invisible in the
  * dashboard: always on, never listed. The only way to restrain one was the
- * read-only preset, which blocks five write tools at once — there was no way to
+ * read-only preset, which blocks its write tools at once — there was no way to
  * say "this agent may read workspace files but must never search the web".
  *
  * Unlike autonomy-approvals.spec.ts, this suite never skips for lack of

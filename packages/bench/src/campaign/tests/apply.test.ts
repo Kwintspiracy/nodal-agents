@@ -212,13 +212,9 @@ describe('the applied instance is the team of the page', () => {
 
   it('the judge is read-only: every write and command tool is blocked, its evidence folder attached', async () => {
     const j = agent(juge, 'juge');
-    for (const tool of [
-      'file_write',
-      'file_edit',
-      'skill_file_write',
-      'run_command',
-      'run_skill_script',
-    ]) {
+    // Le préréglage du produit, pas une copie : la copie d'ici avait cinq outils
+    // et ne vérifiait donc pas `file_move` (#1109).
+    for (const tool of d.READONLY_PRESET_TOOLS) {
       expect(await winningApproval(db, juge.entityId, applied.agents['juge']!.id, tool)).toBe(
         'block',
       );

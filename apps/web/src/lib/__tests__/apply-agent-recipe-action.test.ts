@@ -32,6 +32,7 @@ import {
   approvalRules,
   entities,
   users,
+  READONLY_PRESET_TOOLS,
 } from '@nodal-agents/db';
 
 let testDb: TestDb;
@@ -157,14 +158,7 @@ describe('the profile is applied through createAgentAction', () => {
         .filter((r) => r.action === 'block')
         .map((r) => r.toolName)
         .sort(),
-    ).toEqual([
-      'file_edit',
-      'file_move',
-      'file_write',
-      'run_command',
-      'run_skill_script',
-      'skill_file_write',
-    ]);
+    ).toEqual([...READONLY_PRESET_TOOLS].sort());
     expect(rules.find((r) => r.toolName === 'file_read')?.action).toBe('auto_approve');
   });
 
@@ -327,14 +321,7 @@ describe('createAgentAction with a profile — one gesture, nothing half-done', 
         .filter((r) => r.action === 'block')
         .map((r) => r.toolName)
         .sort(),
-    ).toEqual([
-      'file_edit',
-      'file_move',
-      'file_write',
-      'run_command',
-      'run_skill_script',
-      'skill_file_write',
-    ]);
+    ).toEqual([...READONLY_PRESET_TOOLS].sort());
   });
 
   it('rolls the agent back when a promised skill is missing from the install', async () => {

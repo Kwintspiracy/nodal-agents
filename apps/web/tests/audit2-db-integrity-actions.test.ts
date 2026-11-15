@@ -11,7 +11,14 @@ import { randomBytes } from 'node:crypto';
 import { _setMasterKeyForTests, _resetMasterKeyCacheForTests } from '@nodal-agents/secrets';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { agents, agentAssignments, approvalRules, eq, and } from '@nodal-agents/db';
+import {
+  agents,
+  agentAssignments,
+  approvalRules,
+  eq,
+  and,
+  READONLY_PRESET_TOOLS,
+} from '@nodal-agents/db';
 import type * as NodalMemory from '@nodal-agents/memory';
 
 // ─── Module-level state ───────────────────────────────────────────────────────
@@ -415,14 +422,8 @@ describe('setCliProviderEnabledAction — per-provider allow-flag on cli_default
 
 // ─── setReviewerReadOnlyPresetAction — bulk block, delete-only-block on off ───
 
-const READONLY_PRESET_TOOLS = [
-  'file_write',
-  'file_edit',
-  'file_move',
-  'skill_file_write',
-  'run_command',
-  'run_skill_script',
-];
+// La liste du préréglage est lue dans le produit, jamais recopiée ici (#1109) :
+// une copie littérale de la même liste a laissé un parcours rouge deux semaines.
 
 describe('setReviewerReadOnlyPresetAction', () => {
   it('enable sets a block row on every preset tool', async () => {
