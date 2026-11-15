@@ -20,8 +20,6 @@ import { toolResultOutputText, toolResultShape } from './tool-result-shape.ts';
 
 /** Au plus ce nombre de caractères par résultat cité. */
 export const RESULT_HEAD_MAX_CHARS = 200;
-/** Au plus ce nombre de lignes non vides par résultat cité. */
-const RESULT_HEAD_LINES = 2;
 /** Au plus ce nombre de caractères par nom d'outil (les fournisseurs n'en acceptent pas plus). */
 export const NAME_MAX_CHARS = 64;
 /** Au plus ce nombre de noms distincts par liste d'outils ; les autres sont comptés. */
@@ -77,6 +75,48 @@ export function quotedLines(text: string): string[] {
 export function recordField(text: string, max: number): string {
   const line = oneLine(text).trim();
   return line.length > max ? `${line.slice(0, max - 1)}…` : line;
+}
+
+/**
+ * Un texte cité à sa borne (#1101) : la citation, et, quand elle n'est pas le
+ * texte entier, combien elle en porte (`quoted` caractères sur `total`). Celui
+ * qui cite le DIT avec ces nombres (`RECORD_WORDS.cut`) : le `…` seul n'a pas
+ * été lu comme une coupe, et « (3 impression(s)) » coupé avant la phrase qui
+ * disait un exemplaire de trois pages a été lu comme trois impressions.
+ */
+export interface BoundedQuote {
+  text: string;
+  cut: { quoted: number; total: number } | null;
+}
+
+/**
+ * Un texte venu de la base, sur une ligne et au plus `max` caractères, marque
+ * de coupe comprise. Coupé ENTRE deux mots, jamais dans un mot, quand un
+ * espace se trouve dans la seconde moitié de la borne ; sinon (un seul mot
+ * plus long que la borne, un JSON sans espace) au caractère. Pure.
+ */
+export function quoteAtBound(text: string, max: number): BoundedQuote {
+  const line = oneLine(text).trim();
+  if (line.length <= max) return { text: line, cut: null };
+  const room = line.slice(0, max - 1);
+  const lastSpace = room.search(/\s\S*$/);
+  const kept = (lastSpace >= Math.floor(max / 2) ? room.slice(0, lastSpace) : room).trimEnd();
+  return { text: `${kept}…`, cut: { quoted: kept.length, total: line.length } };
+}
+
+/**
+ * L'issue d'un appel, lue sur ce que le runner a RANGÉ de son résultat, par la
+ * seule lecture de l'issue qu'il ait (`toolResultShape`, celle de la garde de
+ * la boucle) : le bloc `{ error }` que le runner écrit pour un échec, et dans
+ * lequel il encadre les mots d'un tiers sans jamais l'entourer. Jamais sur ce
+ * que dit le texte d'un résultat : une réponse qui contient « error » n'est
+ * pas un échec. `other` : une marque d'approbation, un envoi peut-être parti,
+ * un résultat retiré par la compaction, aucun résultat rangé.
+ */
+export function callOutcome(output: unknown): 'succeeded' | 'failed' | 'other' {
+  if (output === undefined) return 'other';
+  const shape = toolResultShape(output);
+  return shape === 'ok' ? 'succeeded' : shape === 'error' ? 'failed' : 'other';
 }
 
 /**
@@ -199,10 +239,13 @@ export function toolNames(acts: JobActs): string {
 }
 
 /**
- * Le début de ce qu'un appel a rendu, cité comme une donnée : ses deux
- * premières lignes non vides, jointes par une espace, au plus
- * RESULT_HEAD_MAX_CHARS caractères. Une seule ligne, toujours : un texte venu
- * d'un tiers ne peut pas ouvrir une ligne du relevé à lui.
+ * Ce qu'un appel a rendu, cité comme une donnée : le texte ENTIER, ses lignes
+ * non vides jointes par une espace, au plus RESULT_HEAD_MAX_CHARS caractères
+ * (`quoteAtBound`). Une seule ligne, toujours : un texte venu d'un tiers ne
+ * peut pas ouvrir une ligne du relevé à lui. Plus de borne en lignes (#1101) :
+ * les deux premières lignes d'une réponse de trois se lisaient comme la
+ * réponse entière, sans rien qui dise la coupe ; une réponse courte est citée
+ * entière, une longue dit combien en est cité (`cut`).
  *
  * Le cadre que la plateforme pose autour d'un résultat tiers est retiré par sa
  * propre fonction (`unwrapUntrusted`), jamais par un préfixe recopié ici, et
@@ -210,16 +253,18 @@ export function toolNames(acts: JobActs): string {
  * (`redactSecretsInText`), AVANT la coupe : un secret coupé en deux ne se
  * reconnaîtrait plus.
  */
-export function resultHead(output: unknown): string {
-  if (output === undefined) return '(no result recorded)';
-  if (toolResultShape(output) === 'elided') return '(result no longer in the transcript)';
-  const lines = redactSecretsInText(unframedText(output))
+export function resultHead(output: unknown): BoundedQuote {
+  if (output === undefined) return { text: '(no result recorded)', cut: null };
+  if (toolResultShape(output) === 'elided') {
+    return { text: '(result no longer in the transcript)', cut: null };
+  }
+  const whole = redactSecretsInText(unframedText(output))
     .split(LINE_BREAK)
     .map((l) => oneLine(l).trim())
     .filter((l) => l !== '')
-    .slice(0, RESULT_HEAD_LINES);
-  const head = recordField(lines.join(' '), RESULT_HEAD_MAX_CHARS);
-  return head === '' ? '(empty result)' : head;
+    .join(' ');
+  const quote = quoteAtBound(whole, RESULT_HEAD_MAX_CHARS);
+  return quote.text === '' ? { text: '(empty result)', cut: null } : quote;
 }
 
 /**

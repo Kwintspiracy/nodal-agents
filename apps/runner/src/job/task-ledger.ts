@@ -28,7 +28,15 @@
 import { eq, ne, and, inArray, desc } from '@nodal-agents/db';
 import { agentTasks, agentJobs, agents } from '@nodal-agents/db';
 import type { RunnerDeps } from '../deps.ts';
-import { jobActs, recordField, toolNames, NAME_MAX_CHARS, type JobActs } from './tool-acts.ts';
+import { RECORD_WORDS, type RecordWords } from './record-words.ts';
+import {
+  jobActs,
+  quoteAtBound,
+  recordField,
+  toolNames,
+  NAME_MAX_CHARS,
+  type JobActs,
+} from './tool-acts.ts';
 
 /** Max ledger entries surfaced per root job — keeps a busy fan-out bounded. */
 export const MAX_TASKS_PER_EXCHANGE = 3;
@@ -119,9 +127,18 @@ export async function loadTaskLedger(
   return ledger;
 }
 
-function truncateResult(s: string | null): string {
-  const text = recordField(s ?? '', RESULT_TRUNCATE_CHARS);
-  return text === '' ? '(no result)' : text;
+/**
+ * `result: …` / `error: …` — the task's stored text at its bound. Cut, it says
+ * so in the runner's words BEFORE the colon (#1101, `words.cut`), where the
+ * stored text cannot imitate them: a cut result read as the whole answer is a
+ * false statement of what happened.
+ */
+function taskOutcomePart(label: string, s: string | null, words: RecordWords): string {
+  const quote = quoteAtBound(s ?? '', RESULT_TRUNCATE_CHARS);
+  if (quote.text === '') return `${label}: (no result)`;
+  return quote.cut
+    ? `${label} (${words.cut(quote.cut.quoted, quote.cut.total)}): ${quote.text}`
+    : `${label}: ${quote.text}`;
 }
 
 /**
@@ -129,13 +146,16 @@ function truncateResult(s: string | null): string {
  * conversational history — the real tool calls a delegated task made, pulled
  * from its OWN child job's `tools_used`, never from the creating job's prose.
  */
-export function formatTaskLedgerEntry(entry: TaskLedgerEntry): string {
+export function formatTaskLedgerEntry(
+  entry: TaskLedgerEntry,
+  words: RecordWords = RECORD_WORDS,
+): string {
   const toolsStr = toolNames(entry);
   const actionsPart = toolsStr ? `actions — ${toolsStr}; ` : '';
   const title = recordField(entry.title, TITLE_MAX_CHARS);
   return entry.status === 'blocked'
-    ? `[Task "${title}" failed: ${actionsPart}error: ${truncateResult(entry.result)}]`
-    : `[Task "${title}" completed: ${actionsPart}result: ${truncateResult(entry.result)}]`;
+    ? `[Task "${title}" failed: ${actionsPart}${taskOutcomePart('error', entry.result, words)}]`
+    : `[Task "${title}" completed: ${actionsPart}${taskOutcomePart('result', entry.result, words)}]`;
 }
 
 // ─── Délégation EN LIGNE (`assign_*`) ────────────────────────────────────────
