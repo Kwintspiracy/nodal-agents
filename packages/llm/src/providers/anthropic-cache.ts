@@ -19,7 +19,7 @@
 // stays cheap AND well under the token budget, exactly like Cowork.
 
 import type { ModelMessage } from 'ai';
-import { SYSTEM_PROMPT_CACHE_BOUNDARY } from '@nodal-agents/shared';
+import { isRequestNote, SYSTEM_PROMPT_CACHE_BOUNDARY } from '@nodal-agents/shared';
 
 const EPHEMERAL = { anthropic: { cacheControl: { type: 'ephemeral' as const } } };
 
@@ -58,10 +58,18 @@ export function withAnthropicPromptCaching<T extends object>(args: T): T {
 
   // Sliding breakpoint: cache_control on the LAST message (the SDK applies it to
   // that message's last content part). Caches the whole prefix up to here.
+  //
+  // The last message that WILL BE REPLAYED (#1088): a note of the runner that
+  // belongs to this request only (`isRequestNote`) trails the message it is
+  // about and is never replayed, so a prefix cached through it could never be
+  // read back. The breakpoint sits just before the trailing notes, on the
+  // prefix the next turn sends again, and the notes ride uncached after it.
+  let breakpoint = original.length - 1;
+  while (breakpoint >= 0 && isRequestNote(original[breakpoint])) breakpoint -= 1;
   const messages: ModelMessage[] =
-    original.length > 0
+    breakpoint >= 0
       ? original.map((m, i) =>
-          i === original.length - 1
+          i === breakpoint
             ? ({
                 ...m,
                 providerOptions: { ...(m.providerOptions ?? {}), ...EPHEMERAL },

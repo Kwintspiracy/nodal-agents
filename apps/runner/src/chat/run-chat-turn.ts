@@ -22,6 +22,7 @@ import {
 import {
   buildSystemPrompt,
   assertTurnToolCallBudget,
+  REPLY_FORM_NOTES,
   ToolCallLimitExceededError,
 } from '@nodal-agents/orchestration';
 import type { Agent, AgentId, EntityId } from '@nodal-agents/orchestration';
@@ -51,6 +52,7 @@ import {
   formatLocalTime,
   handoffNote,
   openingMessages,
+  requestNoteMessage,
   runnerRecordMessage,
   type BrakeStop,
   type ReplyRendering,
@@ -288,7 +290,7 @@ function totalHistoryChars(blocks: ReadonlyArray<ReadonlyArray<ModelMessage>>): 
   return total;
 }
 
-interface HistoryRow {
+export interface HistoryRow {
   role: string;
   content: string;
   /** Quand le message a été écrit : un message de la personne rejoué en porte la date (#650). */
@@ -513,6 +515,89 @@ function runTaskOf<T extends { toolName: string }>(response: {
   const calls = response.toolCalls ?? [];
   assertTurnToolCallBudget(calls.length);
   return calls.find((tc) => tc.toolName === 'run_task');
+}
+
+/**
+ * The rows of the conversation a turn replays (step 4), chronological: the
+ * OLDEST are dropped until what is left fits the budget — the same
+ * char-budget-as-token-proxy approach as thread-history.ts's
+ * loadThreadHistory. The most recent row (the message being answered) is
+ * always kept: it is never simply dropped, only (as a last resort,
+ * `chatTurnMessages`) truncated.
+ *
+ * One "block" (1 or 2 ModelMessages) per row, so the trim drops a whole block
+ * at a time — never an escalation's tool-call without its tool-result. The
+ * runner's record of each launched job rides in its `run_task` result, which
+ * the budget does not count (`totalHistoryChars`): the trim is the same with
+ * or without it, so the records are read AFTER it, for the rows it keeps only.
+ * The END of a launched job (#1078) is not counted either: an end is built
+ * only for a launching row the trim kept, and a trimmed launch takes its end
+ * with it.
+ *
+ * Pure, and exported so that a replay can rebuild a real turn from its rows.
+ */
+export function keptHistoryRows(
+  chronologicalRows: readonly HistoryRow[],
+  timezone: string,
+): HistoryRow[] {
+  let remainingRows = [...chronologicalRows];
+  let blocks = remainingRows.map((r) => buildHistoryBlock(r, (s) => s, [], timezone));
+  while (blocks.length > 1 && totalHistoryChars(blocks) > HISTORY_BUDGET_CHARS) {
+    blocks = blocks.slice(1);
+    remainingRows = remainingRows.slice(1);
+  }
+  return remainingRows;
+}
+
+/**
+ * The messages the model is given for a chat turn, from the rows the turn
+ * keeps (`keptHistoryRows`, chronological, the message being answered LAST)
+ * and the runner's record of each job they launched (`loadExchangeRecords`).
+ * Pure: a replay script calls it on real rows and gets the turn's request.
+ *
+ * - Per-message head+tail truncation applies only if the kept rows STILL
+ *   exceed the budget (e.g. the single most recent turn is itself gigantic,
+ *   F-12, audit #2 round 2): a conversation that fits keeps every turn intact.
+ * - The moments of the conversation in the order they happened (#1078,
+ *   conversation-moments.ts): each kept row at the time it was written, and the
+ *   end of each job a kept row launched at the time it ended. The message being
+ *   answered is the last row, written by this turn: it is not a moment of the
+ *   history, it stays LAST, and a job that ended after it was written comes
+ *   just before it.
+ * - What governs the form of THIS reply is read last (#1088): the note of the
+ *   rendering (`REPLY_FORM_NOTES`), right after the message being answered.
+ *   It belongs to this request only: nothing stores it, so no later turn
+ *   replays it, and every turn carries one, for its own message. A rendering
+ *   with no note leaves the request as it was.
+ */
+export function chatTurnMessages(input: {
+  rows: readonly HistoryRow[];
+  records: ReadonlyMap<string, readonly string[]>;
+  timezone: string;
+  replyRendering: ReplyRendering;
+}): ModelMessage[] {
+  const { rows, records, timezone, replyRendering } = input;
+  const truncateFn =
+    totalHistoryChars(rows.map((r) => buildHistoryBlock(r, (s) => s, [], timezone))) >
+    HISTORY_BUDGET_CHARS
+      ? truncateHeadTail
+      : (s: string) => s;
+  const ledgerOf = (r: HistoryRow) => records.get(r.jobId ?? '') ?? [];
+  const answered = rows.slice(-1);
+  const moments = conversationMoments(rows.slice(0, -1), (r) => ({
+    writtenAt: r.createdAt,
+    endedAt: endOf(r),
+  }));
+  const note = REPLY_FORM_NOTES[replyRendering];
+  return [
+    ...moments.flatMap((m) =>
+      m.kind === 'row'
+        ? buildHistoryBlock(m.row, truncateFn, ledgerOf(m.row), timezone)
+        : [taskEndRecord(m.row, m.endedAt, truncateFn, ledgerOf(m.row), timezone)],
+    ),
+    ...answered.flatMap((r) => buildHistoryBlock(r, truncateFn, ledgerOf(r), timezone)),
+    ...(note === null ? [] : [requestNoteMessage(note) as ModelMessage]),
+  ];
 }
 
 export async function runChatTurn(opts: {
@@ -788,36 +873,9 @@ export async function runChatTurn(opts: {
     .orderBy(desc(chatMessages.createdAt))
     .limit(HISTORY_CANDIDATE_LIMIT);
 
-  // Build one "block" (1 or 2 ModelMessages) per row, so the budget trim
-  // below can drop a whole block at a time — never split an escalation's
-  // tool-call from its tool-result. `truncateFn` is a parameter (not always
-  // `truncateHeadTail`) — see the round-2 fix below: per-message truncation
-  // is a LAST RESORT, not an unconditional per-turn cap (F-12, audit #2
-  // round 2 — an unconditional cap chopped a single large paste mid-turn
-  // even when the whole conversation fit comfortably under budget).
-  //
-  // The runner's record of each launched job rides in its `run_task` result,
-  // which the budget does not count (`totalHistoryChars`): the trim is the
-  // same with or without it, so the records are read AFTER it, for the turns
-  // it keeps only.
-  //
-  // The END of a launched job (#1078) is not counted either: the trim runs on
-  // the rows alone, exactly as before the end moved out of the `run_task`
-  // result, and an end is built only for a launching row the trim kept. A
-  // trimmed launch takes its end with it.
-  const chronologicalRows = rows.reverse();
-  let remainingRows = chronologicalRows;
-  let blocks = remainingRows.map((r) => buildHistoryBlock(r, (s) => s, [], deployment.timezone));
-
-  // Drop the OLDEST blocks (front of the chronological array) until the
-  // total size is under budget — the same char-budget-as-token-proxy
-  // approach as thread-history.ts's loadThreadHistory. Always keep at least
-  // the single most recent turn — it's never simply dropped, only (as a
-  // last resort below) truncated.
-  while (blocks.length > 1 && totalHistoryChars(blocks) > HISTORY_BUDGET_CHARS) {
-    blocks = blocks.slice(1);
-    remainingRows = remainingRows.slice(1);
-  }
+  // The rows the budget keeps (`keptHistoryRows`), then the messages of the
+  // turn (`chatTurnMessages`): both pure, so a replay rebuilds a real turn.
+  const remainingRows = keptHistoryRows(rows.reverse(), deployment.timezone);
 
   // The record of each launched job (#1075, exchange-record.ts): its tools,
   // what those that act returned, its delegations — `create_task` and in line
@@ -828,32 +886,12 @@ export async function runChatTurn(opts: {
     db,
     remainingRows.map((r) => r.jobId),
   );
-  // Last resort: per-message head+tail truncation only if what's left STILL
-  // exceeds the budget (e.g. the single most recent turn is itself gigantic).
-  // A conversation that fits under budget as-is keeps every turn intact,
-  // however large a single message is.
-  const truncateFn =
-    totalHistoryChars(blocks) > HISTORY_BUDGET_CHARS ? truncateHeadTail : (s: string) => s;
-  // The moments of the conversation in the order they happened (#1078,
-  // conversation-moments.ts): each kept row at the time it was written, and the
-  // end of each job a kept row launched at the time it ended. The message being
-  // answered is the last row, written by this turn (step 1b): it is not a
-  // moment of the history, it stays LAST, and a job that ended after it was
-  // written comes just before it.
-  const ledgerOf = (r: HistoryRow) => records.get(r.jobId ?? '') ?? [];
-  const answered = remainingRows.slice(-1);
-  const moments = conversationMoments(remainingRows.slice(0, -1), (r) => ({
-    writtenAt: r.createdAt,
-    endedAt: endOf(r),
-  }));
-  const messages: ModelMessage[] = [
-    ...moments.flatMap((m) =>
-      m.kind === 'row'
-        ? buildHistoryBlock(m.row, truncateFn, ledgerOf(m.row), deployment.timezone)
-        : [taskEndRecord(m.row, m.endedAt, truncateFn, ledgerOf(m.row), deployment.timezone)],
-    ),
-    ...answered.flatMap((r) => buildHistoryBlock(r, truncateFn, ledgerOf(r), deployment.timezone)),
-  ];
+  const messages = chatTurnMessages({
+    rows: remainingRows,
+    records,
+    timezone: deployment.timezone,
+    replyRendering,
+  });
   onPhase?.('historyLoaded');
 
   // 5. One LLM call. The agent may reply in text (pure conversation) and/or call

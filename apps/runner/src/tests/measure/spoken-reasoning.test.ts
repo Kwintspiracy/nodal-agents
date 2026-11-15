@@ -41,6 +41,7 @@ import {
   type MeasureRequest,
   type TurnRecord,
 } from '../../measure/spoken-reasoning.ts';
+import { REPLY_FORM_NOTES } from '@nodal-agents/orchestration';
 import { loadPersonaFile, personaFingerprint } from '../../measure/persona.ts';
 import { seedJob, type Body } from '../job/tool-loading-harness.ts';
 
@@ -75,7 +76,14 @@ function scriptedProvider(): Wire[] {
       const body = JSON.parse(init?.body as string) as Wire;
       bodies.push(body);
       const isTurn = body.messages.some((m) => m.role === 'system');
-      const lastUser = [...body.messages].reverse().find((m) => m.role === 'user');
+      // The person's words: the last user message that is not the note of
+      // the spoken rendering, which follows them (#1088).
+      const note = REPLY_FORM_NOTES.spoken ?? '';
+      const lastUser = [...body.messages]
+        .reverse()
+        .find(
+          (m) => m.role === 'user' && !(note !== '' && JSON.stringify(m.content).includes(note)),
+        );
       const asked = JSON.stringify(lastUser?.content ?? '');
       const effort = body.reasoning?.enabled === false ? 'off' : (body.reasoning?.effort ?? 'auto');
       const completion = { off: 20, low: 50, auto: 80 }[effort] ?? 99;

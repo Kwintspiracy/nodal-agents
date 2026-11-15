@@ -73,6 +73,7 @@ export * from './failure-codes';
 export * from './job-result-kind';
 export * from './reply-rendering';
 export * from './runner-record';
+export * from './request-note';
 export * from './conversation-inbox';
 export * from './handoff';
 export * from './card-words';
