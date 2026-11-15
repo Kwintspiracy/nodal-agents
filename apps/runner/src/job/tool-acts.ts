@@ -20,7 +20,7 @@ import { toolResultOutputText, toolResultShape } from './tool-result-shape.ts';
 
 /** Au plus ce nombre de caractères par résultat cité. */
 export const RESULT_HEAD_MAX_CHARS = 200;
-/** Au plus ce nombre de lignes non vides par résultat cité qui ne tient pas entier. */
+/** Au plus ce nombre de lignes non vides par résultat cité. */
 const RESULT_HEAD_LINES = 2;
 /** Au plus ce nombre de caractères par nom d'outil (les fournisseurs n'en acceptent pas plus). */
 export const NAME_MAX_CHARS = 64;
@@ -81,10 +81,7 @@ export function recordField(text: string, max: number): string {
 
 /**
  * Un texte cité à sa borne (#1101) : la citation, et, quand elle n'est pas le
- * texte entier, combien elle en porte (`quoted` caractères sur `total`). Celui
- * qui cite le DIT avec ces nombres (`RECORD_WORDS.cut`) : le `…` seul n'a pas
- * été lu comme une coupe, et « (3 impression(s)) » coupé avant la phrase qui
- * disait un exemplaire de trois pages a été lu comme trois impressions.
+ * texte entier, combien elle en porte (`quoted` caractères sur `total`).
  */
 export interface BoundedQuote {
   text: string;
@@ -241,17 +238,17 @@ export function toolNames(acts: JobActs): string {
 }
 
 /**
- * Ce qu'un appel a rendu, cité comme une donnée, sur UNE ligne : un texte venu
- * d'un tiers ne peut pas ouvrir une ligne du relevé à lui. Ses lignes non
- * vides sont jointes par une espace.
- *  - Le texte entier tient dans `max` : il est cité entier, sans note.
- *  - Sinon, ses RESULT_HEAD_LINES premières lignes, au plus `max` caractères
- *    coupés entre deux mots, suivies de `…`, et `cut` dit combien du texte
- *    entier est cité (#1101) : deux lignes d'une réponse de trois, ou 200
- *    caractères d'une réponse de 400, ne se lisent plus comme la réponse
- *    entière. Celui qui cite le dit (`RECORD_WORDS.cut`) et lui fait place
- *    dans la même borne (`quotedCallLines`) : une citation coupée ne coûte pas
- *    plus qu'avant #1101.
+ * Le début de ce qu'un appel a rendu, cité comme une donnée : ses deux
+ * premières lignes non vides, jointes par une espace, au plus
+ * RESULT_HEAD_MAX_CHARS caractères. Une seule ligne, toujours : un texte venu
+ * d'un tiers ne peut pas ouvrir une ligne du relevé à lui.
+ *
+ * Une citation qui n'est pas le texte entier finit par `…`, et la coupe tombe
+ * ENTRE deux mots (#1101, `quoteAtBound`), jamais au milieu d'un mot. Une note
+ * qui dise la coupe (`(cut)`, `(first 195 of 400 characters)`) a été mesurée
+ * le 15/11 sur le modèle en service : elle ne changeait pas ce que le modèle
+ * lit d'une réponse coupée avant la phrase qui la tranche, et coûtait +2,8 %
+ * de jetons par tour. Elle n'est pas posée ; ce défaut-là reste ouvert (#1101).
  *
  * Le cadre que la plateforme pose autour d'un résultat tiers est retiré par sa
  * propre fonction (`unwrapUntrusted`), jamais par un préfixe recopié ici, et
@@ -259,29 +256,21 @@ export function toolNames(acts: JobActs): string {
  * (`redactSecretsInText`), AVANT la coupe : un secret coupé en deux ne se
  * reconnaîtrait plus.
  */
-export function resultHead(output: unknown, max: number = RESULT_HEAD_MAX_CHARS): BoundedQuote {
-  if (output === undefined) return { text: '(no result recorded)', cut: null };
-  if (toolResultShape(output) === 'elided') {
-    return { text: '(result no longer in the transcript)', cut: null };
-  }
+export function resultHead(output: unknown): string {
+  if (output === undefined) return '(no result recorded)';
+  if (toolResultShape(output) === 'elided') return '(result no longer in the transcript)';
   const lines = redactSecretsInText(unframedText(output))
     .split(LINE_BREAK)
     .map((l) => oneLine(l).trim())
     .filter((l) => l !== '');
-  const whole = lines.join(' ');
-  if (whole === '') return { text: '(empty result)', cut: null };
-  if (whole.length <= max) return { text: whole, cut: null };
-  const head = lines.slice(0, RESULT_HEAD_LINES).join(' ');
-  // Les premières lignes tiennent sous la borne : la coupe tombe entre deux
-  // lignes, donc entre deux mots ; sinon `quoteAtBound` coupe entre deux mots.
-  if (head.length < max) {
-    return { text: `${head}…`, cut: { quoted: head.length, total: whole.length } };
-  }
-  const quote = quoteAtBound(head, max);
-  return {
-    text: quote.text,
-    cut: { quoted: quote.cut?.quoted ?? head.length, total: whole.length },
-  };
+  const dropped = lines.length > RESULT_HEAD_LINES;
+  // Des lignes laissées de côté se marquent aussi `…` : la place en est gardée.
+  const quote = quoteAtBound(
+    lines.slice(0, RESULT_HEAD_LINES).join(' '),
+    dropped ? RESULT_HEAD_MAX_CHARS - 1 : RESULT_HEAD_MAX_CHARS,
+  );
+  const head = dropped && quote.cut === null ? `${quote.text}…` : quote.text;
+  return head === '' ? '(empty result)' : head;
 }
 
 /**

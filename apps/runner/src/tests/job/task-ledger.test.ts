@@ -205,9 +205,9 @@ describe('loadTaskLedger @cap:suivre-execution/moteur', () => {
 
     const ledger = await loadTaskLedger(db, [rootJobId]);
     const line = formatTaskLedgerEntry(ledger.get(rootJobId)![0]!);
-    // At its bound, and the cut said in numbers before the stored text (#1101).
+    // At its bound, marked `…`.
     expect(line).toBe(
-      `[Task "long result" completed: actions — web_search; result (first 169 of 500 characters): ${'x'.repeat(169)}…]`,
+      `[Task "long result" completed: actions — web_search; result: ${'x'.repeat(199)}…]`,
     );
   });
 
@@ -261,7 +261,7 @@ describe('loadTaskLedger @cap:suivre-execution/moteur', () => {
         calls: [],
         result: null,
       },
-    ].map((e) => formatTaskLedgerEntry(e));
+    ].map(formatTaskLedgerEntry);
     expect(lines).toEqual([
       '[Task "a" completed: actions — web_search; result: ok]',
       '[Task "b" failed: error: (no result)]',

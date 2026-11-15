@@ -1507,7 +1507,7 @@ describe('runChatTurn — the launched job carries the record of what its tools 
   const RECORD = [
     `[Actions performed in this exchange: file_read, file_write, ${GET}, ${SUBMIT}]`,
     'file_write → {"path":"out/flyer.md","bytes":1834,"written":true}',
-    `${SUBMIT} → Request 4521 submitted. Status: pending, waiting for the owner to confirm. Pages: 3`,
+    `${SUBMIT} → Request 4521 submitted. Status: pending, waiting for the owner to confirm.…`,
   ];
 
   /**

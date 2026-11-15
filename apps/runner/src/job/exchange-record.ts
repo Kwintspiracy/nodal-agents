@@ -19,9 +19,9 @@
 // citations identiques se disent une fois avec leur compte (`nom ×N → …`).
 //
 // CE QUI EST LU COMME « CE QUI S'EST PASSÉ » (#1101). Le relevé est lu ainsi
-// par le modèle : il ne dit donc que ce qui est acquis, et un fragment ne se
-// lit que comme un fragment. Deux phrases fausses dites à la personne le 14/11
-// l'ont montré. Les mots du cadre vivent dans record-words.ts :
+// par le modèle : il ne dit donc que ce qui est acquis. Une phrase fausse dite
+// à la personne le 14/11 l'a montré. Les mots du cadre vivent dans
+// record-words.ts :
 //   - un job qui n'a pas fini est dit par ses outils appelés jusque-là, sans
 //     citation (`running`) : un appel raté qu'il refait n'est pas son issue ;
 //   - un échec qu'un appel RÉUSSI du même outil a refait ensuite n'est pas
@@ -29,9 +29,12 @@
 //     un échec que rien n'a refait est cité, et dit (`nom (failed) → …`).
 //     L'issue est lue sur ce que le runner a RANGÉ (`callOutcome`), jamais
 //     sur les mots d'un résultat ;
-//   - une citation qui n'est pas la réponse entière dit combien elle en porte
-//     (`nom (only the first 195 of 400 characters are quoted) → …`), coupée
-//     entre deux mots.
+//   - une citation qui ne tient pas entière garde ses deux premières lignes,
+//     coupées entre deux mots, et finit par `…`. Une note de coupe a été
+//     mesurée (15/11, modèle en service) : elle ne changeait pas ce que le
+//     modèle lit, et coûtait +2,8 % par tour ; elle n'est pas posée. Une
+//     réponse coupée avant la phrase qui la tranche reste trompeuse : c'est
+//     la suite de #1101, pas réglée ici.
 // Ce que le runner dit d'un appel est AVANT la flèche ; ce que l'outil a dit,
 // APRÈS : un texte rangé ne peut pas imiter les mots du runner.
 //
@@ -57,8 +60,7 @@
 // Le travail d'un job délégué suit la même règle, sous la même borne.
 //
 // BORNES DITES (invariant #4) : au plus MAX_TOOL_NAMES noms par liste (le reste
-// compté), NAME_MAX_CHARS par nom, RESULT_HEAD_MAX_CHARS par citation (la coupe
-// dite en nombres), au plus
+// compté), NAME_MAX_CHARS par nom, RESULT_HEAD_MAX_CHARS par citation, au plus
 // MAX_QUOTED_RESULTS citations distinctes par échange, les DERNIÈRES (celles
 // qui tombent sont comptées), au plus 3 tâches et 3 délégations en ligne
 // (task-ledger.ts), chaque texte de la base coupé à sa borne. Un relevé tient
@@ -85,7 +87,7 @@ import { and, inArray, isNotNull } from '@nodal-agents/db';
 import { agentJobs, toolCalls } from '@nodal-agents/db';
 import type { RunnerDeps } from '../deps.ts';
 import { isJobEnded } from './conversation-moments.ts';
-import { RECORD_WORDS, cutNoteRoom, type RecordWords } from './record-words.ts';
+import { RECORD_WORDS, type RecordWords } from './record-words.ts';
 import {
   formatInlineDelegationEntry,
   formatTaskLedgerEntry,
@@ -102,7 +104,6 @@ import {
   resultHead,
   toolNames,
   NAME_MAX_CHARS,
-  RESULT_HEAD_MAX_CHARS,
   type JobActs,
   type ToolCallFact,
 } from './tool-acts.ts';
@@ -162,7 +163,7 @@ export function exchangeRecordLines(
   if (!facts.ended) return ownNames === '' ? [] : [oneLine(words.running(ownNames))];
   const sections: Array<{ header: string | null; acts: Acting }> = [
     { header: ownNames === '' ? null : words.actions(ownNames), acts: facts.own },
-    ...facts.tasks.map((t) => ({ header: formatTaskLedgerEntry(t, words), acts: t })),
+    ...facts.tasks.map((t) => ({ header: formatTaskLedgerEntry(t), acts: t })),
     ...facts.inline.map((d) => ({ header: formatInlineDelegationEntry(d), acts: d })),
   ];
   const quoted = sections.map((s) =>
@@ -199,10 +200,6 @@ export function exchangeRecordLines(
  *    succès (`words.redone`). Lu comme « ce qui s'est passé », il ne l'était pas ;
  *  - un échec que rien n'a refait EST ce qui s'est passé : cité, et dit
  *    `words.failed` ;
- *  - une citation qui n'est pas la réponse entière dit combien en est cité
- *    (`words.cut`), et cette note est prise sur la borne de la citation
- *    (`cutNoteRoom`) : la ligne d'une citation coupée n'est pas plus longue
- *    qu'avant #1101 (mesuré : +4,8 % de jetons par tour quand elle s'ajoutait).
  * Des lignes identiques (même outil, mêmes mots du runner, même citation) se
  * disent UNE fois, avec leur compte, là où tombe la dernière :
  * `telegram_send_message ×9 → {"sent":true}`. La borne compte ensuite des
@@ -229,18 +226,13 @@ export function quotedCallLines(
   }
   const entries = calls.flatMap((c, i) => {
     if (redoneBy.has(i)) return [];
-    const first = resultHead(c.output);
-    // La note de coupe prend sa place sur la borne de la citation.
-    const head = first.cut
-      ? resultHead(c.output, RESULT_HEAD_MAX_CHARS - cutNoteRoom(words, first.cut.total))
-      : first;
+    const head = resultHead(c.output);
     const redone = redoneCount.get(i) ?? 0;
     const notes = [
       ...(outcomes[i] === 'failed' ? [words.failed] : []),
       ...(redone > 0 ? [words.redone(redone)] : []),
-      ...(head.cut ? [words.cut(head.cut.quoted, head.cut.total)] : []),
     ];
-    return [{ name: recordField(c.name, NAME_MAX_CHARS), notes, head: head.text }];
+    return [{ name: recordField(c.name, NAME_MAX_CHARS), notes, head }];
   });
   const key = (e: (typeof entries)[number]) => JSON.stringify([e.name, e.notes, e.head]);
   const count = new Map<string, number>();

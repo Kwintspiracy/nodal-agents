@@ -28,7 +28,6 @@
 import { eq, ne, and, inArray, desc } from '@nodal-agents/db';
 import { agentTasks, agentJobs, agents } from '@nodal-agents/db';
 import type { RunnerDeps } from '../deps.ts';
-import { RECORD_WORDS, cutNoteRoom, type RecordWords } from './record-words.ts';
 import {
   jobActs,
   quoteAtBound,
@@ -128,19 +127,12 @@ export async function loadTaskLedger(
 }
 
 /**
- * `result: …` / `error: …` — the task's stored text at its bound. Cut, it says
- * so in the runner's words BEFORE the colon (#1101, `words.cut`), where the
- * stored text cannot imitate them: a cut result read as the whole answer is a
- * false statement of what happened. The note takes its room from the same
- * bound (`cutNoteRoom`): a cut result costs no more than before #1101.
+ * The task's stored text at its bound, cut between two words (#1101,
+ * `quoteAtBound`) and marked `…`.
  */
-function taskOutcomePart(label: string, s: string | null, words: RecordWords): string {
-  const first = quoteAtBound(s ?? '', RESULT_TRUNCATE_CHARS);
-  if (first.text === '') return `${label}: (no result)`;
-  if (!first.cut) return `${label}: ${first.text}`;
-  const quote = quoteAtBound(s ?? '', RESULT_TRUNCATE_CHARS - cutNoteRoom(words, first.cut.total));
-  const cut = quote.cut ?? first.cut;
-  return `${label} (${words.cut(cut.quoted, cut.total)}): ${quote.text}`;
+function truncateResult(s: string | null): string {
+  const text = quoteAtBound(s ?? '', RESULT_TRUNCATE_CHARS).text;
+  return text === '' ? '(no result)' : text;
 }
 
 /**
@@ -148,16 +140,13 @@ function taskOutcomePart(label: string, s: string | null, words: RecordWords): s
  * conversational history — the real tool calls a delegated task made, pulled
  * from its OWN child job's `tools_used`, never from the creating job's prose.
  */
-export function formatTaskLedgerEntry(
-  entry: TaskLedgerEntry,
-  words: RecordWords = RECORD_WORDS,
-): string {
+export function formatTaskLedgerEntry(entry: TaskLedgerEntry): string {
   const toolsStr = toolNames(entry);
   const actionsPart = toolsStr ? `actions — ${toolsStr}; ` : '';
   const title = recordField(entry.title, TITLE_MAX_CHARS);
   return entry.status === 'blocked'
-    ? `[Task "${title}" failed: ${actionsPart}${taskOutcomePart('error', entry.result, words)}]`
-    : `[Task "${title}" completed: ${actionsPart}${taskOutcomePart('result', entry.result, words)}]`;
+    ? `[Task "${title}" failed: ${actionsPart}error: ${truncateResult(entry.result)}]`
+    : `[Task "${title}" completed: ${actionsPart}result: ${truncateResult(entry.result)}]`;
 }
 
 // ─── Délégation EN LIGNE (`assign_*`) ────────────────────────────────────────
