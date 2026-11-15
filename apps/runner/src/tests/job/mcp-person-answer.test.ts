@@ -18,7 +18,7 @@ import { MockLanguageModelV3 } from 'ai/test';
 import { generateText } from 'ai';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { and, eq } from '@nodal-agents/db';
+import { and, approvalsOldestFirst, eq } from '@nodal-agents/db';
 import {
   agentAssignments,
   agentJobs,
@@ -309,7 +309,7 @@ async function questionsOf(jobId: string) {
     .select()
     .from(approvalRequests)
     .where(and(eq(approvalRequests.jobId, jobId), eq(approvalRequests.kind, 'elicitation')))
-    .orderBy(approvalRequests.requestedAt);
+    .orderBy(approvalsOldestFirst);
 }
 
 /** Attendre que la question n° `n` (à partir de 1) du job soit posée et ouverte. */

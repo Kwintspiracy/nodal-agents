@@ -27,7 +27,7 @@
 
 import {
   and,
-  asc,
+  approvalsOldestFirst,
   eq,
   inArray,
   approvalRequests,
@@ -325,7 +325,7 @@ export async function personAnswerRowsOf(
     })
     .from(approvalRequests)
     .where(and(eq(approvalRequests.jobId, jobId), eq(approvalRequests.kind, 'elicitation')))
-    .orderBy(asc(approvalRequests.requestedAt), asc(approvalRequests.id));
+    .orderBy(approvalsOldestFirst);
 }
 
 /**
