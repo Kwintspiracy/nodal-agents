@@ -13,10 +13,28 @@
 //
 // LA RÈGLE, pour tout outil et sans liste tenue à la main :
 //   [Actions performed in this exchange: tool_a, tool_b ×2, tool_c]
-//   tool_b → <les deux premières lignes non vides de ce que l'appel a rendu>
+//   tool_b → <ce que l'appel a rendu, sur une ligne, à sa borne>
 // Chaque outil appelé est nommé. Chaque appel qui n'était pas DÉCLARÉ en
-// lecture seule AU MOMENT DE L'APPEL est cité (une ligne `nom → début`). Des
-// citations identiques se disent une fois avec leur compte (`nom ×N → début`).
+// lecture seule AU MOMENT DE L'APPEL est cité (une ligne `nom → citation`). Des
+// citations identiques se disent une fois avec leur compte (`nom ×N → …`).
+//
+// CE QUI EST LU COMME « CE QUI S'EST PASSÉ » (#1101). Le relevé est lu ainsi
+// par le modèle : il ne dit donc que ce qui est acquis. Une phrase fausse dite
+// à la personne le 14/11 l'a montré. Les mots du cadre vivent dans
+// record-words.ts :
+//   - un job qui n'a pas fini est dit par ses outils appelés jusque-là, sans
+//     citation (`running`) : un appel raté qu'il refait n'est pas son issue ;
+//   - un job fini : chacun de ses appels qui agissent est cité, dans l'ordre,
+//     comme sa réponse le dit. Le runner n'affirme aucune issue (« échoué »,
+//     « refait ») : il n'en range aucune, et qu'un appel en refasse un autre
+//     est une intention qu'il ne peut pas connaître (revue de #1106, passe 1).
+//     Un essai raté cité à côté du succès qui l'a suivi reste ouvert (#1101) ;
+//   - une citation qui ne tient pas entière garde ses deux premières lignes,
+//     coupées entre deux mots, et finit par `…`. Une note de coupe a été
+//     mesurée (15/11, modèle en service) : elle ne changeait pas ce que le
+//     modèle lit, et coûtait +2,8 % par tour ; elle n'est pas posée. Une
+//     réponse coupée avant la phrase qui la tranche reste trompeuse : c'est
+//     la suite de #1101, pas réglée ici.
 //
 // « Déclaré » est un fait de l'APPEL, rangé quand il a tourné, jamais relu sur
 // les déclarations du jour : la ligne `tool_calls` de l'appel porte le
@@ -49,9 +67,10 @@
 // PRÉFIXE STABLE : le relevé d'un échange passé est le même, octet pour octet,
 // d'un tour au suivant (cache de prompt). Il ne vient que de ce que le job a
 // rangé, dans un ordre déterministe : un job terminé ne range plus rien, son
-// relevé ne bouge plus. Celui d'un job encore en cours dit ce qu'il a fait
-// jusque-là, comme son résultat ; ce qu'un tour sait d'un travail qui tourne
-// est un autre sujet.
+// relevé ne bouge plus. Celui d'un job encore en cours (une seule ligne, ses
+// outils appelés) change quand il appelle un outil de plus, puis une fois,
+// quand il finit : il prend alors sa forme d'échange terminé, et n'en bouge
+// plus.
 //
 // UNE LIGNE, TOUJOURS. Les premiers caractères du résultat d'un outil web ou
 // MCP, un nom d'outil, le titre d'une tâche, le nom d'un agent viennent de la
@@ -65,6 +84,8 @@
 import { and, inArray, isNotNull } from '@nodal-agents/db';
 import { agentJobs, toolCalls } from '@nodal-agents/db';
 import type { RunnerDeps } from '../deps.ts';
+import { isJobEnded } from './conversation-moments.ts';
+import { RECORD_WORDS, type RecordWords } from './record-words.ts';
 import {
   formatInlineDelegationEntry,
   formatTaskLedgerEntry,
@@ -81,6 +102,7 @@ import {
   toolNames,
   NAME_MAX_CHARS,
   type JobActs,
+  type ToolCallFact,
 } from './tool-acts.ts';
 
 /** Au plus ce nombre de citations distinctes par échange : les dernières. */
@@ -103,6 +125,12 @@ type Acting = JobActs & { jobId: string | null };
 
 /** Ce que le relevé d'un échange dit : le job de tête, et ce qu'il a délégué. */
 export interface ExchangeFacts {
+  /**
+   * Le job de tête a-t-il fini, pour le lecteur (#1101) ? Un job qui n'a pas
+   * fini n'est dit que par les outils qu'il a appelés : rien de ce qu'ils ont
+   * rendu, ni de ce qu'ont rendu ses délégations, n'est encore son issue.
+   */
+  ended: boolean;
   own: Acting;
   tasks: readonly TaskLedgerEntry[];
   inline: readonly InlineDelegationEntry[];
@@ -112,22 +140,33 @@ export interface ExchangeFacts {
  * Les lignes du relevé d'un échange : les outils du job de tête, puis chaque
  * délégation, chacune suivie des résultats cités de ses appels qui agissent.
  * Un échange sans aucun appel et sans délégation n'a aucune ligne.
+ *
+ * Un job qui n'a pas fini (#1101) : UNE ligne, ses outils appelés jusque-là
+ * (`words.running`), et aucune citation. Ce qu'un appel a rendu pendant que le
+ * job tourne n'est pas encore ce qui s'est passé : le 14/11, le relevé d'une
+ * tâche en cours citait un premier envoi raté qu'elle refaisait déjà, et la
+ * personne s'est entendu dire qu'il y avait un problème. Ce qui est acquis :
+ * que le job tourne, et ce qu'il a appelé.
+ *
+ * `words` : les mots du cadre (record-words.ts), ceux du runner par défaut.
+ * Pure : un rejeu rebâtit le relevé d'un vrai échange en lui passant ses faits.
  */
-export function exchangeRecordLines(facts: ExchangeFacts, readOnly: DeclaredReadOnly): string[] {
+export function exchangeRecordLines(
+  facts: ExchangeFacts,
+  readOnly: DeclaredReadOnly,
+  words: RecordWords = RECORD_WORDS,
+): string[] {
   const ownNames = toolNames(facts.own);
+  if (!facts.ended) return ownNames === '' ? [] : [oneLine(words.running(ownNames))];
   const sections: Array<{ header: string | null; acts: Acting }> = [
-    {
-      header: ownNames === '' ? null : `[Actions performed in this exchange: ${ownNames}]`,
-      acts: facts.own,
-    },
+    { header: ownNames === '' ? null : words.actions(ownNames), acts: facts.own },
     ...facts.tasks.map((t) => ({ header: formatTaskLedgerEntry(t), acts: t })),
     ...facts.inline.map((d) => ({ header: formatInlineDelegationEntry(d), acts: d })),
   ];
   const quoted = sections.map((s) =>
-    collapseRepeats(
-      s.acts.calls
-        .filter((c) => s.acts.jobId === null || !readOnly(s.acts.jobId, c.id))
-        .map((c) => [recordField(c.name, NAME_MAX_CHARS), resultHead(c.output)] as const),
+    quotedCallLines(
+      s.acts.calls.filter((c) => s.acts.jobId === null || !readOnly(s.acts.jobId, c.id)),
+      words,
     ),
   );
   const total = quoted.reduce((n, q) => n + q.length, 0);
@@ -139,7 +178,7 @@ export function exchangeRecordLines(facts: ExchangeFacts, readOnly: DeclaredRead
     for (const line of quoted[i]!) {
       if (skip > 0) {
         skip -= 1;
-        if (skip === 0) lines.push(`[${left} earlier tool results not quoted]`);
+        if (skip === 0) lines.push(words.notQuoted(left));
         continue;
       }
       lines.push(line);
@@ -150,25 +189,35 @@ export function exchangeRecordLines(facts: ExchangeFacts, readOnly: DeclaredRead
 }
 
 /**
- * Des citations identiques (même outil, même début) se disent UNE fois, avec
- * leur compte, là où tombe la dernière : `telegram_send_message ×9 →
- * {"sent":true}`. La borne compte ensuite des lignes distinctes : neuf accusés
- * identiques ne chassent plus un résultat qui dit quelque chose. Pour tout
- * outil, sans liste.
+ * Les citations des appels qui agissent d'UN job, dans l'ordre, avant la
+ * borne : chacun, tel qu'il a répondu, sans rien affirmer de son issue. Des
+ * citations identiques (même outil, même début) se disent UNE fois, avec leur
+ * compte, là où tombe la dernière : `telegram_send_message ×9 → {"sent":true}`.
+ * La borne compte ensuite des lignes distinctes : neuf accusés identiques ne
+ * chassent plus un résultat qui dit quelque chose. Pour tout outil, sans
+ * liste. Pure.
  */
-function collapseRepeats(heads: ReadonlyArray<readonly [string, string]>): string[] {
-  const key = ([name, head]: readonly [string, string]) => `${name}\u0000${head}`;
+export function quotedCallLines(
+  calls: readonly ToolCallFact[],
+  words: RecordWords = RECORD_WORDS,
+): string[] {
+  const entries = calls.map((c) => [recordField(c.name, NAME_MAX_CHARS), resultHead(c.output)]);
+  const key = ([name, head]: string[]) => `${name}\u0000${head}`;
   const count = new Map<string, number>();
   const last = new Map<string, number>();
-  heads.forEach((h, i) => {
-    count.set(key(h), (count.get(key(h)) ?? 0) + 1);
-    last.set(key(h), i);
+  entries.forEach((e, i) => {
+    count.set(key(e), (count.get(key(e)) ?? 0) + 1);
+    last.set(key(e), i);
   });
-  return heads.flatMap((h, i) => {
-    if (last.get(key(h)) !== i) return [];
-    const n = count.get(key(h))!;
-    return [`${h[0]}${n > 1 ? ` ×${n}` : ''} → ${h[1]}`];
-  });
+  return entries.flatMap((e, i) =>
+    last.get(key(e)) === i ? [words.quoteLine(e[0]!, count.get(key(e))!, e[1]!)] : [],
+  );
+}
+
+/** Ce qu'un lecteur sait d'un job pour dire s'il a fini : son statut, l'heure rangée à sa fin. */
+export interface JobEndFacts {
+  status: string | null;
+  completedAt: Date | null;
 }
 
 /**
@@ -181,12 +230,24 @@ function collapseRepeats(heads: ReadonlyArray<readonly [string, string]>): strin
  * le seul à les désigner). Ils ne sont ni nommés ni cités (`jobActs`). Un
  * chemin dont la réponse est le résultat du job (tableau de bord, appareil, tour
  * de chat) n'en passe aucun : aucun appel n'y a livré la réponse.
+ *
+ * `hasEnded` (#1101) : le job a-t-il fini POUR CE LECTEUR, lu sur ce que la
+ * base range de lui (son statut, l'heure de sa fin), jamais sur ses résultats.
+ * Par défaut, son statut est terminal (terminé, échoué, annulé). L'historique
+ * d'un job lancé depuis une conversation lit un job fini APRÈS le départ de ce
+ * job comme encore en cours (thread-history.ts) : il passe sa propre règle,
+ * pour que le relevé dise la même chose que le cadre qu'il lui pose.
  */
 export async function loadExchangeRecords(
   db: RunnerDeps['db'],
   jobIds: readonly (string | null)[],
-  replyCallIds: ReadonlyMap<string, ReadonlySet<string>> = new Map(),
+  opts: {
+    replyCallIds?: ReadonlyMap<string, ReadonlySet<string>>;
+    hasEnded?: (job: JobEndFacts) => boolean;
+  } = {},
 ): Promise<Map<string, string[]>> {
+  const replyCallIds = opts.replyCallIds ?? new Map<string, ReadonlySet<string>>();
+  const hasEnded = opts.hasEnded ?? ((job: JobEndFacts) => isJobEnded(job.status));
   const records = new Map<string, string[]>();
   const ids = [...new Set(jobIds.filter((id): id is string => !!id))];
   if (ids.length === 0) return records;
@@ -196,6 +257,8 @@ export async function loadExchangeRecords(
       task: agentJobs.task,
       messages: agentJobs.messages,
       toolsUsed: agentJobs.toolsUsed,
+      status: agentJobs.status,
+      completedAt: agentJobs.completedAt,
     })
     .from(agentJobs)
     .where(inArray(agentJobs.id, ids));
@@ -209,6 +272,7 @@ export async function loadExchangeRecords(
   for (const job of jobs) {
     const lines = exchangeRecordLines(
       {
+        ended: hasEnded({ status: job.status, completedAt: job.completedAt }),
         own: { ...jobActs(job, replyCallIds.get(job.id)), jobId: job.id },
         tasks: taskLedger.get(job.id) ?? [],
         inline: inlineLedger.get(job.id) ?? [],

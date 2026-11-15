@@ -20,7 +20,7 @@ import { toolResultOutputText, toolResultShape } from './tool-result-shape.ts';
 
 /** Au plus ce nombre de caractères par résultat cité. */
 export const RESULT_HEAD_MAX_CHARS = 200;
-/** Au plus ce nombre de lignes non vides par résultat cité. */
+/** Au plus ce nombre de lignes non vides par résultat cité qui ne tient pas entier. */
 const RESULT_HEAD_LINES = 2;
 /** Au plus ce nombre de caractères par nom d'outil (les fournisseurs n'en acceptent pas plus). */
 export const NAME_MAX_CHARS = 64;
@@ -73,10 +73,45 @@ export function quotedLines(text: string): string[] {
     .map((line) => (line === '' ? QUOTE_MARK : `${QUOTE_MARK} ${line}`));
 }
 
-/** Un champ venu de la base, sur une ligne et à sa borne : la coupe est marquée `…`. */
+/**
+ * Les `n` premières unités de `text`, sans couper un caractère en deux : une
+ * paire de substitution (un emoji, un idéogramme rare) coupée laisserait une
+ * moitié seule, qui n'est pas de l'Unicode valide et part telle quelle chez le
+ * fournisseur (revue de #1106, passe 1). La coupe recule alors d'une unité.
+ */
+function headOf(text: string, n: number): string {
+  const last = text.charCodeAt(n - 1);
+  return last >= 0xd800 && last <= 0xdbff ? text.slice(0, n - 1) : text.slice(0, n);
+}
+
+/**
+ * Un champ venu de la base, sur une ligne et à sa borne : la coupe est marquée
+ * `…`, et ne coupe jamais un caractère en deux (`headOf`).
+ */
 export function recordField(text: string, max: number): string {
   const line = oneLine(text).trim();
-  return line.length > max ? `${line.slice(0, max - 1)}…` : line;
+  return line.length > max ? `${headOf(line, max - 1)}…` : line;
+}
+
+/**
+ * Un texte coupé à `max` caractères, marque `…` comprise. Coupé ENTRE deux
+ * mots, jamais dans un mot, quand un espace se trouve dans la seconde moitié
+ * de la borne ; sinon (un seul mot plus long que la borne, un JSON sans
+ * espace) au caractère, sans jamais couper un caractère en deux. Pure.
+ */
+function cutBetweenWords(line: string, max: number): string {
+  const room = headOf(line, max - 1);
+  const lastSpace = room.search(/\s\S*$/);
+  return `${(lastSpace >= Math.floor(max / 2) ? room.slice(0, lastSpace) : room).trimEnd()}…`;
+}
+
+/**
+ * Un texte venu de la base, sur une ligne et au plus `max` caractères : entier
+ * s'il tient, sinon coupé entre deux mots et marqué `…` (#1101). Pure.
+ */
+export function quoteAtBound(text: string, max: number): string {
+  const line = oneLine(text).trim();
+  return line.length <= max ? line : cutBetweenWords(line, max);
 }
 
 /**
@@ -199,10 +234,20 @@ export function toolNames(acts: JobActs): string {
 }
 
 /**
- * Le début de ce qu'un appel a rendu, cité comme une donnée : ses deux
- * premières lignes non vides, jointes par une espace, au plus
- * RESULT_HEAD_MAX_CHARS caractères. Une seule ligne, toujours : un texte venu
- * d'un tiers ne peut pas ouvrir une ligne du relevé à lui.
+ * Ce qu'un appel a rendu, cité comme une donnée, ses lignes non vides jointes
+ * par une espace. Une seule ligne, toujours : un texte venu d'un tiers ne peut
+ * pas ouvrir une ligne du relevé à lui.
+ *  - Le texte entier tient dans RESULT_HEAD_MAX_CHARS : il est cité entier
+ *    (#1101 ; une réponse courte de trois lignes n'est plus coupée à deux).
+ *  - Sinon, son début : ses deux premières lignes non vides, au plus
+ *    RESULT_HEAD_MAX_CHARS caractères.
+ *
+ * Une citation qui n'est pas le texte entier finit par `…`, et la coupe tombe
+ * ENTRE deux mots (#1101, `quoteAtBound`), jamais au milieu d'un mot. Une note
+ * qui dise la coupe (`(cut)`, `(first 195 of 400 characters)`) a été mesurée
+ * le 15/11 sur le modèle en service : elle ne changeait pas ce que le modèle
+ * lit d'une réponse coupée avant la phrase qui la tranche, et coûtait +2,8 %
+ * de jetons par tour. Elle n'est pas posée ; ce défaut-là reste ouvert (#1101).
  *
  * Le cadre que la plateforme pose autour d'un résultat tiers est retiré par sa
  * propre fonction (`unwrapUntrusted`), jamais par un préfixe recopié ici, et
@@ -216,10 +261,16 @@ export function resultHead(output: unknown): string {
   const lines = redactSecretsInText(unframedText(output))
     .split(LINE_BREAK)
     .map((l) => oneLine(l).trim())
-    .filter((l) => l !== '')
-    .slice(0, RESULT_HEAD_LINES);
-  const head = recordField(lines.join(' '), RESULT_HEAD_MAX_CHARS);
-  return head === '' ? '(empty result)' : head;
+    .filter((l) => l !== '');
+  const whole = lines.join(' ');
+  if (whole.length <= RESULT_HEAD_MAX_CHARS) return whole === '' ? '(empty result)' : whole;
+  // Le texte ne tient pas : ses premières lignes. Plus courtes que la borne,
+  // c'est que des lignes sont laissées de côté, et le `…` le marque ; sinon
+  // elles sont coupées entre deux mots.
+  const head = lines.slice(0, RESULT_HEAD_LINES).join(' ');
+  return head.length < RESULT_HEAD_MAX_CHARS
+    ? `${head}…`
+    : cutBetweenWords(head, RESULT_HEAD_MAX_CHARS);
 }
 
 /**
