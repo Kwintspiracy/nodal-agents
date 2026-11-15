@@ -124,7 +124,7 @@ import type {
   ProofScope,
   ReadyConfig,
 } from '../verification/registry.ts';
-import { TERMINAL_STATUSES, completeJob, failJob, lastTextOfRun } from './state.ts';
+import { TERMINAL_STATUSES, answerOfJobRun, completeJob, failJob } from './state.ts';
 import { watchJobEnd } from './process-scopes.ts';
 import { runnerNotesValue, toDbSafeString } from './transcript-text.ts';
 
@@ -1257,11 +1257,12 @@ export async function finalizeJobSuccess(
           .where(eq(agentJobs.id, jobId));
         // Le texte que la porte de succès aurait laissé, dans le même ordre de
         // préférence : le texte passé par l'appelant, sinon ce qu'un outil de
-        // livraison a déjà écrit, sinon le dernier texte de l'agent.
+        // livraison a déjà écrit, sinon la réponse de l'agent (#1083 : jamais
+        // un texte écrit avant un travail qui l'a suivi).
         const texte =
           finalText.trim() ||
           (row?.result ?? '').trim() ||
-          lastTextOfRun(input.messages, row?.task ?? '');
+          answerOfJobRun(input.messages, row?.task ?? '');
         const result = toDbSafeString([texte, line].filter((t) => t !== '').join('\n\n'));
         const failed = await failJob(
           tx,

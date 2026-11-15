@@ -22,6 +22,7 @@ import {
 import {
   buildSystemPrompt,
   assertTurnToolCallBudget,
+  REPLY_FORM_NOTES,
   ToolCallLimitExceededError,
 } from '@nodal-agents/orchestration';
 import type { Agent, AgentId, EntityId } from '@nodal-agents/orchestration';
@@ -35,12 +36,9 @@ import {
   datedTurn,
   truncate as truncateHeadTail,
 } from '../job/thread-history.ts';
-import {
-  loadTaskLedger,
-  formatTaskLedgerLines,
-  loadInlineDelegationLedger,
-  formatInlineDelegationLines,
-} from '../job/task-ledger.ts';
+import { loadExchangeRecords } from '../job/exchange-record.ts';
+import { conversationMoments, taskEndedAt } from '../job/conversation-moments.ts';
+import { quotedLines } from '../job/tool-acts.ts';
 import { loadConversationContext } from '../job/conversation-id.ts';
 import { TITLE_SYSTEM_PROMPT, cleanTitle, titlePrompt } from './conversation-title.ts';
 import type { ChatSurfaceToolName } from '@nodal-agents/catalog';
@@ -51,8 +49,11 @@ import type { RunnerDeps } from '../deps.ts';
 import { cutReplyNote, stoppedReplyNote } from './turn-stop.ts';
 import { LLMOutputLimitError, LLMTimeoutError, type LlmTimeoutReason } from '@nodal-agents/llm';
 import {
+  formatLocalTime,
   handoffNote,
   openingMessages,
+  requestNoteMessage,
+  runnerRecordMessage,
   type BrakeStop,
   type ReplyRendering,
 } from '@nodal-agents/shared';
@@ -191,6 +192,32 @@ export type ChatTurnResult =
     };
 
 /**
+ * The words the runner says of a launched job's outcome, by status: the ONE
+ * source of them, for the `run_task` result of a job still under its launch
+ * and for the record of a job's end (#1078). `null` while the job runs.
+ */
+function outcomeStatusLine(status: string | null): string | null {
+  if (status === 'completed') return 'Completed.';
+  if (status === 'failed') {
+    return 'FAILED — report this to the user with the reason; do not silently retry.';
+  }
+  if (status === 'cancelled') return 'Cancelled by the user.';
+  return null;
+}
+
+/** What a finished job produced: its result, or its failure reason. A cancel has none. */
+function outcomeBody(
+  status: string | null,
+  result: string | null,
+  error: string | null,
+): string | null {
+  const r = (result ?? '').trim();
+  if (status === 'completed') return r || '(no textual output was recorded)';
+  if (status === 'failed') return r || error || 'unknown error';
+  return null;
+}
+
+/**
  * Build the run_task tool-result for a PRIOR chat escalation, reflecting the
  * job's REAL outcome at read time. This replaces a static "Task dispatched."
  * that left the orchestrator permanently blind to completion: it could never
@@ -200,23 +227,35 @@ export type ChatTurnResult =
  * `result` is the single source of truth — `completeJob`/`failJob` already fill
  * it from the delegated children when the parent didn't re-publish, so there is
  * nothing to recompile here.
+ *
+ * Since #1078 this is the result of a job that has NO end to place: still
+ * running, or finished with no stored end time. A job that ended is told at
+ * the time it ended (`taskEndRecord`).
  */
 function buildDispatchOutput(
   status: string | null,
   result: string | null,
   error: string | null,
 ): string {
-  const r = (result ?? '').trim();
-  if (status === 'completed') {
-    return `Completed.\n${r || '(no textual output was recorded)'}`;
-  }
-  if (status === 'failed') {
-    return `FAILED — report this to the user with the reason; do not silently retry.\n${r || error || 'unknown error'}`;
-  }
-  if (status === 'cancelled') return 'Cancelled by the user.';
+  const line = outcomeStatusLine(status);
   // pending / processing / awaiting_approval / awaiting_delegation
-  return 'Still running — no result yet. Do NOT dispatch it again; wait for it to finish.';
+  if (line === null) {
+    return 'Still running — no result yet. Do NOT dispatch it again; wait for it to finish.';
+  }
+  const body = outcomeBody(status, result, error);
+  return body === null
+    ? line
+    : `${line}
+${body}`;
 }
+
+/**
+ * The `run_task` result under the turn that launched a job which has ENDED
+ * (#1078): its outcome is not here, it is a moment of its own, at the time the
+ * job ended (`taskEndRecord`).
+ */
+export const LAUNCHED_OUTPUT =
+  'Launched. Its outcome is recorded further down, at the time it ended.';
 
 /**
  * Sum of text length across all history blocks (F-12, audit #2) — a char
@@ -251,7 +290,7 @@ function totalHistoryChars(blocks: ReadonlyArray<ReadonlyArray<ModelMessage>>): 
   return total;
 }
 
-interface HistoryRow {
+export interface HistoryRow {
   role: string;
   content: string;
   /** Quand le message a été écrit : un message de la personne rejoué en porte la date (#650). */
@@ -266,27 +305,39 @@ interface HistoryRow {
   jobStatus: string | null;
   jobResult: string | null;
   jobError: string | null;
+  /** When the launched job was created: the launch the record of its end names (#1078). */
+  jobCreatedAt: Date | null;
+  /** When the launched job ended, as stored at its end (`agent_jobs.completed_at`, #1078). */
+  jobCompletedAt: Date | null;
+}
+
+/** When the job this row launched ended, if it has an end to place (#1078, `taskEndedAt`). */
+function endOf(r: HistoryRow): Date | null {
+  return r.jobId ? taskEndedAt({ status: r.jobStatus, completedAt: r.jobCompletedAt }) : null;
 }
 
 /**
  * Build one "block" (1 or 2 ModelMessages) for a single history row. Nothing
  * the runner wrote lands in an assistant part (#562): ledger lines and the
  * stop note travel in the `run_task` result, the notes on a plain reply in a
- * `[système]` message after it.
+ * `[système]` message after it. For a job that ENDED (#1078), the `run_task`
+ * result only says it was launched: its outcome, ledger lines and stop note
+ * are the record of its end (`taskEndRecord`), at the time it ended.
  * `truncateFn` is a parameter — NOT always `truncateHeadTail` — so the caller
  * controls whether per-message truncation applies (F-12, audit #2 round 2:
  * it's a last resort when the budget is exceeded even after dropping older
  * turns, never an unconditional per-turn cap; pass the identity function to
  * keep a turn fully intact).
  *
- * `ledgerLines` (2026-07-12 incident — see task-ledger.ts) — the REAL tool
- * calls made by any tasks this exchange's job delegated via `create_task`.
- * The job's own `result` (from deliverCompletedRoots' compileTaskResults) is
- * the delegated agent's PROSE, not a structural record of what it did; these
- * lines are appended after that prose so a later turn can't be told "no, I
- * never sent it" when a child job's tools_used says otherwise. Appended
- * AFTER truncation of the dispatch output itself so the bounded, already-
- * short ledger can never be the part that gets chopped.
+ * `ledgerLines` — the runner's record of the launched job (#1075,
+ * exchange-record.ts): every tool it called, the head of each result of a
+ * tool not declared read-only, and its delegations with their own acting
+ * calls (2026-07-12 incident — see task-ledger.ts). The job's own `result` is
+ * the agent's PROSE, not a structural record of what it did; these lines are
+ * appended after that prose so a later turn can't be told "no, I never did
+ * it" when the job's tools say otherwise. Appended AFTER truncation of the
+ * dispatch output itself so the bounded record can never be the part that
+ * gets chopped.
  *
  * `timezone` — the one the system prompt states "now" in: each message of the
  * person carries its own date in it (#650, `datedTurn`, the same form as the
@@ -301,13 +352,18 @@ function buildHistoryBlock(
   if (r.role === 'assistant' && r.jobId) {
     const toolCallId = `hist-${r.jobId}`;
     const ackText = r.content ? truncateFn(r.content) : '';
-    const dispatchOutput = truncateFn(buildDispatchOutput(r.jobStatus, r.jobResult, r.jobError));
-    const withLedger =
-      ledgerLines.length > 0 ? `${dispatchOutput}\n\n${ledgerLines.join('\n')}` : dispatchOutput;
-    // Un Stop après l'escalade (#456) marque l'accusé `stopped` et annule le
-    // job : sans la note, le modèle suivant lirait une annulation ordinaire,
-    // pas la personne qui a arrêté (revue Codex de #459, passe 4).
-    const outputValue = r.stopped === true ? `${withLedger}\n\n${stoppedReplyNote()}` : withLedger;
+    let outputValue = LAUNCHED_OUTPUT;
+    // A job that ended is told at the time it ended (#1078, `taskEndRecord`):
+    // its outcome, its record and the stop note go there, not here.
+    if (endOf(r) === null) {
+      const dispatchOutput = truncateFn(buildDispatchOutput(r.jobStatus, r.jobResult, r.jobError));
+      const withLedger =
+        ledgerLines.length > 0 ? `${dispatchOutput}\n\n${ledgerLines.join('\n')}` : dispatchOutput;
+      // Un Stop après l'escalade (#456) marque l'accusé `stopped` et annule le
+      // job : sans la note, le modèle suivant lirait une annulation ordinaire,
+      // pas la personne qui a arrêté (revue Codex de #459, passe 4).
+      outputValue = r.stopped === true ? `${withLedger}\n\n${stoppedReplyNote()}` : withLedger;
+    }
     return [
       {
         role: 'assistant',
@@ -367,6 +423,45 @@ function sentAt(r: HistoryRow): Date {
 }
 
 /**
+ * The END of a launched job, as a moment of the conversation (#1078): a runner
+ * record (#562) placed at the time the job ended, never in the agent's mouth.
+ *
+ *   [<end time>] The task launched at <launch time> ended. <status line>
+ *   > <its result, or its failure reason, line by line>
+ *   <its record (#1075), one line per entry>
+ *   <the stop note, when the person stopped the reply that launched it>
+ *
+ * The first line is the runner's, dated as a message of the person is
+ * (`datedTurn`), with the status words of `outcomeStatusLine`. The result is
+ * DATA: every line of it starts with the quote mark (`quotedLines`), which no
+ * line the runner writes starts with, so stored text cannot open a line that
+ * reads as the runner's. The last-resort truncation applies to it as it did in
+ * the `run_task` result.
+ */
+function taskEndRecord(
+  r: HistoryRow,
+  endedAt: Date,
+  truncateFn: (s: string) => string,
+  ledgerLines: readonly string[],
+  timezone: string,
+): ModelMessage {
+  if (!r.jobCreatedAt) throw new Error(`chat history: agent_jobs ${r.jobId} has no created_at`);
+  const status = outcomeStatusLine(r.jobStatus);
+  if (status === null) throw new Error(`chat history: agent_jobs ${r.jobId} has not ended`);
+  const body = outcomeBody(r.jobStatus, r.jobResult, r.jobError);
+  return runnerRecordMessage([
+    datedTurn(
+      `The task launched at ${formatLocalTime(timezone, r.jobCreatedAt)} ended. ${status}`,
+      endedAt,
+      timezone,
+    ),
+    ...(body === null ? [] : quotedLines(truncateFn(body))),
+    ...ledgerLines,
+    ...(r.stopped === true ? [stoppedReplyNote()] : []),
+  ]) as ModelMessage;
+}
+
+/**
  * Un appel du tour a été COUPÉ (#484) : une horloge, ou un flux rompu, avant
  * tout texte gardé. Le tour échoue en disant la coupure et sa raison, `llm_cut`
  * + `cutReason`, quel que soit l'appel qu'elle frappe : la réponse diffusée ou
@@ -420,6 +515,89 @@ function runTaskOf<T extends { toolName: string }>(response: {
   const calls = response.toolCalls ?? [];
   assertTurnToolCallBudget(calls.length);
   return calls.find((tc) => tc.toolName === 'run_task');
+}
+
+/**
+ * The rows of the conversation a turn replays (step 4), chronological: the
+ * OLDEST are dropped until what is left fits the budget — the same
+ * char-budget-as-token-proxy approach as thread-history.ts's
+ * loadThreadHistory. The most recent row (the message being answered) is
+ * always kept: it is never simply dropped, only (as a last resort,
+ * `chatTurnMessages`) truncated.
+ *
+ * One "block" (1 or 2 ModelMessages) per row, so the trim drops a whole block
+ * at a time — never an escalation's tool-call without its tool-result. The
+ * runner's record of each launched job rides in its `run_task` result, which
+ * the budget does not count (`totalHistoryChars`): the trim is the same with
+ * or without it, so the records are read AFTER it, for the rows it keeps only.
+ * The END of a launched job (#1078) is not counted either: an end is built
+ * only for a launching row the trim kept, and a trimmed launch takes its end
+ * with it.
+ *
+ * Pure, and exported so that a replay can rebuild a real turn from its rows.
+ */
+export function keptHistoryRows(
+  chronologicalRows: readonly HistoryRow[],
+  timezone: string,
+): HistoryRow[] {
+  let remainingRows = [...chronologicalRows];
+  let blocks = remainingRows.map((r) => buildHistoryBlock(r, (s) => s, [], timezone));
+  while (blocks.length > 1 && totalHistoryChars(blocks) > HISTORY_BUDGET_CHARS) {
+    blocks = blocks.slice(1);
+    remainingRows = remainingRows.slice(1);
+  }
+  return remainingRows;
+}
+
+/**
+ * The messages the model is given for a chat turn, from the rows the turn
+ * keeps (`keptHistoryRows`, chronological, the message being answered LAST)
+ * and the runner's record of each job they launched (`loadExchangeRecords`).
+ * Pure: a replay script calls it on real rows and gets the turn's request.
+ *
+ * - Per-message head+tail truncation applies only if the kept rows STILL
+ *   exceed the budget (e.g. the single most recent turn is itself gigantic,
+ *   F-12, audit #2 round 2): a conversation that fits keeps every turn intact.
+ * - The moments of the conversation in the order they happened (#1078,
+ *   conversation-moments.ts): each kept row at the time it was written, and the
+ *   end of each job a kept row launched at the time it ended. The message being
+ *   answered is the last row, written by this turn: it is not a moment of the
+ *   history, it stays LAST, and a job that ended after it was written comes
+ *   just before it.
+ * - What governs the form of THIS reply is read last (#1088): the note of the
+ *   rendering (`REPLY_FORM_NOTES`), right after the message being answered.
+ *   It belongs to this request only: nothing stores it, so no later turn
+ *   replays it, and every turn carries one, for its own message. A rendering
+ *   with no note leaves the request as it was.
+ */
+export function chatTurnMessages(input: {
+  rows: readonly HistoryRow[];
+  records: ReadonlyMap<string, readonly string[]>;
+  timezone: string;
+  replyRendering: ReplyRendering;
+}): ModelMessage[] {
+  const { rows, records, timezone, replyRendering } = input;
+  const truncateFn =
+    totalHistoryChars(rows.map((r) => buildHistoryBlock(r, (s) => s, [], timezone))) >
+    HISTORY_BUDGET_CHARS
+      ? truncateHeadTail
+      : (s: string) => s;
+  const ledgerOf = (r: HistoryRow) => records.get(r.jobId ?? '') ?? [];
+  const answered = rows.slice(-1);
+  const moments = conversationMoments(rows.slice(0, -1), (r) => ({
+    writtenAt: r.createdAt,
+    endedAt: endOf(r),
+  }));
+  const note = REPLY_FORM_NOTES[replyRendering];
+  return [
+    ...moments.flatMap((m) =>
+      m.kind === 'row'
+        ? buildHistoryBlock(m.row, truncateFn, ledgerOf(m.row), timezone)
+        : [taskEndRecord(m.row, m.endedAt, truncateFn, ledgerOf(m.row), timezone)],
+    ),
+    ...answered.flatMap((r) => buildHistoryBlock(r, truncateFn, ledgerOf(r), timezone)),
+    ...(note === null ? [] : [requestNoteMessage(note) as ModelMessage]),
+  ];
 }
 
 export async function runChatTurn(opts: {
@@ -686,6 +864,8 @@ export async function runChatTurn(opts: {
       jobStatus: agentJobs.status,
       jobResult: agentJobs.result,
       jobError: agentJobs.error,
+      jobCreatedAt: agentJobs.createdAt,
+      jobCompletedAt: agentJobs.completedAt,
     })
     .from(chatMessages)
     .leftJoin(agentJobs, eq(chatMessages.jobId, agentJobs.id))
@@ -693,72 +873,25 @@ export async function runChatTurn(opts: {
     .orderBy(desc(chatMessages.createdAt))
     .limit(HISTORY_CANDIDATE_LIMIT);
 
-  // Delegated-task visibility (2026-07-12 incident — see task-ledger.ts): one
-  // batched query for every escalated job's own create_task fan-out, keyed by
-  // jobId (= agent_tasks.root_job_id).
-  const jobIds = rows.map((r) => r.jobId);
-  const taskLedger = await loadTaskLedger(db, jobIds);
-  // Et la délégation EN LIGNE (`assign_*`), qui ne passe PAS par `agent_tasks`.
-  //
-  // Le registre a d'abord été branché sur `loadThreadHistory` seulement, donc
-  // sur Telegram, Slack et Discord — pas ici (revue Codex, 27/08). Or un tour
-  // de chat dans le tableau de bord escalade par le même chemin : sans cette
-  // ligne, un compte rendu de délégation inventé y restait indiscernable d'un
-  // vrai. Exactement la panne que ce registre existe pour fermer, laissée
-  // ouverte sur la surface où le propriétaire parle le plus à ses agents.
-  const inlineLedger = await loadInlineDelegationLedger(db, jobIds);
-  const ledgerLinesByJobId = new Map<string, string[]>();
-  for (const jobId of new Set(jobIds.filter((id): id is string => !!id))) {
-    const lines = [
-      ...formatTaskLedgerLines(taskLedger.get(jobId) ?? []),
-      ...formatInlineDelegationLines(inlineLedger.get(jobId) ?? []),
-    ];
-    if (lines.length > 0) ledgerLinesByJobId.set(jobId, lines);
-  }
+  // The rows the budget keeps (`keptHistoryRows`), then the messages of the
+  // turn (`chatTurnMessages`): both pure, so a replay rebuilds a real turn.
+  const remainingRows = keptHistoryRows(rows.reverse(), deployment.timezone);
 
-  // Build one "block" (1 or 2 ModelMessages) per row, so the budget trim
-  // below can drop a whole block at a time — never split an escalation's
-  // tool-call from its tool-result. `truncateFn` is a parameter (not always
-  // `truncateHeadTail`) — see the round-2 fix below: per-message truncation
-  // is a LAST RESORT, not an unconditional per-turn cap (F-12, audit #2
-  // round 2 — an unconditional cap chopped a single large paste mid-turn
-  // even when the whole conversation fit comfortably under budget).
-  const chronologicalRows = rows.reverse();
-  let remainingRows = chronologicalRows;
-  let blocks = remainingRows.map((r) =>
-    buildHistoryBlock(
-      r,
-      (s) => s,
-      ledgerLinesByJobId.get(r.jobId ?? '') ?? [],
-      deployment.timezone,
-    ),
+  // The record of each launched job (#1075, exchange-record.ts): its tools,
+  // what those that act returned, its delegations — `create_task` and in line
+  // (`assign_*`). The in-line ones were first wired on `loadThreadHistory`
+  // only, not here (revue Codex, 27/08): the surface where the owner talks to
+  // agents most. One builder for every replay path since #1075.
+  const records = await loadExchangeRecords(
+    db,
+    remainingRows.map((r) => r.jobId),
   );
-
-  // Drop the OLDEST blocks (front of the chronological array) until the
-  // total size is under budget — the same char-budget-as-token-proxy
-  // approach as thread-history.ts's loadThreadHistory. Always keep at least
-  // the single most recent turn — it's never simply dropped, only (as a
-  // last resort below) truncated.
-  while (blocks.length > 1 && totalHistoryChars(blocks) > HISTORY_BUDGET_CHARS) {
-    blocks = blocks.slice(1);
-    remainingRows = remainingRows.slice(1);
-  }
-
-  // Last resort: only rebuild with per-message head+tail truncation if
-  // what's left STILL exceeds the budget (e.g. the single most recent turn
-  // is itself gigantic). A conversation that fits under budget as-is keeps
-  // every turn intact, however large a single message is.
-  if (totalHistoryChars(blocks) > HISTORY_BUDGET_CHARS) {
-    blocks = remainingRows.map((r) =>
-      buildHistoryBlock(
-        r,
-        truncateHeadTail,
-        ledgerLinesByJobId.get(r.jobId ?? '') ?? [],
-        deployment.timezone,
-      ),
-    );
-  }
-  const messages: ModelMessage[] = blocks.flatMap((b) => b);
+  const messages = chatTurnMessages({
+    rows: remainingRows,
+    records,
+    timezone: deployment.timezone,
+    replyRendering,
+  });
   onPhase?.('historyLoaded');
 
   // 5. One LLM call. The agent may reply in text (pure conversation) and/or call

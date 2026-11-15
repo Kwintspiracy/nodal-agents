@@ -1761,6 +1761,9 @@ async function _writeToolCall(
         // C'est le seul classement dont l'écran dispose pour un connecteur tiers,
         // dont la carte `generic` ne distingue pas une lecture d'une écriture.
         riskLevel: tool.riskLevel,
+        // 0166 (#1075) : l'indice de lecture seule d'un outil MCP, tel qu'il
+        // était à l'appel ; NULL pour un outil qui n'en donne pas.
+        readOnlyHint: tool.readOnlyHint ?? null,
         // NOUVEAU-1: the audit trail is never re-executed, so we store a
         // secret-redacted copy — create_connector/create_mcp API keys and stdio
         // env values must not sit in cleartext in tool_calls or render to the
@@ -1808,6 +1811,7 @@ async function markToolStarted(
         toolName: tool.name,
         card: typeof tool.card === 'string' ? tool.card : 'generic',
         riskLevel: tool.riskLevel,
+        readOnlyHint: tool.readOnlyHint ?? null,
         toolInput: redactSecretsForAudit(input) as Record<string, unknown>,
         toolOutput: null,
         // La marque EST une exécution commencée (#443) : c'est elle, et elle

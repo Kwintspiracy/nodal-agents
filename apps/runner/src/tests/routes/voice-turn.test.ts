@@ -65,6 +65,7 @@ import type { RunnerEnv } from '../../env.ts';
 import { TITLE_SYSTEM_PROMPT } from '../../chat/conversation-title.ts';
 import { ACTION_RECHECK } from '../../llm/action-recheck.ts';
 import { REDACTED_TEXT } from '@nodal-agents/shared';
+import { REPLY_FORM_NOTES } from '@nodal-agents/orchestration';
 import { openUtterances, VOICE_LIMITS } from '../../chat/voice-utterances.ts';
 import { finalizeJobFailure, finalizeJobSuccess } from '../../job/finalize.ts';
 import { publishJobEnded } from '../../events/publish.ts';
@@ -694,10 +695,16 @@ describe('the voice turn route @cap:parler-a-un-agent/moteur', () => {
     expect(heardAudio(evs)).toEqual(Buffer.from(VOICE_PCM));
     // The turn is the dashboard chat turn: run_task its only tool, the
     // transcript the person's words, and the prompt says the reply is heard.
+    // The form of this reply is said again right after the words (#1088):
+    // the note of the spoken rendering, on the wire, last.
     expect(sent.front).toHaveLength(1);
     const front = sent.front[0]!;
     expect((front.tools ?? []).map((t) => t.function.name)).toEqual(['run_task']);
-    expect(textOf(front.messages[front.messages.length - 1]!.content)).toContain(TRANSCRIPT);
+    expect(textOf(front.messages[front.messages.length - 2]!.content)).toContain(TRANSCRIPT);
+    expect(front.messages[front.messages.length - 1]).toMatchObject({ role: 'user' });
+    expect(textOf(front.messages[front.messages.length - 1]!.content)).toBe(
+      REPLY_FORM_NOTES.spoken,
+    );
     expect(systemOf(front)).toContain(SPOKEN_LINE);
 
     expect(await rows(conv)).toEqual([
