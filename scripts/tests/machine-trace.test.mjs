@@ -7,7 +7,7 @@
 
 import { describe, it, expect, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import {
@@ -313,6 +313,23 @@ describe('gardien', () => {
       "[machine] trace stopped: the --out file failed (EACCES: permission denied); the command goes on and its exit code is the step's verdict",
     ]);
   });
+
+  // Revue de la PR #1107, passe 2 (constats 1 et 2) : DIRE la panne peut
+  // échouer aussi (la sortie de l'étape fermée). Cet échec-là ne sort jamais
+  // de `essayer` : il terminerait le lanceur avant que le code de la commande
+  // soit connu.
+  it('never lets a failure to SAY the failure escape', () => {
+    const g = gardien(() => {
+      throw new Error('EPIPE: broken pipe');
+    });
+    expect(() =>
+      g.essayer('the --out file', () => {
+        throw new Error('EACCES: permission denied');
+      }),
+    ).not.toThrow();
+    expect(g.panne).toEqual({ quoi: 'the --out file', message: 'EACCES: permission denied' });
+    expect(g.essayer('sample', () => 1)).toBeUndefined();
+  });
 });
 
 describe.runIf(process.platform === 'linux')('machine-trace.mjs on this machine', () => {
@@ -368,10 +385,17 @@ describe.runIf(process.platform === 'linux')('machine-trace.mjs when the trace f
   let dir;
   afterEach(() => dir && rmSync(dir, { recursive: true, force: true }));
 
-  /** Une commande qui laisse un témoin, attend `ms`, puis sort avec `code`. */
+  /**
+   * Une commande qui laisse un témoin à son DÉBUT et un autre à sa FIN (juste
+   * avant de sortir avec `code`, après `ms`) : le second prouve qu'elle a
+   * tourné jusqu'au bout, pas seulement démarré (revue de la PR #1107, passe 2).
+   * Elle n'écrit rien sur sa sortie : celle-ci est celle du lanceur, que
+   * certains cas ferment.
+   */
   function commande({ code, ms = 3000, rendreIllisible }) {
     const script = join(dir, 'cmd.mjs');
-    const temoin = join(dir, 'ran');
+    const temoin = join(dir, 'started');
+    const fin = join(dir, 'ended');
     writeFileSync(
       script,
       [
@@ -380,10 +404,38 @@ describe.runIf(process.platform === 'linux')('machine-trace.mjs when the trace f
         rendreIllisible
           ? `setTimeout(() => chmodSync(${JSON.stringify(rendreIllisible)}, 0o444), 1500);`
           : '',
-        `setTimeout(() => process.exit(${code}), ${ms});`,
+        `setTimeout(() => { writeFileSync(${JSON.stringify(fin)}, 'end ${code}'); process.exit(${code}); }, ${ms});`,
       ].join('\n'),
     );
-    return { script, temoin };
+    return { script, temoin, fin };
+  }
+
+  /** La commande a démarré ET est allée jusqu'à sa fin, avec ce code. */
+  function aToutJoue({ temoin, fin }, code) {
+    expect(existsSync(temoin), 'the command started').toBe(true);
+    expect(existsSync(fin) && readFileSync(fin, 'utf8'), 'the command ran to its end').toBe(
+      `end ${code}`,
+    );
+  }
+
+  /**
+   * Le lanceur avec sa sortie standard FERMÉE dès le départ : le lecteur du
+   * tube s'en va (c'est ce qui arrive quand l'étape perd sa sortie). Rend le
+   * code de sortie du lanceur, qui doit être celui de la commande.
+   */
+  function lancerSortieFermee(args) {
+    return new Promise((resolve) => {
+      const p = spawn(
+        process.execPath,
+        [join(process.cwd(), 'scripts/machine-trace.mjs'), ...args],
+        {
+          cwd: dir,
+          stdio: ['ignore', 'pipe', 'ignore'],
+        },
+      );
+      p.stdout.destroy();
+      p.on('exit', (code, signal) => resolve({ code, signal }));
+    });
   }
 
   function lancer(args, env = process.env) {
@@ -405,9 +457,9 @@ describe.runIf(process.platform === 'linux')('machine-trace.mjs when the trace f
     async (code) => {
       dir = mkdtempSync(join(tmpdir(), 'machine-trace-panne-'));
       const out = join(dir, 'trace.log');
-      const { script, temoin } = commande({ code, ms: 4000, rendreIllisible: out });
-      const r = await lancer(['--out', out, '--every', '1', '--', process.execPath, script]);
-      expect(existsSync(temoin)).toBe(true);
+      const c = commande({ code, ms: 4000, rendreIllisible: out });
+      const r = await lancer(['--out', out, '--every', '1', '--', process.execPath, c.script]);
+      aToutJoue(c, code);
       expect(r.code).toBe(code);
       expect(arrets(r.stdout)).toEqual([
         expect.stringMatching(/^\[machine\] trace stopped: .*EACCES/),
@@ -420,20 +472,23 @@ describe.runIf(process.platform === 'linux')('machine-trace.mjs when the trace f
   it('a --out file unwritable from the start: the command runs and keeps a red code', async () => {
     dir = mkdtempSync(join(tmpdir(), 'machine-trace-panne-'));
     const out = join(dir, 'missing-folder', 'trace.log');
-    const { script, temoin } = commande({ code: 3, ms: 500 });
-    const r = await lancer(['--out', out, '--', process.execPath, script]);
-    expect(existsSync(temoin)).toBe(true);
+    const c = commande({ code: 3, ms: 500 });
+    const r = await lancer(['--out', out, '--', process.execPath, c.script]);
+    aToutJoue(c, 3);
     expect(r.code).toBe(3);
     expect(arrets(r.stdout)).toEqual([expect.stringMatching(/ENOENT/)]);
   }, 30_000);
 
   it('getconf unavailable: the command runs and keeps a red code', async () => {
     dir = mkdtempSync(join(tmpdir(), 'machine-trace-panne-'));
-    const { script, temoin } = commande({ code: 3, ms: 500 });
+    const c = commande({ code: 3, ms: 500 });
     // Seul le dossier de node reste dans le PATH : ni getconf ni sudo.
     const env = { ...process.env, PATH: dirname(process.execPath) };
-    const r = await lancer(['--out', join(dir, 'trace.log'), '--', process.execPath, script], env);
-    expect(existsSync(temoin)).toBe(true);
+    const r = await lancer(
+      ['--out', join(dir, 'trace.log'), '--', process.execPath, c.script],
+      env,
+    );
+    aToutJoue(c, 3);
     expect(r.code).toBe(3);
     expect(arrets(r.stdout)).toEqual([expect.stringMatching(/getconf/)]);
   }, 30_000);
@@ -456,5 +511,74 @@ describe.runIf(process.platform === 'linux')('machine-trace.mjs when the trace f
     expect(r.stdout).toMatch(/^\[machine\] .* start: node with 2 arguments$/m);
     expect(r.stdout).not.toContain('MARKER-748-SECRET');
     expect(readFileSync(out, 'utf8')).not.toContain('MARKER-748-SECRET');
+  }, 30_000);
+
+  // Revue de la PR #1107, passe 2 : rien de ce que le lanceur ÉCRIT ne peut
+  // le terminer. Sa sortie standard est fermée dès le départ ; chaque relevé,
+  // chaque ligne, et la ligne qui dirait la panne y échouent.
+  it.each([0, 3])(
+    'stdout closed AND --out unwritable mid-run: the command runs to its end and its code (%i) is returned',
+    async (code) => {
+      dir = mkdtempSync(join(tmpdir(), 'machine-trace-sortie-'));
+      const out = join(dir, 'trace.log');
+      const c = commande({ code, ms: 4000, rendreIllisible: out });
+      const r = await lancerSortieFermee([
+        '--out',
+        out,
+        '--every',
+        '1',
+        '--',
+        process.execPath,
+        c.script,
+      ]);
+      aToutJoue(c, code);
+      expect(r).toEqual({ code, signal: null });
+    },
+    30_000,
+  );
+
+  it.each([0, 3])(
+    'stdout closed and nothing else failing: every sample goes on to --out, and the code (%i) is returned',
+    async (code) => {
+      dir = mkdtempSync(join(tmpdir(), 'machine-trace-sortie-'));
+      const out = join(dir, 'trace.log');
+      const c = commande({ code, ms: 3000 });
+      const r = await lancerSortieFermee([
+        '--out',
+        out,
+        '--every',
+        '1',
+        '--',
+        process.execPath,
+        c.script,
+      ]);
+      aToutJoue(c, code);
+      expect(r).toEqual({ code, signal: null });
+      // La trace a continué dans le fichier, et y a dit UNE fois que la sortie
+      // de l'étape était fermée.
+      const fichier = readFileSync(out, 'utf8');
+      expect(fichier.match(/^\[machine\] the step's output is closed/gm)).toHaveLength(1);
+      expect(fichier).toMatch(/^\[machine\] summary: \d+ samples/m);
+      expect(fichier).toMatch(new RegExp(`^\\[machine\\] command ended \\(exit ${code}\\)`, 'm'));
+    },
+    30_000,
+  );
+
+  it('a command that cannot start: 127, stdout open', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'machine-trace-127-'));
+    const r = await lancer(['--out', join(dir, 'trace.log'), '--', join(dir, 'no-such-program')]);
+    expect(r.code).toBe(127);
+    expect(r.stdout).toMatch(/^\[machine\] the command could not start: .*ENOENT/m);
+  }, 30_000);
+
+  it('a command that cannot start: 127, stdout closed', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'machine-trace-127-'));
+    const r = await lancerSortieFermee([
+      '--out',
+      join(dir, 'trace.log'),
+      '--',
+      join(dir, 'no-such-program'),
+    ]);
+    expect(r).toEqual({ code: 127, signal: null });
   }, 30_000);
 });
