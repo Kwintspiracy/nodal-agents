@@ -114,6 +114,7 @@ export async function approveRoute(
       result.code === 'question_options_unreadable' ||
       result.code === 'answer_empty' ||
       result.code === 'answer_too_long' ||
+      result.code === 'notes_too_long' ||
       result.code === 'content_required' ||
       result.code === 'content_not_expected' ||
       result.code === 'form_unreadable'

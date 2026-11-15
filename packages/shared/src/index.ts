@@ -40,6 +40,7 @@ export * from './approval-explain';
 export * from './approval-rules-chain';
 export * from './readonly-preset';
 export * from './question-answer';
+export * from './card-notes';
 export * from './elicitation';
 export * from './elicitation-card';
 export * from './untrusted';
