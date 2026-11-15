@@ -107,8 +107,10 @@ const NOMS_GENERIQUES = new Set(['node', 'MainThread', 'sh', 'bash', 'tsx', 'npm
  * connu, sinon le nom du premier script.
  */
 export function etiquette(nom, argv = [], cwd = '') {
-  const court = nom.split(/[ (]/)[0] || nom;
-  if (!NOMS_GENERIQUES.has(court) || argv.length === 0) return court;
+  const brut = nom.split(/[ (]/)[0] || nom;
+  // Node 24 nomme son fil principal « MainThread » : c'est un `node`.
+  const court = brut === 'MainThread' ? 'node' : brut;
+  if (!NOMS_GENERIQUES.has(brut) || argv.length === 0) return court;
   const ligne = argv.join(' ');
   const paquet = /(?:^|\/)((?:apps|packages)\/[\w.-]+)/.exec(`${ligne} ${cwd}`);
   if (/playwright/.test(ligne)) return `${court}:playwright`;

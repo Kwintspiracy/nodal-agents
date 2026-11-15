@@ -115,6 +115,10 @@ describe('etiquette', () => {
       'node:apps/cli',
     );
   });
+  it('calls node what Node 24 names "MainThread"', () => {
+    expect(etiquette('MainThread', ['node', '/tmp/x/hog.mjs'])).toBe('node:hog.mjs');
+    expect(etiquette('MainThread')).toBe('node');
+  });
   it('names the Playwright test runner, then falls back to the script name', () => {
     expect(etiquette('node', ['node', '/w/node_modules/@playwright/test/cli.js', 'test'])).toBe(
       'node:playwright',
