@@ -606,6 +606,18 @@ function neutralizeActionLabel(raw: unknown): { label: string } | { reason: stri
 }
 
 /**
+ * Un texte écrit par le serveur (libellé d'un bouton, nom d'un champ, libellé
+ * d'une option), tel qu'un relevé peut le CITER : la règle des libellés de
+ * boutons — invisibles retirés, espaces resserrés, au plus
+ * `ELICITATION_ACTION_LABEL_MAX` caractères. `null` : vide ou trop long, il ne
+ * se cite pas (#1084).
+ */
+export function quotableServerText(raw: unknown): string | null {
+  const read = neutralizeActionLabel(raw);
+  return 'label' in read ? read.label : null;
+}
+
+/**
  * Les libellés de `params._meta["nodal/actions"]`, chacun vérifié à part : un
  * libellé refusé est rendu dans `rejected` avec sa raison (l'appelant le
  * journalise) et son bouton garde le libellé par défaut ; l'autre est gardé.
