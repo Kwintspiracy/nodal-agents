@@ -71,6 +71,12 @@ export const DEVICE_GESTURES = {
       "method": "GET",
       "path": "/api/voice/replies/:audioId"
     }
+  ],
+  "see": [
+    {
+      "method": "GET",
+      "path": "/api/devices/:deviceId/cards/:cardId/images/:n"
+    }
   ]
 } as const;
 
@@ -103,6 +109,12 @@ export type DeviceCardChoice = {
     answer?: string | undefined;
 };
 
+export type DeviceCardImage = {
+    path: string;
+    mimeType: string;
+    caption?: string | undefined;
+};
+
 export type DeviceRunState = "working" | "waiting" | "done" | "cancelled" | "failed";
 
 export type DeviceDeliverable = {
@@ -128,6 +140,11 @@ export type DeviceEvent = {
         decision: "approve" | "reject";
         answer?: string | undefined;
     }[];
+    images?: {
+        path: string;
+        mimeType: string;
+        caption?: string | undefined;
+    }[] | undefined;
 } | {
     type: "card.closed";
     cardId: string;

@@ -34,6 +34,7 @@ import {
   renderExplanationText,
   readQuestionToolInput,
   quoteThirdPartyText,
+  elicitationChoices,
   type ShellGateReason,
 } from '@nodal-agents/shared';
 import { explainApprovalRequest } from './explain-request.ts';
@@ -45,6 +46,7 @@ import {
   jobChatOn,
   type ApprovalCard,
   type QuestionCard,
+  type ChoiceCard,
   type ChannelAdapter,
   type ChannelKind,
   type ChannelCredentials,
@@ -53,7 +55,11 @@ import {
 import type { ApprovalGateRequest } from '@nodal-agents/tools';
 import type { RunnerDeps } from '../deps.ts';
 import { deviceOfChat, publishApprovalRequested } from '../events/publish.ts';
-import { loadElicitationCard, renderElicitationCardFor } from './elicitation-card-view.ts';
+import {
+  loadElicitationCard,
+  renderElicitationCardFor,
+  type ElicitationCardState,
+} from './elicitation-card-view.ts';
 
 /** callback_data carried by the buttons. Parsed by approval-callback.ts. Stays well under Telegram's 64-byte cap. */
 export const APPROVAL_CALLBACK_PREFIX = 'apr';
@@ -137,10 +143,16 @@ export function buildQuestionCardBody(args: {
  * (élicitation, 0145), sur un canal. Le message est cité tel quel — texte
  * tiers, montré comme une donnée ; le cadre est celui du produit.
  *
- * Sans boutons sur aucun canal pour l'instant : un formulaire ne se remplit
- * pas d'un ✅, il se remplit sur le dashboard (la carte le dit).
+ * `hasButtons` : la carte porte les choix qui y répondent (#1067, une liste de
+ * choix répond à son formulaire) ; sa dernière ligne est alors celle de la
+ * carte de question. Sans : un formulaire ne se remplit pas d'un ✅, il se
+ * remplit sur le dashboard, et la carte le dit.
  */
-export function buildElicitationCardBody(args: { server: string; message: string }): string {
+export function buildElicitationCardBody(args: {
+  server: string;
+  message: string;
+  hasButtons?: boolean;
+}): string {
   return (
     `❓ The MCP server "${args.server}" asks:
 
@@ -148,7 +160,9 @@ export function buildElicitationCardBody(args: { server: string; message: string
     `${quoteThirdPartyText(args.message)}
 
 ` +
-    'Answer from the dashboard: the question is on the run, and on the Approvals page.'
+    (args.hasButtons === true
+      ? 'Tap an option below, or answer from the dashboard.'
+      : 'Answer from the dashboard: the question is on the run, and on the Approvals page.')
   );
 }
 
@@ -663,6 +677,7 @@ export async function notifyApprovalCreated(
 export type ComposedRequestCard =
   | { kind: 'approval_card'; card: ApprovalCard }
   | { kind: 'question_card'; card: QuestionCard }
+  | { kind: 'choice_card'; card: ChoiceCard }
   | { kind: 'text'; text: string };
 
 /**
@@ -780,6 +795,9 @@ async function sendComposedCard(
     case 'approval_card':
       if (!adapter.sendApprovalCard) throw new Error(`${adapter.channel} draws no approval card`);
       return adapter.sendApprovalCard(credentials, conversationId, composed.card);
+    case 'choice_card':
+      if (!adapter.sendChoiceCard) throw new Error(`${adapter.channel} draws no card of choices`);
+      return adapter.sendChoiceCard(credentials, conversationId, composed.card);
     case 'text':
       return adapter.sendText(credentials, conversationId, composed.text);
     default: {
@@ -787,6 +805,78 @@ async function sendComposedCard(
       throw new Error(`composed_card_unhandled: ${JSON.stringify(unhandled)}`);
     }
   }
+}
+
+/**
+ * Le renvoi au dashboard de la question d'un serveur : sa question citée, et
+ * pourquoi elle n'est pas répondue sur place. Rien n'y répond : ce n'est pas
+ * une carte, et il n'est pas consigné comme telle.
+ */
+function elicitationPointerText(state: ElicitationCardState, why: string): string {
+  return `${buildElicitationCardBody({ server: state.asked.server, message: state.asked.message })}\n(${why}.)`;
+}
+
+/**
+ * LA composition de la question d'un serveur pour un canal qui dessine des
+ * CHOIX et aucun formulaire (`sendChoiceCard` sans `sendCard` : un appareil,
+ * #1067). UNE fonction pour l'envoi (`deliverElicitationToOrigin`) et pour la
+ * relecture par un appareil (`GET /api/devices/:deviceId/cards`) : la carte
+ * relue est celle qui a été envoyée.
+ *
+ * Une carte de choix quand une liste de choix répond au formulaire
+ * (`elicitationChoices`, la règle que la décision relit) : les mots du
+ * serveur, ses libellés, et ses images NOMMÉES dans la carte, que l'adaptateur
+ * porte comme il le peut. Sinon le renvoi au dashboard, avec la raison
+ * (invariant #4) : jamais une carte amputée.
+ */
+export async function composeElicitationChoiceCard(
+  db: RunnerDeps['db'],
+  state: ElicitationCardState,
+  adapter: ChannelAdapter,
+): Promise<
+  { kind: 'choice_card'; card: ChoiceCard } | { kind: 'text'; text: string; why: string }
+> {
+  const choices = elicitationChoices(state.fields, state.asked.actions);
+  if (!adapter.sendChoiceCard || !choices.ok) {
+    // The person reads what every channel without a form says, word for word
+    // (the reason it gave before #1067); the log says which rule refused it.
+    const why = `${adapter.channel} has no buttons to fill a form with`;
+    return {
+      kind: 'text',
+      text: elicitationPointerText(state, why),
+      why: choices.ok ? why : `${why} (${choices.reason})`,
+    };
+  }
+  const images = await db
+    .select({
+      position: approvalRequestAttachments.position,
+      mimeType: approvalRequestAttachments.mimeType,
+      caption: approvalRequestAttachments.caption,
+    })
+    .from(approvalRequestAttachments)
+    .where(eq(approvalRequestAttachments.approvalRequestId, state.approvalRequestId))
+    .orderBy(approvalRequestAttachments.position);
+  return {
+    kind: 'choice_card',
+    card: {
+      text: buildElicitationCardBody({
+        server: state.asked.server,
+        message: state.asked.message,
+        hasButtons: true,
+      }),
+      choices: choices.choices.map((c) => ({
+        label: c.label,
+        decision: c.decision,
+        ...(c.answer !== undefined ? { answer: c.answer } : {}),
+      })),
+      callbackId: `${APPROVAL_CALLBACK_PREFIX}:${state.approvalRequestId}`,
+      images: images.map((i) => ({
+        position: i.position,
+        mimeType: i.mimeType,
+        caption: i.caption ?? null,
+      })),
+    },
+  };
 }
 
 // ─── 0145 — la question d'un serveur MCP, sur le canal de la demande ──────────
@@ -886,6 +976,29 @@ async function deliverElicitationToOrigin(
   const { channel, credentials, conversationId } = target;
   const adapter = getAdapter(channel);
 
+  // A channel that draws CHOICES and no form (#1067): the card of choices,
+  // which names its own images — nothing is sent before it — or the pointer
+  // to the dashboard, with the reason.
+  if (adapter.sendChoiceCard && !adapter.sendCard) {
+    const composed = await composeElicitationChoiceCard(deps.db, state, adapter);
+    if (composed.kind === 'text') {
+      console.warn(`[approval-notify] question ${req.approvalRequestId}: ${composed.why}`);
+      await adapter.sendText(credentials, conversationId, composed.text);
+      return;
+    }
+    let sent: SendResult;
+    try {
+      sent = await sendComposedCard(adapter, credentials, conversationId, composed);
+    } catch (err) {
+      const why = `the card could not be sent on ${channel}: ${err instanceof Error ? err.message : String(err)}`;
+      console.warn(`[approval-notify] question ${req.approvalRequestId}: ${why}`);
+      await adapter.sendText(credentials, conversationId, elicitationPointerText(state, why));
+      return;
+    }
+    await recordElicitationCard(deps, req, target, sent);
+    return;
+  }
+
   // The card says its images are "above": it is sent only when every one of
   // them was. Otherwise the question goes with the dashboard pointer, and says
   // how many images are only there (invariant #4).
@@ -933,7 +1046,7 @@ async function deliverElicitationToOrigin(
   // button, whose text is never formatted and notifies nobody.
   const pointToDashboard = async (why: string): Promise<void> => {
     console.warn(`[approval-notify] question ${req.approvalRequestId}: ${why}`);
-    const text = `${buildElicitationCardBody({ server: state.asked.server, message: state.asked.message })}\n(${why}.)`;
+    const text = elicitationPointerText(state, why);
     if (adapter.sendCard)
       await adapter.sendCard(credentials, conversationId, { text, buttons: [] });
     else await adapter.sendText(credentials, conversationId, text);
@@ -964,17 +1077,31 @@ async function deliverElicitationToOrigin(
     );
     return;
   }
+  await recordElicitationCard(deps, req, target, sent);
+}
+
+/**
+ * La carte d'une question de serveur, envoyée, est CONSIGNÉE (#637) : c'est ce
+ * qui la règle quand la question est tranchée ailleurs, et ce qui laisse ses
+ * boutons répondre (un appareil ne répond qu'à une carte posée sur lui).
+ */
+async function recordElicitationCard(
+  deps: RunnerDeps,
+  req: ApprovalGateRequest,
+  target: ChannelApprovalDeliveryTarget,
+  sent: SendResult,
+): Promise<void> {
   try {
     await recordApprovalCardMessage(deps.db, {
       approvalRequestId: req.approvalRequestId,
-      channel,
+      channel: target.channel,
       agentId: target.agentId,
-      conversationId,
+      conversationId: target.conversationId,
       messageId: sent.messageId,
     });
   } catch (err) {
     console.warn(
-      `[approval-notify] card for ${req.approvalRequestId} was sent on ${channel} ` +
+      `[approval-notify] card for ${req.approvalRequestId} was sent on ${target.channel} ` +
         `(message ${sent.messageId}) but could not be recorded — its buttons will not answer: ` +
         (err instanceof Error ? err.message : String(err)),
     );

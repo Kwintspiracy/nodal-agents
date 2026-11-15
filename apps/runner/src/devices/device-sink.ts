@@ -14,7 +14,7 @@
 import { randomUUID } from 'node:crypto';
 import { DeliveryError, type DeviceOutbound, type DeviceSink } from '@nodal-agents/delivery';
 import { findWorkspaceDevice, isDeviceId } from '@nodal-agents/db';
-import { DeviceEventSchema, type DeviceEvent } from '@nodal-agents/shared';
+import { DeviceEventSchema, deviceCardImagePath, type DeviceEvent } from '@nodal-agents/shared';
 import type { RunnerDeps } from '../deps.ts';
 import { jobEvents, type JobEventBus } from '../events/job-events.ts';
 import { APPROVAL_CALLBACK_PREFIX } from '../approvals/notify.ts';
@@ -36,8 +36,15 @@ function cardIdOf(callbackId: string): string {
   return id;
 }
 
-/** The protocol event for one send, and the id a later edit names. */
-export function deviceEventFor(out: DeviceOutbound): { event: DeviceEvent; messageId: string } {
+/**
+ * The protocol event for one send to device `deviceId`, and the id a later
+ * edit names. The device's id is what a card's image pointers name: the
+ * route that serves them answers that device only.
+ */
+export function deviceEventFor(
+  out: DeviceOutbound,
+  deviceId: string,
+): { event: DeviceEvent; messageId: string } {
   switch (out.kind) {
     case 'text': {
       const bubbleId = randomUUID();
@@ -81,6 +88,33 @@ export function deviceEventFor(out: DeviceOutbound): { event: DeviceEvent; messa
         },
       };
     }
+    case 'choice_card': {
+      const cardId = cardIdOf(out.card.callbackId);
+      return {
+        messageId: cardId,
+        event: {
+          type: 'card',
+          cardId,
+          kind: 'question',
+          text: out.card.text,
+          choices: out.card.choices.map((c) => ({
+            label: c.label,
+            decision: c.decision,
+            ...(c.answer !== undefined ? { answer: c.answer } : {}),
+          })),
+          // Pointers, never the bytes (`see`, DEVICE_GESTURES).
+          ...(out.card.images.length > 0
+            ? {
+                images: out.card.images.map((image) => ({
+                  path: deviceCardImagePath(deviceId, cardId, image.position),
+                  mimeType: image.mimeType,
+                  ...(image.caption !== null ? { caption: image.caption } : {}),
+                })),
+              }
+            : {}),
+        },
+      };
+    }
     case 'card_edit':
       return {
         messageId: out.messageId,
@@ -104,7 +138,7 @@ export function createDeviceSink(db: RunnerDeps['db'], bus: JobEventBus = jobEve
           `device_not_in_workspace: ${to.deviceId} is not a device of workspace ${to.entityId}`,
         );
       }
-      const { event, messageId } = deviceEventFor(out);
+      const { event, messageId } = deviceEventFor(out, device.id);
       // The schema is the contract #947 and #950 are tested against: an event
       // that does not fit it is never sent.
       bus.publish(

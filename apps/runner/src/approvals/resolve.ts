@@ -21,8 +21,11 @@ import type { AnyDrizzleDb, RunHeadLookup } from '@nodal-agents/db';
 import { z } from 'zod';
 import {
   FREE_ANSWER_MAX,
+  elicitationChoices,
+  parseElicitationSchema,
   readElicitationToolInput,
   validateElicitationContent,
+  type ElicitationToolInput,
   type CardWordsHandOff,
   type ElicitationContentError,
   type ElicitationValue,
@@ -225,18 +228,37 @@ export async function resolveApprovalDecision(
   // demandé. Le refuser, c'est lui dire non. Un contenu sur toute autre ligne,
   // ou une option / réponse libre sur celle-ci, est un geste mal adressé :
   // refusé, jamais traduit ni jeté (invariant #4).
+  //
+  // #1067 — un formulaire qu'une liste de choix remplit (`elicitationChoices`,
+  // la règle même qui a dessiné la carte d'un appareil) se répond aussi d'un
+  // CHOIX : `answer` nomme l'option, et le formulaire rempli est celui de ce
+  // choix ; sans champ, l'accord seul suffit. Lu sur la ligne, jamais sur ce
+  // que l'appelant affirme, puis validé comme tout contenu.
   if (kind === 'elicitation') {
-    if (rawAnswer !== null || input.free === true)
-      return { ok: false, code: 'answer_not_expected' };
+    if (input.free === true) return { ok: false, code: 'answer_not_expected' };
     if (input.decision === 'approve') {
-      if (input.content === undefined) return { ok: false, code: 'content_required' };
+      if (input.content !== undefined && rawAnswer !== null) {
+        return { ok: false, code: 'answer_not_expected' };
+      }
       const form = readElicitationToolInput(approval.toolInput);
-      if (!form) return { ok: false, code: 'form_unreadable' };
-      const checked = validateElicitationContent(form.requestedSchema, input.content);
+      if (!form) {
+        return input.content === undefined && rawAnswer === null
+          ? { ok: false, code: 'content_required' }
+          : { ok: false, code: 'form_unreadable' };
+      }
+      let content = input.content;
+      if (content === undefined) {
+        const chosen = contentOfChoice(form, rawAnswer);
+        if (!chosen.ok) return { ok: false, code: chosen.code };
+        content = chosen.content;
+      }
+      const checked = validateElicitationContent(form.requestedSchema, content);
       if (!checked.ok) return { ok: false, code: 'content_invalid', errors: checked.errors };
       responseToStore = checked.content;
     } else if (input.content !== undefined) {
       return { ok: false, code: 'content_not_expected' };
+    } else if (rawAnswer !== null) {
+      return { ok: false, code: 'answer_not_expected' };
     }
   } else if (input.content !== undefined) {
     return { ok: false, code: 'content_not_expected' };
@@ -453,6 +475,38 @@ export async function resolveApprovalDecision(
     resumed: 'worker',
     handOff,
   };
+}
+
+/**
+ * Le formulaire que remplit le CHOIX `answer` (null : l'accord sans option)
+ * sur la question d'un serveur (#1067). Le formulaire n'est pas de ceux qu'une
+ * liste de choix remplit : sans réponse, il attend son contenu
+ * (`content_required`) ; avec, la réponse n'y a rien à faire
+ * (`answer_not_expected`). Une réponse qui n'est aucun des choix est refusée
+ * (`answer_not_an_option`), jamais rattachée « au plus proche ».
+ */
+function contentOfChoice(
+  form: ElicitationToolInput,
+  answer: string | null,
+):
+  | { ok: true; content: Record<string, ElicitationValue> }
+  | {
+      ok: false;
+      code: 'content_required' | 'answer_not_expected' | 'answer_not_an_option' | 'form_unreadable';
+    } {
+  const parsed = parseElicitationSchema(form.requestedSchema);
+  if (!parsed.ok) return { ok: false, code: 'form_unreadable' };
+  const choices = elicitationChoices(parsed.fields, form.actions);
+  if (!choices.ok) {
+    return { ok: false, code: answer === null ? 'content_required' : 'answer_not_expected' };
+  }
+  const chosen = choices.choices.find(
+    (c) => c.decision === 'approve' && (c.answer?.trim() ?? null) === answer,
+  );
+  if (!chosen?.content) {
+    return { ok: false, code: answer === null ? 'content_required' : 'answer_not_an_option' };
+  }
+  return { ok: true, content: chosen.content };
 }
 
 /** Le slug de l'agent qui tient la carte, pour le cadre ; null s'il n'en a pas. */
