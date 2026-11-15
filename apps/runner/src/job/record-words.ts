@@ -57,7 +57,18 @@ export const RECORD_WORDS: RecordWords = {
   notQuoted: (n) => `[${n} earlier tool results not quoted]`,
   failed: 'failed',
   redone: (n) => (n === 1 ? 'after 1 failed attempt' : `after ${n} failed attempts`),
-  cut: (quoted, total) => `only the first ${quoted} of ${total} characters are quoted`,
+  cut: (quoted, total) => `first ${quoted} of ${total} characters`,
   quoteLine: ({ name, count, notes, head }) =>
     `${name}${count > 1 ? ` ×${count}` : ''}${notes.length > 0 ? ` (${notes.join('; ')})` : ''} → ${head}`,
 };
+
+/**
+ * La place que prend la note de coupe d'un texte de `total` caractères, ses
+ * séparateurs compris (` (`, `; `, `)`), au plus : `quoted` n'a jamais plus de
+ * chiffres que `total`. Une citation coupée la prend sur sa propre borne
+ * (#1101) : la dire ne coûte pas plus que la citation d'avant, mesurée à
+ * +4,8 % de jetons par tour quand elle s'y ajoutait.
+ */
+export function cutNoteRoom(words: RecordWords, total: number): number {
+  return words.cut(total, total).length + 3;
+}

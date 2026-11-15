@@ -28,7 +28,7 @@
 import { eq, ne, and, inArray, desc } from '@nodal-agents/db';
 import { agentTasks, agentJobs, agents } from '@nodal-agents/db';
 import type { RunnerDeps } from '../deps.ts';
-import { RECORD_WORDS, type RecordWords } from './record-words.ts';
+import { RECORD_WORDS, cutNoteRoom, type RecordWords } from './record-words.ts';
 import {
   jobActs,
   quoteAtBound,
@@ -131,14 +131,16 @@ export async function loadTaskLedger(
  * `result: …` / `error: …` — the task's stored text at its bound. Cut, it says
  * so in the runner's words BEFORE the colon (#1101, `words.cut`), where the
  * stored text cannot imitate them: a cut result read as the whole answer is a
- * false statement of what happened.
+ * false statement of what happened. The note takes its room from the same
+ * bound (`cutNoteRoom`): a cut result costs no more than before #1101.
  */
 function taskOutcomePart(label: string, s: string | null, words: RecordWords): string {
-  const quote = quoteAtBound(s ?? '', RESULT_TRUNCATE_CHARS);
-  if (quote.text === '') return `${label}: (no result)`;
-  return quote.cut
-    ? `${label} (${words.cut(quote.cut.quoted, quote.cut.total)}): ${quote.text}`
-    : `${label}: ${quote.text}`;
+  const first = quoteAtBound(s ?? '', RESULT_TRUNCATE_CHARS);
+  if (first.text === '') return `${label}: (no result)`;
+  if (!first.cut) return `${label}: ${first.text}`;
+  const quote = quoteAtBound(s ?? '', RESULT_TRUNCATE_CHARS - cutNoteRoom(words, first.cut.total));
+  const cut = quote.cut ?? first.cut;
+  return `${label} (${words.cut(cut.quoted, cut.total)}): ${quote.text}`;
 }
 
 /**

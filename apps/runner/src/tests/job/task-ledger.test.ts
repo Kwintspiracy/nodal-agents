@@ -207,7 +207,7 @@ describe('loadTaskLedger @cap:suivre-execution/moteur', () => {
     const line = formatTaskLedgerEntry(ledger.get(rootJobId)![0]!);
     // At its bound, and the cut said in numbers before the stored text (#1101).
     expect(line).toBe(
-      `[Task "long result" completed: actions — web_search; result (only the first 199 of 500 characters are quoted): ${'x'.repeat(199)}…]`,
+      `[Task "long result" completed: actions — web_search; result (first 169 of 500 characters): ${'x'.repeat(169)}…]`,
     );
   });
 

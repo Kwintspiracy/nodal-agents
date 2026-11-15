@@ -20,6 +20,8 @@ import { toolResultOutputText, toolResultShape } from './tool-result-shape.ts';
 
 /** Au plus ce nombre de caractères par résultat cité. */
 export const RESULT_HEAD_MAX_CHARS = 200;
+/** Au plus ce nombre de lignes non vides par résultat cité qui ne tient pas entier. */
+const RESULT_HEAD_LINES = 2;
 /** Au plus ce nombre de caractères par nom d'outil (les fournisseurs n'en acceptent pas plus). */
 export const NAME_MAX_CHARS = 64;
 /** Au plus ce nombre de noms distincts par liste d'outils ; les autres sont comptés. */
@@ -239,13 +241,17 @@ export function toolNames(acts: JobActs): string {
 }
 
 /**
- * Ce qu'un appel a rendu, cité comme une donnée : le texte ENTIER, ses lignes
- * non vides jointes par une espace, au plus RESULT_HEAD_MAX_CHARS caractères
- * (`quoteAtBound`). Une seule ligne, toujours : un texte venu d'un tiers ne
- * peut pas ouvrir une ligne du relevé à lui. Plus de borne en lignes (#1101) :
- * les deux premières lignes d'une réponse de trois se lisaient comme la
- * réponse entière, sans rien qui dise la coupe ; une réponse courte est citée
- * entière, une longue dit combien en est cité (`cut`).
+ * Ce qu'un appel a rendu, cité comme une donnée, sur UNE ligne : un texte venu
+ * d'un tiers ne peut pas ouvrir une ligne du relevé à lui. Ses lignes non
+ * vides sont jointes par une espace.
+ *  - Le texte entier tient dans `max` : il est cité entier, sans note.
+ *  - Sinon, ses RESULT_HEAD_LINES premières lignes, au plus `max` caractères
+ *    coupés entre deux mots, suivies de `…`, et `cut` dit combien du texte
+ *    entier est cité (#1101) : deux lignes d'une réponse de trois, ou 200
+ *    caractères d'une réponse de 400, ne se lisent plus comme la réponse
+ *    entière. Celui qui cite le dit (`RECORD_WORDS.cut`) et lui fait place
+ *    dans la même borne (`quotedCallLines`) : une citation coupée ne coûte pas
+ *    plus qu'avant #1101.
  *
  * Le cadre que la plateforme pose autour d'un résultat tiers est retiré par sa
  * propre fonction (`unwrapUntrusted`), jamais par un préfixe recopié ici, et
@@ -253,18 +259,29 @@ export function toolNames(acts: JobActs): string {
  * (`redactSecretsInText`), AVANT la coupe : un secret coupé en deux ne se
  * reconnaîtrait plus.
  */
-export function resultHead(output: unknown): BoundedQuote {
+export function resultHead(output: unknown, max: number = RESULT_HEAD_MAX_CHARS): BoundedQuote {
   if (output === undefined) return { text: '(no result recorded)', cut: null };
   if (toolResultShape(output) === 'elided') {
     return { text: '(result no longer in the transcript)', cut: null };
   }
-  const whole = redactSecretsInText(unframedText(output))
+  const lines = redactSecretsInText(unframedText(output))
     .split(LINE_BREAK)
     .map((l) => oneLine(l).trim())
-    .filter((l) => l !== '')
-    .join(' ');
-  const quote = quoteAtBound(whole, RESULT_HEAD_MAX_CHARS);
-  return quote.text === '' ? { text: '(empty result)', cut: null } : quote;
+    .filter((l) => l !== '');
+  const whole = lines.join(' ');
+  if (whole === '') return { text: '(empty result)', cut: null };
+  if (whole.length <= max) return { text: whole, cut: null };
+  const head = lines.slice(0, RESULT_HEAD_LINES).join(' ');
+  // Les premières lignes tiennent sous la borne : la coupe tombe entre deux
+  // lignes, donc entre deux mots ; sinon `quoteAtBound` coupe entre deux mots.
+  if (head.length < max) {
+    return { text: `${head}…`, cut: { quoted: head.length, total: whole.length } };
+  }
+  const quote = quoteAtBound(head, max);
+  return {
+    text: quote.text,
+    cut: { quoted: quote.cut?.quoted ?? head.length, total: whole.length },
+  };
 }
 
 /**

@@ -62,7 +62,7 @@ const PRINT_ANSWER =
   'Details: 1 copy of a document of 3 pages, so the 3 impressions are its 3 pages, duplex off, colour on, A4 paper from tray 2, estimated time 40 seconds, no error reported, the queue held no other job then.';
 
 /** The line the record gives for it: the cut said by the runner, before the arrow. */
-const PRINT_LINE = `${PRINT} (only the first 195 of 400 characters are quoted) → Printed: Quarterly report, final version with annexes.pdf sent to the shared queue as job 4471 at 14:02, accepted by the server, priority normal, (3 impression(s)) logged for this request so far.…`;
+const PRINT_LINE = `${PRINT} (first 163 of 400 characters) → Printed: Quarterly report, final version with annexes.pdf sent to the shared queue as job 4471 at 14:02, accepted by the server, priority normal, (3 impression(s))…`;
 
 type Call = [name: string, output: unknown];
 
@@ -247,11 +247,21 @@ describe('a quotation that is not the whole answer says how much of it is quoted
     expect(head).toEqual({ text: 'Request 4521 submitted. Status: pending. Pages: 3', cut: null });
   });
 
+  it('a long answer of many lines: its first two lines, and the cut said', () => {
+    const listing = Array.from({ length: 40 }, (_, i) => `file-${i}.md`).join('\n');
+    const own = acts([['run_command', text(`exit 0\nwrote 40 files\n${listing}`)]]);
+    const total = `exit 0 wrote 40 files ${listing.split('\n').join(' ')}`.length;
+    expect(lines({ own })).toEqual([
+      '[Actions performed in this exchange: run_command]',
+      `run_command (first 21 of ${total} characters) → exit 0 wrote 40 files…`,
+    ]);
+  });
+
   it('a failed call whose answer is cut says both, the outcome first', () => {
     const own = acts([[SEND, json({ error: `invalid_input: ${'y'.repeat(300)}` })]]);
     const [, line] = lines({ own });
     expect(line).toBe(
-      `${SEND} (failed; only the first 199 of 327 characters are quoted) → {"error":"invalid_input: ${'y'.repeat(174)}…`,
+      `${SEND} (failed; first 169 of 327 characters) → {"error":"invalid_input: ${'y'.repeat(144)}…`,
     );
   });
 
@@ -265,8 +275,81 @@ describe('a quotation that is not the whole answer says how much of it is quoted
       calls: [],
     });
     expect(entry).toBe(
-      `[Task "Print the report" completed: actions — ${PRINT}; result (only the first 195 of 400 characters are quoted): ${PRINT_LINE.split(' → ')[1]}]`,
+      `[Task "Print the report" completed: actions — ${PRINT}; result (first 163 of 400 characters): ${PRINT_LINE.split(' → ')[1]}]`,
     );
+  });
+});
+
+// ─── The cost of saying the cut ──────────────────────────────────────────────
+//
+// Measured on the real spoken turn of 2026-11-14: a note ADDED to every cut
+// quotation, and heads no longer held to two lines, cost +1 407 input tokens
+// per turn (+4.8 %). The note now takes its room from the quotation's own
+// bound, and the two-line head is back for an answer that does not fit whole.
+
+/**
+ * The quotation of #1076, as main wrote it before #1101: the first two
+ * non-empty lines, joined, cut at 200 characters with `…`. For the
+ * comparison only, on plain results (no frame, no secret).
+ */
+function quotationBefore1101(output: { type: string; value: unknown }): string {
+  const raw = typeof output.value === 'string' ? output.value : JSON.stringify(output.value);
+  const head = raw
+    .split(/(?:(?!\t)[\p{Zl}\p{Zp}\p{Cc}])+/u)
+    .map((l) => l.replace(/[\p{Zl}\p{Zp}\p{Cc}]+/gu, ' ').trim())
+    .filter((l) => l !== '')
+    .slice(0, 2)
+    .join(' ');
+  return head.length > 200 ? `${head.slice(0, 199)}…` : head;
+}
+
+describe('saying the cut costs no more than the quotation it replaces (#1101) @cap:reprendre-conversation/moteur', () => {
+  const prose = (seed: number, n: number) =>
+    Array.from({ length: n }, (_, i) => `word${(seed * 7 + i) % 13}`).join(' ');
+  /** Five exchanges of eight acting calls each, of the kinds a history carries. */
+  const exchanges: Call[][] = Array.from({ length: 5 }, (_, e) => [
+    ['web_fetch', text(prose(e, 120))],
+    [MCP_SEND, text(`Delivered to ${prose(e + 1, 3)}.`)],
+    ['file_read_remote', text(prose(e + 2, 400))],
+    [SEND, json({ ok: true, bytes: 803_938 + e })],
+    ['run_command', text(`exit 0\n${prose(e + 3, 6)}\n${prose(e + 4, 300)}`)],
+    [
+      'db_query',
+      json({ rows: Array.from({ length: 30 }, (_, i) => ({ id: i, name: `row ${i}` })) }),
+    ],
+    [PRINT, text(PRINT_ANSWER)],
+    ['web_search_and_summarise', text(`${prose(e + 5, 20)}\n${prose(e + 6, 200)}`)],
+  ]);
+
+  it('a cut quotation by characters is never longer than the line it replaces', () => {
+    for (const calls of exchanges) {
+      for (const [name, output] of calls) {
+        const [, line] = lines({ own: acts([[name, output]]) });
+        const before = `${name} → ${quotationBefore1101(output as { type: string; value: unknown })}`;
+        const whole = resultHead(output);
+        // A head cut by characters (not by lines) carries the note within the old line.
+        const cutByChars = whole.cut !== null && before.endsWith('…');
+        if (cutByChars) expect(line!.length).toBeLessThanOrEqual(before.length);
+      }
+    }
+  });
+
+  it('a history of five exchanges: within 1 % of its size before #1101', () => {
+    let before = 0;
+    let after = 0;
+    for (const calls of exchanges) {
+      const own = acts(calls);
+      const record = lines({ own });
+      after += record.join('\n').length;
+      before += [
+        record[0]!,
+        ...calls.map(
+          ([name, output]) =>
+            `${name} → ${quotationBefore1101(output as { type: string; value: unknown })}`,
+        ),
+      ].join('\n').length;
+    }
+    expect(after).toBeLessThanOrEqual(Math.ceil(before * 1.01));
   });
 });
 

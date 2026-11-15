@@ -737,11 +737,12 @@ describe('the record is bounded, and says so (#1075) @cap:reprendre-conversation
       ['run_command'],
     );
     const [entries] = records(await replay(conv, 'telegram', current));
-    const prefix = 'run_command (only the first 199 of 500 characters are quoted) → ';
-    expect(entries![1]!.startsWith(prefix)).toBe(true);
-    const head = entries![1]!.slice(prefix.length);
-    expect(head).toBe(`${'x'.repeat(RESULT_HEAD_MAX_CHARS - 1)}…`);
-    expect(head.length).toBe(RESULT_HEAD_MAX_CHARS);
+    // The note takes its room from the quotation's own bound: the line is no
+    // longer than the line of the same call before #1101.
+    expect(entries![1]).toBe(`run_command (first 169 of 500 characters) → ${'x'.repeat(169)}…`);
+    expect(entries![1]!.length).toBeLessThanOrEqual(
+      'run_command → '.length + RESULT_HEAD_MAX_CHARS,
+    );
   });
 
   it('a multi-line result: its non-empty lines, joined, on one line, whole when it fits (#1101)', async () => {

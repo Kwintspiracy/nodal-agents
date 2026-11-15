@@ -85,7 +85,7 @@ import { and, inArray, isNotNull } from '@nodal-agents/db';
 import { agentJobs, toolCalls } from '@nodal-agents/db';
 import type { RunnerDeps } from '../deps.ts';
 import { isJobEnded } from './conversation-moments.ts';
-import { RECORD_WORDS, type RecordWords } from './record-words.ts';
+import { RECORD_WORDS, cutNoteRoom, type RecordWords } from './record-words.ts';
 import {
   formatInlineDelegationEntry,
   formatTaskLedgerEntry,
@@ -102,6 +102,7 @@ import {
   resultHead,
   toolNames,
   NAME_MAX_CHARS,
+  RESULT_HEAD_MAX_CHARS,
   type JobActs,
   type ToolCallFact,
 } from './tool-acts.ts';
@@ -199,7 +200,9 @@ export function exchangeRecordLines(
  *  - un échec que rien n'a refait EST ce qui s'est passé : cité, et dit
  *    `words.failed` ;
  *  - une citation qui n'est pas la réponse entière dit combien en est cité
- *    (`words.cut`).
+ *    (`words.cut`), et cette note est prise sur la borne de la citation
+ *    (`cutNoteRoom`) : la ligne d'une citation coupée n'est pas plus longue
+ *    qu'avant #1101 (mesuré : +4,8 % de jetons par tour quand elle s'ajoutait).
  * Des lignes identiques (même outil, mêmes mots du runner, même citation) se
  * disent UNE fois, avec leur compte, là où tombe la dernière :
  * `telegram_send_message ×9 → {"sent":true}`. La borne compte ensuite des
@@ -226,7 +229,11 @@ export function quotedCallLines(
   }
   const entries = calls.flatMap((c, i) => {
     if (redoneBy.has(i)) return [];
-    const head = resultHead(c.output);
+    const first = resultHead(c.output);
+    // La note de coupe prend sa place sur la borne de la citation.
+    const head = first.cut
+      ? resultHead(c.output, RESULT_HEAD_MAX_CHARS - cutNoteRoom(words, first.cut.total))
+      : first;
     const redone = redoneCount.get(i) ?? 0;
     const notes = [
       ...(outcomes[i] === 'failed' ? [words.failed] : []),
