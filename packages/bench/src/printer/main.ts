@@ -6,7 +6,11 @@
 // de démarrer, il n'en invente pas un (invariant #4).
 
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { BENCH_PRINTER_RECORDS_ENV } from './identity';
+import {
+  BENCH_PRINTER_PRINT_SECONDS_ENV,
+  BENCH_PRINTER_RECORDS_ENV,
+  parsePrintSeconds,
+} from './identity';
 import { createBenchPrinterServer } from './server';
 
 const dir = process.env[BENCH_PRINTER_RECORDS_ENV];
@@ -17,4 +21,14 @@ if (dir === undefined || dir.trim() === '') {
   process.exit(2);
 }
 
-await createBenchPrinterServer(dir).connect(new StdioServerTransport());
+// Une imprimante qui imprime (#1071), quand la déclaration le dit ; une valeur
+// illisible arrête le serveur, elle n'est pas ignorée (invariant #4).
+const print = parsePrintSeconds(process.env[BENCH_PRINTER_PRINT_SECONDS_ENV]);
+if (!print.ok) {
+  process.stderr.write(`bench_printer_bad_print_seconds: ${print.reason}\n`);
+  process.exit(2);
+}
+
+await createBenchPrinterServer(dir, {
+  printMs: print.seconds === null ? null : print.seconds * 1000,
+}).connect(new StdioServerTransport());
