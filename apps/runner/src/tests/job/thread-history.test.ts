@@ -12,6 +12,7 @@ import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { agentJobs, agentTasks, conversations } from '@nodal-agents/db';
 import type { ModelMessage } from 'ai';
+import { personAnswerMessage } from '@nodal-agents/shared';
 import { loadThreadHistory } from '../../job/thread-history.ts';
 
 /**
@@ -1329,5 +1330,68 @@ describe('loadThreadHistory — runner-written lines are attributed to the runne
     });
     expect(assistantTexts(history)).toEqual(['Il est 14 h.']);
     expect(runnerRecords(history)).toEqual([]);
+  });
+});
+
+// #1084 — le relevé que le runner pose dans un job, après le message d'outils,
+// pour une question qu'un serveur a posée pendant un appel. Il sert au modèle
+// de CE job ; l'historique rejoué d'une conversation ne change pas avec lui.
+describe('loadThreadHistory — le relevé de la réponse à un serveur ne change pas l’historique (#1084) @cap:reprendre-conversation/moteur', () => {
+  it('un tour passé dont la transcription porte un relevé est relu comme le même tour sans lui', async () => {
+    const record = personAnswerMessage({
+      id: '00000000-0000-4000-8000-0000000010e4',
+      toolName: 'reviewdesk__order',
+      toolCallId: 'call-ask',
+      toolInput: { actions: { decline: 'Cancel' } },
+      status: 'rejected',
+      response: null,
+      notes: 'make it shorter',
+      resolvedAt: new Date('2026-11-14T15:08:00Z'),
+      resolvedBy: 'api',
+    });
+    const turn = (withRecord: boolean): unknown[] => [
+      { role: 'user', content: 'fais relire la page' },
+      {
+        role: 'assistant',
+        content: [
+          { type: 'tool-call', toolCallId: 'call-ask', toolName: 'reviewdesk__order', input: {} },
+        ],
+      },
+      {
+        role: 'tool',
+        content: [
+          {
+            type: 'tool-result',
+            toolCallId: 'call-ask',
+            toolName: 'reviewdesk__order',
+            output: { type: 'text', value: '{"action":"decline","content":null}' },
+          },
+        ],
+      },
+      ...(withRecord ? [record] : []),
+      ...tgReply('fais relire la page', 'Je raccourcis la page.').slice(1),
+    ];
+    const replay = async (chatId: string, withRecord: boolean) => {
+      await insertCompletedJob({
+        chatId,
+        task: 'fais relire la page',
+        result: null,
+        minutesAgo: 5,
+        messages: turn(withRecord),
+        toolsUsed: ['reviewdesk__order', 'telegram_send_message'],
+      });
+      return loadThreadHistory({
+        db: db as unknown as Parameters<typeof loadThreadHistory>[0]['db'],
+        conversationId: await convFor(chatId, 'telegram'),
+        channel: 'telegram',
+        excludeJobId: '00000000-0000-0000-0000-000000000000',
+        timezone: 'UTC',
+      });
+    };
+    const withRecord = await replay('1084001', true);
+    const without = await replay('1084002', false);
+    expect(JSON.stringify(withRecord)).toBe(JSON.stringify(without));
+    expect(JSON.stringify(withRecord)).not.toContain('Recorded by Nodal');
+    expect(assistantTexts(withRecord)).toEqual(['Je raccourcis la page.']);
   });
 });

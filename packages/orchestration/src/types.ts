@@ -88,6 +88,14 @@ export interface PendingDelegation {
   subJobId: JobId;
   /** tool_results for sibling tool_use blocks in the same response (message-integrity) */
   sideToolResults?: SideToolResult[];
+  /**
+   * Messages that follow the tool message of the delegating step, appended
+   * right after it on resume, as they were given (#1084: the runner's record
+   * of what the person answered to a server's question asked during a sibling
+   * call of that step). Opaque here: the orchestrator carries them, it does
+   * not read them.
+   */
+  messagesAfterResults?: unknown[];
 }
 
 export interface SideToolResult {

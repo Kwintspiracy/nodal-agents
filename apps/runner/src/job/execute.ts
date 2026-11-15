@@ -258,7 +258,11 @@ import { isMcpOriginJob } from '../lib/mcp-provenance.ts';
 import { checkpointsRoot } from '@nodal-agents/checkpoints';
 import type { RunnerDeps } from '../deps.ts';
 import { notifyApprovalCreated } from '../approvals/notify.ts';
-import { createRequestUserInput, elicitationTimeoutMs } from '../approvals/elicitation.ts';
+import {
+  createRequestUserInput,
+  elicitationTimeoutMs,
+  personAnswerMessages,
+} from '../approvals/elicitation.ts';
 import { notifyCodeTransition } from '../notify/code-transitions.ts';
 import {
   recordReviewerVerificationRuns,
@@ -3205,6 +3209,18 @@ async function runJobTracked(
   // attendue SANS suspendre le job (le serveur garde son appel ouvert). Donnée
   // à chaque appel d'outil de ce run, appels approuvés rejoués compris : c'est
   // souvent là qu'un outil gaté pose sa question.
+  //
+  // #1084 — chaque question posée est RETENUE (`questionsPosees`) : la
+  // réponse de la personne, ou son absence, revient à l'agent comme le relevé
+  // du runner (`personAnswerMessages`), message de la personne posé APRÈS le
+  // message d'outils qui porte l'appel. Deux endroits seulement le posent, les
+  // deux qui exécutent des appels : la fin des appels d'un pas (`relevesDuPas`)
+  // et la reprise des appels approuvés (`executeResolvedApprovals`).
+  // Une question encore ouverte quand son appel a rendu son résultat est dite
+  // telle que sa ligne la porte à cet instant (`personAnswerRecord`).
+  const questionsPosees: string[] = [];
+  const relevesDesQuestions = async (): Promise<ModelMessage[]> =>
+    (await personAnswerMessages(db, questionsPosees.splice(0))) as unknown as ModelMessage[];
   const askPerson = createRequestUserInput(
     deps,
     { jobId: jobId as string, agentId: agentRow.id, entityId: job.entityId ?? '' },
@@ -3213,6 +3229,9 @@ async function runJobTracked(
       timeoutMs: elicitationTimeoutMs(
         runnerEnv?.NODALAI_ELICITATION_TIMEOUT_MS ?? process.env['NODALAI_ELICITATION_TIMEOUT_MS'],
       ),
+      onAsked: (id) => {
+        questionsPosees.push(id);
+      },
     },
   );
   // Le temps où la personne réfléchit n'est pas du temps travaillé.
@@ -3542,6 +3561,9 @@ async function runJobTracked(
       if (!close) await recordApprovalWithoutEffect(db, req.id, replacementOutput);
     }
 
+    // #1084 — ce que la personne a répondu aux questions posées pendant ces
+    // appels rejoués, après les messages qui portent leurs résultats.
+    msgs = [...msgs, ...(await relevesDesQuestions())];
     return { messages: msgs, catastrophicRefusalMessage, perdu: null };
   };
 
@@ -5773,6 +5795,18 @@ async function runJobTracked(
         closeTurn(reason);
         return { role: 'tool', content: toolResultBlocks } as ModelMessage;
       };
+      // #1084 — les relevés des questions que les appels de ce pas ont
+      // posées, lus une fois tous ses appels faits (`relevesDuPas`).
+      let relevesDuPas: ModelMessage[] = [];
+      /**
+       * Ce que ce pas laisse dans la transcription, à TOUTE sortie qui la
+       * continue : son message d'outils, puis le relevé de chaque question
+       * posée pendant ses appels, dans l'ordre où elles l'ont été.
+       */
+      const turnMessages = (reason?: string): ModelMessage[] => [
+        turnToolMessage(reason),
+        ...relevesDuPas,
+      ];
 
       let awaitingApproval = false;
 
@@ -6217,6 +6251,10 @@ async function runJobTracked(
                 content: toolResultOutputText(b.output),
               }));
 
+              // #1084 — les questions posées pendant les appels de ce pas
+              // faits avant la délégation : leurs relevés suivront le message
+              // d'outils que la reprise construit.
+              const relevesAvantDelegation = await relevesDesQuestions();
               const delegation = await handleDelegation(
                 jobShape,
                 childSlug,
@@ -6228,6 +6266,7 @@ async function runJobTracked(
                 preAssignSideResults,
                 db,
                 prise,
+                relevesAvantDelegation,
               );
 
               // Drive the child synchronously, then resume the parent. In
@@ -6463,6 +6502,11 @@ async function runJobTracked(
         }
       }
 
+      // #1084 — tous les appels du pas sont faits : leurs questions sont
+      // closes (ou l'appel a fini avant, et la ligne le dit). Leurs relevés
+      // suivront le message d'outils, quelle que soit la sortie du pas.
+      relevesDuPas = await relevesDesQuestions();
+
       // j. Suspension states — approval gate.
       //
       // A gated tool created an approval request and did NOT execute. `awaitingApproval`
@@ -6486,7 +6530,7 @@ async function runJobTracked(
         if (rawToolCalls.length > 0) {
           messages = [
             ...messages,
-            turnToolMessage('an action of this turn is awaiting user approval'),
+            ...turnMessages('an action of this turn is awaiting user approval'),
           ];
         }
         if (requiresToolDelivery && !toolDelivered && redeliveryNudges < MAX_REDELIVERY_NUDGES) {
@@ -6542,7 +6586,7 @@ async function runJobTracked(
                 'deferred: verify platform state with a read tool before finalizing — see the runtime notice below.',
             }),
           });
-          messages = [...messages, turnToolMessage()];
+          messages = [...messages, ...turnMessages()];
           messages = [
             ...messages,
             { role: 'user', content: VERIFY_BEFORE_ASSERT_NUDGE } as ModelMessage,
@@ -6599,7 +6643,7 @@ async function runJobTracked(
           toolName: 'return_result',
           output: toResultOutput({ error: 'deferred: sibling tool error must be addressed first' }),
         });
-        messages = [...messages, turnToolMessage()];
+        messages = [...messages, ...turnMessages()];
         continue;
       }
 
@@ -6646,7 +6690,7 @@ async function runJobTracked(
                   "l'utilisateur peut faire — il la verra telle quelle.",
               }),
             });
-            messages = [...messages, turnToolMessage()];
+            messages = [...messages, ...turnMessages()];
             messages = [
               ...messages,
               {
@@ -6681,7 +6725,7 @@ async function runJobTracked(
                   "return_result avec status='blocked'.",
               }),
             });
-            messages = [...messages, turnToolMessage()];
+            messages = [...messages, ...turnMessages()];
             messages = [...messages, { role: 'user', content: deliveryNudge } as ModelMessage];
             continue;
           }
@@ -6696,7 +6740,7 @@ async function runJobTracked(
             toolName: 'return_result',
             output: toResultOutput({ acknowledged: true }),
           });
-          messages = [...messages, turnToolMessage()];
+          messages = [...messages, ...turnMessages()];
           toolsUsed = [...new Set([...toolsUsed, 'return_result'])];
 
           // The error column carries a SHORT human reason (first sentence) so the
@@ -6775,7 +6819,7 @@ async function runJobTracked(
                     "appelle return_result avec status='blocked'.",
                 }),
               });
-              messages = [...messages, turnToolMessage()];
+              messages = [...messages, ...turnMessages()];
               messages = [...messages, unresolvedFailureNudge(stuckDelivery)];
               continue;
             }
@@ -6820,7 +6864,7 @@ async function runJobTracked(
                   "deferred: tu n'as pas encore livré ta réponse via telegram_send_message — fais-le avant de terminer",
               }),
             });
-            messages = [...messages, turnToolMessage()];
+            messages = [...messages, ...turnMessages()];
             messages = [...messages, { role: 'user', content: deliveryNudge } as ModelMessage];
             continue;
           }
@@ -6934,7 +6978,7 @@ async function runJobTracked(
                     'entier comme réponse, puis signale à nouveau.',
                 }),
               });
-              messages = [...messages, turnToolMessage()];
+              messages = [...messages, ...turnMessages()];
               messages = [
                 ...messages,
                 { role: 'user', content: emptyDeliverableNudge } as ModelMessage,
@@ -6979,7 +7023,7 @@ async function runJobTracked(
               toolName: 'return_result',
               output: toResultOutput({ acknowledged: true }),
             });
-            messages = [...messages, turnToolMessage()];
+            messages = [...messages, ...turnMessages()];
             toolsUsed = [...new Set([...toolsUsed, 'return_result'])];
             return await echouerSurDeclaration(dueRetour);
           }
@@ -7029,7 +7073,7 @@ async function runJobTracked(
                   })),
                 }),
               });
-              messages = [...messages, turnToolMessage()];
+              messages = [...messages, ...turnMessages()];
               continue;
             }
             toolResultBlocks.push({
@@ -7038,7 +7082,7 @@ async function runJobTracked(
               toolName: 'return_result',
               output: toResultOutput({ acknowledged: true }),
             });
-            messages = [...messages, turnToolMessage()];
+            messages = [...messages, ...turnMessages()];
             toolsUsed = [...new Set([...toolsUsed, 'return_result'])];
             return await echouerSurDeclaration(items);
           }
@@ -7066,7 +7110,7 @@ async function runJobTracked(
           toolName: 'return_result',
           output: toResultOutput({ acknowledged: true }),
         });
-        messages = [...messages, turnToolMessage()];
+        messages = [...messages, ...turnMessages()];
 
         // If this run created tasks on the board, the workflow continues
         // asynchronously: the cron's executeReadyTasks runs each task and
@@ -7214,7 +7258,7 @@ async function runJobTracked(
 
       // k. Append tool results and continue
       if (rawToolCalls.length > 0) {
-        messages = [...messages, turnToolMessage()];
+        messages = [...messages, ...turnMessages()];
       }
 
       // k-pré-bis. Guard 1f — flush any non-progress nudges queued while

@@ -37,6 +37,8 @@ import {
 import {
   ELICITATION_CLOSED_BY,
   ELICITATION_MESSAGE_MAX,
+  personAnswerMessage,
+  type PersonAnswerMessage,
   parseElicitationSchema,
   validateElicitationContent,
   describeElicitationErrors,
@@ -71,6 +73,13 @@ export interface ElicitationWait {
   timeoutMs: number;
   /** Intervalle de sondage ; par défaut, au plus 1 s. */
   pollMs?: number;
+  /**
+   * La question est posée (sa ligne existe) : le run la retient pour en
+   * donner le relevé à l'agent après le message d'outils du pas (#1084,
+   * `personAnswerMessages`). Appelé avant toute attente, dans l'ordre des
+   * questions.
+   */
+  onAsked?: (approvalRequestId: string) => void;
 }
 
 /**
@@ -158,6 +167,7 @@ async function askDuringCall(
     }
     return row.id;
   });
+  wait.onAsked?.(id);
   console.warn(
     `[elicitation] ${req.serverSlug} asks during ${req.toolName} (job ${scope.jobId}): ` +
       `request ${id}, ${req.attachments.length} image(s), expires ${expiresAt.toISOString()}`,
@@ -295,4 +305,36 @@ export async function closeElicitationsOfLostJobs(
     await settleApprovalCards(db, { approvalRequestIds: closed.map((r) => r.id) });
   }
   return closed.length;
+}
+
+/**
+ * Le relevé de chaque question `ids`, écrit depuis sa ligne, dans l'ordre où
+ * elles ont été posées (#1084, `personAnswerRecord`) : ce que la personne a
+ * répondu, ou qu'elle n'a pas répondu, et pourquoi. Un id sans ligne (la ligne
+ * est partie avec son job) n'a pas de relevé : personne ne le lira plus.
+ */
+export async function personAnswerMessages(
+  db: AnyDrizzleDb,
+  ids: readonly string[],
+): Promise<PersonAnswerMessage[]> {
+  if (ids.length === 0) return [];
+  const rows = await db
+    .select({
+      id: approvalRequests.id,
+      toolName: approvalRequests.toolName,
+      toolCallId: approvalRequests.toolCallId,
+      toolInput: approvalRequests.toolInput,
+      status: approvalRequests.status,
+      response: approvalRequests.response,
+      notes: approvalRequests.notes,
+      resolvedAt: approvalRequests.resolvedAt,
+      resolvedBy: approvalRequests.resolvedBy,
+    })
+    .from(approvalRequests)
+    .where(and(inArray(approvalRequests.id, [...ids]), eq(approvalRequests.kind, 'elicitation')));
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  return ids.flatMap((id) => {
+    const row = byId.get(id);
+    return row ? [personAnswerMessage(row)] : [];
+  });
 }

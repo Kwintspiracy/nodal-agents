@@ -33,6 +33,8 @@ import type {
  * @param taskInput        Task + optional data to pass to the child
  * @param sideToolResults  Deferred tool_results for other tool_use blocks in same response
  * @param db               Drizzle DB handle
+ * @param messagesAfterResults  Messages that follow this step's tool message on
+ *                         resume (`PendingDelegation.messagesAfterResults`)
  */
 export async function handleDelegation(
   parentJob: AgentJob,
@@ -48,6 +50,7 @@ export async function handleDelegation(
    * cannot forget it (Nodal review of #575, P3).
    */
   parentClaimGeneration: number,
+  messagesAfterResults: readonly unknown[] = [],
 ): Promise<DelegationResult> {
   // 1. Find the child agent by slug (always DB lookup, never hardcoded).
   // F-6 (audit #2): slug is now unique per (entity_id, slug), not globally —
@@ -146,6 +149,7 @@ export async function handleDelegation(
     toolName,
     subJobId: childJob.id,
     ...(sideToolResults.length > 0 ? { sideToolResults } : {}),
+    ...(messagesAfterResults.length > 0 ? { messagesAfterResults: [...messagesAfterResults] } : {}),
   };
 
   // 4. Update parent: status → awaiting_delegation, store pending_delegation,

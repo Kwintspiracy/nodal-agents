@@ -673,6 +673,7 @@ export async function resumeDelegated(
       content: string;
       is_error?: boolean;
     }>;
+    messagesAfterResults?: unknown[];
   } | null;
 
   if (!pending?.toolUseId) {
@@ -837,7 +838,13 @@ ${consignes}`,
     ? (parent.messages as unknown[])
     : (JSON.parse(String(parent.messages ?? '[]')) as unknown[]);
 
-  const updatedMessages = [...existingMessages, { role: 'tool', content: toolResultParts }];
+  // What followed the tool message of the delegating step (#1084), right after
+  // it, as the runner gave it.
+  const updatedMessages = [
+    ...existingMessages,
+    { role: 'tool', content: toolResultParts },
+    ...(pending.messagesAfterResults ?? []),
+  ];
 
   // 6. Update parent: inject messages, set status → pending, clear pending_delegation,
   // bump chain_count. Each resume from a delegation suspension counts as one
