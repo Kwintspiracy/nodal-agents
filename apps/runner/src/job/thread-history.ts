@@ -86,8 +86,13 @@ import { eq, and, ne, desc, inArray, isNull, lt } from '@nodal-agents/db';
 import { agentJobs, chatMessages } from '@nodal-agents/db';
 import type { ModelMessage } from 'ai';
 import type { RunnerDeps } from '../deps.ts';
-import { loadExchangeRecords } from './exchange-record.ts';
-import { conversationMoments, isJobEnded, taskEndedAt } from './conversation-moments.ts';
+import { loadExchangeRecords, type JobEndFacts } from './exchange-record.ts';
+import {
+  conversationMoments,
+  isJobEnded,
+  taskEndedAt,
+  type ConversationMoment,
+} from './conversation-moments.ts';
 import { ownTranscript } from './tool-acts.ts';
 import {
   formatLocalTime,
@@ -378,57 +383,76 @@ export async function loadThreadHistory(opts: LoadThreadHistoryOptions): Promise
 const DASHBOARD_ROWS_LIMIT = 200;
 
 /**
- * L'historique d'un job du TABLEAU DE BORD : les tours de sa conversation tels
- * que la personne les a vécus, lus dans `chat_messages` — ses messages, mot
- * pour mot et datés, et les réponses de l'agent, celles du chat comme le
- * résultat d'un job qu'il a lancé. La même règle que les canaux : au plus
- * MAX_TURNS tours, sous BUDGET_CHARS, les plus anciens tombent d'abord.
+ * Ce qu'un job lancé depuis une conversation a produit, partagé entre ses
+ * deux lecteurs (ce fichier et le tour de chat, run-chat-turn.ts) : UNE
+ * définition des mots de l'agent (#1088).
  *
- * Ce qui précède le job, et lui seul : les lignes écrites avant sa création,
- * moins le message de la personne qui EST sa tâche (le dernier qui lui est
- * égal) — il ouvre le job, il n'est pas de l'historique.
- *
- * Ce que le runner a écrit d'un job lancé — un résultat recompilé (`relay`),
- * ses notes, les délégations — va dans le relevé `[système]`, jamais dans la
- * bouche de l'agent (#562), comme pour un canal.
- *
- * Depuis #1078, ce qu'un job lancé a produit (son résultat, puis ce relevé) est
- * relu à l'heure où il a FINI, pas sous le tour qui l'a lancé : le même ordre
- * que le tour de chat (conversation-moments.ts). Au lancement, les mots de
- * l'agent de cette ligne.
+ *  - `own` : son propre résultat, ce que l'agent a dit à la personne en
+ *    finissant, sans les lignes que le runner y a ajoutées (`runner_notes`),
+ *    rogné ; `''` quand il n'en a pas, ou quand le résultat est `relay` ;
+ *  - `relay` : le texte d'AUTRES jobs recompilé par le runner (#562), rogné ;
+ *    `''` sinon. Ce n'est jamais la bouche de l'agent ;
+ *  - `notes` : les lignes du runner (`runner_notes`), dites par le runner.
  */
-async function loadDashboardHistory(opts: LoadThreadHistoryOptions): Promise<ModelMessage[]> {
-  if (!opts.conversationId) return [];
-  const [current] = await opts.db
-    .select({ task: agentJobs.task, createdAt: agentJobs.createdAt })
-    .from(agentJobs)
-    .where(eq(agentJobs.id, opts.excludeJobId));
-  if (!current?.createdAt) {
-    throw new Error(`thread history: agent_jobs ${opts.excludeJobId} has no created_at`);
-  }
-  const rows = await opts.db
-    .select({
-      role: chatMessages.role,
-      content: chatMessages.content,
-      createdAt: chatMessages.createdAt,
-      jobId: chatMessages.jobId,
-      jobStatus: agentJobs.status,
-      jobCompletedAt: agentJobs.completedAt,
-      result: agentJobs.result,
-      resultKind: agentJobs.resultKind,
-      runnerNotes: agentJobs.runnerNotes,
-    })
-    .from(chatMessages)
-    .leftJoin(agentJobs, eq(chatMessages.jobId, agentJobs.id))
-    .where(
-      and(
-        eq(chatMessages.conversationId, opts.conversationId),
-        lt(chatMessages.createdAt, current.createdAt),
-      ),
-    )
-    .orderBy(desc(chatMessages.createdAt))
-    .limit(DASHBOARD_ROWS_LIMIT);
-  const chronological = [...rows].reverse();
+export interface JobOutcome {
+  own: string;
+  relay: string;
+  notes: string[];
+}
+
+/** `storedNotes` : la colonne `agent_jobs.runner_notes` telle que lue (jsonb). */
+export function jobOutcome(
+  result: string | null,
+  resultKind: string | null,
+  storedNotes: unknown,
+): JobOutcome {
+  const notes = Array.isArray(storedNotes) ? (storedNotes as string[]) : [];
+  return {
+    own: resultKind !== 'relay' ? (withoutRunnerNotes(result, notes) ?? '').trim() : '',
+    relay: resultKind === 'relay' ? (result ?? '').trim() : '',
+    notes,
+  };
+}
+
+/**
+ * Une ligne de `chat_messages` telle que `loadDashboardHistory` la lit, avec le
+ * job qu'elle a lancé (jointure à gauche : `null` partout pour une ligne sans
+ * job).
+ */
+export type DashboardHistoryRow = {
+  role: string;
+  content: string;
+  createdAt: Date | null;
+  jobId: string | null;
+  jobStatus: string | null;
+  jobCompletedAt: Date | null;
+  result: string | null;
+  resultKind: string | null;
+  // Typed through `Record`, as in `replyOfRow`: the column as read (jsonb).
+} & Record<'runnerNotes', unknown>;
+
+/** Le job qu'on démarre : sa tâche (le message qui l'ouvre) et sa création. */
+export interface DashboardHistoryJob {
+  task: string;
+  createdAt: Date;
+}
+
+type DashboardMoment = ConversationMoment<DashboardHistoryRow>;
+
+/**
+ * Les tours de la conversation qui précède le job, avant le budget : les
+ * lignes écrites avant lui, moins le message qui EST sa tâche (le dernier qui
+ * lui est égal), rangées en moments (#1078) puis en tours. Pure.
+ */
+function dashboardTurns(
+  rows: readonly DashboardHistoryRow[],
+  current: DashboardHistoryJob,
+): {
+  turns: DashboardMoment[][];
+  first: number;
+  endOf: (r: DashboardHistoryRow) => Date | null;
+} {
+  const chronological = [...rows];
   for (let i = chronological.length - 1; i >= 0; i--) {
     const r = chronological[i]!;
     if (r.role === 'user' && r.content === current.task) {
@@ -444,9 +468,8 @@ async function loadDashboardHistory(opts: LoadThreadHistoryOptions): Promise<Mod
   // la création du job qu'on démarre. Sinon il est relu comme un travail encore
   // en cours, et l'historique de ce job ne dépend pas de ce qui arrive après
   // son départ.
-  type Row = (typeof chronological)[number];
   const createdAt = current.createdAt;
-  const endOf = (r: Row): Date | null => {
+  const endOf = (r: DashboardHistoryRow): Date | null => {
     if (!r.jobId) return null;
     const endedAt = taskEndedAt({ status: r.jobStatus, completedAt: r.jobCompletedAt });
     return endedAt !== null && endedAt < createdAt ? endedAt : null;
@@ -460,64 +483,83 @@ async function loadDashboardHistory(opts: LoadThreadHistoryOptions): Promise<Mod
   // réponses de l'agent, les fins de job). On garde ou on jette un tour entier,
   // jamais une moitié. Seuls les MAX_TURNS derniers peuvent être relus : les
   // relevés ne se lisent que pour eux.
-  const turns: Array<typeof moments> = [];
+  const turns: DashboardMoment[][] = [];
   for (const m of moments) {
     const last = turns[turns.length - 1];
     if ((m.kind === 'row' && m.row.role === 'user') || !last) turns.push([m]);
     else last.push(m);
   }
-  const first = Math.max(0, turns.length - MAX_TURNS);
-  // Le relevé d'un job lancé dit ce qu'en dit ce lecteur (#1101) : fini s'il a
-  // fini AVANT le job qu'on démarre (ou fini sans heure rangée, son issue
-  // restant sous son lancement), sinon encore en cours, et alors sans aucune
-  // citation : un essai qu'il refaisait n'est pas son issue.
-  const records = await loadExchangeRecords(
-    opts.db,
-    turns
+  return { turns, first: Math.max(0, turns.length - MAX_TURNS), endOf };
+}
+
+/**
+ * Les relevés que l'historique d'un job peut lire (#1075) : ceux des jobs
+ * lancés par les tours qui peuvent être relus, et ce qu'en dit ce lecteur
+ * (#1101) : fini s'il a fini AVANT le job qu'on démarre (ou fini sans heure
+ * rangée, son issue restant sous son lancement), sinon encore en cours, et
+ * alors sans aucune citation : un essai qu'il refaisait n'est pas son issue.
+ * Pure : la demande que `loadDashboardHistory` fait à `loadExchangeRecords`,
+ * et celle qu'un rejeu refait.
+ */
+export function dashboardHistoryRecordsRequest(
+  rows: readonly DashboardHistoryRow[],
+  current: DashboardHistoryJob,
+): {
+  jobIds: Array<string | null>;
+  hasEnded: (j: JobEndFacts) => boolean;
+} {
+  const { turns, first } = dashboardTurns(rows, current);
+  return {
+    jobIds: turns
       .slice(first)
       .flat()
       .flatMap((m) => (m.kind === 'row' ? [m.row.jobId] : [])),
-    {
-      hasEnded: (j) =>
-        isJobEnded(j.status) && (j.completedAt === null || j.completedAt < createdAt),
-    },
-  );
-
-  /**
-   * Ce que le job lancé a produit, dans les formes de ce lecteur : son propre
-   * résultat comme les mots de l'agent, puis le relevé du runner (ses outils,
-   * un résultat recompilé, ses notes).
-   */
-  const outcome = (row: Row) => {
-    const runnerNotes = Array.isArray(row.runnerNotes) ? row.runnerNotes : [];
-    return {
-      own: row.resultKind !== 'relay' ? withoutRunnerNotes(row.result, runnerNotes) : null,
-      relay: row.resultKind === 'relay' ? (row.result ?? '').trim() : '',
-      runnerNotes,
-    };
+    hasEnded: (j) =>
+      isJobEnded(j.status) && (j.completedAt === null || j.completedAt < current.createdAt),
   };
+}
+
+/**
+ * Les messages de l'historique d'un job du tableau de bord, à partir des
+ * lignes de sa conversation (chronologiques, écrites avant le job) et des
+ * relevés que `dashboardHistoryRecordsRequest` demande. Pure, et exportée pour
+ * qu'un rejeu reconstruise ce qu'un job lancé depuis une conversation a lu
+ * (#1088), comme `chatTurnMessages` pour le tour de chat.
+ */
+export function dashboardHistoryMessages(input: {
+  rows: readonly DashboardHistoryRow[];
+  current: DashboardHistoryJob;
+  records: ReadonlyMap<string, readonly string[]>;
+  timezone: string;
+}): ModelMessage[] {
+  const { records, timezone } = input;
+  const { turns, first, endOf } = dashboardTurns(input.rows, input.current);
+
   const spokenAndRecord = (said: string, recordLines: readonly string[]): ModelMessage[] => [
     ...(said !== '' ? [{ role: 'assistant', content: truncate(said) } as ModelMessage] : []),
     ...(recordLines.length > 0 ? [runnerRecordMessage(recordLines) as ModelMessage] : []),
   ];
-  const recordOf = (row: Row, out: ReturnType<typeof outcome> | null): string[] => [
+  /**
+   * Ce que le job lancé a produit, dans les formes de ce lecteur : son propre
+   * résultat comme les mots de l'agent (`jobOutcome`), puis le relevé du
+   * runner (ses outils, un résultat recompilé, ses notes).
+   */
+  const recordOf = (row: DashboardHistoryRow, out: JobOutcome | null): string[] => [
     ...(records.get(row.jobId!) ?? []),
     ...(out && out.relay !== '' ? [truncate(out.relay)] : []),
-    ...(out?.runnerNotes ?? []),
+    ...(out?.notes ?? []),
   ];
 
-  const messagesOf = (m: (typeof moments)[number]): ModelMessage[] => {
+  const messagesOf = (m: DashboardMoment): ModelMessage[] => {
     const row = m.row;
     if (m.kind === 'end') {
       // La fin du job, à l'heure où il a fini : ce qu'il a produit.
-      const out = outcome(row);
-      return spokenAndRecord((out.own ?? '').trim(), recordOf(row, out));
+      const out = jobOutcome(row.result, row.resultKind, row.runnerNotes);
+      return spokenAndRecord(out.own, recordOf(row, out));
     }
     if (row.role === 'user') {
       if (!row.createdAt) throw new Error('thread history: a chat_messages row has no created_at');
-      return [
-        { role: 'user', content: datedTurn(truncate(row.content), row.createdAt, opts.timezone) },
-      ];
+      return [{ role: 'user', content: datedTurn(truncate(row.content), row.createdAt, timezone) }];
     }
     if (!row.jobId) return spokenAndRecord(row.content.trim(), []);
     // Un job fini SANS heure de fin rangée garde son issue sous son lancement,
@@ -525,8 +567,8 @@ async function loadDashboardHistory(opts: LoadThreadHistoryOptions): Promise<Mod
     const unplaced = row.jobCompletedAt === null && isJobEnded(row.jobStatus);
     // Une fin placée plus loin, ou un travail encore en cours pour ce lecteur :
     // au lancement, les mots de l'agent et ce que ses outils ont fait.
-    const out = unplaced ? outcome(row) : null;
-    const said = [row.content.trim(), (out?.own ?? '').trim()].filter((t) => t !== '').join('\n\n');
+    const out = unplaced ? jobOutcome(row.result, row.resultKind, row.runnerNotes) : null;
+    const said = [row.content.trim(), out?.own ?? ''].filter((t) => t !== '').join('\n\n');
     return spokenAndRecord(said, endOf(row) !== null ? [] : recordOf(row, out));
   };
 
@@ -550,6 +592,74 @@ async function loadDashboardHistory(opts: LoadThreadHistoryOptions): Promise<Mod
   let kept = assemble(from);
   while (kept.length > 0 && totalChars(kept) > BUDGET_CHARS) kept = assemble(++from);
   return kept.flatMap((b) => b);
+}
+
+/**
+ * L'historique d'un job du TABLEAU DE BORD : les tours de sa conversation tels
+ * que la personne les a vécus, lus dans `chat_messages` — ses messages, mot
+ * pour mot et datés, et les réponses de l'agent, celles du chat comme le
+ * résultat d'un job qu'il a lancé. La même règle que les canaux : au plus
+ * MAX_TURNS tours, sous BUDGET_CHARS, les plus anciens tombent d'abord.
+ *
+ * Ce qui précède le job, et lui seul : les lignes écrites avant sa création,
+ * moins le message de la personne qui EST sa tâche (le dernier qui lui est
+ * égal) — il ouvre le job, il n'est pas de l'historique.
+ *
+ * Ce que le runner a écrit d'un job lancé — un résultat recompilé (`relay`),
+ * ses notes, les délégations — va dans le relevé `[système]`, jamais dans la
+ * bouche de l'agent (#562), comme pour un canal.
+ *
+ * Depuis #1078, ce qu'un job lancé a produit (son résultat, puis ce relevé) est
+ * relu à l'heure où il a FINI, pas sous le tour qui l'a lancé : le même ordre
+ * que le tour de chat (conversation-moments.ts). Au lancement, les mots de
+ * l'agent de cette ligne.
+ *
+ * Les lectures de la base restent ici ; ce qui en est fait est pur
+ * (`dashboardHistoryRecordsRequest`, `dashboardHistoryMessages`, #1088).
+ */
+async function loadDashboardHistory(opts: LoadThreadHistoryOptions): Promise<ModelMessage[]> {
+  if (!opts.conversationId) return [];
+  const [current] = await opts.db
+    .select({ task: agentJobs.task, createdAt: agentJobs.createdAt })
+    .from(agentJobs)
+    .where(eq(agentJobs.id, opts.excludeJobId));
+  if (!current?.createdAt) {
+    throw new Error(`thread history: agent_jobs ${opts.excludeJobId} has no created_at`);
+  }
+  const job: DashboardHistoryJob = { task: current.task, createdAt: current.createdAt };
+  const rows: DashboardHistoryRow[] = await opts.db
+    .select({
+      role: chatMessages.role,
+      content: chatMessages.content,
+      createdAt: chatMessages.createdAt,
+      jobId: chatMessages.jobId,
+      jobStatus: agentJobs.status,
+      jobCompletedAt: agentJobs.completedAt,
+      result: agentJobs.result,
+      resultKind: agentJobs.resultKind,
+      runnerNotes: agentJobs.runnerNotes,
+    })
+    .from(chatMessages)
+    .leftJoin(agentJobs, eq(chatMessages.jobId, agentJobs.id))
+    .where(
+      and(
+        eq(chatMessages.conversationId, opts.conversationId),
+        lt(chatMessages.createdAt, current.createdAt),
+      ),
+    )
+    .orderBy(desc(chatMessages.createdAt))
+    .limit(DASHBOARD_ROWS_LIMIT);
+  const chronological = [...rows].reverse();
+  const request = dashboardHistoryRecordsRequest(chronological, job);
+  const records = await loadExchangeRecords(opts.db, request.jobIds, {
+    hasEnded: request.hasEnded,
+  });
+  return dashboardHistoryMessages({
+    rows: chronological,
+    current: job,
+    records,
+    timezone: opts.timezone,
+  });
 }
 
 /**
