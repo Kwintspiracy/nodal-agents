@@ -381,8 +381,8 @@ describe('the form of a spoken reply is said with the message it answers (#1088)
           `The task launched at ${formatLocalTime(TZ, at('13:40:04'))} ended. Completed.`,
           at('13:58:00'),
         ),
-        '> The magazine is unfinished: no verified sources.',
       ]),
+      { role: 'assistant', content: 'The magazine is unfinished: no verified sources.' },
       { role: 'user', content: dated('Thanks', at('14:00:00')) },
       { role: 'assistant', content: 'You are welcome.' },
       { role: 'user', content: dated(ARE_YOU_THERE, sentAt) },
@@ -404,7 +404,7 @@ describe('the form of a spoken reply is said with the message it answers (#1088)
     const { calls, sentAt } = await turn(conv, ARE_YOU_THERE, 'spoken');
     const seen = calls[0]!.messages;
     expect(texts(seen)).toContain(
-      'Still running — no result yet. Do NOT dispatch it again; wait for it to finish.',
+      'Still running — no result yet. What the person says about it, or asks beside it, still goes through run_task.',
     );
     expect(seen.slice(-2)).toEqual([
       { role: 'user', content: dated(ARE_YOU_THERE, sentAt) },
@@ -491,6 +491,8 @@ describe('chatTurnMessages, the pure builder a replay calls on real rows (#1088)
     jobError: null,
     jobCreatedAt: null,
     jobCompletedAt: null,
+    jobResultKind: null,
+    jobRunnerNotes: null,
   });
   const rows = [
     row('user', 'Print the magazine', '13:10:00'),

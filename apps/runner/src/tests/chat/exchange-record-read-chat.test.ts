@@ -223,7 +223,7 @@ describe('the chat turn reads the record of a launched job as settled facts only
         spoken,
       );
       expect(runTaskResult(messages)).toBe(
-        `Still running — no result yet. Do NOT dispatch it again; wait for it to finish.\n\n${RUNNING_RECORD}`,
+        `Still running — no result yet. What the person says about it, or asks beside it, still goes through run_task.\n\n${RUNNING_RECORD}`,
       );
       // What the provider receives, the request body itself.
       expect(body).toContain(JSON.stringify(RUNNING_RECORD).slice(1, -1));
@@ -241,8 +241,8 @@ describe('the chat turn reads the record of a launched job as settled facts only
         .filter((e): e is string[] => e !== null)
         .filter((e) => e[0]!.includes('The task launched at'));
       expect(ends).toHaveLength(1);
+      // The task's report is the agent's message after the record (#1088).
       expect(ends[0]!.slice(1)).toEqual([
-        '> Sent you the cat.',
         `[Actions performed in this exchange: generate_image, ${SEND} ×2]`,
         'generate_image → {"path":"out/cat.png"}',
         `${SEND} → {"error":"invalid_input: path: Required"}`,
