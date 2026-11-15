@@ -24,19 +24,17 @@
 // record-words.ts :
 //   - un job qui n'a pas fini est dit par ses outils appelés jusque-là, sans
 //     citation (`running`) : un appel raté qu'il refait n'est pas son issue ;
-//   - un échec qu'un appel RÉUSSI du même outil a refait ensuite n'est pas
-//     cité, il est compté sur ce succès (`nom (after 1 failed attempt) → …`) ;
-//     un échec que rien n'a refait est cité, et dit (`nom (failed) → …`).
-//     L'issue est lue sur ce que le runner a RANGÉ (`callOutcome`), jamais
-//     sur les mots d'un résultat ;
+//   - un job fini : chacun de ses appels qui agissent est cité, dans l'ordre,
+//     comme sa réponse le dit. Le runner n'affirme aucune issue (« échoué »,
+//     « refait ») : il n'en range aucune, et qu'un appel en refasse un autre
+//     est une intention qu'il ne peut pas connaître (revue de #1106, passe 1).
+//     Un essai raté cité à côté du succès qui l'a suivi reste ouvert (#1101) ;
 //   - une citation qui ne tient pas entière garde ses deux premières lignes,
 //     coupées entre deux mots, et finit par `…`. Une note de coupe a été
 //     mesurée (15/11, modèle en service) : elle ne changeait pas ce que le
 //     modèle lit, et coûtait +2,8 % par tour ; elle n'est pas posée. Une
 //     réponse coupée avant la phrase qui la tranche reste trompeuse : c'est
 //     la suite de #1101, pas réglée ici.
-// Ce que le runner dit d'un appel est AVANT la flèche ; ce que l'outil a dit,
-// APRÈS : un texte rangé ne peut pas imiter les mots du runner.
 //
 // « Déclaré » est un fait de l'APPEL, rangé quand il a tourné, jamais relu sur
 // les déclarations du jour : la ligne `tool_calls` de l'appel porte le
@@ -97,7 +95,6 @@ import {
   type TaskLedgerEntry,
 } from './task-ledger.ts';
 import {
-  callOutcome,
   jobActs,
   oneLine,
   recordField,
@@ -192,49 +189,20 @@ export function exchangeRecordLines(
 }
 
 /**
- * Les citations des appels qui agissent d'UN job, dans l'ordre (#1101), avant
- * la borne. Ce que le runner dit d'un appel vient de ce qu'il a RANGÉ de son
- * issue (`callOutcome`), jamais des mots du résultat :
- *  - un échec suivi, plus tard dans le même job, d'un appel RÉUSSI du même
- *    outil a été refait : il n'est pas cité, il est compté sur la ligne de ce
- *    succès (`words.redone`). Lu comme « ce qui s'est passé », il ne l'était pas ;
- *  - un échec que rien n'a refait EST ce qui s'est passé : cité, et dit
- *    `words.failed` ;
- * Des lignes identiques (même outil, mêmes mots du runner, même citation) se
- * disent UNE fois, avec leur compte, là où tombe la dernière :
- * `telegram_send_message ×9 → {"sent":true}`. La borne compte ensuite des
- * lignes distinctes : neuf accusés identiques ne chassent plus un résultat qui
- * dit quelque chose. Pour tout outil, sans liste. Pure.
+ * Les citations des appels qui agissent d'UN job, dans l'ordre, avant la
+ * borne : chacun, tel qu'il a répondu, sans rien affirmer de son issue. Des
+ * citations identiques (même outil, même début) se disent UNE fois, avec leur
+ * compte, là où tombe la dernière : `telegram_send_message ×9 → {"sent":true}`.
+ * La borne compte ensuite des lignes distinctes : neuf accusés identiques ne
+ * chassent plus un résultat qui dit quelque chose. Pour tout outil, sans
+ * liste. Pure.
  */
 export function quotedCallLines(
   calls: readonly ToolCallFact[],
   words: RecordWords = RECORD_WORDS,
 ): string[] {
-  const outcomes = calls.map((c) => callOutcome(c.output));
-  // Pour chaque échec, le premier succès du même outil qui le suit.
-  const redoneBy = new Set<number>();
-  const redoneCount = new Map<number, number>();
-  const nextSuccess = new Map<string, number>();
-  for (let i = calls.length - 1; i >= 0; i--) {
-    const name = calls[i]!.name;
-    if (outcomes[i] === 'succeeded') nextSuccess.set(name, i);
-    const by = nextSuccess.get(name);
-    if (outcomes[i] === 'failed' && by !== undefined) {
-      redoneBy.add(i);
-      redoneCount.set(by, (redoneCount.get(by) ?? 0) + 1);
-    }
-  }
-  const entries = calls.flatMap((c, i) => {
-    if (redoneBy.has(i)) return [];
-    const head = resultHead(c.output);
-    const redone = redoneCount.get(i) ?? 0;
-    const notes = [
-      ...(outcomes[i] === 'failed' ? [words.failed] : []),
-      ...(redone > 0 ? [words.redone(redone)] : []),
-    ];
-    return [{ name: recordField(c.name, NAME_MAX_CHARS), notes, head }];
-  });
-  const key = (e: (typeof entries)[number]) => JSON.stringify([e.name, e.notes, e.head]);
+  const entries = calls.map((c) => [recordField(c.name, NAME_MAX_CHARS), resultHead(c.output)]);
+  const key = ([name, head]: string[]) => `${name}\u0000${head}`;
   const count = new Map<string, number>();
   const last = new Map<string, number>();
   entries.forEach((e, i) => {
@@ -242,7 +210,7 @@ export function quotedCallLines(
     last.set(key(e), i);
   });
   return entries.flatMap((e, i) =>
-    last.get(key(e)) === i ? [words.quoteLine({ ...e, count: count.get(key(e))! })] : [],
+    last.get(key(e)) === i ? [words.quoteLine(e[0]!, count.get(key(e))!, e[1]!)] : [],
   );
 }
 

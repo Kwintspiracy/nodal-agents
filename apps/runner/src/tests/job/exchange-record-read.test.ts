@@ -11,11 +11,11 @@
 //     The sentence saying it was one copy of three pages was past the cut.
 //
 // The rule: a job that has not ended is told by the names of its calls and
-// nothing it returned; a failure redone by a later success of the same tool is
-// counted on that success, a failure not redone is quoted AS failed — both read
-// on the outcome the runner stored (`toolResultShape`), never on the words; a
-// quotation cut at its bound is cut between two words and marked `…`, and
-// costs no more than before. A note saying the cut was measured on the model
+// nothing it returned. An ended job's acting calls are quoted as on main,
+// every one, in order, with nothing asserted about an outcome: whether a call
+// "redid" another is an intent the runner cannot know (review of #1106, pass
+// 1). A quotation cut at its bound is cut between two words and marked `…`,
+// never inside a character, and costs no more than before. A note saying the cut was measured on the model
 // in service (2026-11-15) and changed nothing in what it read: defect 2 stays
 // open (#1101), it is the words of the tool's answer once its end is missing.
 // These tests assert the exact text, on the pure constructor
@@ -128,80 +128,58 @@ describe('a job that has not ended is told by its calls, never by what they retu
   });
 });
 
-// ─── 2. An attempt that was done again ───────────────────────────────────────
+// ─── 2. An ended job: every acting call quoted, in order, nothing asserted ───
 
-describe('a failure redone by a later success of the same tool is counted, a failure not redone is quoted as failed (#1101) @cap:reprendre-conversation/moteur', () => {
-  it('a delivery tool: failed, then sent — one line, the failure counted on the success', () => {
+describe('an ended job: every acting call is quoted in order, and the runner asserts no outcome (#1101) @cap:reprendre-conversation/moteur', () => {
+  it('two different sends, the first failed for good: BOTH are quoted, in order', () => {
+    // Review of #1106, pass 1: a success of the same tool must not claim a
+    // failure it did not redo. Asked "did you send the report?", the record
+    // must still say that the report's send failed.
     const own = acts([
+      [SEND, json({ error: 'invalid_input: report.pdf is not an image' })],
+      [SEND, json({ sent: true, file: 'chart.png' })],
+    ]);
+    expect(lines({ own })).toEqual([
+      `[Actions performed in this exchange: ${SEND} ×2]`,
+      `${SEND} → {"error":"invalid_input: report.pdf is not an image"}`,
+      `${SEND} → {"sent":true,"file":"chart.png"}`,
+    ]);
+  });
+
+  it('fail, retry, fail, retry: identical lines merged with their count, none hidden', () => {
+    const own = acts([
+      [SEND, INVALID],
+      [SEND, SENT],
       [SEND, INVALID],
       [SEND, SENT],
     ]);
     expect(lines({ own })).toEqual([
-      `[Actions performed in this exchange: ${SEND} ×2]`,
-      `${SEND} (after 1 failed attempt) → {"sent":true}`,
+      `[Actions performed in this exchange: ${SEND} ×4]`,
+      `${SEND} ×2 → {"error":"invalid_input: path: Required"}`,
+      `${SEND} ×2 → {"sent":true}`,
     ]);
   });
 
-  it('an MCP tool: two failures it raised, then a success', () => {
+  it('an answer that carries an "error" key is quoted as data, with no verdict on it', () => {
     const own = acts([
-      [MCP_SEND, mcpRaised(MCP_SEND, 'upstream timeout')],
-      [MCP_SEND, mcpRaised(MCP_SEND, 'upstream timeout')],
-      [MCP_SEND, text(wrapUntrusted(MCP_SEND, 'File delivered to the shared folder.'))],
-    ]);
-    expect(lines({ own })).toEqual([
-      `[Actions performed in this exchange: ${MCP_SEND} ×3]`,
-      `${MCP_SEND} (after 2 failed attempts) → File delivered to the shared folder.`,
-    ]);
-  });
-
-  it('a failure NOT redone is what happened: quoted, and said failed', () => {
-    const own = acts([
-      [SEND, SENT],
-      [SEND, INVALID],
-    ]);
-    expect(lines({ own })).toEqual([
-      `[Actions performed in this exchange: ${SEND} ×2]`,
-      `${SEND} → {"sent":true}`,
-      `${SEND} (failed) → {"error":"invalid_input: path: Required"}`,
-    ]);
-  });
-
-  it('a product tool refused by the gate, then ANOTHER tool succeeding: the failure stands', () => {
-    const blocked = json({
-      error: 'blocked: an approval rule forbids "file_write" for this agent.',
-    });
-    const own = acts([
-      ['file_write', blocked],
-      ['file_edit', json({ path: 'a.md', edited: true })],
-    ]);
-    expect(lines({ own })).toEqual([
-      '[Actions performed in this exchange: file_write, file_edit]',
-      'file_write (failed) → {"error":"blocked: an approval rule forbids \\"file_write\\" for this agent."}',
-      'file_edit → {"path":"a.md","edited":true}',
-    ]);
-  });
-
-  it('the outcome is read on the stored shape, never on the words: an answer that SAYS error or failed is not a failure', () => {
-    const own = acts([
+      [MCP_SEND, json({ error: null, files: ['a.pdf'] })],
       [
         MCP_SEND,
-        text(wrapUntrusted(MCP_SEND, '{"error":null,"failed":0,"delivered":"report.pdf"}')),
+        text(wrapUntrusted(MCP_SEND, '{"error":"none","ok":true,"delivered":"report.pdf"}')),
       ],
-      ['run_command', text('Failed: 0. Errors: none. 3 files sent.')],
     ]);
     expect(lines({ own })).toEqual([
-      `[Actions performed in this exchange: ${MCP_SEND}, run_command]`,
-      `${MCP_SEND} → {"error":null,"failed":0,"delivered":"report.pdf"}`,
-      'run_command → Failed: 0. Errors: none. 3 files sent.',
+      `[Actions performed in this exchange: ${MCP_SEND} ×2]`,
+      `${MCP_SEND} → {"error":null,"files":["a.pdf"]}`,
+      `${MCP_SEND} → {"error":"none","ok":true,"delivered":"report.pdf"}`,
     ]);
   });
 
-  it('a delegated job follows the same rule, under its delegation line', () => {
+  it('a delegated job: the same, under its delegation line', () => {
     const child = acts(
       [
         [MCP_SEND, mcpRaised(MCP_SEND, 'quota exceeded')],
         [MCP_SEND, text(wrapUntrusted(MCP_SEND, 'Sent.'))],
-        ['file_write', json({ error: 'disk full' })],
       ],
       'child-1',
     );
@@ -211,9 +189,9 @@ describe('a failure redone by a later success of the same tool is counted, a fai
     ).toEqual([
       '[Actions performed in this exchange: assign_courier]',
       'assign_courier → The courier finished.',
-      `[Delegated to Courier (completed) — actions: ${MCP_SEND} ×2, file_write]`,
-      `${MCP_SEND} (after 1 failed attempt) → Sent.`,
-      'file_write (failed) → {"error":"disk full"}',
+      `[Delegated to Courier (completed) — actions: ${MCP_SEND} ×2]`,
+      `${MCP_SEND} → {"error":"quota exceeded"}`,
+      `${MCP_SEND} → Sent.`,
     ]);
   });
 });
@@ -242,16 +220,37 @@ describe('a quotation cut at its bound is cut between two words and marked, with
 
   it('the cut falls between two words, never inside one, and the quotation stays within its bound', () => {
     const q = quoteAtBound(PRINT_ANSWER, RESULT_HEAD_MAX_CHARS);
-    expect(q.cut).toEqual({ quoted: 195, total: 400 });
-    expect(q.text.length).toBeLessThanOrEqual(RESULT_HEAD_MAX_CHARS);
-    expect(PRINT_ANSWER.startsWith(q.text.slice(0, -1))).toBe(true);
-    expect(PRINT_ANSWER[q.text.length - 1]).toBe(' ');
+    expect(q.length).toBe(196);
+    expect(PRINT_ANSWER.startsWith(q.slice(0, -1))).toBe(true);
+    expect(PRINT_ANSWER[q.length - 1]).toBe(' ');
     // One word longer than the bound: cut inside it, there is nothing better.
-    const word = quoteAtBound('x'.repeat(500), RESULT_HEAD_MAX_CHARS);
-    expect(word).toEqual({
-      text: `${'x'.repeat(RESULT_HEAD_MAX_CHARS - 1)}…`,
-      cut: { quoted: RESULT_HEAD_MAX_CHARS - 1, total: 500 },
+    expect(quoteAtBound('x'.repeat(500), RESULT_HEAD_MAX_CHARS)).toBe(
+      `${'x'.repeat(RESULT_HEAD_MAX_CHARS - 1)}…`,
+    );
+  });
+
+  it('a cut never splits a character: an emoji at the bound goes whole or not at all', () => {
+    // Review of #1106, pass 1: a surrogate pair cut in two leaves a lone half,
+    // which is not valid Unicode and goes as such to the provider.
+    const LONE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+    const emoji = '\u{1F4C4}'; // two UTF-16 units
+    // No space anywhere: the cut is by character, and the bound falls inside the pair.
+    const run = `${'x'.repeat(RESULT_HEAD_MAX_CHARS - 2)}${emoji}${'y'.repeat(50)}`;
+    const quoted = quoteAtBound(run, RESULT_HEAD_MAX_CHARS);
+    expect(quoted).toBe(`${'x'.repeat(RESULT_HEAD_MAX_CHARS - 2)}…`);
+    expect(quoted).not.toMatch(LONE);
+    expect(resultHead(text(run))).toBe(quoted);
+    // The same for a field cut at its bound (a task title, a tool name).
+    const field = formatTaskLedgerEntry({
+      jobId: null,
+      title: `${'t'.repeat(118)}${emoji}rest`,
+      status: 'done',
+      result: 'ok',
+      toolsUsed: [],
+      calls: [],
     });
+    expect(field).toBe(`[Task "${'t'.repeat(118)}…" completed: result: ok]`);
+    expect(field).not.toMatch(LONE);
   });
 
   it('an answer that fits is quoted whole; one that does not keeps two lines, then `…`', () => {
@@ -268,10 +267,10 @@ describe('a quotation cut at its bound is cut between two words and marked, with
     expect(resultHead(text('Delivered.\nId 77'))).toBe('Delivered. Id 77');
   });
 
-  it('a failed call whose answer is cut: said failed, cut and marked', () => {
+  it('a long error answer: cut and marked like any other, nothing said of its outcome', () => {
     const own = acts([[SEND, json({ error: `invalid_input: ${'y'.repeat(300)}` })]]);
     const [, line] = lines({ own });
-    expect(line).toBe(`${SEND} (failed) → {"error":"invalid_input: ${'y'.repeat(174)}…`);
+    expect(line).toBe(`${SEND} → {"error":"invalid_input: ${'y'.repeat(174)}…`);
   });
 
   it("a task's result cut at its bound: between two words, in the task line", () => {
@@ -294,9 +293,8 @@ describe('a quotation cut at its bound is cut between two words and marked, with
 // Measured on the real spoken turn of 2026-11-14: a note added to every cut
 // quotation and heads no longer held to two lines cost +1 407 input tokens per
 // turn (+4.8 %); the note taken from the bound still cost +803 (+2.8 %). The
-// record now costs no more than main's, but for the runner's marks on an
-// outcome (`(failed)`, `(after N failed attempts)`) and the `…` of lines left
-// out.
+// record now costs no more than main's, but for a short answer quoted whole
+// and the `…` of lines left out.
 
 /**
  * The quotation of #1076, as main wrote it before #1101: the first two
@@ -488,7 +486,7 @@ const FAILED_THEN_SENT: Call[] = [
 ];
 
 describe('the thread of a channel: an ended exchange (#1101) @cap:reprendre-conversation/moteur', () => {
-  it('a send redone is counted, a print cut between two words, and the failed words are nowhere', async () => {
+  it('both sends quoted in order, and a print cut between two words', async () => {
     const conv = await conversation('telegram', 'chat-1');
     await job({
       conversationId: conv,
@@ -511,14 +509,14 @@ describe('the thread of a channel: an ended exchange (#1101) @cap:reprendre-conv
       [
         `[Actions performed in this exchange: generate_image, ${SEND} ×2, ${PRINT}]`,
         'generate_image → {"path":"out/cat.png"}',
-        `${SEND} (after 1 failed attempt) → {"sent":true}`,
+        `${SEND} → {"error":"invalid_input: path: Required"}`,
+        `${SEND} → {"sent":true}`,
         PRINT_LINE,
       ],
     ]);
-    expect(JSON.stringify(history)).not.toContain('invalid_input');
   });
 
-  it('a delegated job (task board) that redid a failure: counted under its task line', async () => {
+  it('a delegated job (task board): its calls quoted in order under its task line', async () => {
     const conv = await conversation('telegram', 'chat-2');
     const root = await job({
       conversationId: conv,
@@ -561,7 +559,8 @@ describe('the thread of a channel: an ended exchange (#1101) @cap:reprendre-conv
         '[Actions performed in this exchange: create_task]',
         'create_task → {"taskId":"t-1"}',
         `[Task "Send it" completed: actions — ${MCP_SEND} ×2; result: Sent.]`,
-        `${MCP_SEND} (after 1 failed attempt) → Sent.`,
+        `${MCP_SEND} → {"error":"quota exceeded"}`,
+        `${MCP_SEND} → Sent.`,
       ],
     ]);
   });
@@ -625,6 +624,13 @@ describe('the history of a job launched from a chat conversation: a launched job
   }
 
   const RUNNING = [RECORD_WORDS.running(`generate_image, ${SEND} ×2`)];
+  /** Once it has ended: every acting call, in order, as on main. */
+  const ENDED = [
+    `[Actions performed in this exchange: generate_image, ${SEND} ×2]`,
+    'generate_image → {"path":"out/cat.png"}',
+    `${SEND} → {"error":"invalid_input: path: Required"}`,
+    `${SEND} → {"sent":true}`,
+  ];
 
   for (const channel of ['dashboard', 'device'] as const) {
     it(`${channel}: a job still running is told by its calls, never its failed attempt`, async () => {
@@ -643,18 +649,12 @@ describe('the history of a job launched from a chat conversation: a launched job
     expect(records(await replay(conv, 'dashboard', worker))).toEqual([RUNNING]);
   });
 
-  it('a job that ended before the worker started: its end, with the failure counted', async () => {
+  it('a job that ended before the worker started: its end, every call quoted in order', async () => {
     const { conv, worker } = await launched('dashboard', {
       status: 'completed',
       completedAt: ago(3),
     });
-    expect(records(await replay(conv, 'dashboard', worker))).toEqual([
-      [
-        `[Actions performed in this exchange: generate_image, ${SEND} ×2]`,
-        'generate_image → {"path":"out/cat.png"}',
-        `${SEND} (after 1 failed attempt) → {"sent":true}`,
-      ],
-    ]);
+    expect(records(await replay(conv, 'dashboard', worker))).toEqual([ENDED]);
   });
 
   it('loadExchangeRecords: a job awaiting a person, or cancelled, by its stored status', async () => {
@@ -678,10 +678,6 @@ describe('the history of a job launched from a chat conversation: a launched job
     });
     const got = await loadExchangeRecords(db as unknown as RunnerDeps['db'], [waiting, cancelled]);
     expect(got.get(waiting)).toEqual(RUNNING);
-    expect(got.get(cancelled)).toEqual([
-      `[Actions performed in this exchange: generate_image, ${SEND} ×2]`,
-      'generate_image → {"path":"out/cat.png"}',
-      `${SEND} (after 1 failed attempt) → {"sent":true}`,
-    ]);
+    expect(got.get(cancelled)).toEqual(ENDED);
   });
 });

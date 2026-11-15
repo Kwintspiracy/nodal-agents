@@ -131,7 +131,7 @@ export async function loadTaskLedger(
  * `quoteAtBound`) and marked `…`.
  */
 function truncateResult(s: string | null): string {
-  const text = quoteAtBound(s ?? '', RESULT_TRUNCATE_CHARS).text;
+  const text = quoteAtBound(s ?? '', RESULT_TRUNCATE_CHARS);
   return text === '' ? '(no result)' : text;
 }
 

@@ -6,8 +6,8 @@
 // that had failed and that the task was already doing again; the front told
 // the person "a problem with the image". The second send succeeded. A turn that
 // answers while a job runs is told that the job runs and what it has called,
-// never what an attempt returned. Once the job has ended, a failure it redid is
-// counted on the success, not quoted as the outcome. Spoken and written turns
+// never what an attempt returned. Once the job has ended, its acting calls are
+// quoted as on main, every one, in order. Spoken and written turns
 // go through the same history: both are proven here, on the prompt the mock
 // provider is handed (`doGenerate`), the request body as the provider sees it.
 
@@ -231,7 +231,7 @@ describe('the chat turn reads the record of a launched job as settled facts only
       expect(body).not.toContain('{\\"sent\\":true}');
     });
 
-    it(`${turn}, after the task ended: the failure it redid is counted, not quoted`, async () => {
+    it(`${turn}, after the task ended: every acting call quoted in order, as on main`, async () => {
       const { body, messages } = await turnWhile(
         { status: 'completed', completedAt: ago(2), result: 'Sent you the cat.' },
         spoken,
@@ -245,9 +245,13 @@ describe('the chat turn reads the record of a launched job as settled facts only
         '> Sent you the cat.',
         `[Actions performed in this exchange: generate_image, ${SEND} ×2]`,
         'generate_image → {"path":"out/cat.png"}',
-        `${SEND} (after 1 failed attempt) → {"sent":true}`,
+        `${SEND} → {"error":"invalid_input: path: Required"}`,
+        `${SEND} → {"sent":true}`,
       ]);
-      expect(body).not.toContain('invalid_input');
+      // What the provider receives carries both answers, in order.
+      const failed = body.indexOf('invalid_input: path: Required');
+      expect(failed).toBeGreaterThan(-1);
+      expect(body.indexOf('{\\"sent\\":true}', failed)).toBeGreaterThan(failed);
     });
   }
 });

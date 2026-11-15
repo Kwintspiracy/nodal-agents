@@ -73,49 +73,45 @@ export function quotedLines(text: string): string[] {
     .map((line) => (line === '' ? QUOTE_MARK : `${QUOTE_MARK} ${line}`));
 }
 
-/** Un champ venu de la base, sur une ligne et à sa borne : la coupe est marquée `…`. */
+/**
+ * Les `n` premières unités de `text`, sans couper un caractère en deux : une
+ * paire de substitution (un emoji, un idéogramme rare) coupée laisserait une
+ * moitié seule, qui n'est pas de l'Unicode valide et part telle quelle chez le
+ * fournisseur (revue de #1106, passe 1). La coupe recule alors d'une unité.
+ */
+function headOf(text: string, n: number): string {
+  const last = text.charCodeAt(n - 1);
+  return last >= 0xd800 && last <= 0xdbff ? text.slice(0, n - 1) : text.slice(0, n);
+}
+
+/**
+ * Un champ venu de la base, sur une ligne et à sa borne : la coupe est marquée
+ * `…`, et ne coupe jamais un caractère en deux (`headOf`).
+ */
 export function recordField(text: string, max: number): string {
   const line = oneLine(text).trim();
-  return line.length > max ? `${line.slice(0, max - 1)}…` : line;
+  return line.length > max ? `${headOf(line, max - 1)}…` : line;
 }
 
 /**
- * Un texte cité à sa borne (#1101) : la citation, et, quand elle n'est pas le
- * texte entier, combien elle en porte (`quoted` caractères sur `total`).
+ * Un texte coupé à `max` caractères, marque `…` comprise. Coupé ENTRE deux
+ * mots, jamais dans un mot, quand un espace se trouve dans la seconde moitié
+ * de la borne ; sinon (un seul mot plus long que la borne, un JSON sans
+ * espace) au caractère, sans jamais couper un caractère en deux. Pure.
  */
-export interface BoundedQuote {
-  text: string;
-  cut: { quoted: number; total: number } | null;
-}
-
-/**
- * Un texte venu de la base, sur une ligne et au plus `max` caractères, marque
- * de coupe comprise. Coupé ENTRE deux mots, jamais dans un mot, quand un
- * espace se trouve dans la seconde moitié de la borne ; sinon (un seul mot
- * plus long que la borne, un JSON sans espace) au caractère. Pure.
- */
-export function quoteAtBound(text: string, max: number): BoundedQuote {
-  const line = oneLine(text).trim();
-  if (line.length <= max) return { text: line, cut: null };
-  const room = line.slice(0, max - 1);
+function cutBetweenWords(line: string, max: number): string {
+  const room = headOf(line, max - 1);
   const lastSpace = room.search(/\s\S*$/);
-  const kept = (lastSpace >= Math.floor(max / 2) ? room.slice(0, lastSpace) : room).trimEnd();
-  return { text: `${kept}…`, cut: { quoted: kept.length, total: line.length } };
+  return `${(lastSpace >= Math.floor(max / 2) ? room.slice(0, lastSpace) : room).trimEnd()}…`;
 }
 
 /**
- * L'issue d'un appel, lue sur ce que le runner a RANGÉ de son résultat, par la
- * seule lecture de l'issue qu'il ait (`toolResultShape`, celle de la garde de
- * la boucle) : le bloc `{ error }` que le runner écrit pour un échec, et dans
- * lequel il encadre les mots d'un tiers sans jamais l'entourer. Jamais sur ce
- * que dit le texte d'un résultat : une réponse qui contient « error » n'est
- * pas un échec. `other` : une marque d'approbation, un envoi peut-être parti,
- * un résultat retiré par la compaction, aucun résultat rangé.
+ * Un texte venu de la base, sur une ligne et au plus `max` caractères : entier
+ * s'il tient, sinon coupé entre deux mots et marqué `…` (#1101). Pure.
  */
-export function callOutcome(output: unknown): 'succeeded' | 'failed' | 'other' {
-  if (output === undefined) return 'other';
-  const shape = toolResultShape(output);
-  return shape === 'ok' ? 'succeeded' : shape === 'error' ? 'failed' : 'other';
+export function quoteAtBound(text: string, max: number): string {
+  const line = oneLine(text).trim();
+  return line.length <= max ? line : cutBetweenWords(line, max);
 }
 
 /**
@@ -268,14 +264,13 @@ export function resultHead(output: unknown): string {
     .filter((l) => l !== '');
   const whole = lines.join(' ');
   if (whole.length <= RESULT_HEAD_MAX_CHARS) return whole === '' ? '(empty result)' : whole;
-  const dropped = lines.length > RESULT_HEAD_LINES;
-  // Des lignes laissées de côté se marquent aussi `…` : la place en est gardée.
-  const quote = quoteAtBound(
-    lines.slice(0, RESULT_HEAD_LINES).join(' '),
-    dropped ? RESULT_HEAD_MAX_CHARS - 1 : RESULT_HEAD_MAX_CHARS,
-  );
-  const head = dropped && quote.cut === null ? `${quote.text}…` : quote.text;
-  return head === '' ? '(empty result)' : head;
+  // Le texte ne tient pas : ses premières lignes. Plus courtes que la borne,
+  // c'est que des lignes sont laissées de côté, et le `…` le marque ; sinon
+  // elles sont coupées entre deux mots.
+  const head = lines.slice(0, RESULT_HEAD_LINES).join(' ');
+  return head.length < RESULT_HEAD_MAX_CHARS
+    ? `${head}…`
+    : cutBetweenWords(head, RESULT_HEAD_MAX_CHARS);
 }
 
 /**
