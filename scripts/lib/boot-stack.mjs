@@ -8,7 +8,8 @@
 // le filet (le plafond) est atteint.
 
 import { spawn } from 'node:child_process';
-import { openSync, closeSync } from 'node:fs';
+import { openSync, closeSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
 
 /**
  * Attend la stack. Les effets (horloge, sonde, état du processus) sont injectés :
@@ -123,4 +124,20 @@ export async function lancerEtAttendre({
     pasMs,
   });
   return { ...verdict, pid: enfant.pid };
+}
+
+/**
+ * Le build de production du web est-il là ? La stack démarre comme chez un
+ * utilisateur (#748) : `next start` sur `apps/web/.next`, rien ne se compile
+ * pendant un parcours. Sans build, `next start` meurt et le CLI attendrait son
+ * délai de santé avant de le dire ; ce constat le dit AVANT de lancer quoi que
+ * ce soit. Rend le message de refus, ou null quand le build est là.
+ */
+export function refusSansBuild(racineDuDepot) {
+  const temoin = join(racineDuDepot, 'apps', 'web', '.next', 'BUILD_ID');
+  if (existsSync(temoin)) return null;
+  return (
+    `boot-stack: the web app has no production build (${temoin} is missing), and the stack serves the built app. ` +
+    'Build it first: pnpm turbo run build --filter=@nodal-agents/web'
+  );
 }
