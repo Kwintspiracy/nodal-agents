@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// boot-stack.mjs — démarre la stack de dev depuis les sources et rend la main
+// boot-stack.mjs — démarre la stack depuis les sources (web construit) et rend la main
 // quand le dashboard répond. Utilisé par `ci.yml` (e2e-smoke) et `qa.yml`, qui
 // avaient chacun leur boucle d'attente aveugle (#514).
 //
@@ -24,11 +24,12 @@
 
 import { readFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
-import { lancerEtAttendre, finDuJournal } from './lib/boot-stack.mjs';
+import { fileURLToPath } from 'node:url';
+import { lancerEtAttendre, finDuJournal, refusSansBuild } from './lib/boot-stack.mjs';
 
 if (process.platform === 'win32') {
   console.error(
-    'boot-stack: not supported on Windows (a detached pnpm.cmd loses its output). Run the dev command from CLAUDE.md instead: pnpm --filter nodal-agents exec tsx src/index.ts --dev',
+    'boot-stack: not supported on Windows (a detached pnpm.cmd loses its output). Run the CLI by hand instead: pnpm --filter nodal-agents exec tsx src/index.ts',
   );
   process.exit(2);
 }
@@ -52,11 +53,21 @@ if (!Number.isFinite(plafondMin) || plafondMin <= 0) {
   process.exit(2);
 }
 
-// La même commande que CLAUDE.md : le CLI, depuis les sources, en mode --dev
-// (Postgres embarqué, migrations, runner, web HMR).
+// La stack que les utilisateurs font tourner (#748) : le CLI depuis les
+// sources (Postgres embarqué, migrations, runner) et le web CONSTRUIT, servi
+// par `next start`. Jusqu'au 15/11/2026 c'était `--dev` (`next dev`) : chaque
+// route se compilait à sa première visite, PENDANT le parcours qui l'ouvrait
+// (un premier essai perdu à chaque run), et le compilateur montait à 8,8 Go
+// sur une machine de 16 (trace machine-trace.mjs, #748). Le build est l'étape
+// d'avant dans les workflows ; sans lui, refus immédiat et nommé.
+const refus = refusSansBuild(fileURLToPath(new URL('..', import.meta.url)));
+if (refus) {
+  console.error(refus);
+  process.exit(1);
+}
 const v = await lancerEtAttendre({
   commande: 'pnpm',
-  args: ['--filter', 'nodal-agents', 'exec', 'tsx', 'src/index.ts', '--dev'],
+  args: ['--filter', 'nodal-agents', 'exec', 'tsx', 'src/index.ts'],
   url: values.url,
   journal: values.log,
   plafondMs: plafondMin * 60_000,
