@@ -11,8 +11,9 @@
  *     and what the user still has to provide. Only "Continue" reaches the
  *     ordinary create form, pre-filled and still editable.
  *  3. Submitting creates ONE agent; its skill (`code-review`) is attached and
- *     the five write tools are blocked — asserted on agent_skill_assignments
- *     and approval_rules.
+ *     every tool of the read-only preset (READONLY_PRESET_TOOLS, read from
+ *     the product, never copied) is blocked — asserted on
+ *     agent_skill_assignments and approval_rules.
  *  4. The agent is ordinary: no column on its row says it came from a profile.
  *
  * Cleanup deletes the agent it created (cascade removes assignments + rules).
@@ -31,6 +32,7 @@ import {
   agentSkillAssignments,
   approvalRules,
 } from '@nodal-agents/db';
+import { READONLY_PRESET_TOOLS } from '@nodal-agents/shared';
 import { requireLiveStack, makeDbClient, testSlugSuffix } from './helpers';
 
 /**
@@ -104,11 +106,14 @@ test.describe('agent recipes @cap:configurer-agent/ecran', () => {
       await expect(detail.getByText(/Not installed yet\.|Ready\./)).toBeVisible();
       // Read-only is an autonomy rule, not a tool: shown under Autonomy.
       await expect(detail.getByText('Read-only agent: on.')).toBeVisible();
-      await expect(
-        detail.getByText(
-          /blocked: file_write, file_edit, skill_file_write, run_command, run_skill_script/,
-        ),
-      ).toBeVisible();
+      // La liste vient du produit, jamais d'une copie : la copie littérale de
+      // ce parcours avait perdu `file_move` et l'a laissé rouge chaque nuit du
+      // 02/11 au 15/11 (#1109). Chaque outil du préréglage doit y figurer.
+      const blockedLine = detail.getByText(/^blocked: /);
+      await expect(blockedLine).toBeVisible();
+      for (const tool of READONLY_PRESET_TOOLS) {
+        await expect(blockedLine, `the read-only line names ${tool}`).toContainText(tool);
+      }
       await expect(detail.getByText('A folder of its own')).toBeVisible();
       // Not a form yet: no Name field on this screen.
       await expect(detail.getByLabel('Name')).toHaveCount(0);
@@ -162,14 +167,7 @@ test.describe('agent recipes @cap:configurer-agent/ecran', () => {
           .filter((r) => r.action === 'block')
           .map((r) => r.toolName)
           .sort(),
-      ).toEqual([
-        'file_edit',
-        'file_move',
-        'file_write',
-        'run_command',
-        'run_skill_script',
-        'skill_file_write',
-      ]);
+      ).toEqual([...READONLY_PRESET_TOOLS].sort());
 
       // 4. Ordinary agent: nothing on the row says "profile". Asserted on the
       // column set, so a future provenance column fails here instead of

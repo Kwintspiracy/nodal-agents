@@ -2,7 +2,7 @@
 //
 // The sixteen built-in tools every agent gets were always on and never listed
 // in the dashboard: the only way to restrain one was the read-only preset,
-// which blocks five write tools at once. There was no way to say "this agent
+// which blocks its write tools at once. There was no way to say "this agent
 // may read workspace files but must never search the web".
 //
 // Two things have to hold, and the second is the one that matters:
