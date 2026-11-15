@@ -20,7 +20,7 @@ import { toolResultOutputText, toolResultShape } from './tool-result-shape.ts';
 
 /** Au plus ce nombre de caractères par résultat cité. */
 export const RESULT_HEAD_MAX_CHARS = 200;
-/** Au plus ce nombre de lignes non vides par résultat cité. */
+/** Au plus ce nombre de lignes non vides par résultat cité qui ne tient pas entier. */
 const RESULT_HEAD_LINES = 2;
 /** Au plus ce nombre de caractères par nom d'outil (les fournisseurs n'en acceptent pas plus). */
 export const NAME_MAX_CHARS = 64;
@@ -238,10 +238,13 @@ export function toolNames(acts: JobActs): string {
 }
 
 /**
- * Le début de ce qu'un appel a rendu, cité comme une donnée : ses deux
- * premières lignes non vides, jointes par une espace, au plus
- * RESULT_HEAD_MAX_CHARS caractères. Une seule ligne, toujours : un texte venu
- * d'un tiers ne peut pas ouvrir une ligne du relevé à lui.
+ * Ce qu'un appel a rendu, cité comme une donnée, ses lignes non vides jointes
+ * par une espace. Une seule ligne, toujours : un texte venu d'un tiers ne peut
+ * pas ouvrir une ligne du relevé à lui.
+ *  - Le texte entier tient dans RESULT_HEAD_MAX_CHARS : il est cité entier
+ *    (#1101 ; une réponse courte de trois lignes n'est plus coupée à deux).
+ *  - Sinon, son début : ses deux premières lignes non vides, au plus
+ *    RESULT_HEAD_MAX_CHARS caractères.
  *
  * Une citation qui n'est pas le texte entier finit par `…`, et la coupe tombe
  * ENTRE deux mots (#1101, `quoteAtBound`), jamais au milieu d'un mot. Une note
@@ -263,6 +266,8 @@ export function resultHead(output: unknown): string {
     .split(LINE_BREAK)
     .map((l) => oneLine(l).trim())
     .filter((l) => l !== '');
+  const whole = lines.join(' ');
+  if (whole.length <= RESULT_HEAD_MAX_CHARS) return whole === '' ? '(empty result)' : whole;
   const dropped = lines.length > RESULT_HEAD_LINES;
   // Des lignes laissées de côté se marquent aussi `…` : la place en est gardée.
   const quote = quoteAtBound(

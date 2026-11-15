@@ -254,9 +254,9 @@ describe('a quotation cut at its bound is cut between two words and marked, with
     });
   });
 
-  it('lines left out are marked too: the first two, then `…`', () => {
+  it('an answer that fits is quoted whole; one that does not keeps two lines, then `…`', () => {
     expect(resultHead(text('Request 4521 submitted.\n\nStatus: pending.\nPages: 3'))).toBe(
-      'Request 4521 submitted. Status: pending.…',
+      'Request 4521 submitted. Status: pending. Pages: 3',
     );
     const listing = Array.from({ length: 40 }, (_, i) => `file-${i}.md`).join('\n');
     const own = acts([['run_command', text(`exit 0\nwrote 40 files\n${listing}`)]]);
