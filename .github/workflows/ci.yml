@@ -486,9 +486,15 @@ jobs:
       # embedded Postgres…" — and a blind 5-min loop kept polling a dead CLI.
       # The script's own cap is 8 min, a net under the CLI's 300 s health
       # budget; 10 here leaves it time to print before the step is cut.
+      #
+      # La trace de la machine (#748) : ce job perdait son runner au milieu des
+      # parcours sans rien laisser. Les deux étapes qui chargent la machine
+      # tournent sous `machine-trace.mjs`, qui écrit toutes les 5 s la mémoire,
+      # le swap, la pression, les OOM kills et les processus les plus lourds,
+      # dans le journal ET dans un fichier gardé en artefact (`if: always()`).
       - name: Boot the stack
         timeout-minutes: 10
-        run: node scripts/boot-stack.mjs --log "$RUNNER_TEMP/stack.log"
+        run: node scripts/machine-trace.mjs --out "$RUNNER_TEMP/machine-trace.log" -- node scripts/boot-stack.mjs --log "$RUNNER_TEMP/stack.log"
 
       # Les autres parcours ne sont pas ici pour une raison de COÛT, pas de
       # capacité : depuis la sortie d'`agent-flows.spec.ts` (issue #110), plus
@@ -510,6 +516,7 @@ jobs:
       - name: Six journeys — boot/navigation, the autonomy tab, delegation outcomes, memory, the runs list, a narrow row
         timeout-minutes: 10
         run: >
+          node scripts/machine-trace.mjs --out "$RUNNER_TEMP/machine-trace.log" --
           pnpm --filter @nodal-agents/web exec playwright test
           tests/e2e/smoke.spec.ts
           tests/e2e/autonomy-approvals.spec.ts
@@ -517,6 +524,15 @@ jobs:
           tests/e2e/memory-kept.spec.ts
           tests/e2e/activity-runs.spec.ts
           tests/e2e/edrow-narrow.spec.ts
+
+      - name: Upload the machine trace
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: machine-trace
+          path: ${{ runner.temp }}/machine-trace.log
+          retention-days: 7
+          if-no-files-found: ignore
 
       - name: Upload the report on failure
         if: failure()
