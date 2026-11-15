@@ -19,6 +19,8 @@ import {
   regrouper,
   ligne,
   bilan,
+  seuilsFranchis,
+  annotation,
 } from '../lib/machine-trace.mjs';
 
 const GO = 1024 ** 3;
@@ -244,6 +246,27 @@ describe('bilan', () => {
   });
 });
 
+describe('seuilsFranchis', () => {
+  it('names each threshold crossed downward once, highest first', () => {
+    const deja = new Set();
+    expect(seuilsFranchis(5 * GO, deja)).toEqual([]);
+    const premiers = seuilsFranchis(2.5 * GO, deja);
+    expect(premiers).toEqual([4, 3]);
+    for (const s of premiers) deja.add(s);
+    // Remonter puis redescendre sous 3 Go ne l'annonce pas une seconde fois.
+    expect(seuilsFranchis(2.9 * GO, deja)).toEqual([]);
+    expect(seuilsFranchis(0.4 * GO, deja)).toEqual([2, 1, 0.5]);
+  });
+});
+
+describe('annotation', () => {
+  it('writes a GitHub Actions command, escaping what would cut it', () => {
+    expect(annotation('warning', 'machine-trace: low, very', 'used 90% | a\nb')).toBe(
+      '::warning title=machine-trace%3A low%2C very::used 90%25 | a%0Ab',
+    );
+  });
+});
+
 describe.runIf(process.platform === 'linux')('machine-trace.mjs on this machine', () => {
   let dir;
   afterEach(() => dir && rmSync(dir, { recursive: true, force: true }));
@@ -267,8 +290,15 @@ describe.runIf(process.platform === 'linux')('machine-trace.mjs on this machine'
     });
     expect(code).toBe(3);
     const fichier = readFileSync(out, 'utf8');
-    // Le fichier et la sortie de l'étape portent les mêmes lignes.
-    expect(stdout).toBe(fichier);
+    // La sortie de l'étape porte les lignes du fichier, plus les annotations
+    // (chacune précédée d'un saut de ligne), qui ne vont qu'au journal.
+    const lignes = stdout.split('\n');
+    const annotations = lignes.filter((l) => l.startsWith('::'));
+    expect(lignes.filter((l) => l !== '' && !l.startsWith('::')).join('\n') + '\n').toBe(fichier);
+    expect(annotations[0]).toMatch(/^::notice title=machine-trace%3A host::\[machine\] host: /);
+    expect(annotations.at(-1)).toMatch(
+      /^::notice title=machine-trace%3A summary::\[machine\] summary: \d+ samples/,
+    );
     expect(fichier).toMatch(/^\[machine\] host: vendor "/m);
     const relevés = fichier
       .split('\n')

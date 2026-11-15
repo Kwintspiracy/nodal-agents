@@ -19,7 +19,14 @@
 
 import { spawn, execFileSync } from 'node:child_process';
 import { appendFileSync } from 'node:fs';
-import { identite, releverMachine, ligne, bilan } from './lib/machine-trace.mjs';
+import {
+  identite,
+  releverMachine,
+  ligne,
+  bilan,
+  seuilsFranchis,
+  annotation,
+} from './lib/machine-trace.mjs';
 
 if (process.platform !== 'linux') {
   console.error('machine-trace: Linux only (it reads /proc and /sys)');
@@ -52,8 +59,19 @@ function ecrire(texte) {
   appendFileSync(sortie, `${texte}\n`);
 }
 
+/**
+ * Une annotation (voir lib/machine-trace.mjs : c'est ce qui arrive au serveur
+ * même quand le runner est perdu). Précédée d'un saut de ligne : la sortie de
+ * Playwright écrit ses points sans retour, et une commande doit commencer sa
+ * ligne pour être lue.
+ */
+function annoncer(genre, titre, texte) {
+  process.stdout.write(`\n${annotation(genre, titre, texte)}\n`);
+}
+
 const debut = Date.now();
 const releves = [];
+const seuilsDejaFranchis = new Set();
 let precedent = null;
 function relever() {
   const maintenant = Date.now();
@@ -63,13 +81,26 @@ function relever() {
   if (precedent) delete precedent.procs;
   precedent = r;
   releves.push(r);
-  ecrire(
-    ligne(r, { depuisSec: r.depuisSec, heure: new Date(maintenant).toISOString().slice(11, 19) }),
-  );
+  const texte = ligne(r, {
+    depuisSec: r.depuisSec,
+    heure: new Date(maintenant).toISOString().slice(11, 19),
+  });
+  ecrire(texte);
+  const franchis = seuilsFranchis(r.mem.disponible, seuilsDejaFranchis);
+  for (const s of franchis) seuilsDejaFranchis.add(s);
+  if (franchis.length > 0) {
+    annoncer('warning', `machine-trace: available memory under ${franchis.at(-1)} GB`, texte);
+  }
+  if (r.debits.oomKill > 0) {
+    annoncer('warning', 'machine-trace: the kernel killed a process (OOM)', texte);
+  }
+  return texte;
 }
 
 ecrire(`[machine] ${new Date(debut).toISOString()} start: ${commande.join(' ')}`);
-ecrire(identite());
+const hote = identite();
+ecrire(hote);
+annoncer('notice', 'machine-trace: host', hote);
 relever();
 const minuterie = setInterval(relever, pasSec * 1000);
 
@@ -77,6 +108,9 @@ const enfant = spawn(commande[0], commande.slice(1), { stdio: 'inherit' });
 for (const sig of ['SIGINT', 'SIGTERM']) {
   process.on(sig, () => {
     ecrire(`[machine] ${sig} received, forwarded to the command`);
+    // L'état de la machine AU MOMENT où le runner arrête l'étape : c'est la
+    // ligne qui manquait à chaque runner perdu.
+    annoncer('warning', `machine-trace: ${sig} received`, relever());
     enfant.kill(sig);
   });
 }
@@ -108,7 +142,9 @@ enfant.on('error', (err) => {
 enfant.on('exit', (code, signal) => {
   clearInterval(minuterie);
   relever();
-  ecrire(bilan(releves));
+  const resume = bilan(releves);
+  ecrire(resume);
+  annoncer('notice', 'machine-trace: summary', resume);
   for (const l of noyau()) ecrire(`[machine] kernel: ${l}`);
   const rendu = code ?? 128 + ({ SIGINT: 2, SIGKILL: 9, SIGTERM: 15 }[signal] ?? 1);
   ecrire(

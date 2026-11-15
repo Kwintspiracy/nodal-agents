@@ -308,3 +308,36 @@ export function releverMachine(avant, { ticsParSec, taillePage, maintenantMs, di
     disqueLibre: fs.bavail * fs.bsize,
   };
 }
+
+// ── Ce qui survit à un runner perdu ─────────────────────────────────────────
+//
+// Mesuré sur la PR de #748 (job 132773066041) : quand le runner est perdu, le
+// journal du job n'existe pas (`BlobNotFound`) et l'artefact `if: always()` est
+// sauté. Ce qui arrive quand même au serveur, c'est la CHRONOLOGIE du job
+// (l'étape y passe « cancelled » pendant l'arrêt) — et les annotations
+// (`::warning::`) voyagent par ce canal-là, au moment où elles sont écrites.
+// GitHub en garde dix par type et par étape : on n'en écrit donc qu'aux moments
+// qui comptent (l'identité de la machine, chaque seuil de mémoire franchi, un
+// OOM kill, le signal d'arrêt, le bilan), jamais à chaque relevé.
+
+/** Les seuils de mémoire disponible (Go) dont le franchissement est annoncé. */
+export const SEUILS_DISPONIBLE_GO = [4, 3, 2, 1, 0.5];
+
+/**
+ * Les seuils que `disponible` (octets) vient de franchir vers le bas, parmi
+ * ceux qui ne l'ont pas encore été (`deja`). Du plus haut au plus bas.
+ */
+export function seuilsFranchis(disponible, deja) {
+  return SEUILS_DISPONIBLE_GO.filter((s) => !deja.has(s) && disponible < s * GO);
+}
+
+/**
+ * Une commande d'annotation GitHub Actions. Les caractères réservés sont
+ * échappés comme le runner les lit (`%`, retours ; et `:` `,` dans le titre),
+ * sinon une ligne de trace couperait la commande.
+ */
+export function annotation(genre, titre, texte) {
+  const donnee = (t) => t.replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A');
+  const propriete = (t) => donnee(t).replace(/:/g, '%3A').replace(/,/g, '%2C');
+  return `::${genre} title=${propriete(titre)}::${donnee(texte)}`;
+}
