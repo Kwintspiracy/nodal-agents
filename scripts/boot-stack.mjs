@@ -57,8 +57,10 @@ if (!Number.isFinite(plafondMin) || plafondMin <= 0) {
 // sources (Postgres embarqué, migrations, runner) et le web CONSTRUIT, servi
 // par `next start`. Jusqu'au 15/11/2026 c'était `--dev` (`next dev`) : chaque
 // route se compilait à sa première visite, PENDANT le parcours qui l'ouvrait
-// (un premier essai perdu à chaque run), et le compilateur montait à 8,8 Go
-// sur une machine de 16 (trace machine-trace.mjs, #748). Le build est l'étape
+// (un premier essai perdu à chaque run), et le compilateur montait de 8 à
+// 11,5 Go sur une machine de 16, jusqu'à ce que le noyau le tue et que le runner
+// de CI s'arrête avec lui (essais de référence de la PR #1107, run 43703389782,
+// job 132780788415). Le build est l'étape
 // d'avant dans les workflows ; sans lui, refus immédiat et nommé.
 const refus = refusSansBuild(fileURLToPath(new URL('..', import.meta.url)));
 if (refus) {
