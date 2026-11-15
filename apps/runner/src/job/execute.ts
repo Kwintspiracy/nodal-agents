@@ -66,6 +66,8 @@ import {
   findMcpToolNameCollision,
   mcpToolNameCollisionMessage,
   openingMessages,
+  personAnswersOfCalls,
+  recordedPersonAnswers,
 } from '@nodal-agents/shared';
 import { ADAPTER_REGISTRY } from '@nodal-agents/runner-adapters';
 import {
@@ -258,7 +260,12 @@ import { isMcpOriginJob } from '../lib/mcp-provenance.ts';
 import { checkpointsRoot } from '@nodal-agents/checkpoints';
 import type { RunnerDeps } from '../deps.ts';
 import { notifyApprovalCreated } from '../approvals/notify.ts';
-import { createRequestUserInput, elicitationTimeoutMs } from '../approvals/elicitation.ts';
+import {
+  createRequestUserInput,
+  elicitationTimeoutMs,
+  personAnswerRowsOf,
+  withPersonAnswers,
+} from '../approvals/elicitation.ts';
 import { notifyCodeTransition } from '../notify/code-transitions.ts';
 import {
   recordReviewerVerificationRuns,
@@ -1677,7 +1684,13 @@ async function runJobTracked(
   // gardent leur vrai résultat, les autres disent qu'ils n'ont pas tourné.
   let tourOuvert: ((raison: string) => ModelMessage) | null = null;
   const RAISON_FIN_DU_RUN = 'the job ended before this call was handled';
-  const transcriptionFermee = (msgs: ModelMessage[]): ModelMessage[] => {
+  //
+  // #1084 — et chaque message d'outils qu'elle porte est suivi du relevé des
+  // questions posées pendant ses appels (`withPersonAnswers`, lu sur les
+  // lignes) : une fin de run en plein pas, une annulation pendant une
+  // délégation ou une reprise perdue écrivent les résultats réels de leurs
+  // appels, et la réponse de la personne avec eux.
+  const fermerLesAppels = (msgs: ModelMessage[]): ModelMessage[] => {
     const ouverts = unansweredToolCalls(msgs);
     if (ouverts.length === 0) return msgs;
     if (tourOuvert) return [...msgs, tourOuvert(RAISON_FIN_DU_RUN)];
@@ -1694,22 +1707,24 @@ async function runJobTracked(
       } as ModelMessage,
     ];
   };
-  const failJob: typeof failJobRow = (base, id, code, stats, msgs, userMessage, hint) =>
+  const transcriptionFermee = async (msgs: ModelMessage[]): Promise<ModelMessage[]> =>
+    (await withPersonAnswers(db, jobId as string, fermerLesAppels(msgs))) as ModelMessage[];
+  const failJob: typeof failJobRow = async (base, id, code, stats, msgs, userMessage, hint) =>
     failJobRow(
       base,
       id,
       code,
       stats,
-      msgs === undefined ? undefined : transcriptionFermee(msgs as ModelMessage[]),
+      msgs === undefined ? undefined : await transcriptionFermee(msgs as ModelMessage[]),
       userMessage,
       hint,
     );
-  const cancelJob: typeof cancelJobRow = (base, id, stats, msgs, partialResult) =>
+  const cancelJob: typeof cancelJobRow = async (base, id, stats, msgs, partialResult) =>
     cancelJobRow(
       base,
       id,
       stats,
-      msgs === undefined ? undefined : transcriptionFermee(msgs as ModelMessage[]),
+      msgs === undefined ? undefined : await transcriptionFermee(msgs as ModelMessage[]),
       partialResult,
     );
   // llmClient is resolved per-job from the agent's llmKeyId (Brique 24/25).
@@ -3825,7 +3840,7 @@ async function runJobTracked(
         jobId: jobId as string,
         errorCode,
         stats: runStats(),
-        messages: transcriptionFermee(messages),
+        messages: await transcriptionFermee(messages),
         ...(userMessage !== undefined ? { userMessage, replaceResult } : {}),
         ...(runnerNotes ? { runnerNotes } : {}),
         ...(notice
@@ -4620,6 +4635,12 @@ async function runJobTracked(
         return await lacherLeJob(perteEnTete, 'turn_start');
       }
       await lireLaFile('turn_start');
+      // #1084 — avant que le modèle relise la transcription : chaque message
+      // d'outils y est suivi du relevé des questions de ses appels. Ce qu'un
+      // autre chemin a écrit sans eux (la reprise d'appels approuvés, le
+      // message d'outils qu'une délégation reprise construit, un run
+      // précédent du job) les reçoit ici, depuis les lignes.
+      messages = (await withPersonAnswers(db, jobId as string, messages)) as ModelMessage[];
 
       // Invariant 8: hard turn cap. `turn` is cumulative across resumes (it's
       // seeded from job.turn), so a job that loops — or resumes — without ever
@@ -5773,6 +5794,18 @@ async function runJobTracked(
         closeTurn(reason);
         return { role: 'tool', content: toolResultBlocks } as ModelMessage;
       };
+      // #1084 — les relevés des questions que les appels de ce pas ont
+      // posées, lus une fois tous ses appels faits (`relevesDuPas`).
+      let relevesDuPas: ModelMessage[] = [];
+      /**
+       * Ce que ce pas laisse dans la transcription, à TOUTE sortie qui la
+       * continue : son message d'outils, puis le relevé de chaque question
+       * posée pendant ses appels, dans l'ordre où elles l'ont été.
+       */
+      const turnMessages = (reason?: string): ModelMessage[] => [
+        turnToolMessage(reason),
+        ...relevesDuPas,
+      ];
 
       let awaitingApproval = false;
 
@@ -6463,6 +6496,16 @@ async function runJobTracked(
         }
       }
 
+      // #1084 — tous les appels du pas sont faits : leurs questions sont
+      // closes (ou l'appel a fini avant, et la ligne le dit). Leurs relevés,
+      // lus sur les lignes, suivront le message d'outils quelle que soit la
+      // sortie du pas.
+      relevesDuPas = personAnswersOfCalls(
+        await personAnswerRowsOf(db, jobId as string),
+        rawToolCalls.map((tc) => tc.toolCallId),
+        recordedPersonAnswers(messages),
+      ) as unknown as ModelMessage[];
+
       // j. Suspension states — approval gate.
       //
       // A gated tool created an approval request and did NOT execute. `awaitingApproval`
@@ -6486,7 +6529,7 @@ async function runJobTracked(
         if (rawToolCalls.length > 0) {
           messages = [
             ...messages,
-            turnToolMessage('an action of this turn is awaiting user approval'),
+            ...turnMessages('an action of this turn is awaiting user approval'),
           ];
         }
         if (requiresToolDelivery && !toolDelivered && redeliveryNudges < MAX_REDELIVERY_NUDGES) {
@@ -6542,7 +6585,7 @@ async function runJobTracked(
                 'deferred: verify platform state with a read tool before finalizing — see the runtime notice below.',
             }),
           });
-          messages = [...messages, turnToolMessage()];
+          messages = [...messages, ...turnMessages()];
           messages = [
             ...messages,
             { role: 'user', content: VERIFY_BEFORE_ASSERT_NUDGE } as ModelMessage,
@@ -6599,7 +6642,7 @@ async function runJobTracked(
           toolName: 'return_result',
           output: toResultOutput({ error: 'deferred: sibling tool error must be addressed first' }),
         });
-        messages = [...messages, turnToolMessage()];
+        messages = [...messages, ...turnMessages()];
         continue;
       }
 
@@ -6646,7 +6689,7 @@ async function runJobTracked(
                   "l'utilisateur peut faire — il la verra telle quelle.",
               }),
             });
-            messages = [...messages, turnToolMessage()];
+            messages = [...messages, ...turnMessages()];
             messages = [
               ...messages,
               {
@@ -6681,7 +6724,7 @@ async function runJobTracked(
                   "return_result avec status='blocked'.",
               }),
             });
-            messages = [...messages, turnToolMessage()];
+            messages = [...messages, ...turnMessages()];
             messages = [...messages, { role: 'user', content: deliveryNudge } as ModelMessage];
             continue;
           }
@@ -6696,7 +6739,7 @@ async function runJobTracked(
             toolName: 'return_result',
             output: toResultOutput({ acknowledged: true }),
           });
-          messages = [...messages, turnToolMessage()];
+          messages = [...messages, ...turnMessages()];
           toolsUsed = [...new Set([...toolsUsed, 'return_result'])];
 
           // The error column carries a SHORT human reason (first sentence) so the
@@ -6775,7 +6818,7 @@ async function runJobTracked(
                     "appelle return_result avec status='blocked'.",
                 }),
               });
-              messages = [...messages, turnToolMessage()];
+              messages = [...messages, ...turnMessages()];
               messages = [...messages, unresolvedFailureNudge(stuckDelivery)];
               continue;
             }
@@ -6820,7 +6863,7 @@ async function runJobTracked(
                   "deferred: tu n'as pas encore livré ta réponse via telegram_send_message — fais-le avant de terminer",
               }),
             });
-            messages = [...messages, turnToolMessage()];
+            messages = [...messages, ...turnMessages()];
             messages = [...messages, { role: 'user', content: deliveryNudge } as ModelMessage];
             continue;
           }
@@ -6934,7 +6977,7 @@ async function runJobTracked(
                     'entier comme réponse, puis signale à nouveau.',
                 }),
               });
-              messages = [...messages, turnToolMessage()];
+              messages = [...messages, ...turnMessages()];
               messages = [
                 ...messages,
                 { role: 'user', content: emptyDeliverableNudge } as ModelMessage,
@@ -6979,7 +7022,7 @@ async function runJobTracked(
               toolName: 'return_result',
               output: toResultOutput({ acknowledged: true }),
             });
-            messages = [...messages, turnToolMessage()];
+            messages = [...messages, ...turnMessages()];
             toolsUsed = [...new Set([...toolsUsed, 'return_result'])];
             return await echouerSurDeclaration(dueRetour);
           }
@@ -7029,7 +7072,7 @@ async function runJobTracked(
                   })),
                 }),
               });
-              messages = [...messages, turnToolMessage()];
+              messages = [...messages, ...turnMessages()];
               continue;
             }
             toolResultBlocks.push({
@@ -7038,7 +7081,7 @@ async function runJobTracked(
               toolName: 'return_result',
               output: toResultOutput({ acknowledged: true }),
             });
-            messages = [...messages, turnToolMessage()];
+            messages = [...messages, ...turnMessages()];
             toolsUsed = [...new Set([...toolsUsed, 'return_result'])];
             return await echouerSurDeclaration(items);
           }
@@ -7066,7 +7109,7 @@ async function runJobTracked(
           toolName: 'return_result',
           output: toResultOutput({ acknowledged: true }),
         });
-        messages = [...messages, turnToolMessage()];
+        messages = [...messages, ...turnMessages()];
 
         // If this run created tasks on the board, the workflow continues
         // asynchronously: the cron's executeReadyTasks runs each task and
@@ -7214,7 +7257,7 @@ async function runJobTracked(
 
       // k. Append tool results and continue
       if (rawToolCalls.length > 0) {
-        messages = [...messages, turnToolMessage()];
+        messages = [...messages, ...turnMessages()];
       }
 
       // k-pré-bis. Guard 1f — flush any non-progress nudges queued while

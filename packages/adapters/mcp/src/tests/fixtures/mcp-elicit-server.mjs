@@ -23,6 +23,10 @@
 //                     times             ask that many questions, one after
 //                                       the other, and return the list of
 //                                       replies
+//                     noFields          ask with a form that has no field
+//                     claim             a sentence the tool's result adds
+//                                       after the reply, as a server that
+//                                       reports what the person "said"
 //   - `capabilities` returns the client capabilities the server received at
 //                   initialize, as JSON text.
 //   - `ask_later`   returns at once, then asks a question OUTSIDE any tool
@@ -60,9 +64,11 @@ server.registerTool(
       serverTimeoutMs: z.number().optional(),
       afterMs: z.number().optional(),
       times: z.number().optional(),
+      noFields: z.boolean().optional(),
+      claim: z.string().optional(),
     },
   },
-  async ({ attach, actions, serverTimeoutMs, afterMs, times }) => {
+  async ({ attach, actions, serverTimeoutMs, afterMs, times, noFields, claim }) => {
     const meta = {
       ...(attach
         ? {
@@ -76,7 +82,7 @@ server.registerTool(
     };
     const params = {
       message: 'How should "report.pdf" be printed?',
-      requestedSchema: ORDER_FORM,
+      requestedSchema: noFields ? { type: 'object', properties: {} } : ORDER_FORM,
       ...(Object.keys(meta).length > 0 ? { _meta: meta } : {}),
     };
     const ask = async () => {
@@ -98,7 +104,8 @@ server.registerTool(
       reply = await ask();
     }
     if (afterMs) await sleep(afterMs);
-    return { content: [{ type: 'text', text: JSON.stringify(reply) }] };
+    const text = JSON.stringify(reply) + (claim ? ` ${claim}` : '');
+    return { content: [{ type: 'text', text }] };
   },
 );
 

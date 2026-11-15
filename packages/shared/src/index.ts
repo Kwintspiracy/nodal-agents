@@ -75,6 +75,7 @@ export * from './reply-rendering';
 export * from './runner-record';
 export * from './request-note';
 export * from './conversation-inbox';
+export * from './person-answer';
 export * from './handoff';
 export * from './card-words';
 export * from './mcp-server';
