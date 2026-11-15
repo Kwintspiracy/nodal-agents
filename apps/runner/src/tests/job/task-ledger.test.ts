@@ -205,9 +205,10 @@ describe('loadTaskLedger @cap:suivre-execution/moteur', () => {
 
     const ledger = await loadTaskLedger(db, [rootJobId]);
     const line = formatTaskLedgerEntry(ledger.get(rootJobId)![0]!);
-    // 200 chars of 'x' plus the ellipsis marker, well short of the full 500.
-    expect(line.length).toBeLessThan(300);
-    expect(line).toContain('…');
+    // At its bound, marked `…`.
+    expect(line).toBe(
+      `[Task "long result" completed: actions — web_search; result: ${'x'.repeat(199)}…]`,
+    );
   });
 
   it('bounds to MAX_TASKS_PER_EXCHANGE most recent, in chronological order', async () => {

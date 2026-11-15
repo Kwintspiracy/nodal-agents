@@ -229,7 +229,11 @@ export async function loadThreadHistory(opts: LoadThreadHistoryOptions): Promise
   const records = await loadExchangeRecords(
     opts.db,
     chronological.map((r) => r.id),
-    new Map([...replies].map(([id, r]) => [id, r.reply?.callIds ?? new Set<string>()])),
+    {
+      replyCallIds: new Map(
+        [...replies].map(([id, r]) => [id, r.reply?.callIds ?? new Set<string>()]),
+      ),
+    },
   );
 
   // Each "block" is a contiguous slice of messages we keep or drop together
@@ -463,12 +467,20 @@ async function loadDashboardHistory(opts: LoadThreadHistoryOptions): Promise<Mod
     else last.push(m);
   }
   const first = Math.max(0, turns.length - MAX_TURNS);
+  // Le relevé d'un job lancé dit ce qu'en dit ce lecteur (#1101) : fini s'il a
+  // fini AVANT le job qu'on démarre (ou fini sans heure rangée, son issue
+  // restant sous son lancement), sinon encore en cours, et alors sans aucune
+  // citation : un essai qu'il refaisait n'est pas son issue.
   const records = await loadExchangeRecords(
     opts.db,
     turns
       .slice(first)
       .flat()
       .flatMap((m) => (m.kind === 'row' ? [m.row.jobId] : [])),
+    {
+      hasEnded: (j) =>
+        isJobEnded(j.status) && (j.completedAt === null || j.completedAt < createdAt),
+    },
   );
 
   /**

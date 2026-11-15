@@ -28,7 +28,14 @@
 import { eq, ne, and, inArray, desc } from '@nodal-agents/db';
 import { agentTasks, agentJobs, agents } from '@nodal-agents/db';
 import type { RunnerDeps } from '../deps.ts';
-import { jobActs, recordField, toolNames, NAME_MAX_CHARS, type JobActs } from './tool-acts.ts';
+import {
+  jobActs,
+  quoteAtBound,
+  recordField,
+  toolNames,
+  NAME_MAX_CHARS,
+  type JobActs,
+} from './tool-acts.ts';
 
 /** Max ledger entries surfaced per root job — keeps a busy fan-out bounded. */
 export const MAX_TASKS_PER_EXCHANGE = 3;
@@ -119,8 +126,12 @@ export async function loadTaskLedger(
   return ledger;
 }
 
+/**
+ * The task's stored text at its bound, cut between two words (#1101,
+ * `quoteAtBound`) and marked `…`.
+ */
 function truncateResult(s: string | null): string {
-  const text = recordField(s ?? '', RESULT_TRUNCATE_CHARS);
+  const text = quoteAtBound(s ?? '', RESULT_TRUNCATE_CHARS);
   return text === '' ? '(no result)' : text;
 }
 
