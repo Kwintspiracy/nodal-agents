@@ -36,6 +36,8 @@ cannot. See
 | `nodal-agents checkpoints` | List the snapshots taken before an agent wrote in a folder. |
 | `nodal-agents checkpoints restore <sha>` | Put a workspace back to a snapshot. |
 | `nodal-agents mcp serve` | Serve this install as an MCP server on stdio (your client launches it). |
+| `nodal-agents renderer install` | Download and install the page renderer now, with progress. |
+| `nodal-agents renderer status` | Say whether the page renderer is installed, and why not. |
 | `nodal-agents reset` | Delete **all** data and config at `~/.nodalai`. |
 
 ### `nodal-agents up`
@@ -48,6 +50,15 @@ If a configured port is occupied or reserved by the OS, `up` rotates to the next
 | ---- | ------ |
 | `--dev` | Run web in `next dev` mode (HMR, no prebuild). Slower first load, far faster iteration. Off by default. |
 | `--detach` (`-d`) | Start the services and return the terminal. Stop them later with `nodal-agents down`. |
+| `--skip-renderer-install` | Do not download the page renderer at this start. |
+
+#### The page renderer, downloaded once
+
+The `render_pdf` tool turns an HTML page into a PDF with Nodal's own page renderer: `chrome-headless-shell`, the window-less build of Chrome for Testing that Google publishes for automation. Its build is pinned in Nodal and checked against a pinned SHA-256. The first `up` downloads it **after** "All services healthy" (about 120 MB, 270 MB unpacked, into `<home>/renderer/`), showing the progress; a later `up` that finds it installed does nothing, and an update that pins a new build installs it and removes the old one. Detached, the terminal comes back once it is done.
+
+It never stops Nodal from starting: offline, a download or disk error, or a platform Google publishes no build for, and `up` says the renderer is not installed and why. `render_pdf` then answers with the same reason. Install it later with `nodal-agents renderer install`.
+
+To turn the download off: pass `--skip-renderer-install`, or set `"pageRenderer": { "autoInstall": false }` in `config.json`. On Linux, Chrome's sandbox stays on: a system that cannot run it (Nodal running as root, or an Ubuntu 23.10+ that restricts unprivileged user namespaces) makes `render_pdf` say so, and a missing system library is named.
 
 #### What "cleans up" means, and what it refuses to do
 
@@ -231,6 +242,7 @@ These environment variables change CLI behavior:
 | `NODALAI_CONFIG_PATH` | Put `config.json` elsewhere than in the home folder. Read by the CLI and the dashboard alike. |
 | `NODALAI_CHECKPOINTS_ROOT` | Move the shadow checkpoint store away from `<home>/checkpoints/`. Read by the runner and by `nodal-agents checkpoints` alike. |
 | `NODALAI_WORKSPACES_ROOT` | Move the per-workspace file tree away from `<home>/workspaces/`. |
+| `NODALAI_RENDERER_DIR` | Keep the page renderer away from `<home>/renderer/`: one renderer shared by several homes (the bench's campaigns, CI). |
 
 Each path variable must be an absolute path. An empty or relative value stops the CLI with an error that names the variable: Nodal never falls back to `~/.nodalai` on its own. A narrower variable (`NODALAI_CONFIG_PATH`, `NODALAI_WORKSPACES_ROOT`, `NODALAI_CHECKPOINTS_ROOT`) wins over `NODALAI_HOME` for its own entry only; everything else follows the home.
 
@@ -249,6 +261,7 @@ All persistent state lives under Nodal's home folder: `~/.nodalai/` by default, 
   logs/postgres/  # the cluster's own log, one subdirectory per data directory
   workspaces/     # one subtree per workspace: shared/, skills/<slug>/, channel media
   checkpoints/    # the shadow git store: store/, indexes/, gitconfig
+  renderer/       # the page renderer render_pdf drives (chrome-headless-shell)
 ```
 
 To wipe everything, use `nodal-agents reset` (preferred — it stops services first) rather than deleting the folder by hand.

@@ -69,7 +69,10 @@ if (refus) {
 }
 const v = await lancerEtAttendre({
   commande: 'pnpm',
-  args: ['--filter', 'nodal-agents', 'exec', 'tsx', 'src/index.ts'],
+  // `--skip-renderer-install` (#1082) : la stack des parcours e2e ne rend
+  // aucune page, et le téléchargement du moteur, après « healthy », se
+  // disputerait la machine avec les parcours.
+  args: ['--filter', 'nodal-agents', 'exec', 'tsx', 'src/index.ts', '--skip-renderer-install'],
   url: values.url,
   journal: values.log,
   plafondMs: plafondMin * 60_000,

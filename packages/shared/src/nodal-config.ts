@@ -100,6 +100,18 @@ export const NodalConfigSchema = z.object({
       googleClientSecret: z.string().optional(),
     })
     .optional(),
+  /**
+   * Nodal's page renderer (#1082), the window-less Chrome for Testing build
+   * the `render_pdf` tool drives. `up` downloads it once, after the services
+   * are healthy, unless `autoInstall` is `false` (or `up --skip-renderer-install`
+   * is passed). Turned off, the tool says so and names
+   * `nodal-agents renderer install`.
+   */
+  pageRenderer: z
+    .object({
+      autoInstall: z.boolean().optional(),
+    })
+    .optional(),
 });
 
 export type NodalConfig = z.infer<typeof NodalConfigSchema>;

@@ -186,10 +186,32 @@ jobs:
       # de résultat) et, si un worker meurt sans que vitest l'ait demandé, son
       # code de sortie, son signal et ses fichiers (`<paquet>.worker-exits.log`).
       # Le dossier part en artefact même quand l'étape est rouge, un par tranche.
+      # Le moteur de rendu de pages (#1082) : les tests de packages/page-render
+      # (tranche packages-2) et de render_pdf (packages/tools, tranche
+      # packages-1) rendent de VRAIES pages avec le build épinglé. Installé ici
+      # une fois, en cache (la clé est le fichier de l'épingle, donc un nouveau
+      # build repart d'un cache neuf), par la commande même que la personne
+      # tape : `nodal-agents renderer install`. Absent, ces tests ROUGISSENT
+      # (REAL_RENDERER_MISSING), jamais sautés. Les autres tranches n'en ont
+      # pas besoin.
+      - uses: actions/cache@v4
+        if: startsWith(matrix.shard, 'packages')
+        with:
+          path: .cache/page-renderer
+          key: page-renderer-${{ runner.os }}-${{ hashFiles('packages/page-render/src/pin.ts') }}
+
+      - name: Install the page renderer
+        if: startsWith(matrix.shard, 'packages')
+        timeout-minutes: 3
+        env:
+          NODALAI_RENDERER_DIR: ${{ github.workspace }}/.cache/page-renderer
+        run: pnpm --filter nodal-agents exec tsx src/index.ts renderer install
+
       - name: Unit tests (${{ matrix.shard }})
         timeout-minutes: 30
         env:
           NODAL_VITEST_REPORT_DIR: ${{ runner.temp }}/vitest-reports
+          NODALAI_RENDERER_DIR: ${{ github.workspace }}/.cache/page-renderer
         run: ${{ matrix.run }}
 
       - name: Upload test reports

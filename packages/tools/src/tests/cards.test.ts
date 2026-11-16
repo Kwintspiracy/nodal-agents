@@ -117,6 +117,7 @@ const EXPECTED_CARDS: Record<string, ToolCard> = {
   file_edit: 'files',
   file_list: 'files',
   file_move: 'files',
+  render_pdf: 'files',
   file_read: 'read',
   file_search: 'search',
   file_write: 'files',

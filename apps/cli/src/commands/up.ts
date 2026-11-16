@@ -182,6 +182,11 @@ export interface RunUpOptions {
    * detection — to do the same three statements.
    */
   repairMigrations?: boolean;
+  /**
+   * Do not download the page renderer at this start (#1082). The same as
+   * `"pageRenderer": { "autoInstall": false }` in config.json, for one start.
+   */
+  skipRendererInstall?: boolean;
 }
 
 export async function runUp(opts: RunUpOptions = {}): Promise<void> {
@@ -1150,6 +1155,20 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
     console.log(chalk.cyan(`  LAN mode — sign up at ${webUrl}/login`));
   }
 
+  // ── 9a. The page renderer, downloaded once (#1082) ───────────────────────
+  // AFTER "All services healthy" and the ready line, never before: the
+  // download cannot delay the start. It never fails it either: a failure is
+  // said here and by render_pdf, with the command to install it later.
+  // Foreground: it runs while the services serve. Detached: the prompt comes
+  // back once it is done, so the progress is seen and nothing is cut halfway.
+  const { ensureRendererAtStart, rendererInstallTurnedOff } =
+    await import('../lib/page-renderer.ts');
+  const rendererStart = ensureRendererAtStart({
+    turnedOff: rendererInstallTurnedOff(config, opts.skipRendererInstall === true),
+  }).then((outcome) => {
+    logLauncherEvent('page-renderer', `outcome=${outcome}`);
+  });
+
   // ── 9b. Detached: hand the terminal back and leave everything running ─────
   // The order matters. We return only AFTER the health + render checks above,
   // so a detached start that comes back to the prompt is a start that WORKED —
@@ -1159,6 +1178,7 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
   // to kill the services when the foreground CLI dies, which is precisely what
   // must not happen here.
   if (opts.detach) {
+    await rendererStart;
     logLauncherEvent('detached', `web=${webUrl} runner=${runnerUrl}`);
     console.log(chalk.gray('  Detached — the terminal is yours again.'));
     console.log(chalk.gray('  nodal-agents logs runner   follow a service'));

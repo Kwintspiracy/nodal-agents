@@ -280,6 +280,11 @@ export function explainApproval(opts: ExplainOptions): ApprovalExplanation {
       effect = 'write';
       target = typeof input['destination'] === 'string' ? input['destination'] : null;
       break;
+    case 'render_pdf':
+      // La cible est le PDF écrit : c'est lui que la porte d'écrasement protège (#1082).
+      effect = 'write';
+      target = typeof input['output'] === 'string' ? input['output'] : null;
+      break;
     case 'run_command':
     case 'run_skill_script':
       effect = 'destructive';

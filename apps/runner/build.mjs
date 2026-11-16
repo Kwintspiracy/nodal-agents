@@ -75,6 +75,11 @@ const EXTERNALS = [
   // A job owns its processes (#755): the Windows Job Object, through koffi
   // (FFI, prebuilt native binaries). Never bundled; `import()` on win32 only.
   'koffi',
+  // Nodal's page renderer (#1082): Google's driver for chrome-headless-shell,
+  // and its installer. Their own dependency trees (ws, chromium-bidi, the
+  // archive tools) resolve from the pack's node_modules.
+  'puppeteer-core',
+  '@puppeteer/browsers',
 ];
 
 // esbuild's external matches the literal import string. Deep imports

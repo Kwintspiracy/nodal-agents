@@ -175,6 +175,12 @@ export function computeApprovalImpactLine(
             'removing a file in the shared workspace that this agent did not create.'
         : `Moves "${str(input['source'])}" to "${str(input['destination'])}", removing from ` +
             'the shared workspace a file that this agent did not create.';
+    case 'render_pdf':
+      // Gaté par la porte de file_write, sur le PDF écrit (#1082).
+      return (
+        `Overwrites the existing file "${str(input['output'])}" in the shared workspace with ` +
+        `a PDF rendered from "${str(input['source'])}".`
+      );
     case 'run_command': {
       const cmd = input['command'];
       return typeof cmd === 'string' && cmd.trim().length > 0

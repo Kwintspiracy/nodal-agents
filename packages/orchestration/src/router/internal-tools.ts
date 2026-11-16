@@ -32,6 +32,7 @@ const RISK: Readonly<Record<string, OperationDescriptor['risk']>> = {
   file_write: 'write',
   file_edit: 'write',
   file_move: 'write',
+  render_pdf: 'write',
 };
 
 /**

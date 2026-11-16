@@ -14,6 +14,7 @@ import { markMemoryOutdatedTool } from './mark-memory-outdated';
 import { webSearchTool } from './web-search';
 import { generateSpeechTool } from './generate-speech';
 import { dashboardPublishTool } from './dashboard-publish';
+import { renderPdfTool } from './render-pdf';
 import {
   fileReadTool,
   fileWriteTool,
@@ -71,6 +72,8 @@ export { webSearchTool } from './web-search';
 export { generateSpeechTool, MAX_SPEECH_CHARS } from './generate-speech';
 export { dashboardPublishTool, DashboardPublishInputSchema } from './dashboard-publish';
 export type { DashboardPublishInput } from './dashboard-publish';
+export { renderPdfTool, RenderPdfInputSchema, MAX_PDF_BYTES } from './render-pdf';
+export type { RenderPdfInput, RenderPdfOutput } from './render-pdf';
 export {
   fileReadTool,
   fileWriteTool,
@@ -200,6 +203,9 @@ export function registerBuiltins(registry: ToolRegistry): void {
   registry.register(fileMoveTool);
   registry.register(fileListTool);
   registry.register(fileSearchTool);
+  // render_pdf (#1082) — toujours donné, comme les outils de fichier : il lit
+  // par le périmètre de file_read et écrit par celui de file_write.
+  registry.register(renderPdfTool);
   // Office tools — gated behind the "office-editing" skill, NOT always-on.
   for (const tool of OFFICE_TOOLS) {
     registry.register(tool);
@@ -307,6 +313,11 @@ export const ALWAYS_ON_TOOLS = [
   'file_move',
   'file_list',
   'file_search',
+  // render_pdf (#1082) — le rendu d'une page HTML en PDF par le moteur de
+  // Nodal, pour tout agent : sans lui, un agent qui doit rendre « un PDF
+  // d'exactement deux pages » lance le navigateur installé sur la machine, ce
+  // que la compétence `pdf` lui dit de faire (« use a headless browser »).
+  'render_pdf',
 ] as const;
 export type AlwaysOnTool = (typeof ALWAYS_ON_TOOLS)[number];
 
@@ -402,6 +413,7 @@ export const ALWAYS_ON_TOOL_DOCS: ReadonlyArray<AlwaysOnToolDoc> = (
     fileMoveTool,
     fileListTool,
     fileSearchTool,
+    renderPdfTool,
   ] as ReadonlyArray<{
     name: string;
     description: string;

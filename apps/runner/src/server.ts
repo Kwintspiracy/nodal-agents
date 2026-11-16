@@ -85,6 +85,7 @@ import { backfillMemoryEmbeddings } from './bootstrap/backfill-embeddings.ts';
 import { backfillRegisteredProjects } from './bootstrap/backfill-registered-projects.ts';
 import { seedDefaultSkills } from './bootstrap/seed-default-skills.ts';
 import { closeAllJobProcessScopes, getSandboxStatus } from '@nodal-agents/sandbox';
+import { closeAllRenderers } from '@nodal-agents/page-render';
 import { startJobProcessSweep } from './job/process-scopes.ts';
 import { AuthError, checkRequestOrigin } from '@nodal-agents/auth';
 import { isValidWorkerSecret } from './lib/worker-secret.ts';
@@ -634,6 +635,8 @@ async function main(): Promise<void> {
     processSweep.stop();
     // Ce que les commandes des jobs ont laissé tourner ne survit pas au runner.
     await closeAllJobProcessScopes();
+    // Ni un navigateur de rendu de pages en cours d'appel (#1082).
+    await closeAllRenderers();
     await telegramManager?.stop();
     await discordManager?.stop();
     await slackManager?.stop();

@@ -38,10 +38,18 @@ program
 program
   .option('--dev', 'Run web in `next dev` mode (HMR, no prebuild required)')
   .option('-d, --detach', 'Return to the prompt once healthy — services keep running')
-  .action(async (opts: { dev?: boolean; detach?: boolean }) => {
+  .option(
+    '--skip-renderer-install',
+    'Do not download the page renderer at this start (render_pdf then says it is not installed)',
+  )
+  .action(async (opts: { dev?: boolean; detach?: boolean; skipRendererInstall?: boolean }) => {
     const { runUp } = await import('./commands/up.ts');
     try {
-      await runUp({ dev: opts.dev, detach: opts.detach });
+      await runUp({
+        dev: opts.dev,
+        detach: opts.detach,
+        skipRendererInstall: opts.skipRendererInstall,
+      });
     } catch (err) {
       console.error(chalk.red('Error:'), err instanceof Error ? err.message : String(err));
       process.exit(1);
@@ -82,14 +90,62 @@ program
     '--repair-migrations',
     'Apply migrations the journal announces and this database never got',
   )
-  .action(async (opts: { dev?: boolean; detach?: boolean; repairMigrations?: boolean }) => {
-    const { runUp } = await import('./commands/up.ts');
+  .option(
+    '--skip-renderer-install',
+    'Do not download the page renderer at this start (render_pdf then says it is not installed)',
+  )
+  .action(
+    async (opts: {
+      dev?: boolean;
+      detach?: boolean;
+      repairMigrations?: boolean;
+      skipRendererInstall?: boolean;
+    }) => {
+      const { runUp } = await import('./commands/up.ts');
+      try {
+        await runUp({
+          dev: opts.dev,
+          detach: opts.detach,
+          repairMigrations: opts.repairMigrations,
+          skipRendererInstall: opts.skipRendererInstall,
+        });
+      } catch (err) {
+        console.error(chalk.red('Error:'), err instanceof Error ? err.message : String(err));
+        process.exit(1);
+      }
+    },
+  );
+
+// ── nodal-agents renderer ─────────────────────────────────────────────────────
+//
+// Le moteur de rendu de pages (#1082) : `up` le télécharge une fois, après
+// « All services healthy ». Cette commande l'installe au premier plan (refusé
+// au démarrage, ou échoué hors ligne), ou dit où il en est.
+
+const renderer = program
+  .command('renderer')
+  .description("Nodal's page renderer (the window-less Chrome that render_pdf drives)");
+
+renderer
+  .command('install')
+  .description('Download and install the pinned page renderer now, showing progress')
+  .action(async () => {
+    const { runRendererInstall } = await import('./lib/page-renderer.ts');
     try {
-      await runUp({
-        dev: opts.dev,
-        detach: opts.detach,
-        repairMigrations: opts.repairMigrations,
-      });
+      process.exitCode = await runRendererInstall();
+    } catch (err) {
+      console.error(chalk.red('Error:'), err instanceof Error ? err.message : String(err));
+      process.exit(1);
+    }
+  });
+
+renderer
+  .command('status')
+  .description('Say whether the page renderer is installed, and why not')
+  .action(async () => {
+    const { runRendererStatus } = await import('./lib/page-renderer.ts');
+    try {
+      process.exitCode = await runRendererStatus();
     } catch (err) {
       console.error(chalk.red('Error:'), err instanceof Error ? err.message : String(err));
       process.exit(1);

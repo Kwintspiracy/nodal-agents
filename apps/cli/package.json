@@ -18,8 +18,10 @@
     "@nodal-agents/checkpoints": "workspace:*",
     "@nodal-agents/db": "workspace:*",
     "@nodal-agents/mcp-server": "workspace:*",
+    "@nodal-agents/page-render": "workspace:*",
     "@nodal-agents/sandbox": "workspace:*",
     "@nodal-agents/shared": "workspace:*",
+    "@puppeteer/browsers": "3.2.7",
     "chalk": "^5.4.1",
     "commander": "^14.0.3",
     "embedded-postgres": "18.3.0-beta.17",
@@ -31,6 +33,7 @@
   },
   "devDependencies": {
     "@types/prompts": "^2.4.9",
+    "fflate": "^0.8.3",
     "tsup": "^8.3.0",
     "tsx": "^4.19.2",
     "vitest": "^4.1.6",
