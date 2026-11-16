@@ -66,6 +66,8 @@ import {
   findMcpToolNameCollision,
   mcpToolNameCollisionMessage,
   openingMessages,
+  personAnswersOfCalls,
+  recordedPersonAnswers,
 } from '@nodal-agents/shared';
 import { ADAPTER_REGISTRY } from '@nodal-agents/runner-adapters';
 import {
@@ -203,6 +205,7 @@ import {
   findTaskBoundary,
 } from './state.ts';
 import { holdJobHeartbeat } from './heartbeat.ts';
+import { answerOfRun } from './final-answer.ts';
 import {
   AWAITING_APPROVAL_MARK,
   DEFERRED_MARK,
@@ -257,7 +260,12 @@ import { isMcpOriginJob } from '../lib/mcp-provenance.ts';
 import { checkpointsRoot } from '@nodal-agents/checkpoints';
 import type { RunnerDeps } from '../deps.ts';
 import { notifyApprovalCreated } from '../approvals/notify.ts';
-import { createRequestUserInput, elicitationTimeoutMs } from '../approvals/elicitation.ts';
+import {
+  createRequestUserInput,
+  elicitationTimeoutMs,
+  personAnswerRowsOf,
+  withPersonAnswers,
+} from '../approvals/elicitation.ts';
 import { notifyCodeTransition } from '../notify/code-transitions.ts';
 import {
   recordReviewerVerificationRuns,
@@ -1676,7 +1684,13 @@ async function runJobTracked(
   // gardent leur vrai résultat, les autres disent qu'ils n'ont pas tourné.
   let tourOuvert: ((raison: string) => ModelMessage) | null = null;
   const RAISON_FIN_DU_RUN = 'the job ended before this call was handled';
-  const transcriptionFermee = (msgs: ModelMessage[]): ModelMessage[] => {
+  //
+  // #1084 — et chaque message d'outils qu'elle porte est suivi du relevé des
+  // questions posées pendant ses appels (`withPersonAnswers`, lu sur les
+  // lignes) : une fin de run en plein pas, une annulation pendant une
+  // délégation ou une reprise perdue écrivent les résultats réels de leurs
+  // appels, et la réponse de la personne avec eux.
+  const fermerLesAppels = (msgs: ModelMessage[]): ModelMessage[] => {
     const ouverts = unansweredToolCalls(msgs);
     if (ouverts.length === 0) return msgs;
     if (tourOuvert) return [...msgs, tourOuvert(RAISON_FIN_DU_RUN)];
@@ -1693,22 +1707,24 @@ async function runJobTracked(
       } as ModelMessage,
     ];
   };
-  const failJob: typeof failJobRow = (base, id, code, stats, msgs, userMessage, hint) =>
+  const transcriptionFermee = async (msgs: ModelMessage[]): Promise<ModelMessage[]> =>
+    (await withPersonAnswers(db, jobId as string, fermerLesAppels(msgs))) as ModelMessage[];
+  const failJob: typeof failJobRow = async (base, id, code, stats, msgs, userMessage, hint) =>
     failJobRow(
       base,
       id,
       code,
       stats,
-      msgs === undefined ? undefined : transcriptionFermee(msgs as ModelMessage[]),
+      msgs === undefined ? undefined : await transcriptionFermee(msgs as ModelMessage[]),
       userMessage,
       hint,
     );
-  const cancelJob: typeof cancelJobRow = (base, id, stats, msgs, partialResult) =>
+  const cancelJob: typeof cancelJobRow = async (base, id, stats, msgs, partialResult) =>
     cancelJobRow(
       base,
       id,
       stats,
-      msgs === undefined ? undefined : transcriptionFermee(msgs as ModelMessage[]),
+      msgs === undefined ? undefined : await transcriptionFermee(msgs as ModelMessage[]),
       partialResult,
     );
   // llmClient is resolved per-job from the agent's llmKeyId (Brique 24/25).
@@ -3824,7 +3840,7 @@ async function runJobTracked(
         jobId: jobId as string,
         errorCode,
         stats: runStats(),
-        messages: transcriptionFermee(messages),
+        messages: await transcriptionFermee(messages),
         ...(userMessage !== undefined ? { userMessage, replaceResult } : {}),
         ...(runnerNotes ? { runnerNotes } : {}),
         ...(notice
@@ -3875,17 +3891,19 @@ async function runJobTracked(
    */
   const echouerSurDeclaration = async (items: DeclarationItem[]): Promise<ExecuteJobResult> => {
     const line = deliverableNotVerifiedLine(items);
-    // Le texte que le run aurait livré — ce qu'un outil de livraison a déjà
-    // écrit, sinon le dernier texte de l'agent —, puis la ligne. Il REMPLACE le
-    // résultat dans la transaction qui pose l'échec : une seconde écriture après
-    // coup laissait, sur une panne entre les deux, un échec dont le résultat ne
-    // disait que « livré » (revue Codex de #509, passe 3).
+    // Le texte que le run aurait livré — ce qu'un outil a déjà écrit
+    // (`dashboard_publish`), qui n'est jamais écrasé, comme à la porte de
+    // succès et dans `finalizeJobSuccess` ; sinon la réponse de l'agent
+    // (#1083) —, puis la ligne. Il REMPLACE le résultat dans la transaction
+    // qui pose l'échec : une seconde écriture après coup laissait, sur une
+    // panne entre les deux, un échec dont le résultat ne disait que « livré »
+    // (revue Codex de #509, passe 3).
     const [dejaEcrit] = await db
       .select({ result: agentJobs.result })
       .from(agentJobs)
       .where(eq(agentJobs.id, jobId as string))
       .limit(1);
-    const texte = (dejaEcrit?.result ?? '').trim() || lastAssistantTextSeen.trim();
+    const texte = (dejaEcrit?.result ?? '').trim() || reponseDuRun();
     const livrable = [texte, line].filter((t) => t !== '').join('\n\n');
     trace(DELIVERABLE_NOT_VERIFIED, { paths: items.map((i) => i.path) });
     await failJobWithHarnessNotice(
@@ -4433,18 +4451,21 @@ async function runJobTracked(
   }
 
   // The last non-empty assistant TEXT this job has written, this run OR an
-  // earlier one. For a delegated sub-job this IS the deliverable the parent
-  // receives (Hermes: `tools/delegate_tool.py:2064-2078`,
-  // `summary = final_response`); for a head job it is what
-  // `fillResultFromFinalTextIfEmpty` lands in `agent_jobs.result` when no
-  // delivery tool wrote it. Empty at finalization time means the job produced
-  // nothing, anywhere — see the empty-deliverable guard in the return_result
-  // branch.
+  // earlier one, WHENEVER it was written. It is what a run STOPPED before its
+  // end delivers (budget, timeout, provider rejection), always followed by the
+  // line that says it was stopped: a stopped run gave no answer, and this is
+  // what it had written when it was cut.
+  //
+  // It is NOT the answer of a run that ENDS (#1083): a text written before
+  // later work is a step, not the outcome, and a repair turn's note does not
+  // replace the answer given before the proof. That answer is `reponseDuRun()`
+  // (`answerOfRun`, job/final-answer.ts), the one reading every ending gate
+  // uses — the text branch, the return_result branch, the empty-deliverable
+  // guard, the declared-deliverable failure.
   //
   // Seeded from the transcript, not just tracked per turn: a parent writes its
   // text BEFORE suspending into a delegation, and comes back in a fresh
-  // executeJob run whose final turn is `return_result` alone. Counting only
-  // this run's text would fail that job over a deliverable it already wrote.
+  // executeJob run. Counting only this run's text would lose what it wrote.
   //
   // From the CURRENT turn only (#419): the replayed thread history that
   // precedes the task carries the older turns' ledger lines as assistant text
@@ -4474,6 +4495,15 @@ async function runJobTracked(
       .trim();
     if (joined !== '') lastAssistantTextSeen = joined;
   }
+  // La réponse que le job a donnée en finissant (#1083) : relue dans la
+  // transcription du tour courant, donc la même après une reprise. Sans
+  // frontière, tout est relu, comme `lastAssistantTextSeen` au-dessus (et
+  // c'est tracé là).
+  // « Les réponses de ce job partent par un envoi » se lit dans SA livraison
+  // (#649, `replyTo`), pas dans la présence d'un envoi : un job qui répond par
+  // son résultat peut envoyer une image en passant.
+  const reponseDuRun = (): string =>
+    answerOfRun(currentTurnMessages(messages, job.task), requiresToolDelivery);
   // ONE nudge, as Hermes does: ask for the deliverable, then fail loud.
   const MAX_EMPTY_DELIVERABLE_NUDGES = 1;
   // Le compteur de rappels vit en mémoire, donc il repart à zéro à chaque
@@ -4513,10 +4543,12 @@ async function runJobTracked(
   const emptyDeliverableNudge =
     '[système] ' +
     EMPTY_DELIVERABLE_NUDGE_MARK +
-    ' Tu as signalé la fin de la tâche mais tu n’as produit AUCUN texte. ' +
-    '`return_result` ne transporte pas de contenu : ta réponse écrite EST le livrable. ' +
-    'Écris maintenant ton livrable (ce que tu as trouvé ou fait, en résultats, pas en ' +
-    'intentions) comme réponse, puis arrête-toi.';
+    ' Tu as signalé la fin de la tâche sans donner de réponse : aucun texte écrit depuis ' +
+    'ton dernier appel d’outil, et aucun `reason` : ta réponse écrite EST le livrable. Un ' +
+    'texte écrit AVANT un pas qui a encore agi n’est pas repris, parce qu’il ne connaissait ' +
+    'pas la suite. Écris maintenant ton livrable EN ENTIER (ce que tu as trouvé ou fait, en ' +
+    'résultats, pas en intentions), en reprenant ce qui reste vrai de ce texte : pas de ' +
+    '« voir plus haut », personne ne le lira. Puis arrête-toi.';
 
   // A return_result(status='blocked') MUST carry a user-facing reason. If the
   // agent omits it, nudge (bounded) for one before finalizing — never leave the
@@ -4603,6 +4635,12 @@ async function runJobTracked(
         return await lacherLeJob(perteEnTete, 'turn_start');
       }
       await lireLaFile('turn_start');
+      // #1084 — avant que le modèle relise la transcription : chaque message
+      // d'outils y est suivi du relevé des questions de ses appels. Ce qu'un
+      // autre chemin a écrit sans eux (la reprise d'appels approuvés, le
+      // message d'outils qu'une délégation reprise construit, un run
+      // précédent du job) les reçoit ici, depuis les lignes.
+      messages = (await withPersonAnswers(db, jobId as string, messages)) as ModelMessage[];
 
       // Invariant 8: hard turn cap. `turn` is cumulative across resumes (it's
       // seeded from job.turn), so a job that loops — or resumes — without ever
@@ -5489,11 +5527,16 @@ async function runJobTracked(
           if (perteAvantFin) return await lacherLeJob(perteAvantFin, 'finalize');
           const noticeALivrer = harnessNoticeDelivery(failedDelegationNotice());
           const cibleNotice = harnessNoticeTarget();
+          // La réponse du job (#1083) : ce texte final, précédé, si le job est
+          // passé par des tours de réparation, de la réponse donnée avant la
+          // preuve et de ce que chaque réparation a dit. Sans réparation, c'est
+          // ce texte-là.
+          const reponseTexte = reponseDuRun();
           const finalized = await finalizeJobSuccess(
             db,
             {
               jobId: jobId as string,
-              result: textContent,
+              result: reponseTexte,
               // Les MOTS DE L'AGENT : c'est son texte final, sur la branche
               // texte (#154, #210).
               resultKind: 'prose',
@@ -5578,7 +5621,7 @@ async function runJobTracked(
           );
           return {
             status: 'completed',
-            result: await withDeliveryNotice(withFailedDelegationNotice(textContent)),
+            result: await withDeliveryNotice(withFailedDelegationNotice(reponseTexte)),
             toolsUsed,
             exitReason: 'final_text',
           };
@@ -5751,6 +5794,18 @@ async function runJobTracked(
         closeTurn(reason);
         return { role: 'tool', content: toolResultBlocks } as ModelMessage;
       };
+      // #1084 — les relevés des questions que les appels de ce pas ont
+      // posées, lus une fois tous ses appels faits (`relevesDuPas`).
+      let relevesDuPas: ModelMessage[] = [];
+      /**
+       * Ce que ce pas laisse dans la transcription, à TOUTE sortie qui la
+       * continue : son message d'outils, puis le relevé de chaque question
+       * posée pendant ses appels, dans l'ordre où elles l'ont été.
+       */
+      const turnMessages = (reason?: string): ModelMessage[] => [
+        turnToolMessage(reason),
+        ...relevesDuPas,
+      ];
 
       let awaitingApproval = false;
 
@@ -6441,6 +6496,16 @@ async function runJobTracked(
         }
       }
 
+      // #1084 — tous les appels du pas sont faits : leurs questions sont
+      // closes (ou l'appel a fini avant, et la ligne le dit). Leurs relevés,
+      // lus sur les lignes, suivront le message d'outils quelle que soit la
+      // sortie du pas.
+      relevesDuPas = personAnswersOfCalls(
+        await personAnswerRowsOf(db, jobId as string),
+        rawToolCalls.map((tc) => tc.toolCallId),
+        recordedPersonAnswers(messages),
+      ) as unknown as ModelMessage[];
+
       // j. Suspension states — approval gate.
       //
       // A gated tool created an approval request and did NOT execute. `awaitingApproval`
@@ -6464,7 +6529,7 @@ async function runJobTracked(
         if (rawToolCalls.length > 0) {
           messages = [
             ...messages,
-            turnToolMessage('an action of this turn is awaiting user approval'),
+            ...turnMessages('an action of this turn is awaiting user approval'),
           ];
         }
         if (requiresToolDelivery && !toolDelivered && redeliveryNudges < MAX_REDELIVERY_NUDGES) {
@@ -6520,7 +6585,7 @@ async function runJobTracked(
                 'deferred: verify platform state with a read tool before finalizing — see the runtime notice below.',
             }),
           });
-          messages = [...messages, turnToolMessage()];
+          messages = [...messages, ...turnMessages()];
           messages = [
             ...messages,
             { role: 'user', content: VERIFY_BEFORE_ASSERT_NUDGE } as ModelMessage,
@@ -6577,7 +6642,7 @@ async function runJobTracked(
           toolName: 'return_result',
           output: toResultOutput({ error: 'deferred: sibling tool error must be addressed first' }),
         });
-        messages = [...messages, turnToolMessage()];
+        messages = [...messages, ...turnMessages()];
         continue;
       }
 
@@ -6624,7 +6689,7 @@ async function runJobTracked(
                   "l'utilisateur peut faire — il la verra telle quelle.",
               }),
             });
-            messages = [...messages, turnToolMessage()];
+            messages = [...messages, ...turnMessages()];
             messages = [
               ...messages,
               {
@@ -6659,7 +6724,7 @@ async function runJobTracked(
                   "return_result avec status='blocked'.",
               }),
             });
-            messages = [...messages, turnToolMessage()];
+            messages = [...messages, ...turnMessages()];
             messages = [...messages, { role: 'user', content: deliveryNudge } as ModelMessage];
             continue;
           }
@@ -6674,7 +6739,7 @@ async function runJobTracked(
             toolName: 'return_result',
             output: toResultOutput({ acknowledged: true }),
           });
-          messages = [...messages, turnToolMessage()];
+          messages = [...messages, ...turnMessages()];
           toolsUsed = [...new Set([...toolsUsed, 'return_result'])];
 
           // The error column carries a SHORT human reason (first sentence) so the
@@ -6753,7 +6818,7 @@ async function runJobTracked(
                     "appelle return_result avec status='blocked'.",
                 }),
               });
-              messages = [...messages, turnToolMessage()];
+              messages = [...messages, ...turnMessages()];
               messages = [...messages, unresolvedFailureNudge(stuckDelivery)];
               continue;
             }
@@ -6798,7 +6863,7 @@ async function runJobTracked(
                   "deferred: tu n'as pas encore livré ta réponse via telegram_send_message — fais-le avant de terminer",
               }),
             });
-            messages = [...messages, turnToolMessage()];
+            messages = [...messages, ...turnMessages()];
             messages = [...messages, { role: 'user', content: deliveryNudge } as ModelMessage];
             continue;
           }
@@ -6816,8 +6881,8 @@ async function runJobTracked(
         }
 
         // Guard 3c — empty deliverable (#107, job f1852d35 / sub-job 538b8d53).
-        // `return_result` is a SIGNAL and carries no content, so a turn made of
-        // reasoning + `return_result{status:'success'}` delivers NOTHING. Hermes
+        // `return_result` is a SIGNAL, so a turn made of reasoning +
+        // `return_result{status:'success'}` with no `reason` delivers NOTHING. Hermes
         // refuses exactly this (`tools/delegate_tool.py:2064-2078`: status is
         // `completed` only if the final response is non-empty, "treat it as a
         // failure so the parent surfaces it instead of silently accepting
@@ -6828,7 +6893,27 @@ async function runJobTracked(
         // A run that created tasks delivers later via the board, and a run that
         // already wrote a result (dashboard_publish, an earlier resume) has a
         // deliverable — neither is empty.
-        if (taskRows.length === 0 && !toolDelivered && lastAssistantTextSeen === '') {
+        //
+        // EMPTY means no ANSWER (#1083), not no text: a text followed by work in
+        // a LATER step is a step, not the deliverable, and promoting it handed a
+        // delegating agent « je relance le rendu » for a document that was
+        // finished. A `reason` given with the success signal is the answer when
+        // no written reply follows the work (`answerOfRun`).
+        const reponseRetour = reponseDuRun();
+        if (reponseRetour === '' && lastAssistantTextSeen !== '') {
+          trace('answer_predates_work', { turn, lastTextLen: lastAssistantTextSeen.length });
+        }
+        // « Déjà livré » veut dire : CELUI QUI LIT ce job a reçu quelque chose
+        // de l'envoi (revue de #1087, F2). Deux lecteurs le reçoivent, par les
+        // mécanismes qui existent déjà : la personne, quand les réponses du job
+        // partent par un envoi (sa livraison, #649) ; le parent d'un job
+        // délégué, à qui `withDeliveryNotice` remet le fait de l'envoi (#824).
+        // Un job de TÊTE qui répond par son résultat (MCP, API, tableau de
+        // bord) ne transmet rien de l'envoi à qui lit son résultat : un envoi
+        // en passant ne le livre pas, et son résultat vide est un livrable vide.
+        const dejaLivreParEnvoi =
+          toolDelivered && (requiresToolDelivery || Boolean(job.parentJobId));
+        if (taskRows.length === 0 && !dejaLivreParEnvoi && reponseRetour === '') {
           const [deliverableRow] = await db
             .select({ result: agentJobs.result })
             .from(agentJobs)
@@ -6887,12 +6972,12 @@ async function runJobTracked(
                 toolName: 'return_result',
                 output: toResultOutput({
                   error:
-                    'deferred: tu signales la fin de la tâche mais tu n’as produit aucun ' +
-                    'contenu. `return_result` ne transporte rien : écris ton livrable comme ' +
-                    'réponse, puis signale à nouveau.',
+                    'deferred: tu signales la fin de la tâche sans réponse : aucun texte écrit ' +
+                    'depuis ton dernier appel d’outil, et aucun `reason`. Écris ton livrable en ' +
+                    'entier comme réponse, puis signale à nouveau.',
                 }),
               });
-              messages = [...messages, turnToolMessage()];
+              messages = [...messages, ...turnMessages()];
               messages = [
                 ...messages,
                 { role: 'user', content: emptyDeliverableNudge } as ModelMessage,
@@ -6937,7 +7022,7 @@ async function runJobTracked(
               toolName: 'return_result',
               output: toResultOutput({ acknowledged: true }),
             });
-            messages = [...messages, turnToolMessage()];
+            messages = [...messages, ...turnMessages()];
             toolsUsed = [...new Set([...toolsUsed, 'return_result'])];
             return await echouerSurDeclaration(dueRetour);
           }
@@ -6987,7 +7072,7 @@ async function runJobTracked(
                   })),
                 }),
               });
-              messages = [...messages, turnToolMessage()];
+              messages = [...messages, ...turnMessages()];
               continue;
             }
             toolResultBlocks.push({
@@ -6996,7 +7081,7 @@ async function runJobTracked(
               toolName: 'return_result',
               output: toResultOutput({ acknowledged: true }),
             });
-            messages = [...messages, turnToolMessage()];
+            messages = [...messages, ...turnMessages()];
             toolsUsed = [...new Set([...toolsUsed, 'return_result'])];
             return await echouerSurDeclaration(items);
           }
@@ -7006,11 +7091,16 @@ async function runJobTracked(
           });
         }
 
-        // Brique 33: return_result is status-only. Content delivery happens via
-        // dashboard_publish, telegram_send_message, etc. — those tools already
-        // wrote to agent_jobs.result (or a delivery channel) via their side-effects.
-        // We pass empty finalResult; completeJob preserves existing result.
-        const finalResult = '';
+        // Brique 33, inchangée : un `result` qu'un outil a déjà écrit
+        // (`dashboard_publish`) est GARDÉ — rien ne l'écrase, comme sur main.
+        // Sinon, la réponse du job (#1083), lue ici parce que c'est ici que la
+        // livraison du job est connue ; vide, `completeJob` compile les enfants.
+        const [dejaPublie] = await db
+          .select({ result: agentJobs.result })
+          .from(agentJobs)
+          .where(eq(agentJobs.id, jobId as string))
+          .limit(1);
+        const finalResult = (dejaPublie?.result ?? '').trim() !== '' ? '' : reponseRetour;
         toolsUsed = [...new Set([...toolsUsed, 'return_result'])];
 
         toolResultBlocks.push({
@@ -7019,7 +7109,7 @@ async function runJobTracked(
           toolName: 'return_result',
           output: toResultOutput({ acknowledged: true }),
         });
-        messages = [...messages, turnToolMessage()];
+        messages = [...messages, ...turnMessages()];
 
         // If this run created tasks on the board, the workflow continues
         // asynchronously: the cron's executeReadyTasks runs each task and
@@ -7056,12 +7146,12 @@ async function runJobTracked(
           {
             jobId: jobId as string,
             result: finalResult,
-            // `finalResult` est VIDE ici (brique 33 : `return_result` ne
-            // transporte aucun contenu), donc rien n'est écrit et cette marque
-            // n'est pas posée : celle de l'outil de livraison qui a rempli
-            // `result` plus tôt, ou celle des remplissages de `completeJob`,
-            // reste en place. Elle est nommée quand même — la primitive exige
-            // que chaque porte DISE de quel genre est le texte qu'elle passe.
+            // `finalResult` est VIDE ici (brique 33), donc rien n'est écrit et
+            // cette marque n'est pas posée : celle de l'outil de livraison qui a
+            // rempli `result` plus tôt, ou celle des remplissages de
+            // `completeJob`, reste en place. Elle est nommée quand même — la
+            // primitive exige que chaque porte DISE de quel genre est le texte
+            // qu'elle passe.
             resultKind: 'prose',
             // Même boucle, même reprise possible (issue #375).
             repairTurn: 'supported',
@@ -7167,7 +7257,7 @@ async function runJobTracked(
 
       // k. Append tool results and continue
       if (rawToolCalls.length > 0) {
-        messages = [...messages, turnToolMessage()];
+        messages = [...messages, ...turnMessages()];
       }
 
       // k-pré-bis. Guard 1f — flush any non-progress nudges queued while

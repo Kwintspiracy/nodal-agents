@@ -11,6 +11,7 @@
 //   const session = await pairing.done();                      // the owner confirmed it
 //   const nodal = connect(url, session);                       // keep `session` to reconnect
 //   nodal.on('card', (card) => …); await nodal.say(wav, 'audio/wav');
+//   const { bytes, mimeType } = await nodal.image(card.images[0]);  // a card's image, if any
 //
 // The protocol itself (events, payloads, routes) is NOT written here: it comes
 // from the single protocol module `packages/shared/src/device-protocol.ts`,
@@ -30,22 +31,29 @@
 // session with a `NodalDeviceError` of code `revoked`: never an endless retry.
 
 import {
+  DEVICE_ANSWER_OPTION_KEYS,
   DEVICE_GESTURES,
   DEVICE_PAIRING_GESTURES,
   DEVICE_POLL_STATUS,
+  DEVICE_CARD_NOTES_MAX,
   DEVICE_PROTOCOL_VERSION,
+  type DeviceAnswerOptions,
   type DeviceCapability,
   type DeviceCardChoice,
+  type DeviceCardImage,
   type DeviceEvent,
 } from './protocol.generated.ts';
 
 export {
   DEVICE_CAPABILITIES,
+  DEVICE_CARD_NOTES_MAX,
   DEVICE_GESTURES,
   DEVICE_PAIRING_GESTURES,
   DEVICE_PROTOCOL_VERSION,
+  type DeviceAnswerOptions,
   type DeviceCapability,
   type DeviceCardChoice,
+  type DeviceCardImage,
   type DeviceDeliverable,
   type DeviceEvent,
   type DeviceEventType,
@@ -69,7 +77,9 @@ export {
  *     before the answer);
  *   - `stream_cut`: an answer or a stream stopped before its end;
  *   - `aborted`: the call was aborted by the device's own `signal`;
- *   - `closed`: the session was closed (by `close()`, while a call was running).
+ *   - `closed`: the session was closed (by `close()`, while a call was running);
+ *   - `invalid_argument`: the call was refused here, before any request left,
+ *     because of what it was given (the person's words over their bound).
  */
 export type NodalDeviceErrorCode =
   | 'refused'
@@ -81,7 +91,8 @@ export type NodalDeviceErrorCode =
   | 'network'
   | 'stream_cut'
   | 'aborted'
-  | 'closed';
+  | 'closed'
+  | 'invalid_argument';
 
 export class NodalDeviceError extends Error {
   readonly code: NodalDeviceErrorCode;
@@ -151,6 +162,22 @@ function fetchOf(options: FetchOptions): typeof fetch {
 /** `http://host:3001/` + `/api/x` → `http://host:3001/api/x`. */
 function urlOf(baseUrl: string, path: string): string {
   return baseUrl.replace(/\/+$/, '') + path;
+}
+
+/** Is `path` the route of an image of one of device `deviceId`'s cards (DEVICE_GESTURES `see`)? */
+function isImagePathOf(deviceId: string, path: string): boolean {
+  const want = DEVICE_GESTURES.see[0].path.split('/');
+  const got = path.split('/');
+  return (
+    want.length === got.length &&
+    want.every((seg, i) => {
+      const part = got[i] ?? '';
+      if (seg === ':deviceId') return part === encodeURIComponent(deviceId);
+      if (seg === ':n') return /^[0-9]+$/.test(part);
+      if (seg.startsWith(':')) return /^[A-Za-z0-9-]+$/.test(part);
+      return seg === part;
+    })
+  );
 }
 
 /** A route of the protocol table with its `:params` filled in. */
@@ -596,8 +623,24 @@ export interface NodalDevice {
   ): Promise<TurnResult>;
   /** One typed turn. */
   send(text: string): Promise<TurnResult>;
-  /** Answer a card with one of its `choices`. */
-  answer(cardId: string, choice: DeviceCardChoice): Promise<void>;
+  /**
+   * Answer a card with one of its `choices`, for any kind of card, approved or
+   * refused. `options.notes` is what the person said besides the choice (a
+   * change to make, a reason): sent as `notes` of `POST /api/approve`, stored
+   * on the request and handed to the agent. Absent or only whitespace: no
+   * words, and the request is the same as without options. More than
+   * `DEVICE_CARD_NOTES_MAX` characters: refused here with `invalid_argument`,
+   * before any request leaves. So is any third argument that is not an options
+   * object with only `notes` (a bare string, a number, an array, a mistyped
+   * key): never read as "no words". `undefined` and `null` are no options.
+   */
+  answer(cardId: string, choice: DeviceCardChoice, options?: DeviceAnswerOptions): Promise<void>;
+  /**
+   * Read one image of a card (`card.images`), with this device's token: its
+   * bytes and their content type. Only a card's image route is read; any
+   * other path is refused before a request leaves.
+   */
+  image(image: DeviceCardImage): Promise<{ mimeType: string; bytes: Uint8Array }>;
   /** Stop the current turn. Resolves true when a turn was running. */
   cancel(): Promise<boolean>;
   /** Start a new conversation (like `/new`): the next turns begin from a blank thread. */
@@ -1061,12 +1104,67 @@ export function connect(
     return readTurn(res, null, text);
   };
 
-  const answer: NodalDevice['answer'] = async (cardId, choice) => {
+  const answer: NodalDevice['answer'] = async (cardId, choice, options) => {
+    // The third argument is absent, `null` (no options), or a plain object
+    // with only the keys the protocol names. Anything else is refused BEFORE a
+    // request leaves: a string, a number, an array, a key that is a typo would
+    // otherwise be read as "no words", the card settled, the words lost.
+    if (options !== undefined && options !== null) {
+      const proto: unknown =
+        typeof options === 'object' ? Object.getPrototypeOf(options) : undefined;
+      const plain = typeof options === 'object' && (proto === Object.prototype || proto === null);
+      if (!plain) {
+        throw new NodalDeviceError(
+          'invalid_argument',
+          `invalid_argument: the third argument of answer() is an options object such as { notes: "…" }, not ${Array.isArray(options) ? 'an array' : typeof options}`,
+        );
+      }
+      const unknown = Object.keys(options).filter(
+        (k) => !(DEVICE_ANSWER_OPTION_KEYS as readonly string[]).includes(k),
+      );
+      if (unknown.length > 0) {
+        throw new NodalDeviceError(
+          'invalid_argument',
+          `invalid_argument: answer() takes only ${DEVICE_ANSWER_OPTION_KEYS.join(', ')}, not ${unknown.join(', ')}`,
+        );
+      }
+    }
+    const notes = options?.notes;
+    // Whitespace is no words: nothing is sent for it. What is sent is the
+    // person's text as they wrote it, checked against the bound Nodal enforces.
+    if (notes !== undefined && typeof notes !== 'string') {
+      throw new NodalDeviceError('invalid_argument', 'invalid_argument: the words must be a text');
+    }
+    const words = notes !== undefined && notes.trim() !== '' ? notes : undefined;
+    if (words !== undefined && words.length > DEVICE_CARD_NOTES_MAX) {
+      throw new NodalDeviceError(
+        'invalid_argument',
+        `invalid_argument: the words are ${words.length} characters, Nodal takes at most ${DEVICE_CARD_NOTES_MAX}`,
+      );
+    }
     await request('POST', DEVICE_GESTURES.answer[0].path, {
       approvalRequestId: cardId,
       decision: choice.decision,
       ...(choice.answer !== undefined ? { answer: choice.answer } : {}),
+      ...(words !== undefined ? { notes: words } : {}),
     });
+  };
+
+  const image: NodalDevice['image'] = async (img) => {
+    // The token goes to this device's card image route and nowhere else: a
+    // path that is not one (another device's, another route, an address) is
+    // refused here, before the token leaves.
+    if (!isImagePathOf(session.deviceId, img.path)) {
+      throw new NodalDeviceError(
+        'protocol',
+        `protocol: "${img.path}" is not an image route of this device's cards`,
+      );
+    }
+    const res = await request('GET', img.path);
+    return {
+      mimeType: res.headers.get('content-type') ?? img.mimeType,
+      bytes: new Uint8Array(await res.arrayBuffer()),
+    };
   };
 
   const cancel: NodalDevice['cancel'] = async () => {
@@ -1121,6 +1219,7 @@ export function connect(
     say: gesture(say),
     send: gesture(send),
     answer: gesture(answer),
+    image: gesture(image),
     cancel: gesture(cancel),
     newConversation: gesture(async () => {
       const next = readConversation(true);

@@ -657,6 +657,41 @@ describe('the other gestures @cap:parler-par-canal-externe/moteur', () => {
     expect(nodal.requests.some((r) => r.path.endsWith('/end'))).toBe(false);
     device.close();
   });
+
+  it('image() reads a card’s image from its pointer, with the token; any other path is refused before a request leaves (#1067)', async () => {
+    const live = liveStream();
+    const bytes = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 1, 2, 0xff, 0xd9]);
+    const nodal = fakeNodal({
+      'GET /api/devices/:id/events': () => live.response,
+      'GET /api/devices/:id/cards/:c/images/:n': () =>
+        new Response(bytes, { status: 200, headers: { 'content-type': 'image/jpeg' } }),
+    });
+    const device = connect(BASE, session, { fetch: nodal.fetch });
+    const path = `/api/devices/${DEVICE}/cards/${CARD}/images/1`;
+    expect(await device.image({ path, mimeType: 'image/jpeg' })).toEqual({
+      mimeType: 'image/jpeg',
+      bytes,
+    });
+    const read = nodal.requests.find((r) => r.path.includes('/images/'))!;
+    expect(read).toMatchObject({ method: 'GET', path });
+    expect(read.headers['authorization']).toBe(`Bearer ${TOKEN}`);
+
+    // Another device's image, another route, another address: the token never leaves.
+    for (const foreign of [
+      `/api/devices/0d1e2f3a-4b5c-4d6e-8f7a-9b0c1d2e3f4a/cards/${CARD}/images/0`,
+      `/api/devices/${DEVICE}/cards/${CARD}`,
+      `/api/devices/${DEVICE}/cards/${CARD}/images/x`,
+      `//elsewhere.test/api/devices/${DEVICE}/cards/${CARD}/images/0`,
+    ]) {
+      await expect(device.image({ path: foreign, mimeType: 'image/png' })).rejects.toMatchObject({
+        code: 'protocol',
+      });
+    }
+    expect(nodal.requests.filter((r) => r.path.includes('/cards/')).map((r) => r.path)).toEqual([
+      path,
+    ]);
+    device.close();
+  });
 });
 
 describe('every failure is a NodalDeviceError, the network’s included (review of #1013) @cap:parler-par-canal-externe/moteur', () => {

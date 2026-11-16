@@ -430,11 +430,11 @@ jobs:
     runs-on: ubuntu-24.04
     # The job bound is the SUM of its steps' bounds, so no step can be cut by
     # the job before its own bound (review of PR #516): ~2 setup, 10 install,
-    # 2 Playwright version, 15 Playwright install, 10 boot, 10 journeys, ~2
-    # uploads = 51. Measured before
+    # 2 Playwright version, 15 Playwright install, 8 web build (#748), 10 boot,
+    # 10 journeys, ~2 uploads = 59. Measured before
     # #852: install 0.1 min, Playwright 0.4, boot 0.5, journeys 2.0. A JOB
     # timeout kills everything; a step timeout still runs `if: failure()`.
-    timeout-minutes: 56
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v5
 
@@ -473,10 +473,32 @@ jobs:
         timeout-minutes: 15
         run: node scripts/install-playwright.mjs
 
+      # Les parcours jouent le web CONSTRUIT, comme chez un utilisateur (#748) :
+      # `next dev` compilait chaque route à sa première visite, pendant le
+      # parcours qui l'ouvrait (un premier essai perdu à chaque run), et son
+      # compilateur montait de 8 à 11,5 Go sur cette machine de 16, jusqu'à ce
+      # que le noyau le tue (OOM) et que le runner s'arrête avec lui (essais de
+      # référence de la PR #1107, run 43703389782, job 132780788415).
+      # Le cache turbo de la lignée `build` est RESTAURÉ, jamais sauvé ici : ce
+      # job ne produit rien d'autre que ce que `build` produit déjà, et une
+      # sauvegarde concurrente sous la même clé ne garderait que la première.
+      # Web inchangé depuis l'entrée restaurée : le build est rejoué du cache ;
+      # web modifié : il est reconstruit (mesuré dans la PR de #748).
+      - uses: actions/cache/restore@v4
+        with:
+          path: .turbo/cache
+          key: turbo-${{ runner.os }}-build-${{ github.sha }}
+          restore-keys: |
+            turbo-${{ runner.os }}-build-
+
+      - name: Build the web app
+        timeout-minutes: 8
+        run: pnpm turbo run build --filter=@nodal-agents/web
+
       # NOT `pnpm --filter @nodal-agents/web e2e:up`: that wrapper shells out to
       # a globally-installed `nodal-agents` binary, which does not exist on a
       # runner checking out source. First attempt died on `spawn ENOENT`.
-      # The dev stack from source brings up embedded Postgres + runner + web.
+      # The stack from source brings up embedded Postgres + runner + the built web.
       #
       # Boot and wait are ONE script, shared with `qa.yml` (#514). It follows
       # the CLI's process: it returns when the dashboard answers, fails at once

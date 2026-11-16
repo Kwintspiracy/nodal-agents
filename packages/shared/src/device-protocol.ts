@@ -15,12 +15,16 @@
 //                                                 — the device's own event
 //                                                   stream (DeviceEventSchema)
 //
+// What the stream never carries is a file: an announcement points to its
+// audio, a card to its images, and the device reads them with its token.
+//
 // What a card or a bubble SAYS is never composed for the device: a card
 // carries the platform's fixed frame and the agent's words quoted as data,
 // exactly as the Telegram card does (invariant #2); a bubble carries the
 // agent's reply as it is stored.
 
 import { z } from 'zod';
+import { CARD_NOTES_MAX } from './card-notes';
 
 /** Bumped only when an existing field changes meaning; adding one does not. */
 export const DEVICE_PROTOCOL_VERSION = 1;
@@ -44,6 +48,51 @@ export const DeviceCardChoiceSchema = z.object({
   answer: z.string().optional(),
 });
 export type DeviceCardChoice = z.infer<typeof DeviceCardChoiceSchema>;
+
+/**
+ * The most characters of the person's own words that go with an answer
+ * (`DeviceAnswerOptions.notes`): the one bound every surface shares
+ * (`CARD_NOTES_MAX`, the dashboard's included). Nodal refuses a longer text
+ * with `notes_too_long`; the reference client refuses it before any request.
+ */
+export const DEVICE_CARD_NOTES_MAX = CARD_NOTES_MAX;
+
+/**
+ * What the person said, besides the choice, when answering ANY card: an
+ * approval, a question, an MCP server's question, approved or refused. Sent as
+ * `notes` of `POST /api/approve` (DEVICE_GESTURES `answer`), stored on the
+ * request, and handed to the agent as the person's own word. Absent, or only
+ * whitespace: no words, and nothing is sent. At most `DEVICE_CARD_NOTES_MAX`
+ * characters. Adding it changes no existing field: the protocol version stays.
+ */
+export const DeviceAnswerOptionsSchema = z
+  .object({
+    notes: z.string().optional(),
+  })
+  .strict();
+/**
+ * The keys of `DeviceAnswerOptions`, for a client that cannot run the schema:
+ * it refuses any other key (a typo) instead of dropping it. A test keeps this
+ * list equal to the schema's keys.
+ */
+export const DEVICE_ANSWER_OPTION_KEYS = ['notes'] as const;
+export type DeviceAnswerOptions = z.infer<typeof DeviceAnswerOptionsSchema>;
+
+/**
+ * An image that comes with a card (an MCP server's question shows what it is
+ * about to do): a POINTER, never the bytes. `GET path` with the device's
+ * token (DEVICE_GESTURES `see`) answers the bytes, with `mimeType` as their
+ * content type.
+ */
+export const DeviceCardImageSchema = z.object({
+  /** `/api/devices/:deviceId/cards/:cardId/images/:n`: append it to Nodal's address. */
+  path: z.string(),
+  /** `image/png`, `image/jpeg`, `image/webp` or `image/gif`. */
+  mimeType: z.string(),
+  /** What the server says of the image, as data. Absent: it says nothing. */
+  caption: z.string().optional(),
+});
+export type DeviceCardImage = z.infer<typeof DeviceCardImageSchema>;
 
 /**
  * Where a run stands, as a device reads it: `working` (a job of the run is
@@ -76,15 +125,22 @@ export const DeviceEventSchema = z.discriminatedUnion('type', [
     conversationId: z.string().nullable(),
     text: z.string(),
   }),
-  /** Nodal asks the person something on behalf of a job: approve an action, or choose an option. */
+  /**
+   * Nodal asks the person something on behalf of a job: approve an action,
+   * choose an option, or answer the question an MCP server asks during a
+   * call (`kind: 'question'`, its choices the server's own buttons, a decline
+   * among them).
+   */
   z.object({
     type: z.literal('card'),
     /** The request's id: what `POST /api/approve` takes as `approvalRequestId`. */
     cardId: z.string(),
     kind: z.enum(['approval', 'question']),
-    /** The platform's fixed frame, with the agent's words quoted in it. */
+    /** The platform's fixed frame, with the agent's (or the server's) words quoted in it. */
     text: z.string(),
     choices: z.array(DeviceCardChoiceSchema),
+    /** The images that come with the question, in order. Absent: there are none. */
+    images: z.array(DeviceCardImageSchema).optional(),
   }),
   /** A card's request was settled (here, on another device, on the dashboard, or by expiry). */
   z.object({
@@ -183,11 +239,21 @@ export const DEVICE_GESTURES = {
     { method: 'POST', path: '/api/chat/stop' },
   ],
   hear: [{ method: 'GET', path: '/api/voice/replies/:audioId' }],
+  /** An image of a card (`images[].path`): only a card of a request made on this device. */
+  see: [{ method: 'GET', path: '/api/devices/:deviceId/cards/:cardId/images/:n' }],
 } as const satisfies Record<
   string,
   readonly { method: 'GET' | 'POST' | 'DELETE'; path: `/api/${string}` }[]
 >;
 export type DeviceGesture = keyof typeof DEVICE_GESTURES;
+
+/** The `path` of a card's image `n` (DEVICE_GESTURES `see`), as the card names it. */
+export function deviceCardImagePath(deviceId: string, cardId: string, n: number): string {
+  return DEVICE_GESTURES.see[0].path
+    .replace(':deviceId', encodeURIComponent(deviceId))
+    .replace(':cardId', encodeURIComponent(cardId))
+    .replace(':n', String(n));
+}
 
 // ─── Pairing (#946) ──────────────────────────────────────────────────────────
 //

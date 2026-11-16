@@ -34,7 +34,12 @@ import {
   voiceSettingWriteRoute,
 } from './routes/voice-setting.ts';
 import { eventsRoute } from './routes/events.ts';
-import { deviceCardsRoute, deviceConversationRoute, deviceEventsRoute } from './routes/devices.ts';
+import {
+  deviceCardImageRoute,
+  deviceCardsRoute,
+  deviceConversationRoute,
+  deviceEventsRoute,
+} from './routes/devices.ts';
 import { createDeviceSink } from './devices/device-sink.ts';
 import { createDeviceGate } from './devices/device-auth.ts';
 import {
@@ -340,6 +345,7 @@ export function createApp(
   app.get('/api/events', (c) => eventsRoute(c, deps));
   app.get('/api/devices/:deviceId/events', (c) => deviceEventsRoute(c, deps));
   app.get('/api/devices/:deviceId/cards', (c) => deviceCardsRoute(c, deps));
+  app.get('/api/devices/:deviceId/cards/:cardId/images/:n', (c) => deviceCardImageRoute(c, deps));
   app.post('/api/devices/:deviceId/conversation', (c) => deviceConversationRoute(c, deps));
   app.post('/api/devices/pair', (c) => devicePairRoute(c, deps));
   app.post('/api/devices/pair/poll', (c) => devicePollRoute(c, deps));

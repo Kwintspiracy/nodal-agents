@@ -204,6 +204,8 @@ export {
   RUNNING_WORK_MAX_RUNS,
   RUNNING_WORK_MAX_JOBS,
   buildRunningWorkBlock,
+  // #1088 — la forme de CETTE réponse, dite avec le message auquel elle répond.
+  REPLY_FORM_NOTES,
 } from './system-prompt';
 // #967 — l'annonce dite d'un job lancé par la voix.
 export { buildSpokenAnnouncement } from './spoken-announcement';

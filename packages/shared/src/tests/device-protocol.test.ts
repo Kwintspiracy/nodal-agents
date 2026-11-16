@@ -44,6 +44,20 @@ describe('the protocol events a device receives (#945) @cap:parler-par-canal-ext
         text: 'frame',
         choices: [{ label: 'Approve', decision: 'approve' }],
       },
+      {
+        type: 'card',
+        cardId: 'c',
+        kind: 'question',
+        text: 'frame',
+        choices: [
+          { label: 'Confirm', decision: 'approve' },
+          { label: 'Cancel', decision: 'reject' },
+        ],
+        images: [
+          { path: '/api/devices/d/cards/c/images/0', mimeType: 'image/jpeg', caption: 'Page 1' },
+          { path: '/api/devices/d/cards/c/images/1', mimeType: 'image/png' },
+        ],
+      },
       { type: 'card.closed', cardId: 'c', text: 'done' },
       {
         type: 'state',
@@ -129,6 +143,10 @@ describe('where a device key is accepted, read from the route table (#946) @cap:
       ['POST', '/api/chat/stop'],
       ['POST', '/api/approve'],
       ['GET', '/api/voice/replies/a1'],
+      [
+        'GET',
+        '/api/devices/0b6f5a4e-1f2a-4c3b-9d8e-7f6a5b4c3d2e/cards/6f1c2a9e-0d4b-4e8a-9a51-2b7c3d4e5f60/images/0',
+      ],
     ]) {
       expect(isDeviceTokenRoute(method!, path!)).toBe(true);
     }
@@ -143,6 +161,8 @@ describe('where a device key is accepted, read from the route table (#946) @cap:
       ['POST', '/api/voice/turns/t1/chunks'],
       ['POST', '/api/voice/turns//end'],
       ['GET', '/api/voice/setting'],
+      ['GET', '/api/devices/0b6f5a4e-1f2a-4c3b-9d8e-7f6a5b4c3d2e/cards/c1/images'],
+      ['POST', '/api/devices/0b6f5a4e-1f2a-4c3b-9d8e-7f6a5b4c3d2e/cards/c1/images/0'],
     ]) {
       expect(isDeviceTokenRoute(method!, path!)).toBe(false);
     }

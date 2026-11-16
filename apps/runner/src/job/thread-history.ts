@@ -37,19 +37,20 @@
 //
 // Action ledger (2026-07-11 incident, Layer 1 of the 3-layer fix — see
 // chain-counters.ts Guard 1g for the incident write-up): a prior job's OWN
-// prose is not a reliable record of what it actually did. When a prior job in
-// this thread used a STATE-CHANGING tool (create_schedule, attach_mcp, ...),
-// its exchange gets an `[Actions performed in this exchange: ...]` line naming
-// the REAL tool calls from `agent_jobs.tools_used` — a structural fact the LLM
-// can't override with confabulated prose on a later turn.
+// prose is not a reliable record of what it actually did. Its exchange gets
+// the runner's record of its REAL tool calls — a structural fact the LLM can't
+// override with confabulated prose on a later turn. Since #1075 that record
+// covers EVERY tool, without a hand-kept list: every tool named, and the head
+// of each result of a tool not declared read-only quoted
+// (`loadExchangeRecords`, exchange-record.ts). The 21 names of
+// `STATE_CHANGING_TOOLS` it replaces left every MCP, file and shell tool out,
+// and a rigorous model disowned real work it could not see.
 //
-// Delegated-task ledger (2026-07-12 incident — see task-ledger.ts): the line
-// above only covers the prior job's OWN tools_used. A prior job that instead
-// DELEGATED work via `create_task` (planner fan-out) never touched a tool
-// itself — the real action happened in a child task-board job the LLM has no
-// visibility into. Each prior job's delegated tasks (if any) get their own
-// `[Task "..." completed: actions — ...; result: ...]` line(s), sourced from
-// the CHILD job's tools_used, not the parent's prose summary.
+// Delegated-task ledger (2026-07-12 incident — see task-ledger.ts): a prior
+// job that DELEGATED work via `create_task` (planner fan-out) or in line
+// (`assign_*`) did the real action in a child job. Each delegation gets its
+// own line, sourced from the CHILD job's tools, not the parent's prose
+// summary, and the child's acting calls are quoted under the same rule.
 //
 // WHERE those lines go (#562): in a runner record AFTER the exchange — a user
 // message marked `[système]` (runnerRecord) — never in an assistant part. They
@@ -85,12 +86,14 @@ import { eq, and, ne, desc, inArray, isNull, lt } from '@nodal-agents/db';
 import { agentJobs, chatMessages } from '@nodal-agents/db';
 import type { ModelMessage } from 'ai';
 import type { RunnerDeps } from '../deps.ts';
+import { loadExchangeRecords, type JobEndFacts } from './exchange-record.ts';
 import {
-  loadTaskLedger,
-  formatTaskLedgerLines,
-  loadInlineDelegationLedger,
-  formatInlineDelegationLines,
-} from './task-ledger.ts';
+  conversationMoments,
+  isJobEnded,
+  taskEndedAt,
+  type ConversationMoment,
+} from './conversation-moments.ts';
+import { ownTranscript } from './tool-acts.ts';
 import {
   formatLocalTime,
   inboxMessageReceivedAt,
@@ -135,48 +138,6 @@ export const BUDGET_CHARS = 16_000;
  * (F-12, audit #2) — reuse it instead of re-implementing it.
  */
 export const PER_TURN_MAX_CHARS = 2_400;
-
-/**
- * Built-in tools that create/mutate/delete a platform object — schedules,
- * agents, skills, MCP servers, connectors, memory — as opposed to read tools
- * (`list_schedules`, ...) or delivery tools (`telegram_send_message`, ...).
- * Gates the action ledger below: a prior job whose `tools_used` intersects
- * this set gets a ledger line naming ALL its tools_used (not just the
- * state-changing ones — the point is to show the FULL real action record).
- *
- * Maintained alongside the builtin tool registry
- * (packages/tools/src/builtin) — extend this set whenever a new tool
- * creates, mutates, or deletes a platform object.
- */
-export const STATE_CHANGING_TOOLS: ReadonlySet<string> = new Set([
-  // Schedules
-  'create_schedule',
-  'update_schedule',
-  'toggle_schedule',
-  'run_schedule',
-  // Agents
-  'create_agent',
-  'update_agent',
-  'attach_agent',
-  'detach_agent',
-  // Skills
-  'create_skill',
-  'update_skill',
-  'attach_skill',
-  'detach_skill',
-  // MCP servers
-  'create_mcp',
-  'attach_mcp',
-  'detach_mcp',
-  // Connectors
-  'create_connector',
-  'attach_connector',
-  'detach_connector',
-  // Memory
-  'save_memory',
-  'mark_memory_helpful',
-  'mark_memory_outdated',
-]);
 
 export interface LoadThreadHistoryOptions {
   db: RunnerDeps['db'];
@@ -230,7 +191,6 @@ export async function loadThreadHistory(opts: LoadThreadHistoryOptions): Promise
       channel: agentJobs.channel,
       createdAt: agentJobs.createdAt,
       completedAt: agentJobs.completedAt,
-      toolsUsed: agentJobs.toolsUsed,
       resultKind: agentJobs.resultKind,
       runnerNotes: agentJobs.runnerNotes,
     })
@@ -261,22 +221,24 @@ export async function loadThreadHistory(opts: LoadThreadHistoryOptions): Promise
   // le budget les écarte.
   const chronological = [...rows].reverse();
 
-  // Delegated-task visibility (2026-07-12 incident, see task-ledger.ts): one
-  // batched query for every prior job's own delegated tasks, keyed by job id
-  // (= agent_tasks.root_job_id when that job used create_task).
-  const taskLedger = await loadTaskLedger(
-    opts.db,
-    chronological.map((r) => r.id),
-  );
+  // Ce que l'agent a répondu à chaque tour, lu AVANT le relevé : les appels
+  // qui ont livré cette réponse sont déjà redonnés comme son tour, le relevé
+  // ne les redit pas (#1075). Une seule lecture, ici, pour les deux.
+  const replies = new Map(chronological.map((row) => [row.id, replyOfRow(row)]));
 
-  // Délégation EN LIGNE (`assign_*`, incident du 26/08 — voir task-ledger.ts).
-  // Le registre au-dessus ne couvre que le fan-out `create_task` ; celui-ci lit
-  // les `agent_jobs` enfants. Sans lui, un tour où l'orchestrateur a réellement
-  // délégué et un tour où il a inventé le compte rendu arrivent identiques dans
-  // l'historique — c'est ce qui laissait la confabulation se répéter.
-  const inlineLedger = await loadInlineDelegationLedger(
+  // Le relevé de chaque tour (#1075, exchange-record.ts) : ses outils, ce que
+  // ceux qui agissent ont rendu, et ses délégations — `create_task` comme EN
+  // LIGNE (`assign_*`, incident du 26/08) : sans elles, un tour où
+  // l'orchestrateur a réellement délégué et un tour où il a inventé le compte
+  // rendu arrivaient identiques dans l'historique.
+  const records = await loadExchangeRecords(
     opts.db,
     chronological.map((r) => r.id),
+    {
+      replyCallIds: new Map(
+        [...replies].map(([id, r]) => [id, r.reply?.callIds ?? new Set<string>()]),
+      ),
+    },
   );
 
   // Each "block" is a contiguous slice of messages we keep or drop together
@@ -306,16 +268,9 @@ export async function loadThreadHistory(opts: LoadThreadHistoryOptions): Promise
     // lignes plus anciennes sans marque, et une vraie réponse d'avant n'existe
     // parfois que dans `result`. Elle reste lue comme avant cette PR — la
     // réponse de l'agent, moins ce que `runner_notes` reconnaît (revue Codex de
-    // #576, passe 2).
-    const agentsOwnResult = row.resultKind !== 'relay';
-    const runnerNotes = Array.isArray(row.runnerNotes) ? row.runnerNotes : [];
-    const agentsWords = withoutRunnerNotes(row.result, runnerNotes);
-    const assistant = extractAssistantReply({
-      task: row.task,
-      result: agentsOwnResult ? agentsWords : null,
-      messages: row.messages,
-      channel: row.channel,
-    });
+    // #576, passe 2). Voir `replyOfRow`.
+    const { agentsOwnResult, runnerNotes, agentsWords, reply } = replies.get(row.id)!;
+    const assistant = reply?.text ?? null;
     // Un texte que l'agent a lui-même envoyé n'est pas redit par le relevé.
     const unmarked = agentsOwnResult ? '' : (agentsWords ?? '').trim();
     const runnerResult = unmarked === (assistant ?? '').trim() ? '' : unmarked;
@@ -339,35 +294,23 @@ export async function loadThreadHistory(opts: LoadThreadHistoryOptions): Promise
       { role: 'user', content: datedTurn(truncate(row.task), row.createdAt, opts.timezone) },
       ...followUps,
     ];
+    // Un tour sans aucune trace n'est pas relu. Ce que ses outils ont fait en
+    // est une (#1075) : un tour dont le seul envoi est parti vers une autre
+    // personne n'a pas de réponse relue, mais il a agi, et il ne disparaît pas.
     if (
       assistant === null &&
       runnerResult === '' &&
       runnerNotes.length === 0 &&
-      followUps.length === 0
+      followUps.length === 0 &&
+      !records.has(row.id)
     ) {
       continue;
     }
 
-    // Action ledger (see file header) — only when this job actually used a
-    // STATE-CHANGING tool. Lists the job's FULL tools_used (not just the
-    // state-changing subset) so the ledger reads as a complete action record,
-    // not a partial one.
-    const toolsUsedRow = Array.isArray(row.toolsUsed) ? (row.toolsUsed as string[]) : [];
-    const ledgerLine = toolsUsedRow.some((t) => STATE_CHANGING_TOOLS.has(t))
-      ? `[Actions performed in this exchange: ${toolsUsedRow.join(', ')}]`
-      : null;
-
-    // Delegated-task ledger (see file header) — this job's own create_task
-    // fan-out, if any, sourced from each child task's OWN job.tools_used.
-    const delegatedLedgerLines = formatTaskLedgerLines(taskLedger.get(row.id) ?? []);
-    // Les délégations EN LIGNE de ce tour — actions seulement, pas de résultat :
-    // il est déjà dans la prose du parent, et le redire coûtait 531 caractères
-    // par tour là où 75 suffisent (mesuré sur une install réelle).
-    const inlineLedgerLines = formatInlineDelegationLines(inlineLedger.get(row.id) ?? []);
+    // Le relevé de ses outils et de ses délégations (voir l'en-tête), puis ce
+    // que le runner a écrit de son résultat.
     const allLedgerLines = [
-      ...(ledgerLine ? [ledgerLine] : []),
-      ...delegatedLedgerLines,
-      ...inlineLedgerLines,
+      ...(records.get(row.id) ?? []),
       ...(runnerResult !== '' ? [truncate(runnerResult)] : []),
       ...runnerNotes,
     ];
@@ -440,6 +383,218 @@ export async function loadThreadHistory(opts: LoadThreadHistoryOptions): Promise
 const DASHBOARD_ROWS_LIMIT = 200;
 
 /**
+ * Ce qu'un job lancé depuis une conversation a produit, partagé entre ses
+ * deux lecteurs (ce fichier et le tour de chat, run-chat-turn.ts) : UNE
+ * définition des mots de l'agent (#1088).
+ *
+ *  - `own` : son propre résultat, ce que l'agent a dit à la personne en
+ *    finissant, sans les lignes que le runner y a ajoutées (`runner_notes`),
+ *    rogné ; `''` quand il n'en a pas, ou quand le résultat est `relay` ;
+ *  - `relay` : le texte d'AUTRES jobs recompilé par le runner (#562), rogné ;
+ *    `''` sinon. Ce n'est jamais la bouche de l'agent ;
+ *  - `notes` : les lignes du runner (`runner_notes`), dites par le runner.
+ */
+export interface JobOutcome {
+  own: string;
+  relay: string;
+  notes: string[];
+}
+
+/** `storedNotes` : la colonne `agent_jobs.runner_notes` telle que lue (jsonb). */
+export function jobOutcome(
+  result: string | null,
+  resultKind: string | null,
+  storedNotes: unknown,
+): JobOutcome {
+  const notes = Array.isArray(storedNotes) ? (storedNotes as string[]) : [];
+  return {
+    own: resultKind !== 'relay' ? (withoutRunnerNotes(result, notes) ?? '').trim() : '',
+    relay: resultKind === 'relay' ? (result ?? '').trim() : '',
+    notes,
+  };
+}
+
+/**
+ * Une ligne de `chat_messages` telle que `loadDashboardHistory` la lit, avec le
+ * job qu'elle a lancé (jointure à gauche : `null` partout pour une ligne sans
+ * job).
+ */
+export type DashboardHistoryRow = {
+  role: string;
+  content: string;
+  createdAt: Date | null;
+  jobId: string | null;
+  jobStatus: string | null;
+  jobCompletedAt: Date | null;
+  result: string | null;
+  resultKind: string | null;
+  // Typed through `Record`, as in `replyOfRow`: the column as read (jsonb).
+} & Record<'runnerNotes', unknown>;
+
+/** Le job qu'on démarre : sa tâche (le message qui l'ouvre) et sa création. */
+export interface DashboardHistoryJob {
+  task: string;
+  createdAt: Date;
+}
+
+type DashboardMoment = ConversationMoment<DashboardHistoryRow>;
+
+/**
+ * Les tours de la conversation qui précède le job, avant le budget : les
+ * lignes écrites avant lui, moins le message qui EST sa tâche (le dernier qui
+ * lui est égal), rangées en moments (#1078) puis en tours. Pure.
+ */
+function dashboardTurns(
+  rows: readonly DashboardHistoryRow[],
+  current: DashboardHistoryJob,
+): {
+  turns: DashboardMoment[][];
+  first: number;
+  endOf: (r: DashboardHistoryRow) => Date | null;
+} {
+  const chronological = [...rows];
+  for (let i = chronological.length - 1; i >= 0; i--) {
+    const r = chronological[i]!;
+    if (r.role === 'user' && r.content === current.task) {
+      chronological.splice(i, 1);
+      break;
+    }
+  }
+
+  // LES MOMENTS de la conversation, dans l'ordre où ils ont eu lieu (#1078,
+  // conversation-moments.ts) — le même ordre que le tour de chat. La fin d'un
+  // job lancé est un moment, à l'heure où il a fini. « Ce qui précède le job, et
+  // lui seul » : un job lancé n'a fini, pour ce lecteur, que s'il a fini AVANT
+  // la création du job qu'on démarre. Sinon il est relu comme un travail encore
+  // en cours, et l'historique de ce job ne dépend pas de ce qui arrive après
+  // son départ.
+  const createdAt = current.createdAt;
+  const endOf = (r: DashboardHistoryRow): Date | null => {
+    if (!r.jobId) return null;
+    const endedAt = taskEndedAt({ status: r.jobStatus, completedAt: r.jobCompletedAt });
+    return endedAt !== null && endedAt < createdAt ? endedAt : null;
+  };
+  const moments = conversationMoments(chronological, (r) => ({
+    writtenAt: r.createdAt,
+    endedAt: endOf(r),
+  }));
+
+  // Un tour : un message de la personne, et ce qui suit jusqu'au suivant (les
+  // réponses de l'agent, les fins de job). On garde ou on jette un tour entier,
+  // jamais une moitié. Seuls les MAX_TURNS derniers peuvent être relus : les
+  // relevés ne se lisent que pour eux.
+  const turns: DashboardMoment[][] = [];
+  for (const m of moments) {
+    const last = turns[turns.length - 1];
+    if ((m.kind === 'row' && m.row.role === 'user') || !last) turns.push([m]);
+    else last.push(m);
+  }
+  return { turns, first: Math.max(0, turns.length - MAX_TURNS), endOf };
+}
+
+/**
+ * Les relevés que l'historique d'un job peut lire (#1075) : ceux des jobs
+ * lancés par les tours qui peuvent être relus, et ce qu'en dit ce lecteur
+ * (#1101) : fini s'il a fini AVANT le job qu'on démarre (ou fini sans heure
+ * rangée, son issue restant sous son lancement), sinon encore en cours, et
+ * alors sans aucune citation : un essai qu'il refaisait n'est pas son issue.
+ * Pure : la demande que `loadDashboardHistory` fait à `loadExchangeRecords`,
+ * et celle qu'un rejeu refait.
+ */
+export function dashboardHistoryRecordsRequest(
+  rows: readonly DashboardHistoryRow[],
+  current: DashboardHistoryJob,
+): {
+  jobIds: Array<string | null>;
+  hasEnded: (j: JobEndFacts) => boolean;
+} {
+  const { turns, first } = dashboardTurns(rows, current);
+  return {
+    jobIds: turns
+      .slice(first)
+      .flat()
+      .flatMap((m) => (m.kind === 'row' ? [m.row.jobId] : [])),
+    hasEnded: (j) =>
+      isJobEnded(j.status) && (j.completedAt === null || j.completedAt < current.createdAt),
+  };
+}
+
+/**
+ * Les messages de l'historique d'un job du tableau de bord, à partir des
+ * lignes de sa conversation (chronologiques, écrites avant le job) et des
+ * relevés que `dashboardHistoryRecordsRequest` demande. Pure, et exportée pour
+ * qu'un rejeu reconstruise ce qu'un job lancé depuis une conversation a lu
+ * (#1088), comme `chatTurnMessages` pour le tour de chat.
+ */
+export function dashboardHistoryMessages(input: {
+  rows: readonly DashboardHistoryRow[];
+  current: DashboardHistoryJob;
+  records: ReadonlyMap<string, readonly string[]>;
+  timezone: string;
+}): ModelMessage[] {
+  const { records, timezone } = input;
+  const { turns, first, endOf } = dashboardTurns(input.rows, input.current);
+
+  const spokenAndRecord = (said: string, recordLines: readonly string[]): ModelMessage[] => [
+    ...(said !== '' ? [{ role: 'assistant', content: truncate(said) } as ModelMessage] : []),
+    ...(recordLines.length > 0 ? [runnerRecordMessage(recordLines) as ModelMessage] : []),
+  ];
+  /**
+   * Ce que le job lancé a produit, dans les formes de ce lecteur : son propre
+   * résultat comme les mots de l'agent (`jobOutcome`), puis le relevé du
+   * runner (ses outils, un résultat recompilé, ses notes).
+   */
+  const recordOf = (row: DashboardHistoryRow, out: JobOutcome | null): string[] => [
+    ...(records.get(row.jobId!) ?? []),
+    ...(out && out.relay !== '' ? [truncate(out.relay)] : []),
+    ...(out?.notes ?? []),
+  ];
+
+  const messagesOf = (m: DashboardMoment): ModelMessage[] => {
+    const row = m.row;
+    if (m.kind === 'end') {
+      // La fin du job, à l'heure où il a fini : ce qu'il a produit.
+      const out = jobOutcome(row.result, row.resultKind, row.runnerNotes);
+      return spokenAndRecord(out.own, recordOf(row, out));
+    }
+    if (row.role === 'user') {
+      if (!row.createdAt) throw new Error('thread history: a chat_messages row has no created_at');
+      return [{ role: 'user', content: datedTurn(truncate(row.content), row.createdAt, timezone) }];
+    }
+    if (!row.jobId) return spokenAndRecord(row.content.trim(), []);
+    // Un job fini SANS heure de fin rangée garde son issue sous son lancement,
+    // comme avant #1078 : il n'a pas de moment où la poser.
+    const unplaced = row.jobCompletedAt === null && isJobEnded(row.jobStatus);
+    // Une fin placée plus loin, ou un travail encore en cours pour ce lecteur :
+    // au lancement, les mots de l'agent et ce que ses outils ont fait.
+    const out = unplaced ? jobOutcome(row.result, row.resultKind, row.runnerNotes) : null;
+    const said = [row.content.trim(), out?.own ?? ''].filter((t) => t !== '').join('\n\n');
+    return spokenAndRecord(said, endOf(row) !== null ? [] : recordOf(row, out));
+  };
+
+  // Un tour jeté (au-delà de MAX_TURNS, ou par le budget) emporte la fin des
+  // jobs qu'il a lancés : une fin n'est jamais relue sans son lancement.
+  const assemble = (from: number): ModelMessage[][] => {
+    const dropped = new Set(
+      turns
+        .slice(0, from)
+        .flat()
+        .flatMap((m) => (m.kind === 'row' ? [m.row] : [])),
+    );
+    return turns
+      .slice(from)
+      .map((turn) =>
+        turn.filter((m) => !(m.kind === 'end' && dropped.has(m.row))).flatMap(messagesOf),
+      )
+      .filter((b) => b.length > 0);
+  };
+  let from = first;
+  let kept = assemble(from);
+  while (kept.length > 0 && totalChars(kept) > BUDGET_CHARS) kept = assemble(++from);
+  return kept.flatMap((b) => b);
+}
+
+/**
  * L'historique d'un job du TABLEAU DE BORD : les tours de sa conversation tels
  * que la personne les a vécus, lus dans `chat_messages` — ses messages, mot
  * pour mot et datés, et les réponses de l'agent, celles du chat comme le
@@ -451,8 +606,16 @@ const DASHBOARD_ROWS_LIMIT = 200;
  * égal) — il ouvre le job, il n'est pas de l'historique.
  *
  * Ce que le runner a écrit d'un job lancé — un résultat recompilé (`relay`),
- * ses notes, les délégations — va dans le relevé `[système]` après le tour,
- * jamais dans la bouche de l'agent (#562), comme pour un canal.
+ * ses notes, les délégations — va dans le relevé `[système]`, jamais dans la
+ * bouche de l'agent (#562), comme pour un canal.
+ *
+ * Depuis #1078, ce qu'un job lancé a produit (son résultat, puis ce relevé) est
+ * relu à l'heure où il a FINI, pas sous le tour qui l'a lancé : le même ordre
+ * que le tour de chat (conversation-moments.ts). Au lancement, les mots de
+ * l'agent de cette ligne.
+ *
+ * Les lectures de la base restent ici ; ce qui en est fait est pur
+ * (`dashboardHistoryRecordsRequest`, `dashboardHistoryMessages`, #1088).
  */
 async function loadDashboardHistory(opts: LoadThreadHistoryOptions): Promise<ModelMessage[]> {
   if (!opts.conversationId) return [];
@@ -463,12 +626,15 @@ async function loadDashboardHistory(opts: LoadThreadHistoryOptions): Promise<Mod
   if (!current?.createdAt) {
     throw new Error(`thread history: agent_jobs ${opts.excludeJobId} has no created_at`);
   }
-  const rows = await opts.db
+  const job: DashboardHistoryJob = { task: current.task, createdAt: current.createdAt };
+  const rows: DashboardHistoryRow[] = await opts.db
     .select({
       role: chatMessages.role,
       content: chatMessages.content,
       createdAt: chatMessages.createdAt,
       jobId: chatMessages.jobId,
+      jobStatus: agentJobs.status,
+      jobCompletedAt: agentJobs.completedAt,
       result: agentJobs.result,
       resultKind: agentJobs.resultKind,
       runnerNotes: agentJobs.runnerNotes,
@@ -484,55 +650,16 @@ async function loadDashboardHistory(opts: LoadThreadHistoryOptions): Promise<Mod
     .orderBy(desc(chatMessages.createdAt))
     .limit(DASHBOARD_ROWS_LIMIT);
   const chronological = [...rows].reverse();
-  for (let i = chronological.length - 1; i >= 0; i--) {
-    const r = chronological[i]!;
-    if (r.role === 'user' && r.content === current.task) {
-      chronological.splice(i, 1);
-      break;
-    }
-  }
-
-  const jobIds = chronological.map((r) => r.jobId);
-  const taskLedger = await loadTaskLedger(opts.db, jobIds);
-  const inlineLedger = await loadInlineDelegationLedger(opts.db, jobIds);
-
-  // Un bloc par tour : un message de la personne, et ce que l'agent y a
-  // répondu. On garde ou on jette un tour entier, jamais une moitié.
-  const blocks: ModelMessage[][] = [];
-  for (const row of chronological) {
-    if (row.role === 'user') {
-      if (!row.createdAt) throw new Error('thread history: a chat_messages row has no created_at');
-      blocks.push([
-        { role: 'user', content: datedTurn(truncate(row.content), row.createdAt, opts.timezone) },
-      ]);
-      continue;
-    }
-    const runnerNotes = Array.isArray(row.runnerNotes) ? row.runnerNotes : [];
-    const own =
-      row.jobId && row.resultKind !== 'relay' ? withoutRunnerNotes(row.result, runnerNotes) : null;
-    const relay = row.jobId && row.resultKind === 'relay' ? (row.result ?? '').trim() : '';
-    const said = [row.content.trim(), (own ?? '').trim()].filter((t) => t !== '').join('\n\n');
-    const recordLines = row.jobId
-      ? [
-          ...formatTaskLedgerLines(taskLedger.get(row.jobId) ?? []),
-          ...formatInlineDelegationLines(inlineLedger.get(row.jobId) ?? []),
-          ...(relay !== '' ? [truncate(relay)] : []),
-          ...runnerNotes,
-        ]
-      : [];
-    const turn: ModelMessage[] = [
-      ...(said !== '' ? [{ role: 'assistant', content: truncate(said) } as ModelMessage] : []),
-      ...(recordLines.length > 0 ? [runnerRecordMessage(recordLines) as ModelMessage] : []),
-    ];
-    if (turn.length === 0) continue;
-    const last = blocks[blocks.length - 1];
-    if (last) last.push(...turn);
-    else blocks.push(turn);
-  }
-
-  let kept = blocks.slice(-MAX_TURNS);
-  while (kept.length > 0 && totalChars(kept) > BUDGET_CHARS) kept = kept.slice(1);
-  return kept.flatMap((b) => b);
+  const request = dashboardHistoryRecordsRequest(chronological, job);
+  const records = await loadExchangeRecords(opts.db, request.jobIds, {
+    hasEnded: request.hasEnded,
+  });
+  return dashboardHistoryMessages({
+    rows: chronological,
+    current: job,
+    records,
+    timezone: opts.timezone,
+  });
 }
 
 /**
@@ -614,7 +741,8 @@ export const CHANNEL_SEND_TOOL: Readonly<Record<string, string>> = {
  *   1. `result` column when populated — long-form return_result with text.
  *   2. Concatenated `text` from every `<channel>_send_message` tool call in
  *      the messages array (the actual user-visible reply for conversational
- *      channels).
+ *      channels), whatever its target (#1077). Their call ids come back with
+ *      it: the runner record does not repeat them (#1075).
  *   3. Last assistant message's text content — covers exotic flows that
  *      neither populated `result` nor used the channel send tool.
  *   4. `null` to signal "skip this job".
@@ -630,54 +758,93 @@ export const CHANNEL_SEND_TOOL: Readonly<Record<string, string>> = {
  * 9c22d5b3 (2026-05-26) where 3 Stripe-related prior jobs all returned
  * the same stale MCP pre-amble before this fix.
  */
+/**
+ * Ce que l'agent a répondu à un tour passé, et ce qui en vient : ses propres
+ * mots (`result` moins ce que le runner y a écrit), et la réponse relue.
+ */
+function replyOfRow(
+  row: {
+    task: string;
+    result: string | null;
+    messages: unknown;
+    channel: string;
+    resultKind: string | null;
+    // Typed through `Record`: `runner-notes-one-writer.test.ts` reads a key
+    // followed by a colon as a write, and this is a read of the stored column.
+  } & Record<'runnerNotes', unknown>,
+) {
+  const agentsOwnResult = row.resultKind !== 'relay';
+  const runnerNotes = Array.isArray(row.runnerNotes) ? (row.runnerNotes as string[]) : [];
+  const agentsWords = withoutRunnerNotes(row.result, runnerNotes);
+  const reply = extractAssistantReply({
+    task: row.task,
+    result: agentsOwnResult ? agentsWords : null,
+    messages: row.messages,
+    channel: row.channel,
+  });
+  return { agentsOwnResult, runnerNotes, agentsWords, reply };
+}
+
+/**
+ * La réponse relue d'un tour, et les appels qui l'ont LIVRÉE (#1075) : ceux-là
+ * sont déjà redonnés comme le tour de l'agent, le relevé ne les redit pas.
+ * Vide quand la réponse vient de `result` ou d'un texte de l'assistant.
+ *
+ * Tout appel de l'outil d'envoi du canal est lu comme la réponse, quelle que
+ * soit sa cible : la lecture d'avant #1075, inchangée. Un envoi vers une autre
+ * personne est donc relu comme des mots dits à celle-ci et n'est pas dans le
+ * relevé ; c'est le défaut que décrit #1077 (où un message est parti n'est
+ * rangé nulle part), ni créé ni aggravé ici.
+ */
+interface AssistantReply {
+  text: string;
+  callIds: ReadonlySet<string>;
+}
+
 function extractAssistantReply(row: {
   task: string;
   result: string | null;
   messages: unknown;
   channel: string;
-}): string | null {
+}): AssistantReply | null {
   // 1. result column.
   if (row.result !== null && row.result !== undefined && row.result.trim() !== '') {
-    return row.result;
+    return { text: row.result, callIds: new Set() };
   }
 
-  const allMessages = Array.isArray(row.messages) ? (row.messages as ModelMessage[]) : [];
-
-  // Locate the boundary between injected history and the job's own turns.
-  // Search backward from the end so we land on the LAST occurrence of the
-  // current task — defensive against duplicate user messages (rare).
-  let currentStart = 0;
-  for (let i = allMessages.length - 1; i >= 0; i--) {
-    const m = allMessages[i];
-    if (!m || m.role !== 'user') continue;
-    const c = m.content;
-    if (typeof c === 'string' && c === row.task) {
-      currentStart = i;
-      break;
-    }
-  }
-  const messages = allMessages.slice(currentStart);
+  // The boundary between injected history and the job's own turns — the same
+  // one its tool record reads (`ownTranscript`, tool-acts.ts).
+  const messages = ownTranscript(row.messages, row.task);
 
   // 2. channel-specific send-message tool calls (within current-job slice).
   const sendTool = CHANNEL_SEND_TOOL[row.channel];
   if (sendTool) {
     const parts: string[] = [];
+    const callIds = new Set<string>();
     for (const msg of messages) {
       if (msg.role !== 'assistant') continue;
       const content = msg.content;
       if (!Array.isArray(content)) continue;
       for (const p of content) {
         if (!p || typeof p !== 'object') continue;
-        const part = p as { type?: unknown; toolName?: unknown; input?: unknown };
+        const part = p as {
+          type?: unknown;
+          toolName?: unknown;
+          toolCallId?: unknown;
+          input?: unknown;
+        };
         if (part.type !== 'tool-call' || part.toolName !== sendTool) continue;
         const input = part.input;
         if (input && typeof input === 'object' && 'text' in input) {
           const text = (input as { text: unknown }).text;
-          if (typeof text === 'string' && text.trim() !== '') parts.push(text);
+          if (typeof text === 'string' && text.trim() !== '') {
+            parts.push(text);
+            if (typeof part.toolCallId === 'string') callIds.add(part.toolCallId);
+          }
         }
       }
     }
-    if (parts.length > 0) return parts.join('\n\n');
+    if (parts.length > 0) return { text: parts.join('\n\n'), callIds };
   }
 
   // 3. last assistant text content (within current-job slice).
@@ -685,7 +852,9 @@ function extractAssistantReply(row: {
     const msg = messages[i];
     if (!msg || msg.role !== 'assistant') continue;
     const content = msg.content;
-    if (typeof content === 'string' && content.trim() !== '') return content;
+    if (typeof content === 'string' && content.trim() !== '') {
+      return { text: content, callIds: new Set() };
+    }
     if (Array.isArray(content)) {
       const textParts: string[] = [];
       for (const p of content) {
@@ -694,7 +863,7 @@ function extractAssistantReply(row: {
         if (part.type === 'text' && typeof part.text === 'string') textParts.push(part.text);
       }
       const joined = textParts.join('');
-      if (joined.trim() !== '') return joined;
+      if (joined.trim() !== '') return { text: joined, callIds: new Set() };
     }
   }
 

@@ -27,6 +27,7 @@
 
 import {
   and,
+  approvalsOldestFirst,
   eq,
   inArray,
   approvalRequests,
@@ -37,6 +38,9 @@ import {
 import {
   ELICITATION_CLOSED_BY,
   ELICITATION_MESSAGE_MAX,
+  placePersonAnswers,
+  type PersonAnswerMessage,
+  type PersonAnswerRow,
   parseElicitationSchema,
   validateElicitationContent,
   describeElicitationErrors,
@@ -295,4 +299,45 @@ export async function closeElicitationsOfLostJobs(
     await settleApprovalCards(db, { approvalRequestIds: closed.map((r) => r.id) });
   }
   return closed.length;
+}
+
+/**
+ * Les questions qu'un serveur a posées pendant les appels de ce job, dans
+ * l'ordre où elles l'ont été (#1084) : la source de vérité du relevé de la
+ * personne, qui survit au run qui les a posées (un redémarrage, une reprise
+ * après approbation ou après délégation la relisent telle quelle).
+ */
+export async function personAnswerRowsOf(
+  db: AnyDrizzleDb,
+  jobId: string,
+): Promise<PersonAnswerRow[]> {
+  return db
+    .select({
+      id: approvalRequests.id,
+      toolName: approvalRequests.toolName,
+      toolCallId: approvalRequests.toolCallId,
+      toolInput: approvalRequests.toolInput,
+      status: approvalRequests.status,
+      response: approvalRequests.response,
+      notes: approvalRequests.notes,
+      resolvedAt: approvalRequests.resolvedAt,
+      resolvedBy: approvalRequests.resolvedBy,
+    })
+    .from(approvalRequests)
+    .where(and(eq(approvalRequests.jobId, jobId), eq(approvalRequests.kind, 'elicitation')))
+    .orderBy(approvalsOldestFirst);
+}
+
+/**
+ * `messages` où chaque message d'outils est suivi du relevé de chaque question
+ * posée pendant ses appels (`placePersonAnswers`), lu sur les lignes du job.
+ * Idempotent : appelée partout où une transcription est écrite ou relue pour
+ * le modèle, elle ne pose que ce qui manque.
+ */
+export async function withPersonAnswers<T>(
+  db: AnyDrizzleDb,
+  jobId: string,
+  messages: readonly T[],
+): Promise<Array<T | PersonAnswerMessage>> {
+  return placePersonAnswers(messages, await personAnswerRowsOf(db, jobId));
 }
