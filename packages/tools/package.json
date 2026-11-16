@@ -20,6 +20,7 @@
     "@nodal-agents/delivery": "workspace:*",
     "@nodal-agents/llm": "workspace:*",
     "@nodal-agents/memory": "workspace:*",
+    "@nodal-agents/page-render": "workspace:*",
     "@nodal-agents/sandbox": "workspace:*",
     "@nodal-agents/shared": "workspace:*",
     "@nodal-agents/speech": "workspace:*",

@@ -55,7 +55,7 @@ import {
   nodalHomeEntry,
 } from '@nodal-agents/shared/nodal-home';
 import { readNodalInstances, unregisterNodalInstance } from '@nodal-agents/shared/nodal-instances';
-import { campaignHome, campaignsRoot } from './home';
+import { benchUserDir, campaignHome, campaignsRoot } from './home';
 import { isInside } from './keys';
 import type { CampaignKeys } from './keys';
 
@@ -181,7 +181,18 @@ export function campaignEnv(
   env[NODALAI_HOME_ENV] = home;
   env['NODALAI_NO_BROWSER'] = '1';
   env['NODALAI_WEB_HEALTH_MS'] = String(WEB_HEALTH_MS);
+  // Le moteur de rendu de pages (#1082) : UN pour toutes les campagnes, sous
+  // le dossier du banc. Sans lui, chaque campagne (un dossier de Nodal neuf)
+  // téléchargerait et dépaquetterait le sien au démarrage, ~400 Mo à chaque
+  // fois ; deux campagnes en même temps se partagent l'installation par le
+  // verrou de l'installateur.
+  env['NODALAI_RENDERER_DIR'] = benchRendererDir();
   return env;
+}
+
+/** Le moteur de rendu de pages que les campagnes partagent. */
+export function benchRendererDir(userHome: string = homedir()): string {
+  return join(benchUserDir(userHome), 'renderer');
 }
 
 export { pointProcessAt } from './home';

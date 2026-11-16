@@ -186,3 +186,33 @@ describe('resolveAgentToolNames — script/file-write gated builtins', () => {
     expect(namesWithSkill.has('run_skill_script')).toBe(true);
   });
 });
+
+// #1082 — `render_pdf` is given to EVERY agent, like the file tools it shares
+// its perimeter with: a worker and an orchestrator, in a head job and in a
+// delegated one. The list is the one the whitelist is built from (invariant #9).
+describe('resolveAgentToolNames — render_pdf for every agent and placement @cap:travailler-sur-des-fichiers/moteur', () => {
+  it('a worker and an orchestrator hold it in a head job, a delegated job and a routine run', async () => {
+    const [orchestrator] = await db
+      .insert(agents)
+      .values({
+        entityId: seed.entityId,
+        name: 'Layout lead',
+        slug: `layout-lead-${Date.now()}`,
+        personality: 'x',
+        llmKeyId: null,
+        role: 'orchestrator',
+      })
+      .returning();
+    if (!orchestrator) throw new Error('failed to seed the orchestrator');
+    const delegated = { delegated: true, routine: false, inConversation: false };
+    const routine = { delegated: false, routine: true, inConversation: false };
+    for (const agentId of [seed.agentId, orchestrator.id]) {
+      for (const job of [undefined, delegated, routine]) {
+        const names = await resolveAgentToolNames(db, agentId, job);
+        expect(names.has('render_pdf'), `${agentId} ${JSON.stringify(job)}`).toBe(true);
+        // The perimeter it reads and writes through comes with it.
+        expect(names.has('file_read') && names.has('file_write')).toBe(true);
+      }
+    }
+  });
+});

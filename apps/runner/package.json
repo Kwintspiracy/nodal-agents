@@ -22,6 +22,7 @@
     "@nodal-agents/llm": "workspace:*",
     "@nodal-agents/memory": "workspace:*",
     "@nodal-agents/orchestration": "workspace:*",
+    "@nodal-agents/page-render": "workspace:*",
     "@nodal-agents/runner-adapters": "workspace:*",
     "@nodal-agents/sandbox": "workspace:*",
     "@nodal-agents/secrets": "workspace:*",

@@ -17,6 +17,14 @@
 //   - `Upgrade` websocket en clair (`ws://host:port`).
 // Un refus rend 403 (un port de Nodal) ou 502 codé (un nom introuvable), en
 // requête comme en tunnel.
+//
+// UNE SECONDE POLITIQUE, `publicOnly` (#1082) : le moteur de rendu de pages
+// charge ce qu'une page écrite par un agent demande. Lui ne joint QUE
+// l'internet public : aucune adresse de cette machine (le runner et le tableau
+// de bord écoutent sur la boucle locale), aucune adresse privée, de lien local
+// ou réservée (`isPublicAddress`). Même proxy, même résolution unique, même
+// connexion à l'adresse classée : un nom qui se résout en local (rebinding) est
+// refusé par son adresse, ici comme pour une commande.
 
 import {
   createServer as createHttpServer,
@@ -24,7 +32,7 @@ import {
   type IncomingMessage,
   type Server,
 } from 'node:http';
-import { connect as netConnect, isIP, type AddressInfo, type Socket } from 'node:net';
+import { BlockList, connect as netConnect, isIP, type AddressInfo, type Socket } from 'node:net';
 import { lookup } from 'node:dns/promises';
 import { networkInterfaces } from 'node:os';
 
@@ -86,6 +94,73 @@ export interface NodalProxy {
   close(): Promise<void>;
 }
 
+/**
+ * Les plages qui ne sont pas l'internet public : cette machine, le réseau
+ * local, le lien local, les plages partagées, de documentation, de test et
+ * réservées (RFC 6890), en IPv4 comme en IPv6.
+ */
+const NOT_PUBLIC: BlockList = (() => {
+  const b = new BlockList();
+  const v4: Array<[string, number]> = [
+    ['0.0.0.0', 8],
+    ['10.0.0.0', 8],
+    ['100.64.0.0', 10],
+    ['127.0.0.0', 8],
+    ['169.254.0.0', 16],
+    ['172.16.0.0', 12],
+    ['192.0.0.0', 24],
+    ['192.0.2.0', 24],
+    ['192.88.99.0', 24],
+    ['192.168.0.0', 16],
+    ['198.18.0.0', 15],
+    ['198.51.100.0', 24],
+    ['203.0.113.0', 24],
+    ['224.0.0.0', 4],
+    ['240.0.0.0', 4],
+  ];
+  for (const [net, prefix] of v4) b.addSubnet(net, prefix, 'ipv4');
+  const v6: Array<[string, number]> = [
+    ['::', 128],
+    ['::1', 128],
+    ['64:ff9b::', 96],
+    ['64:ff9b:1::', 48],
+    ['100::', 64],
+    ['2001::', 23],
+    ['2001:db8::', 32],
+    ['2002::', 16],
+    ['fc00::', 7],
+    ['fe80::', 10],
+    ['fec0::', 10],
+    ['ff00::', 8],
+  ];
+  for (const [net, prefix] of v6) b.addSubnet(net, prefix, 'ipv6');
+  return b;
+})();
+
+/**
+ * Une ADRESSE RÉSOLUE est-elle sur l'internet public ? Non pour toute plage de
+ * `NOT_PUBLIC` et pour chaque adresse d'interface de cette machine (une
+ * adresse publique posée sur elle sert aussi le runner en mode réseau local).
+ * Une IPv4 mappée en IPv6 est jugée comme l'IPv4 qu'elle porte.
+ */
+export function isPublicAddress(addr: string, locals: Set<string> = localAddresses()): boolean {
+  const a = normalizeIp(addr);
+  const family = isIP(a);
+  if (family === 0) return false;
+  if (isLocalIp(a, locals)) return false;
+  return !NOT_PUBLIC.check(a, family === 4 ? 'ipv4' : 'ipv6');
+}
+
+/** Ce que le proxy refuse en plus des ports de Nodal. */
+export interface NodalProxyPolicy {
+  /**
+   * Ne joindre QUE l'internet public (`isPublicAddress`) : le moteur de rendu
+   * de pages (#1082). Absent : la politique du bac à sable, qui laisse passer
+   * les services locaux tiers.
+   */
+  readonly publicOnly?: boolean;
+}
+
 /** Ce que le proxy lit du système ; injectable pour les tests. */
 export interface NodalProxyDeps {
   /** Les adresses de cette machine, relues À CHAQUE connexion. */
@@ -103,6 +178,7 @@ export const PROXY_UNRESOLVED = 'SANDBOX_PROXY_UNRESOLVED';
 /** Ce que le proxy décide pour une destination. */
 type Decision =
   | { readonly kind: 'nodal' }
+  | { readonly kind: 'not-public' }
   | { readonly kind: 'unresolved' }
   | { readonly kind: 'forward'; readonly addrs: readonly string[] };
 
@@ -152,6 +228,7 @@ function connectFirst(addrs: readonly string[], port: number): Promise<Socket> {
 export async function startNodalProxy(
   denied: readonly DeniedEndpoint[],
   deps: NodalProxyDeps = {},
+  policy: NodalProxyPolicy = {},
 ): Promise<NodalProxy> {
   const readLocals = deps.localAddresses ?? localAddresses;
   const resolveAll = deps.lookup ?? systemLookup;
@@ -178,6 +255,10 @@ export async function startNodalProxy(
       }
     }
     if (addrs.length === 0) return { kind: 'unresolved' };
+    if (policy.publicOnly === true) {
+      const locals = readLocals();
+      if (addrs.some((a) => !isPublicAddress(a, locals))) return { kind: 'not-public' };
+    }
     if (deniedPorts.has(port)) {
       const locals = readLocals();
       if (addrs.some((a) => isLocalIp(a, locals))) return { kind: 'nodal' };
@@ -187,7 +268,7 @@ export async function startNodalProxy(
 
   /** Le refus d'un tunnel (CONNECT, upgrade), en clair sur la socket. */
   const tunnelRefusal = (d: Exclude<Decision, { kind: 'forward' }>, host: string): string => {
-    if (d.kind === 'nodal') {
+    if (d.kind === 'nodal' || d.kind === 'not-public') {
       refused++;
       return 'HTTP/1.1 403 Forbidden\r\n\r\n';
     }
@@ -209,6 +290,11 @@ export async function startNodalProxy(
       if (d.kind === 'nodal') {
         refused++;
         res.writeHead(403).end('nodal endpoint refused by the sandbox');
+        return;
+      }
+      if (d.kind === 'not-public') {
+        refused++;
+        res.writeHead(403).end('a local or private address is refused');
         return;
       }
       if (d.kind === 'unresolved') {

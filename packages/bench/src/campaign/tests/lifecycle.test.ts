@@ -19,6 +19,7 @@ import { defaultNodalHome } from '@nodal-agents/shared/nodal-home';
 import { readNodalInstances } from '@nodal-agents/shared/nodal-instances';
 import { campaignHome, campaignsRoot } from '../home';
 import {
+  benchRendererDir,
   campaignEnv,
   createInstanceFiles,
   devServerHolding,
@@ -113,6 +114,10 @@ describe('the campaign instance: where it lives, what it is given', () => {
     // La première compilation de `next dev` d'un dépôt neuf : 15 min, pas les 300 s par défaut.
     expect(env['NODALAI_WEB_HEALTH_MS']).toBe('900000');
     expect(env['PATH']).toBe(OWNER_SHELL.PATH);
+    // Un moteur de rendu pour toutes les campagnes, sous le dossier du banc :
+    // jamais celui du propriétaire, jamais un téléchargement par campagne (#1082).
+    expect(env['NODALAI_RENDERER_DIR']).toBe(benchRendererDir());
+    expect(benchRendererDir('/home/ada')).toBe(join('/home/ada', '.nodal-bench', 'renderer'));
     for (const k of [
       'NODALAI_WORKSPACES_ROOT',
       'NODALAI_CONFIG_PATH',

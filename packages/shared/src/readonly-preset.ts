@@ -19,6 +19,8 @@ export const READONLY_PRESET_TOOLS = [
   'file_write',
   'file_edit',
   'file_move',
+  // Rendre un PDF écrit un fichier (#1082).
+  'render_pdf',
   'skill_file_write',
   'run_command',
   'run_skill_script',

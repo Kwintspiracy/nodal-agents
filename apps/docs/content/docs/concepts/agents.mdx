@@ -44,6 +44,7 @@ Every agent gets these tools on every job, regardless of skills (`ALWAYS_ON_TOOL
 - `web_search` — search the web, using the agent's configured Tavily/Firecrawl provider if any, otherwise a free best-effort search.
 - `dashboard_publish` — publish the agent's substantive output to the dashboard (it becomes the job's `result`).
 - `file_read`, `file_write`, `file_edit`, `file_move`, `file_list`, `file_search` — read, edit, move and copy files in the agent's workspaces.
+- `render_pdf` — Nodal's headless browser render: turns an HTML page from the agent's folders into a PDF with Nodal's own window-less Chrome (chrome-headless-shell, downloaded once at Nodal's first start; `nodal-agents renderer install` installs it later, and `nodal-agents up --skip-renderer-install` or `"pageRenderer": { "autoInstall": false }` in `config.json` turns that download off). Given `pages`, it finds by itself the largest scale that fits that many pages, never below 0.6, and says the page count, the scale and the paper it produced. It reads like `file_read`, writes like `file_write`, and loads only the public internet, never a local or private address.
 - `register_project` — declare a folder it worked in as a [project](/docs/concepts/projects).
 - `declare_verification` — declare the commands that prove what it just built, so Nodal runs and records them. Requires approval by default, exactly like `run_command`. See [Proof](/docs/concepts/proof).
 

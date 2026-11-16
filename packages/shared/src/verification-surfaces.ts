@@ -64,6 +64,8 @@ export const VERIFICATION_SURFACE_TOOLS: Readonly<
     'file_edit',
     // Déplacer ou copier un fichier (#879) : il en crée un, et en retire un.
     'file_move',
+    // Un PDF rendu d'une page HTML est un fichier écrit comme un autre (#1082).
+    'render_pdf',
     'docx_create',
     'docx_append_paragraphs',
     'docx_replace_text',

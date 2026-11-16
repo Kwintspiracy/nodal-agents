@@ -84,7 +84,14 @@ export {
   type WindowsSpawnParts,
 } from './command-line';
 export { type RefusedWrite, extractRefusedWrites } from './refused-writes';
-export { startNodalProxy, localAddresses, type NodalProxy, type DeniedEndpoint } from './proxy';
+export {
+  startNodalProxy,
+  localAddresses,
+  isPublicAddress,
+  type NodalProxy,
+  type NodalProxyPolicy,
+  type DeniedEndpoint,
+} from './proxy';
 export {
   BROKER_NODE_VERSION,
   BrokerNodeUnavailable,

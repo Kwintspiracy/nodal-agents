@@ -31,7 +31,9 @@ export type LauncherEvent =
   | 'recovered'
   | 'child-exited'
   | 'shutdown'
-  | 'refused-kill';
+  | 'refused-kill'
+  // The page renderer's start-time install (#1082): installed, ready, off, failed, busy.
+  | 'page-renderer';
 
 /**
  * One line: ISO instant, event, cause.

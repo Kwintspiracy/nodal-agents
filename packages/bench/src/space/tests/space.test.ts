@@ -760,6 +760,8 @@ describe("avant chaque essai : l'équipe du banc ne peut rien envoyer hors de No
       notCovered: [
         "agent coder (claude-code): runs outside Nodal's tool list",
         'declare_verification (process): held by alfred, coder, writer',
+        // #1082: a page an agent renders may load the public internet.
+        'render_pdf (internet): held by alfred, coder, writer',
         'run_command (process): held by writer',
         'run_skill_script (process): held by writer',
         'save_memory (model-provider): held by alfred, coder, writer',
@@ -893,6 +895,7 @@ describe("avant chaque essai : l'équipe du banc ne peut rien envoyer hors de No
     expect(r.notCovered).toEqual([
       "agent coder (claude-code): runs outside Nodal's tool list",
       'declare_verification (process): held by alfred, coder, writer',
+      'render_pdf (internet): held by alfred, coder, writer',
       'run_command (process): held by writer',
       'run_skill_script (process): held by writer',
       'save_memory (model-provider): held by alfred, coder, writer',

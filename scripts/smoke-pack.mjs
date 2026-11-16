@@ -220,6 +220,12 @@ try {
   // lan/local-auth, which is the container preset, not the common path).
   config.bind = 'loopback';
   delete config.auth;
+  // The page renderer (#1082) is downloaded once at a real first start, AFTER
+  // the services are healthy. This gate boots, probes and stops: a 120 MB
+  // download there would be cut every time, on every leg. Turned off by the
+  // setting a person would use; `verify-install.mjs` above still proves the
+  // installer and the driver resolve and load from the pack.
+  config.pageRenderer = { autoInstall: false };
   writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
 
   // ── 6. THE GATE: boot it ───────────────────────────────────────────────────
