@@ -237,8 +237,8 @@ jobs:
   # install et builds des dépendances compris → budget 10.
   test:
     runs-on: ubuntu-24.04
-    # Installation 10 + moteur de rendu 3 (#1082) + tests 10 + 5 de mise en place.
-    timeout-minutes: 28
+    # Installation 10 + bac à sable 1 + moteur de rendu 3 (#1082) + tests 10 + 5 de mise en place.
+    timeout-minutes: 29
     strategy:
       fail-fast: false
       matrix:
@@ -301,6 +301,16 @@ jobs:
         with:
           path: .cache/page-renderer
           key: page-renderer-${{ runner.os }}-${{ hashFiles('packages/page-render/src/pin.ts') }}
+
+      # Ubuntu 24.04 restricts unprivileged user namespaces through AppArmor,
+      # and Chrome's sandbox needs them: without this, every render fails with
+      # SANDBOX_UNAVAILABLE ("No usable sandbox!", run 43829703501). This is the
+      # setting Nodal's own error tells a Linux user to change; the sandbox
+      # itself stays ON (Nodal never passes --no-sandbox).
+      - name: Let Chrome's sandbox use user namespaces
+        if: startsWith(matrix.shard, 'packages')
+        timeout-minutes: 1
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
       - name: Install the page renderer
         if: startsWith(matrix.shard, 'packages')

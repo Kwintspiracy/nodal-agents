@@ -8,7 +8,7 @@
 // Le moteur manquant fait ROUGIR ces tests, avec la commande qui l'installe.
 
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -218,7 +218,8 @@ describe('render_pdf — the perimeter of file_read and file_write @cap:travaill
     const out = await rendre({ source: 'docs/p.html', output: 'docs/p.pdf' });
     if (!out.ok) throw new Error(out.reason);
     expect(out.not_loaded).toHaveLength(1);
-    expect(out.not_loaded?.[0]?.url).toBe(join(DOCS, '..', 'secret.svg'));
+    // The real path: under Windows `tmpdir()` may give the short 8.3 form.
+    expect(out.not_loaded?.[0]?.url).toBe(join(await realpath(DOCS), '..', 'secret.svg'));
     expect(out.not_loaded?.[0]?.reason).toMatch(/^outside the folders this agent can read/);
   });
 
