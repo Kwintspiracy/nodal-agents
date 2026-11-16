@@ -26,7 +26,12 @@ import { connectors } from './connectors.ts';
  */
 export type SkillSourceProblem = 'source_not_found' | 'identity_changed';
 
-/** What the last update check of a community skill found (agent_skills.update_detail). */
+/**
+ * What the last update check found (agent_skills.update_detail): a community
+ * skill's source check (skills/check-updates.ts), or the boot seeder for a
+ * system skill the owner edited whose catalog text changed since
+ * (bootstrap/seed-default-skills.ts — `contentChanged` only, never a problem).
+ */
 export type SkillUpdateDetail =
   | {
       sourceProblem?: undefined;
@@ -89,10 +94,14 @@ export const agentSkills = pgTable(
       jsonb('installed_scripts').$type<
         Array<{ path: string; language: string; sha256?: string }>
       >(),
-    // ─── Community skill update tracking (migration 0069) ───────────────────
-    // updateAvailable: set by checkSkillUpdate (skills/check-updates.ts) when
-    //   the upstream source diverges from what's installed (content and/or
-    //   scripts). Surfaced in the dashboard so the owner can review + apply.
+    // ─── Skill update tracking (migration 0069) ─────────────────────────────
+    // updateAvailable: a newer version than the one in use exists, whatever
+    //   the skill's origin. Set by checkSkillUpdate (skills/check-updates.ts)
+    //   when a community skill's source diverges from what's installed
+    //   (content and/or scripts), and by the boot seeder
+    //   (bootstrap/seed-default-skills.ts) when the catalog text of a system
+    //   skill the owner edited changed. Surfaced in the dashboard so the owner
+    //   can review + apply.
     // updateDetail: what the last check found — null before the first check.
     //   Either a diff (contentChanged/scriptsChanged) or, when the source could
     //   not be read as THIS skill, a `sourceProblem` code: never both, so a
