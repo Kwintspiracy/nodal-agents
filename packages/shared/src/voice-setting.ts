@@ -15,7 +15,7 @@
 //
 // Le réglage vit dans `entity_settings` (clé `voice`), une ligne par espace,
 // posée par la migration 0158 et à la naissance de chaque espace (0160 y a mis
-// le modèle qui écoute, 0165 la source qui écoute). Aucun défaut
+// le modèle qui écoute, 0167 la source qui écoute). Aucun défaut
 // ne se calcule entre l'écran et le moteur : une ligne absente ou illisible
 // est une erreur dite, avec son code (invariant #4).
 //

@@ -1,4 +1,4 @@
-// voice-listening-source-migration.pg.test.ts — migration 0165 contre un VRAI Postgres.
+// voice-listening-source-migration.pg.test.ts — migration 0167 contre un VRAI Postgres.
 //
 // CE QUE CELA PROUVE (#1048) :
 //   - un espace créé après la migration naît avec la source qui écoute ;
@@ -8,12 +8,12 @@
 //     une source (un serveur de la personne) n'est pas réécrite ; une ligne qui
 //     ne se lit pas comme du JSON reste telle quelle ;
 //   - l'entrée du journal existe ;
-//   - UNE BASE PUBLIÉE (0.9.10 : 0164 et 0166 appliquées, JAMAIS 0165) : le
-//     migrateur de drizzle saute 0165 en silence (son `when` est sous la
-//     dernière ligne d'historique), `findMigrationGaps` la nomme, et
-//     `repairMigrations` la pose ET l'enregistre (#298) ;
-//   - une base qui a appliqué 0165 AVANT 0166 (la pile de démonstration) reste
-//     telle quelle : ni trou, ni réécriture, ni seconde ligne d'historique.
+//   - UNE BASE PUBLIÉE (0.9.10 : 0164 et 0166, aucune migration de la voix) :
+//     le migrateur applique 0167 LUI-MÊME, `findMigrationGaps` est vide (donc
+//     `nodal-agents up` ne refuse pas de servir) ;
+//   - une base qui avait appliqué le premier jet (0165) avant 0166, la pile de
+//     démonstration : 0167 s'y applique sans erreur, sans trou, sans toucher
+//     aux lignes qui portent déjà leur source.
 //
 // Le démarrage est un TEST, pas un `beforeAll` (invariant #4).
 
@@ -79,7 +79,7 @@ async function setVoice(db: Db, entityId: string, value: string): Promise<void> 
 
 function migrationStatements(): string[] {
   const path = fileURLToPath(
-    new URL('../../migrations/0165_voice_listening_source.sql', import.meta.url),
+    new URL('../../migrations/0167_voice_listening_source.sql', import.meta.url),
   );
   return readFileSync(path, 'utf8')
     .split('--> statement-breakpoint')
@@ -87,7 +87,7 @@ function migrationStatements(): string[] {
     .filter((s) => s.length > 0);
 }
 
-describe('migration 0165_voice_listening_source @cap:parler-a-un-agent/moteur', () => {
+describe('migration 0167_voice_listening_source @cap:parler-a-un-agent/moteur', () => {
   it('starts a real Postgres and applies the REAL migrations — red if the binary is missing, not skipped', async () => {
     pg = await startRealPostgres();
     await runMigrations(pg.url, { patchVectorAsText: true });
@@ -168,21 +168,26 @@ describe('migration 0165_voice_listening_source @cap:parler-a-un-agent/moteur', 
     const journal = (await import('../../migrations/meta/_journal.json', {
       with: { type: 'json' },
     })) as { default: { entries: Array<{ idx: number; tag: string }> } };
-    expect(journal.default.entries.map((e) => e.tag)).toContain('0165_voice_listening_source');
+    expect(journal.default.entries.map((e) => e.tag)).toContain('0167_voice_listening_source');
   });
 });
 
-// ─── Une base qui a déjà vécu, avec ou sans 0165 ────────────────────────────
+// ─── Une base qui a déjà vécu ───────────────────────────────────────────────
 //
-// On ne simule pas « un trou » en défaisant 0165 à la main : on rejoue ce qui
-// est ARRIVÉ. Un migrateur drizzle applique un dossier dont le journal est
-// celui de `main` à la 0.9.10 (0166 présente, 0165 absente), puis le VRAI
-// migrateur de cette branche passe dessus : c'est ce que fait un
-// `nodal-agents up` après la mise à jour.
+// 0.9.10 a publié 0166 SANS la migration de la voix. Si celle-ci avait gardé
+// son premier numéro (0165, `when` sous celui de 0166), le migrateur de drizzle
+// l'aurait sautée en silence sur toute installation 0.9.10, et `nodal-agents
+// up` aurait refusé de servir (#298). Elle porte donc le numéro suivant (0167)
+// et un `when` APRÈS 0166 : ici, on rejoue ce qui est ARRIVÉ à ces bases — un
+// migrateur drizzle applique un dossier dont le journal est celui d'avant, puis
+// le VRAI migrateur de cette branche passe dessus, comme le fait `up` après la
+// mise à jour.
 
 const MIGRATIONS = fileURLToPath(new URL('../../migrations', import.meta.url));
-const WHEN_0165 = 1_786_437_100_000;
 const WHEN_0166 = 1_786_437_200_000;
+const WHEN_0167 = 1_786_437_300_000;
+/** Le numéro et le `when` du premier jet, que la pile de démonstration a appliqués. */
+const FIRST_DRAFT = { idx: 165, when: 1_786_437_100_000, tag: '0165_voice_listening_source' };
 
 interface JournalFile {
   entries: Array<{ idx: number; when: number; tag: string }>;
@@ -194,12 +199,16 @@ afterAll(() => {
 });
 
 /**
- * Une copie des migrations dont le journal ne porte pas `sansTag` : le journal
- * qu'avait `main` avant cette branche, ou avant 0166. Les `vector(N)` sont
- * réécrits en `text`, comme le fait `up` sur une machine sans pgvector.
+ * Une copie des migrations dont le journal est celui d'une base qui a vécu :
+ * sans les entrées `drop`, avec en plus `add` (le fichier de la voix, recopié
+ * sous son ancien nom). Les `vector(N)` sont réécrits en `text`, comme le fait
+ * `up` sur une machine sans pgvector.
  */
-function migrationsWithout(sansTag: string): string {
-  const dest = mkdtempSync(join(tmpdir(), 'voice-0165-migrations-'));
+function migrationsAsItWas(opts: {
+  drop: string[];
+  add?: { idx: number; when: number; tag: string };
+}): string {
+  const dest = mkdtempSync(join(tmpdir(), 'voice-0167-migrations-'));
   tmpFolders.push(dest);
   mkdirSync(join(dest, 'meta'), { recursive: true });
   for (const f of readdirSync(MIGRATIONS)) {
@@ -210,8 +219,17 @@ function migrationsWithout(sansTag: string): string {
   const journal = JSON.parse(
     readFileSync(join(MIGRATIONS, 'meta', '_journal.json'), 'utf8'),
   ) as JournalFile;
-  const kept = journal.entries.filter((e) => e.tag !== sansTag);
-  expect(kept).toHaveLength(journal.entries.length - 1);
+  const kept = journal.entries.filter((e) => !opts.drop.includes(e.tag));
+  expect(kept).toHaveLength(journal.entries.length - opts.drop.length);
+  if (opts.add) {
+    // The first draft's file: the same SQL, under the number it first had.
+    writeFileSync(
+      join(dest, `${opts.add.tag}.sql`),
+      readFileSync(join(dest, '0167_voice_listening_source.sql'), 'utf8'),
+    );
+    kept.push(opts.add);
+    kept.sort((a, b) => a.when - b.when);
+  }
   writeFileSync(
     join(dest, 'meta', '_journal.json'),
     JSON.stringify({ ...journal, entries: kept }, null, 2),
@@ -251,16 +269,17 @@ async function historyWhens(url: string): Promise<number[]> {
   }
 }
 
-describe('migration 0165 on a database that already lived @cap:parler-a-un-agent/moteur', () => {
-  // Mutation verified: `repairMigrations` made a no-op → the later assertions
-  // of this case go red (no transcriptionSource, no history row, gap stays).
-  it('a 0.9.10 database (0164 and 0166, never 0165): the migrator skips 0165, the gap check names it, the repair lays it and records it', async () => {
+describe('migration 0167 on a database that already lived @cap:parler-a-un-agent/moteur', () => {
+  // Mutation verified: the journal entry given a `when` below 0166's (the first
+  // draft's 1786437100000) → red: the migrator skips it, the row stays without
+  // its source, and `findMigrationGaps` names it.
+  it('a 0.9.10 database (0164 and 0166, no voice migration): the branch applies it ITSELF, no gap is left, so `up` does not refuse', async () => {
     const url = await databaseMigratedWith(
       'published_0910',
-      migrationsWithout('0165_voice_listening_source'),
+      migrationsAsItWas({ drop: ['0167_voice_listening_source'] }),
     );
-    expect(await historyWhens(url)).not.toContain(WHEN_0165);
     expect(await historyWhens(url)).toContain(WHEN_0166);
+    expect(await historyWhens(url)).not.toContain(WHEN_0167);
 
     const { db, close } = createClient(url, { max: 1 });
     try {
@@ -270,49 +289,39 @@ describe('migration 0165 on a database that already lived @cap:parler-a-un-agent
       const before = (await voiceOf(db, entityId)) as Record<string, unknown>;
       expect(before).not.toHaveProperty('transcriptionSource');
 
-      // The branch's real migrator runs: silent, and 0165 is NOT applied.
       await runMigrations(url, { patchVectorAsText: true });
-      expect(await voiceOf(db, entityId)).toEqual(before);
-      expect(await historyWhens(url)).not.toContain(WHEN_0165);
 
-      // The check names it, by journal timestamp.
-      expect(await findMigrationGaps(url, { patchVectorAsText: true })).toEqual([
-        { idx: 165, tag: '0165_voice_listening_source', when: WHEN_0165 },
-      ]);
-
-      // The repair lays it, records it, and the row is read again as a setting.
-      const repaired = await repairMigrations(url, { patchVectorAsText: true });
-      expect(repaired.map((g) => g.tag)).toEqual(['0165_voice_listening_source']);
       expect(await voiceOf(db, entityId)).toEqual({ ...before, transcriptionSource: 'openrouter' });
       expect(await readVoiceSetting(db, entityId)).toMatchObject({ ok: true });
-      expect(await historyWhens(url)).toContain(WHEN_0165);
+      expect(await historyWhens(url)).toContain(WHEN_0167);
+      // The check `up` runs after the migrator finds nothing to refuse on.
       expect(await findMigrationGaps(url, { patchVectorAsText: true })).toEqual([]);
+      expect(await repairMigrations(url, { patchVectorAsText: true })).toEqual([]);
 
       // A workspace created after is born with the full value.
       const born = await newEntity(db);
       expect(await voiceOf(db, born)).toMatchObject({ transcriptionSource: 'openrouter' });
-
-      // A second repair does nothing: no second history row.
-      expect(await repairMigrations(url, { patchVectorAsText: true })).toEqual([]);
-      expect((await historyWhens(url)).filter((w) => w === WHEN_0165)).toHaveLength(1);
     } finally {
       await close();
     }
   }, 180_000);
 
-  // Mutation verified: `gapsBetween` made to report 0165 even when its history
-  // row exists → both cases go red (a phantom gap on a healthy database).
-  it('a database that applied 0165 BEFORE 0166 stays as it is: no gap, nothing rewritten, no second history row', async () => {
+  // Mutation verified: the SQL's backfill made to rewrite rows that carry the
+  // field already → the server row changes and this case goes red.
+  it('a database that applied the first draft (0165) before 0166: 0167 applies without error, no gap, rows already carrying their source are untouched', async () => {
     const url = await databaseMigratedWith(
-      'demo_0165_first',
-      migrationsWithout('0166_tool_call_read_only_hint'),
+      'demo_first_draft',
+      migrationsAsItWas({
+        drop: ['0166_tool_call_read_only_hint', '0167_voice_listening_source'],
+        add: FIRST_DRAFT,
+      }),
     );
-    expect(await historyWhens(url)).toContain(WHEN_0165);
+    expect(await historyWhens(url)).toContain(FIRST_DRAFT.when);
     expect(await historyWhens(url)).not.toContain(WHEN_0166);
 
     const { db, close } = createClient(url, { max: 1 });
     try {
-      const entityId = await newEntity(db);
+      const serverEntity = await newEntity(db);
       const serverValue = JSON.stringify({
         source: 'openrouter',
         model: 'x-ai/grok-voice-tts-1.0',
@@ -321,17 +330,31 @@ describe('migration 0165 on a database that already lived @cap:parler-a-un-agent
         transcriptionModel: 'openai/whisper-large-v3-turbo',
         transcriptionServer: { address: 'http://127.0.0.1:8786/v1' },
       });
-      await setVoice(db, entityId, serverValue);
+      await setVoice(db, serverEntity, serverValue);
+      // A row the first draft already gave its source, read back as is.
+      const listening = await newEntity(db);
+      const listeningBefore = await voiceOf(db, listening);
+      expect(listeningBefore).toMatchObject({ transcriptionSource: 'openrouter' });
+      const updatedAt = async (id: string) =>
+        (
+          await rows<{ updated_at: unknown }>(
+            db,
+            sql`SELECT updated_at FROM entity_settings WHERE entity_id = ${id} AND key = 'voice'`,
+          )
+        )[0]!.updated_at;
+      const stamps = [await updatedAt(serverEntity), await updatedAt(listening)];
       const historyBefore = await historyWhens(url);
 
       await runMigrations(url, { patchVectorAsText: true });
 
-      // 0166 follows, the ordinary way; 0165 keeps its single history row.
-      expect(await historyWhens(url)).toEqual([...historyBefore, WHEN_0166]);
-      expect(await voiceOf(db, entityId)).toEqual(JSON.parse(serverValue));
+      // 0166 and 0167 follow, the ordinary way; the first draft's row stays,
+      // and the journal no longer announces it, so it is no gap.
+      expect(await historyWhens(url)).toEqual([...historyBefore, WHEN_0166, WHEN_0167]);
+      expect(await voiceOf(db, serverEntity)).toEqual(JSON.parse(serverValue));
+      expect(await voiceOf(db, listening)).toEqual(listeningBefore);
+      expect([await updatedAt(serverEntity), await updatedAt(listening)]).toEqual(stamps);
       expect(await findMigrationGaps(url, { patchVectorAsText: true })).toEqual([]);
       expect(await repairMigrations(url, { patchVectorAsText: true })).toEqual([]);
-      expect(await voiceOf(db, entityId)).toEqual(JSON.parse(serverValue));
     } finally {
       await close();
     }
