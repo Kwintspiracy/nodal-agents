@@ -329,9 +329,20 @@ edited on the page it lives on.
 | Setting        | What it holds                                                           |
 | -------------- | ----------------------------------------------------------------------- |
 | **Timezone**   | The zone agents use to tell the time and schedule automations            |
+| **Voice**      | The voice Nodal speaks with (source, model and voice, with a sample to hear), and the model that writes down what you say to it |
 | **Workspaces** | The workspace list, and which one is active                              |
 | **URLs**       | Where this install answers, and where its shared folder is. Read only    |
 | **Session**    | Your account and workspace identifiers in the local database. Read only  |
+
+### Devices — `/settings?page=devices`
+
+*Things that talk to your agents: a speaker, a desk companion, a script.* A
+device pairs from its own side; its request waits here with the 6-digit code
+the device shows or says, what it says it can do and where it asks from, and
+you confirm or refuse it. Paired devices are listed with when they were last
+seen; rename or remove one. A removed device's key is refused at its next
+request. Only a single-user install can pair a device. See [Connect a
+device](/docs/guides/connect-a-device).
 
 ### Install — `/settings?page=install`
 
