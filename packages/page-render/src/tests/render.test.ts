@@ -9,7 +9,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import { execFileSync, spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -371,3 +371,49 @@ describe('renderPdf: no renderer process outlives the call @cap:travailler-sur-d
     expect(err.message).toMatch(/^Nodal's page renderer did not start: /);
   });
 });
+
+// What Chrome says when it dies at launch reaches the agent: driven over a
+// pipe, it leaves puppeteer only "Target closed"; the cause is on its stderr.
+// A fake program writes the exact lines Chrome writes, then exits. Linux and
+// macOS only: Windows does not launch a script as a program.
+describe.runIf(process.platform !== 'win32')(
+  'renderPdf: a launch that fails says why @cap:travailler-sur-des-fichiers/moteur',
+  () => {
+    async function fakeChrome(stderr: string): Promise<string> {
+      const p = join(dir, 'fake-chrome');
+      await writeFile(p, `#!/bin/sh\necho ${JSON.stringify(stderr)} >&2\nexit 1\n`);
+      await chmod(p, 0o755);
+      return p;
+    }
+
+    it('a sandbox Chrome cannot start is named, with what to do, and never turned off', async () => {
+      const exe2 = await fakeChrome(
+        '[1116/120000.000000:FATAL:zygote_host_impl_linux.cc(132)] No usable sandbox! If you are running on Ubuntu 23.10+ or another Linux distro that has disabled unprivileged user namespaces with AppArmor, see …',
+      );
+      const err = (await renderPdf({
+        executablePath: exe2,
+        source: await page('s.html', '<p>x</p>'),
+        readLocal: inDir,
+      }).catch((e: unknown) => e)) as PageRenderError;
+      expect(err.code).toBe('SANDBOX_UNAVAILABLE');
+      expect(err.message).toMatch(/kernel\.apparmor_restrict_unprivileged_userns=0/);
+      expect(err.message).toMatch(/Nodal never turns the sandbox off\.$/);
+    });
+
+    it('a missing system library is named', async () => {
+      const exe2 = await fakeChrome(
+        'chrome-headless-shell: error while loading shared libraries: libnss3.so: cannot open shared object file: No such file or directory',
+      );
+      const err = (await renderPdf({
+        executablePath: exe2,
+        source: await page('l.html', '<p>x</p>'),
+        readLocal: inDir,
+      }).catch((e: unknown) => e)) as PageRenderError;
+      expect(err.code).toBe('MISSING_LIBRARY');
+      expect(err.message).toBe(
+        "Nodal's page renderer cannot start: the system library libnss3.so is missing. Install " +
+          'the package that provides it with the system package manager, then call again.',
+      );
+    });
+  },
+);

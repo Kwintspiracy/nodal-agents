@@ -43,7 +43,7 @@
 // dans le bac à sable de Chrome, sans rien de plus que ce qui précède.
 
 import { mkdtemp, rm } from 'node:fs/promises';
-import { spawnSync, type ChildProcess } from 'node:child_process';
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -329,8 +329,8 @@ async function networkVerdict(url: string): Promise<{ ok: true } | { ok: false; 
  * bibliothèque système manquante (Linux), un bac à sable impossible, ou le
  * texte de Chrome tel quel.
  */
-function launchFailure(err: unknown): PageRenderError {
-  const text = err instanceof Error ? err.message : String(err);
+function launchFailure(err: unknown, chromeStderr = ''): PageRenderError {
+  const text = `${err instanceof Error ? err.message : String(err)}\n${chromeStderr}`;
   const lib = /error while loading shared libraries: ([^\s:]+)/.exec(text);
   if (lib) {
     return new PageRenderError(
@@ -349,10 +349,63 @@ function launchFailure(err: unknown): PageRenderError {
         'Nodal never turns the sandbox off.',
     );
   }
+  const said = firstLine(chromeStderr);
   return new PageRenderError(
     'LAUNCH_FAILED',
-    `Nodal's page renderer did not start: ${firstLine(text)}`,
+    `Nodal's page renderer did not start: ${firstLine(err instanceof Error ? err.message : String(err))}` +
+      (said.length > 0 ? ` (Chrome said: ${said})` : ''),
   );
+}
+
+/** La borne du lancement de diagnostic. */
+const DIAGNOSIS_MS = 10_000;
+
+/**
+ * Ce que Chrome dit LUI-MÊME quand il meurt au lancement. Piloté par un tube,
+ * il ne laisse à puppeteer que « Target closed » : la cause (le bac à sable,
+ * une bibliothèque) est sur son stderr, que ce lancement-ci, direct et borné,
+ * recueille. Appelé seulement après un lancement raté ; son processus est tué
+ * par son pid s'il vit encore à la borne.
+ */
+async function chromeSays(
+  executablePath: string,
+  args: string[],
+  profile: string,
+): Promise<string> {
+  return new Promise((resolve) => {
+    let said = '';
+    let child: ChildProcess;
+    try {
+      child = spawn(
+        executablePath,
+        [...args, `--user-data-dir=${profile}`, '--headless', '--dump-dom', 'about:blank'],
+        {
+          stdio: ['ignore', 'ignore', 'pipe'],
+          windowsHide: true,
+          detached: process.platform !== 'win32',
+        },
+      );
+    } catch (e) {
+      resolve(e instanceof Error ? e.message : String(e));
+      return;
+    }
+    child.stderr?.on('data', (d: Buffer) => {
+      if (said.length < 8_000) said += String(d);
+    });
+    const timer = setTimeout(() => {
+      void killProcessTree(child.pid, {
+        backstop: () => child.kill('SIGKILL'),
+        context: { what: 'page-renderer-diagnosis' },
+      });
+    }, DIAGNOSIS_MS);
+    child.on('error', (e) => {
+      said += `\n${e.message}`;
+    });
+    child.on('close', () => {
+      clearTimeout(timer);
+      resolve(said);
+    });
+  });
 }
 
 function firstLine(text: string): string {
@@ -473,7 +526,10 @@ export async function renderPdf(req: RenderPdfRequest): Promise<RenderPdfResult>
         handleSIGHUP: false,
       });
     } catch (err) {
-      throw launchFailure(err);
+      throw launchFailure(
+        err,
+        await chromeSays(req.executablePath, chromeArgs(proxy), join(profile, 'diagnosis')),
+      );
     }
     child = browser.process();
     pid = child?.pid;
