@@ -1,4 +1,4 @@
-// render-pdf-rules-migration.pg.test.ts — migration 0167 contre un VRAI Postgres.
+// render-pdf-rules-migration.pg.test.ts — migration 0168 contre un VRAI Postgres.
 //
 // @cap:approuver-une-action/moteur
 //
@@ -16,7 +16,7 @@
 //   - un agent SANS règle sur file_write n'a rien ;
 //   - une règle render_pdf déjà posée n'est pas écrasée, et rejouer ne double rien.
 //
-// Les lignes d'avant se posent APRÈS les migrations, puis le fichier 0167
+// Les lignes d'avant se posent APRÈS les migrations, puis le fichier 0168
 // (idempotent) est rejoué : c'est l'état d'une base qui monte de version.
 //
 // Le démarrage est un TEST, pas un `beforeAll` (invariant #4).
@@ -81,10 +81,10 @@ async function regle(
 }
 
 const MIGRATION = fileURLToPath(
-  new URL('../../migrations/0167_render_pdf_rules.sql', import.meta.url),
+  new URL('../../migrations/0168_render_pdf_rules.sql', import.meta.url),
 );
 
-describe('migration 0167_render_pdf_rules @cap:approuver-une-action/moteur', () => {
+describe('migration 0168_render_pdf_rules @cap:approuver-une-action/moteur', () => {
   it('starts a real Postgres and applies the REAL migrations — red if the binary is missing, not skipped', async () => {
     pg = await startRealPostgres();
     await runMigrations(pg.url, { patchVectorAsText: true });
@@ -112,10 +112,10 @@ describe('migration 0167_render_pdf_rules @cap:approuver-une-action/moteur', () 
       // « Tous les agents » de l'espace.
       await regle(db, e, null, 'file_write', 'require_approval');
 
-      const sql0167 = readFileSync(MIGRATION, 'utf8');
-      await db.execute(sql.raw(sql0167));
+      const sql0168 = readFileSync(MIGRATION, 'utf8');
+      await db.execute(sql.raw(sql0168));
       // Rejouée : idempotente.
-      await db.execute(sql.raw(sql0167));
+      await db.execute(sql.raw(sql0168));
 
       const renders = await rows<{
         agent_id: string | null;
@@ -154,6 +154,6 @@ describe('migration 0167_render_pdf_rules @cap:approuver-une-action/moteur', () 
     const journal = (await import('../../migrations/meta/_journal.json', {
       with: { type: 'json' },
     })) as { default: { entries: Array<{ idx: number; tag: string }> } };
-    expect(journal.default.entries.map((e) => e.tag)).toContain('0167_render_pdf_rules');
+    expect(journal.default.entries.map((e) => e.tag)).toContain('0168_render_pdf_rules');
   });
 });
