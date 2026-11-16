@@ -31,8 +31,7 @@ not finished in time and are not in 0.9.10:
 - **Following a print to its end, and saying "printed" only then**, when the
   print tool can tell. (#1073)
 - **Telling you that a skill you edited has a newer version.** As in 0.9.9, an
-  upgrade never overwrites a skill you changed, and nothing tells you yet that
-  its default text moved. (#896)
+  upgrade never overwrites a skill you changed. (#896)
 - **Turning a page into a PDF without your browser.** Nodal has no tool that
   renders a page to a PDF, so agents use the browser installed on your machine,
   which can put a window or a crash alert on your desktop. Planned for the next
@@ -82,7 +81,9 @@ not finished in time and are not in 0.9.10:
   result names the file that is there, with its size and its date. Two filing
   tasks once moved two different documents to the same name 0.18 s apart, both
   were told it worked, and one document was gone. With `replace: true`, a move
-  replaces the file as before, with the same approval. (#938)
+  replaces the file as before, with the same approval. A rename that changes
+  only the case of a name (`scan.pdf` to `Scan.pdf`), refused before as "the
+  same file", now works. (#938)
 - **No preferred language.** An agent answers in the language of the message it
   answers. Onboarding no longer asks for a language, and the memory it wrote
   ("Operator — preferred language: …") is archived; you can restore it from the
