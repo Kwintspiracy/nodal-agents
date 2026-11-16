@@ -8,6 +8,10 @@
 import { SpeechError } from './errors.ts';
 import { googleSpeechAdapter, googleTranscriptionAdapter } from './providers/google.ts';
 import { minimaxSpeechAdapter } from './providers/minimax.ts';
+import {
+  openaiCompatibleSpeechAdapter,
+  openaiCompatibleTranscriptionAdapter,
+} from './providers/openai-compatible.ts';
 import { openrouterSpeechAdapter, openrouterTranscriptionAdapter } from './providers/openrouter.ts';
 import type { SpeechAdapter, SpeechProvider, TranscriptionAdapter } from './speech-adapter.ts';
 
@@ -15,11 +19,13 @@ const speechAdapters: ReadonlyMap<SpeechProvider, SpeechAdapter> = new Map([
   ['google', googleSpeechAdapter],
   ['minimax', minimaxSpeechAdapter],
   ['openrouter', openrouterSpeechAdapter],
+  ['openai-compatible', openaiCompatibleSpeechAdapter],
 ]);
 
 const transcriptionAdapters: ReadonlyMap<SpeechProvider, TranscriptionAdapter> = new Map([
   ['google', googleTranscriptionAdapter],
   ['openrouter', openrouterTranscriptionAdapter],
+  ['openai-compatible', openaiCompatibleTranscriptionAdapter],
 ]);
 
 /** Providers that can SPEAK. Not every provider does both — MiniMax synthesises

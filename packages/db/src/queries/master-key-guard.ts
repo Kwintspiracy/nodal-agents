@@ -21,6 +21,8 @@ import { mcpServers } from '../schema/mcp.ts';
 import { channelBindings } from '../schema/channel-bindings.ts';
 import { agents } from '../schema/agents.ts';
 import { webhookTriggers } from '../schema/webhooks.ts';
+import { entitySettings } from '../schema/app-settings.ts';
+import { eq } from 'drizzle-orm';
 import { isEncrypted, masterKeyFileMissing } from '@nodal-agents/secrets';
 import type { AnyDrizzleDb } from '../client.ts';
 
@@ -98,6 +100,28 @@ export async function assertMasterKeyRestorable(
   const webhookRows = await db.select({ secret: webhookTriggers.secret }).from(webhookTriggers);
   const hasEncryptedWebhookSecret = webhookRows.some((r) => !!r.secret && isEncrypted(r.secret));
   if (hasEncryptedWebhookSecret) throw missingKeyError('a stored webhook secret');
+
+  // The key of a speech or transcription server the user runs (#1048) lives
+  // inside the workspace's voice setting, encrypted like the others. A row
+  // that is not JSON says nothing about the key: the voice setting reader
+  // reports it unreadable on its own.
+  const voiceRows = await db
+    .select({ value: entitySettings.value })
+    .from(entitySettings)
+    .where(eq(entitySettings.key, 'voice'));
+  const hasEncryptedVoiceKey = voiceRows.some((r) => {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(r.value);
+    } catch {
+      return false;
+    }
+    const s = (parsed ?? {}) as Record<string, { key?: unknown } | undefined>;
+    return [s['speechServer'], s['transcriptionServer']].some(
+      (server) => typeof server?.key === 'string' && isEncrypted(server.key),
+    );
+  });
+  if (hasEncryptedVoiceKey) throw missingKeyError('a stored voice server key');
 }
 
 function missingKeyError(what: string): Error {

@@ -41,6 +41,10 @@ export {
   openrouterTranscriptionAdapter,
 } from './providers/openrouter.ts';
 export {
+  openaiCompatibleSpeechAdapter,
+  openaiCompatibleTranscriptionAdapter,
+} from './providers/openai-compatible.ts';
+export {
   bindSpeech,
   bindTranscription,
   type BoundSpeech,

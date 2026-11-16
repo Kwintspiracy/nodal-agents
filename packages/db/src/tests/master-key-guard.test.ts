@@ -22,7 +22,9 @@ import {
   channelBindings,
   agents,
   webhookTriggers,
+  entitySettings,
 } from '../schema/index.ts';
+import { and } from 'drizzle-orm';
 import { assertMasterKeyRestorable } from '../queries/master-key-guard.ts';
 
 let db: TestDb;
@@ -225,5 +227,37 @@ describe('assertMasterKeyRestorable', () => {
     );
 
     await db.delete(webhookTriggers).where(eq(webhookTriggers.agentId, seed.agentId));
+  });
+
+  // #1048: the key of a server the user runs lives in the voice setting.
+  it('throws when the key is missing and a voice server key is stored in the voice setting', async () => {
+    const where = and(eq(entitySettings.entityId, entityId), eq(entitySettings.key, 'voice'));
+    const [before] = await db
+      .select({ value: entitySettings.value })
+      .from(entitySettings)
+      .where(where);
+    // Every workspace has its voice row, with no server and no key: no throw.
+    await expect(
+      assertMasterKeyRestorable(db, { keyPath: missingKeyPath() }),
+    ).resolves.toBeUndefined();
+    await db
+      .update(entitySettings)
+      .set({
+        value: JSON.stringify({
+          source: 'openrouter',
+          model: 'm',
+          voice: 'v',
+          transcriptionSource: 'openai-compatible',
+          transcriptionModel: 'whisper',
+          transcriptionServer: { address: 'http://127.0.0.1:8786/v1', key: encrypt('sk-local') },
+        }),
+      })
+      .where(where);
+
+    await expect(assertMasterKeyRestorable(db, { keyPath: missingKeyPath() })).rejects.toThrow(
+      /voice server key/,
+    );
+
+    await db.update(entitySettings).set({ value: before!.value }).where(where);
   });
 });

@@ -44,15 +44,23 @@ export interface BoundTranscription {
 }
 
 /** An empty key is refused when binding, not on the first call: the caller
- *  learns it where it built the value, not in the middle of an agent's turn. */
-function assertKey(provider: SpeechProvider, connection: SpeechConnection): void {
-  if (connection.apiKey.trim().length === 0) {
-    throw new SpeechError('speech_bad_request', `${provider}: the connection has no API key`);
+ *  learns it where it built the value, not in the middle of an agent's turn.
+ *  An adapter that needs no key says so (`requiresKey: false`, a server the
+ *  user runs, #1048): that is the adapter's fact, never a guess here. */
+function assertKey(
+  adapter: { provider: SpeechProvider; requiresKey: boolean },
+  connection: SpeechConnection,
+): void {
+  if (adapter.requiresKey && connection.apiKey.trim().length === 0) {
+    throw new SpeechError(
+      'speech_bad_request',
+      `${adapter.provider}: the connection has no API key`,
+    );
   }
 }
 
 export function bindSpeech(adapter: SpeechAdapter, connection: SpeechConnection): BoundSpeech {
-  assertKey(adapter.provider, connection);
+  assertKey(adapter, connection);
   const stream = adapter.synthesizeStream;
   const models = adapter.listModels;
   return {
@@ -71,7 +79,7 @@ export function bindTranscription(
   adapter: TranscriptionAdapter,
   connection: SpeechConnection,
 ): BoundTranscription {
-  assertKey(adapter.provider, connection);
+  assertKey(adapter, connection);
   const models = adapter.listModels;
   return {
     provider: adapter.provider,

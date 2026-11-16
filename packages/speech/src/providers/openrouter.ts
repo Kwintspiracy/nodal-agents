@@ -30,6 +30,7 @@
 
 import { SpeechError, vendorRefusalCode } from '../errors.ts';
 import { pcmToWav } from '../wav.ts';
+import { containerOf, streamCompressed } from './audio-answer.ts';
 import type {
   AudioMimeType,
   SpeechAdapter,
@@ -96,7 +97,7 @@ async function listTranscriptionModels(
     );
   } catch (err) {
     throw new SpeechError(
-      'speech_provider_error',
+      'speech_unreachable',
       `openrouter transcription models: request failed — ${err instanceof Error ? err.message : String(err)}`,
     );
   }
@@ -123,6 +124,7 @@ async function listTranscriptionModels(
 
 export const openrouterTranscriptionAdapter: TranscriptionAdapter = {
   provider: 'openrouter',
+  requiresKey: true,
   capabilities,
 
   listModels(connection: SpeechConnection): Promise<readonly TranscriptionModelOffer[]> {
@@ -173,7 +175,7 @@ export const openrouterTranscriptionAdapter: TranscriptionAdapter = {
       });
     } catch (err) {
       throw new SpeechError(
-        'speech_provider_error',
+        'speech_unreachable',
         `openrouter ${req.model}: request failed — ${err instanceof Error ? err.message : String(err)}`,
       );
     }
@@ -254,7 +256,7 @@ async function listSpeechModels(
     });
   } catch (err) {
     throw new SpeechError(
-      'speech_provider_error',
+      'speech_unreachable',
       `openrouter models: request failed — ${err instanceof Error ? err.message : String(err)}`,
     );
   }
@@ -390,7 +392,7 @@ async function openSpeech(
     });
   } catch (err) {
     throw new SpeechError(
-      'speech_provider_error',
+      'speech_unreachable',
       `openrouter ${model}: request failed — ${err instanceof Error ? err.message : String(err)}`,
     );
   }
@@ -413,7 +415,7 @@ async function openSpeech(
   // travel as what they are, with their media type, and the player decodes
   // them; they are never wrapped into a WAV of mp3 bytes nor read as samples,
   // which would play as noise. A container nothing here names is refused.
-  const container = containerOf(contentType);
+  const container = containerOf(contentType, 'audio/pcm');
   if (container === null) {
     await res.body?.cancel().catch(() => {});
     throw new SpeechError(
@@ -423,74 +425,6 @@ async function openSpeech(
     );
   }
   return { res, model, contentType, container, t0 };
-}
-
-/**
- * The container of an answer, from its content type. No type at all is the
- * pcm that was asked for (the odd-length check still catches a cut stream);
- * `audio/l16` is pcm under its RFC name.
- */
-function containerOf(contentType: string): AudioMimeType | null {
-  const type = contentType.split(';')[0]!.trim().toLowerCase();
-  switch (type) {
-    case '':
-    case 'audio/pcm':
-    case 'audio/l16':
-      return 'audio/pcm';
-    case 'audio/mpeg':
-    case 'audio/mp3':
-      return 'audio/mpeg';
-    case 'audio/wav':
-    case 'audio/wave':
-    case 'audio/x-wav':
-      return 'audio/wav';
-    case 'audio/ogg':
-    case 'audio/opus':
-      return 'audio/ogg';
-    case 'audio/flac':
-      return 'audio/flac';
-    case 'audio/aac':
-    case 'audio/mp4':
-      return 'audio/mp4';
-    default:
-      return null;
-  }
-}
-
-/**
- * A compressed answer as it arrives: its bytes, untouched, with their media
- * type. A compressed frame cannot be cut anywhere, so the player joins a
- * sentence's chunks and decodes them once the sentence is complete (#968).
- */
-async function* streamCompressed(
-  res: Response,
-  model: string,
-  container: AudioMimeType,
-): AsyncGenerator<SpeechStreamChunk> {
-  if (!res.body) {
-    throw new SpeechError('speech_provider_error', `${model} answered 200 with no audio`);
-  }
-  const reader = res.body.getReader();
-  let total = 0;
-  let finished = false;
-  try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) {
-        finished = true;
-        break;
-      }
-      if (value.byteLength === 0) continue;
-      total += value.byteLength;
-      yield { audio: value, mimeType: container };
-    }
-  } finally {
-    if (finished) reader.releaseLock();
-    else await reader.cancel().catch(() => {});
-  }
-  if (total === 0) {
-    throw new SpeechError('speech_provider_error', `${model} answered 200 with no audio`);
-  }
 }
 
 /**
@@ -574,6 +508,7 @@ async function* streamPcm(
 
 export const openrouterSpeechAdapter: SpeechAdapter = {
   provider: 'openrouter',
+  requiresKey: true,
   capabilities: {
     // WAV, because the one-shot path wraps the raw PCM the API returns.
     // WAV for a pcm answer; any other container is returned as the model answered it (#969).
