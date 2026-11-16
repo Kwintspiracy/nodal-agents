@@ -123,9 +123,11 @@ not finished in time and are not in 0.9.10:
 - **A spoken reply is short.** Asked by voice about the weather in Tokyo, an
   agent used to answer in 77 words, about 25 seconds of speech. A spoken reply
   is now usually one sentence, two at most, unless you asked for something long.
-  The form of a spoken reply is also said with the message it answers: on a
-  neutral message such as "Are you there?", agents restated where earlier tasks
-  stood 15 times out of 15; with the note, 0 out of 15. (#990, #1097)
+  The form of a spoken reply is also said with the message it answers. On real
+  conversations, replies to a neutral message such as "Are you there?" that
+  restated earlier work went from 14 of 15 to 5 of 15 with that note, and to 0
+  of 30 once a task's report is replayed as the agent's own words (below).
+  (#990, #1097, #1111)
 - **The agent says what it is doing, not who does it.** A spoken acknowledgement
   used to name the teammate it hands the task to, and why: 15 of 40 launches,
   now 1 of 40. Whether it answers or starts a task is no longer said either.
