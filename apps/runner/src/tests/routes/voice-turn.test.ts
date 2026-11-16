@@ -2847,7 +2847,15 @@ describe('a server the person runs, for listening and for speaking (#1048) @cap:
       expect(heard[0]!.headers['authorization']).toBe(key ? `Bearer ${key}` : undefined);
       // OpenRouter's ear was never asked, and the person's words reached the agent.
       expect(sent.transcription).toEqual([]);
-      expect(textOf(sent.front[0]!.messages.at(-1)!.content)).toContain(TRANSCRIPT);
+      // Found by role and content, not by position: since #1088 the runner's
+      // note about the form of the reply follows the person's message, so the
+      // last message of the request is not the one that carries the words.
+      const saidByThePerson = sent.front[0]!.messages.filter(
+        (m) => m.role === 'user' && textOf(m.content).includes(TRANSCRIPT),
+      );
+      expect(saidByThePerson).toHaveLength(1);
+      // The runner stamps the message with its date; the words are the rest.
+      expect(textOf(saidByThePerson[0]!.content).replace(/^\[[^\]]+\] /, '')).toBe(TRANSCRIPT);
     },
   );
 
