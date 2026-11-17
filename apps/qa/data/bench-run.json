@@ -1,7 +1,7 @@
 {
   "run": {
-    "startedAt": "2026-11-16T11:44:35.043Z",
-    "gitSha": "bdb18460",
+    "startedAt": "2026-11-17T12:20:05.231Z",
+    "gitSha": "89ea5371",
     "sections": [
       {
         "sectionId": "architecture",
@@ -78,7 +78,7 @@
             "detail": []
           }
         ],
-        "durationMs": 1659
+        "durationMs": 1725
       },
       {
         "sectionId": "gate",
