@@ -246,6 +246,78 @@ the current database as a copy too: nothing is dropped. Stop Nodal first
     }
   });
 
+// ── nodal-agents backup / restore ─────────────────────────────────────────────
+//
+// One file holding everything this install needs to live again (every table,
+// the master key, the config, optionally the workspaces), read back and
+// compared with the database before it is called done; and the way back from
+// it, on this machine or another. The database a restore replaces is kept as
+// a copy `rollback` can swap back.
+
+program
+  .command('backup')
+  .description('Write everything this install needs into one verified file')
+  .option('--to <folder>', 'The folder to write it to (default: the "backups" folder of this home)')
+  .option('--with-workspaces', "Include this home's workspaces folder")
+  .option(
+    '--passphrase',
+    'Protect the file with a passphrase you type (or NODALAI_BACKUP_PASSPHRASE)',
+  )
+  .option(
+    '--keep <n>',
+    'Keep only the newest N backups of the folder, once this one is verified',
+    (v) => Number(v),
+  )
+  .addHelpText(
+    'after',
+    `
+The file holds the master key: whoever has it can read every stored
+credential, unless it was made with --passphrase (a forgotten passphrase
+cannot be recovered). The default folder is on the same disk as the install:
+copy the file elsewhere to survive the loss of the disk. It works while Nodal
+runs (one consistent snapshot) or not.`,
+  )
+  .action(
+    async (opts: {
+      to?: string;
+      withWorkspaces?: boolean;
+      passphrase?: boolean;
+      keep?: number;
+    }) => {
+      const { runBackup } = await import('./commands/backup.ts');
+      try {
+        await runBackup(opts);
+      } catch (err) {
+        console.error(chalk.red('Error:'), err instanceof Error ? err.message : String(err));
+        process.exit(1);
+      }
+    },
+  );
+
+program
+  .command('restore')
+  .description('Bring this install back from a backup file (the replaced database is kept)')
+  .argument('<file>', 'The backup file (.nodalbak)')
+  .addHelpText(
+    'after',
+    `
+Stop Nodal first (nodal-agents down). The database the backup replaces is kept
+as a copy: \`nodal-agents rollback\` lists it and swaps it back. A backup from an
+older version is migrated by this one; a backup from a newer version is refused
+(install that version first). On a machine with no install yet, one is created
+first. The config of the backup comes back, with this machine's ports and
+database password.`,
+  )
+  .action(async (file: string) => {
+    const { runRestore } = await import('./commands/restore.ts');
+    try {
+      await runRestore(file);
+    } catch (err) {
+      console.error(chalk.red('Error:'), err instanceof Error ? err.message : String(err));
+      process.exit(1);
+    }
+  });
+
 // ── nodal-agents checkpoints ──────────────────────────────────────────────────
 //
 // The other half of the snapshots taken before an agent writes. They are

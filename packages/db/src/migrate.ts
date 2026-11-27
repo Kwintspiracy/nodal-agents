@@ -217,6 +217,45 @@ export function readProgramJournal(opts: RunMigrationsOptions = {}): JournalEntr
 }
 
 /**
+ * A NEW temporary migrations folder holding exactly the entries of this
+ * program's journal whose `when` is in `applied`, in journal order, with
+ * their `.sql` files: the schema of a database whose history is `applied`,
+ * gaps included. A restore builds an archive's schema from it (backup.ts),
+ * through `migrateDatabase` like any other schema. The files are copied
+ * unpatched: the caller's `patchVectorAsText` applies to this folder as to the
+ * bundled one. Throws when `applied` holds a `when` this journal does not have
+ * (the history is newer than the program). The caller removes the folder.
+ */
+export function migrationsFolderFor(
+  applied: readonly number[],
+  opts: Pick<RunMigrationsOptions, 'migrationsFolder'> = {},
+): string {
+  const source = opts.migrationsFolder ?? sourceMigrationsFolder();
+  const journal = readJournal(source);
+  const wanted = new Set(applied.map((w) => Number(w)));
+  const known = new Set(journal.map((e) => Number(e.when)));
+  const unknown = [...wanted].filter((w) => !known.has(w));
+  if (unknown.length > 0) {
+    throw new Error(
+      `the history holds ${unknown.length} migration(s) this program's journal does not have ` +
+        `(created_at ${unknown.sort((a, b) => a - b).join(', ')})`,
+    );
+  }
+  const raw = JSON.parse(readFileSync(join(source, 'meta', '_journal.json'), 'utf8')) as Record<
+    string,
+    unknown
+  >;
+  const entries = journal.filter((e) => wanted.has(Number(e.when)));
+  const folder = mkdtempSync(join(tmpdir(), 'nodalai-migrations-subset-'));
+  mkdirSync(join(folder, 'meta'), { recursive: true });
+  for (const e of entries) {
+    writeFileSync(join(folder, `${e.tag}.sql`), readFileSync(join(source, `${e.tag}.sql`)));
+  }
+  writeFileSync(join(folder, 'meta', '_journal.json'), JSON.stringify({ ...raw, entries }));
+  return folder;
+}
+
+/**
  * Les `created_at` que la base a enregistrés, ou `null` quand elle n'a pas de
  * table d'historique (une base que personne n'a migrée).
  */

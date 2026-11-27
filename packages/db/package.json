@@ -12,7 +12,8 @@
     "./migrate": "./src/migrate.ts",
     "./safe-migrate": "./src/safe-migrate.ts",
     "./schema-state": "./src/schema-state.ts",
-    "./snapshots": "./src/snapshots.ts"
+    "./snapshots": "./src/snapshots.ts",
+    "./backup": "./src/backup.ts"
   },
   "scripts": {
     "lint": "eslint src",

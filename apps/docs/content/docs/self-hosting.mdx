@@ -54,6 +54,7 @@ All persistent data lives at `~/.nodalai/`, or in the folder the `NODALAI_HOME` 
   workspaces/      # One subtree per workspace: shared files, community skills
   checkpoints/     # Shadow git store — snapshots taken before an agent writes
   snapshots/       # config.json and secrets.key saved with each copy of the database
+  backups/         # what `nodal-agents backup` writes by default
 ```
 
 To wipe everything and start fresh:
@@ -63,7 +64,7 @@ nodal-agents down
 rm -rf ~/.nodalai
 ```
 
-Your LLM provider keys, agents, jobs, and memory are all in `pg-data/`. The keys and tokens in it are encrypted with `secrets.key`, and the database opens only with the password in `config.json`: a copy of `pg-data/` is usable only together with those two files.
+Your LLM provider keys, agents, jobs, and memory are all in `pg-data/`. The keys and tokens in it are encrypted with `secrets.key`, and the database opens only with the password in `config.json`: a copy of `pg-data/` is usable only together with those two files. To save an install, use `nodal-agents backup` (below): it takes the three together, in one file.
 
 ### If config.json or secrets.key is damaged
 
@@ -153,7 +154,7 @@ This command:
 2. Installs it only when it is **newer** than the installed version. The same version, or an older one (a registry mirror that lags behind, or a pre-release you installed yourself), changes nothing and says so.
 3. Otherwise, stops the running stack (`nodal-agents down`), installs exactly that version globally, and restarts the stack in the background.
 
-The update itself does not touch `~/.nodalai/pg-data/`. The **next start** of the new version migrates the database to its schema, in place. Before it does, and only when there is a migration to apply to a database that holds data, `up` copies the database inside its own cluster and saves `config.json` and `secrets.key` beside the copy (in `~/.nodalai/snapshots/`). If that copy cannot be made (another program connected to the database, not enough free disk: the message gives the size of the copy and the free space), nothing is migrated and `up` stops. A copy takes about the size of the database on disk; the last two are kept (`"snapshots": { "keep": N }` in `config.json`).
+The update itself does not touch `~/.nodalai/pg-data/`. The **next start** of the new version migrates the database to its schema, in place: make a backup first (`nodal-agents backup`, see [Backup and restore](#backup-and-restore)). Before it does, and only when there is a migration to apply to a database that holds data, `up` copies the database inside its own cluster and saves `config.json` and `secrets.key` beside the copy (in `~/.nodalai/snapshots/`). If that copy cannot be made (another program connected to the database, not enough free disk: the message gives the size of the copy and the free space), nothing is migrated and `up` stops. A copy takes about the size of the database on disk; the last two are kept (`"snapshots": { "keep": N }` in `config.json`).
 
 ### Going back after an update
 
@@ -167,7 +168,33 @@ npm install -g nodal-agents@<version> # the version that last opened it, named b
 nodal-agents up
 ```
 
-The swap keeps the database it replaces as a copy of its own; nothing is dropped. `config.json` is not changed (its database password and ports are the cluster's); the one saved with the copy stays in its folder under `snapshots/`. These copies live in the same cluster, on the same disk: they undo a faulty migration, not a lost disk. Keep your own backup of `~/.nodalai/` for that.
+The swap keeps the database it replaces as a copy of its own; nothing is dropped. The master key travels with its database both ways. `config.json` is not changed (its database password and ports are the cluster's); the one saved with the copy stays in its folder under `snapshots/`. These copies live in the same cluster, on the same disk: they undo a faulty migration, not a lost disk. For that, make a backup.
+
+## Backup and restore
+
+```bash
+nodal-agents backup                      # into ~/.nodalai/backups/
+nodal-agents backup --to /mnt/usb --passphrase --keep 5
+nodal-agents down
+nodal-agents restore ~/.nodalai/backups/nodal-backup-20261128T090000000Z.nodalbak
+nodal-agents up
+```
+
+**What a backup holds.** Every table of the database, the schema it belongs to, the master key (`secrets.key`), `config.json`, and with `--with-workspaces` the `workspaces/` folder: everything an install needs to live again. The folders you gave agents elsewhere on disk are your own files and are not in it; save them as you save the rest of your files.
+
+**It is verified when it is made.** The file is read back and compared with the database, table by table, before the command says it is done; an interrupted backup leaves no file with a backup's name. It works while Nodal runs.
+
+**It holds the master key.** Anyone who has the file can read every stored credential. Keep it where only you can read it, or use `--passphrase` (the passphrase cannot be recovered). The default folder is on the same disk as the install and `reset` deletes it: copy backups to another disk or machine.
+
+**Restore keeps what it replaces.** The database a restore replaces becomes a copy that `nodal-agents rollback` can swap back. A backup from an older version is migrated by the installed one; a backup from a newer version is refused until you install that version.
+
+### Moving to another machine
+
+1. On the old machine: `nodal-agents backup --with-workspaces`, and copy the file across.
+2. On the new one: `npm install -g nodal-agents`, then `nodal-agents restore <file>`. On a machine with no install, it creates one first. The settings of the backup come back; the ports and the database password stay this machine's own.
+3. `nodal-agents up`. The restore lists the folders given to agents that do not exist on this machine.
+
+The same path moves an install to a new major version of the embedded Postgres: a backup does not depend on the server's version, so it restores into a new, empty cluster.
 
 To update without auto-restarting:
 

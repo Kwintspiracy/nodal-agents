@@ -178,3 +178,44 @@ function wrongKeyError(keyPath: string, hadCheck: boolean): Error {
       'the database came from), then run `nodal-agents up` again.',
   );
 }
+
+/** Whether a key opens the secrets a database holds. */
+export type MasterKeyVerdict =
+  | {
+      readonly opens: true;
+      /** What was decrypted with it, or null when the database holds no encrypted value. */
+      readonly proof: string | null;
+    }
+  | {
+      readonly opens: false;
+      /** `missing`: no key, and the database holds encrypted values. `wrong`: none of them opens. */
+      readonly reason: 'missing' | 'wrong';
+      /** The first encrypted value the database holds, for the message. */
+      readonly what: string;
+    };
+
+/**
+ * Does `key` open this database's secrets? READ-ONLY: nothing is written, not
+ * even the check value. A backup asks it of the live key before it writes an
+ * archive (an archive whose key does not open its database could not be
+ * restored), and a restore asks it of the archive's key on the restored copy
+ * BEFORE that copy replaces anything.
+ *
+ * The answer is a decryption, never a comparison alone: the first encrypted
+ * value that opens is named as the proof. A database holding no encrypted
+ * value opens with any key (nothing could be lost), and says so with a null
+ * proof.
+ */
+export async function checkMasterKey(
+  db: AnyDrizzleDb,
+  key: Buffer | null,
+): Promise<MasterKeyVerdict> {
+  const values = await encryptedValues(db);
+  const first = values[0];
+  if (first === undefined) return { opens: true, proof: null };
+  if (key === null) return { opens: false, reason: 'missing', what: first.what };
+  const opened = values.find((v) => decryptsWith(v.blob, key));
+  return opened === undefined
+    ? { opens: false, reason: 'wrong', what: first.what }
+    : { opens: true, proof: opened.what };
+}

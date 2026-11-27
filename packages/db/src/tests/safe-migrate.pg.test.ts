@@ -22,6 +22,7 @@ import {
   readdirSync,
   writeFileSync,
   existsSync,
+  chmodSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -568,13 +569,50 @@ describe('migrateDatabase: a program older than the database @cap:installer-et-d
   }, 120_000);
 });
 
-describe('snapshots: going back is refused when the keys do not match @cap:installer-et-demarrer/moteur', () => {
-  it('a master key different from the one saved with the copy: nothing swapped', async () => {
+describe('snapshots: the master key travels with its database @cap:installer-et-demarrer/moteur', () => {
+  it('a live key different from the one saved with the copy: the copy comes back WITH its key, the live one is kept with the replaced database, and both swap back', async () => {
+    const files = stateFiles();
+    const url = await installAtBase(files);
+    const before = await notes(url);
+    const keyOfCopy = readFileSync(files.keyPath, 'utf-8');
+    const result = await migrateDatabase(url, options(program(M.base, M.destroy), files));
+    // The live database now goes with another key (a key the person put back by hand).
+    const otherKey = randomBytes(32).toString('base64');
+    writeFileSync(files.keyPath, otherKey);
+
+    const back = await restoreSnapshot(url, result.snapshot!.name, {
+      at: tick(),
+      madeBy: '9.9.9',
+      stateFiles: files,
+      currentLastMigration: '0002_destroy',
+      currentOpenedBy: '9.9.9',
+    });
+    expect(await notes(url)).toEqual(before);
+    expect(readFileSync(files.keyPath, 'utf-8')).toBe(keyOfCopy);
+    expect(back.putBack).toEqual([{ path: files.keyPath, previous: 'replaced' }]);
+    // The replaced database keeps the key it went with.
+    expect(readFileSync(join(back.replaced.stateDir, 'secrets.key'), 'utf-8')).toBe(otherKey);
+
+    // And back the other way: the destroyed state, with its own key.
+    await restoreSnapshot(url, back.replaced.name, {
+      at: tick(),
+      madeBy: '9.9.9',
+      stateFiles: files,
+      currentLastMigration: '0000_base',
+      currentOpenedBy: '9.9.9',
+    });
+    expect(await notes(url)).toEqual([{ id: 1, body: 'first' }]);
+    expect(readFileSync(files.keyPath, 'utf-8')).toBe(otherKey);
+  }, 120_000);
+
+  it('a copy whose saved key is unreadable: nothing swapped', async () => {
     const files = stateFiles();
     const url = await installAtBase(files);
     const before = await notes(url);
     const result = await migrateDatabase(url, options(program(M.base, M.destroy), files));
-    writeFileSync(files.keyPath, randomBytes(32).toString('base64'));
+    const saved = join(result.snapshot!.stateDir, 'secrets.key');
+    chmodWritable(saved);
+    writeFileSync(saved, 'not a key');
 
     await expect(
       restoreSnapshot(url, result.snapshot!.name, {
@@ -584,13 +622,20 @@ describe('snapshots: going back is refused when the keys do not match @cap:insta
         currentLastMigration: '0002_destroy',
         currentOpenedBy: '9.9.9',
       }),
-    ).rejects.toThrow(/SNAPSHOT_KEY_MISMATCH/);
-    // Still the migrated database, the copy still a copy.
+    ).rejects.toThrow(/SNAPSHOT_FAILED: .*is not usable/);
     expect(await notes(url)).toEqual([{ id: 1, body: 'first' }]);
     expect(await notes(urlOf(url, result.snapshot!.name))).toEqual(before);
   }, 120_000);
 });
 
+/** A state file is created owner-only; make it writable again for the test. */
+function chmodWritable(path: string): void {
+  try {
+    chmodSync(path, 0o600);
+  } catch {
+    /* Windows: the ACL already grants the owner */
+  }
+}
 describe('the REAL journal, as `up` runs it without pgvector @cap:installer-et-demarrer/moteur', () => {
   it('a fresh database: every real migration applied, no copy; again: nothing pending, no copy', async () => {
     const files = stateFiles();

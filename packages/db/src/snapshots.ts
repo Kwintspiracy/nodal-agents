@@ -34,19 +34,27 @@
 //
 // GOING BACK is a swap, not a copy: in one transaction the current database is
 // renamed to a snapshot name of its own (kept, never dropped, described as
-// replaced by a rollback, its state files saved the same way) and the chosen
-// snapshot takes the database's name. `config.json` is NOT put back: the
-// password and the ports in it are the cluster's, which a database copy does
-// not carry, and an older copy of them could lock the install out. The master
-// key is put back only when it is missing; a key different from the one saved
-// with the snapshot refuses the swap, since one of the two databases would be
-// left without the key it was encrypted with.
+// replaced by a rollback or a restore, its state files saved the same way) and
+// the chosen snapshot takes the database's name. `config.json` is NOT put
+// back: the password and the ports in it are the cluster's, which a database
+// copy does not carry, and an older copy of them could lock the install out.
+// The master key travels WITH its database, both ways: the live key is saved
+// beside the replaced database first, then the key saved with the chosen copy
+// becomes the live one. Each database keeps the key it was encrypted with,
+// and either can be swapped back in later the same way.
+//
+// A RESTORE FROM A BACKUP (backup.ts) goes through the same swap: it loads the
+// archive into an EMPTY copy (`createEmptySnapshot`), which stays incomplete
+// (no description) until it is loaded, counted and its key proved, and is
+// then described like any copy (`completeSnapshot`, kind `from-backup`, the
+// archive's state files beside it). The database it replaces is kept.
 
 import postgres from 'postgres';
 import { existsSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import {
   createStateFile,
+  replaceStateFile,
   masterKeyFilePath,
   nodalConfigPath,
   type StateFileSpec,
@@ -59,7 +67,18 @@ import { MASTER_KEY_FILE } from '@nodal-agents/secrets';
 export { DEFAULT_SNAPSHOTS_KEPT } from '@nodal-agents/shared/nodal-config';
 
 /** Why a copy exists. */
-export type SnapshotKind = 'before-migration' | 'replaced-by-rollback';
+export type SnapshotKind =
+  | 'before-migration'
+  | 'replaced-by-rollback'
+  | 'from-backup'
+  | 'replaced-by-restore';
+
+const SNAPSHOT_KINDS: readonly SnapshotKind[] = [
+  'before-migration',
+  'replaced-by-rollback',
+  'from-backup',
+  'replaced-by-restore',
+];
 
 /** The JSON comment that describes a complete copy. */
 export interface SnapshotMeta {
@@ -97,9 +116,9 @@ export interface SnapshotStateFile {
   readonly spec: StateFileSpec<unknown>;
   /**
    * The database depends on this file (the master key its secrets are
-   * encrypted with). Going back to a copy whose saved file differs from the
-   * live one is refused; a live one that is missing is put back from the copy
-   * (created, never written over). A file without this flag (the config: its
+   * encrypted with). It travels with its database: going back to a copy makes
+   * the file saved with it the live one, the live one being saved beside the
+   * database it replaces first. A file without this flag (the config: its
    * password and ports are the cluster's) is never put back.
    */
   readonly boundToDatabase: boolean;
@@ -138,8 +157,7 @@ export type SnapshotErrorCode =
   | 'SNAPSHOT_NO_SPACE'
   | 'SNAPSHOT_NOT_PERMITTED'
   | 'SNAPSHOT_FAILED'
-  | 'SNAPSHOT_NOT_FOUND'
-  | 'SNAPSHOT_KEY_MISMATCH';
+  | 'SNAPSHOT_NOT_FOUND';
 
 /** A copy could not be made, found or put back. The message says why, with the numbers. */
 export class SnapshotError extends Error {
@@ -329,11 +347,25 @@ function readLive(path: string): string | null {
 
 /** Copy the live state files into `<dir>/<name>/`; returns the names copied. */
 function saveStateFiles(stateFiles: SnapshotStateFiles, name: string): string[] {
+  const live = new Map<string, string>();
+  for (const file of stateFiles.files) {
+    const text = readLive(file.path);
+    if (text !== null) live.set(file.name, text);
+  }
+  return saveStateTexts(stateFiles, name, live);
+}
+
+/** Write `texts` (state file name to content) into `<dir>/<name>/`; returns the names written. */
+function saveStateTexts(
+  stateFiles: SnapshotStateFiles,
+  name: string,
+  texts: ReadonlyMap<string, string>,
+): string[] {
   const folder = join(stateFiles.dir, name);
   const saved: string[] = [];
   for (const file of stateFiles.files) {
-    const text = readLive(file.path);
-    if (text === null) continue;
+    const text = texts.get(file.name);
+    if (text === undefined) continue;
     // Parsed by the file's own reader before a byte is written: a copy that
     // could not be read back is never made.
     createStateFile(join(folder, file.name), text, file.spec);
@@ -445,6 +477,117 @@ export async function createSnapshot(
   });
 }
 
+// ─── A copy filled from elsewhere (a restore) ────────────────────────────────
+
+/** The connection string of database `name` on the same server as `connectionString`. */
+export function databaseUrlOf(connectionString: string, name: string): string {
+  const url = new URL(connectionString);
+  url.pathname = `/${encodeURIComponent(name)}`;
+  return url.toString();
+}
+
+/**
+ * An EMPTY database under a snapshot name of `connectionString`'s database,
+ * for a restore to fill. It has no description, so until `completeSnapshot`
+ * it is listed as an incomplete copy (never swapped in, dropped by the next
+ * prune). Made from `template0`: nothing but what the restore puts in it.
+ */
+export async function createEmptySnapshot(
+  connectionString: string,
+  input: { readonly at: Date; readonly lastMigration: string | null },
+): Promise<{ readonly name: string; readonly url: string }> {
+  const { database, maintenanceUrl } = targetOf(connectionString);
+  const name = snapshotName(database, input.at, input.lastMigration);
+  await withConnection(maintenanceUrl, async (sql) => {
+    try {
+      await sql.unsafe(`CREATE DATABASE ${ident(name)} TEMPLATE template0`).simple();
+    } catch (err) {
+      if (sqlStateOf(err) === '42501') {
+        throw new SnapshotError(
+          'SNAPSHOT_NOT_PERMITTED',
+          `the database user may not create databases (${reasonOf(err)}), so nothing can be ` +
+            `restored into the cluster of "${database}".`,
+        );
+      }
+      throw new SnapshotError(
+        'SNAPSHOT_FAILED',
+        `could not create database "${name}" to restore into: ${reasonOf(err)}`,
+      );
+    }
+  });
+  return { name, url: databaseUrlOf(connectionString, name) };
+}
+
+/**
+ * Describe the copy `name` (made by `createEmptySnapshot` and filled since),
+ * with `texts` (state file name to content) saved beside it the way every
+ * copy's are. From then on it is a complete copy: listed, kept, and swapped
+ * in by `restoreSnapshot`.
+ */
+export async function completeSnapshot(
+  connectionString: string,
+  name: string,
+  input: {
+    readonly at: Date;
+    readonly kind: SnapshotKind;
+    readonly lastMigration: string | null;
+    readonly lastOpenedBy: string | null;
+    readonly madeBy: string;
+    readonly stateFiles: SnapshotStateFiles;
+    readonly texts: ReadonlyMap<string, string>;
+  },
+): Promise<Snapshot> {
+  const { database, maintenanceUrl } = targetOf(connectionString);
+  const saved = saveStateTexts(input.stateFiles, name, input.texts);
+  const meta: SnapshotMeta = {
+    nodalSnapshot: 1,
+    of: database,
+    kind: input.kind,
+    at: input.at.toISOString(),
+    lastMigration: input.lastMigration,
+    lastOpenedBy: input.lastOpenedBy,
+    madeBy: input.madeBy,
+    stateFiles: saved,
+  };
+  try {
+    return await withConnection(maintenanceUrl, async (sql) => {
+      await sql.unsafe(`COMMENT ON DATABASE ${ident(name)} IS ${literal(JSON.stringify(meta))}`);
+      const [row] = await sql<{ size: string }[]>`SELECT pg_database_size(${name})::text AS size`;
+      return {
+        name,
+        sizeBytes: Number(row?.size ?? 0),
+        meta,
+        stateDir: join(input.stateFiles.dir, name),
+      };
+    });
+  } catch (err) {
+    removeStateFiles(input.stateFiles, name);
+    throw new SnapshotError(
+      'SNAPSHOT_FAILED',
+      `could not describe copy "${name}": ${reasonOf(err)}`,
+    );
+  }
+}
+
+/**
+ * Drop the copy `name` and its state folder, whatever is connected to it: a
+ * restore that failed half-way removes what it made, and only that.
+ */
+export async function dropSnapshot(
+  connectionString: string,
+  name: string,
+  stateFilesDir: string,
+): Promise<void> {
+  const { database, maintenanceUrl } = targetOf(connectionString);
+  if (!snapshotPattern(database).test(name)) {
+    throw new SnapshotError('SNAPSHOT_NOT_FOUND', `"${name}" is not a copy of "${database}".`);
+  }
+  await withConnection(maintenanceUrl, (sql) =>
+    sql.unsafe(`DROP DATABASE IF EXISTS ${ident(name)} WITH (FORCE)`).simple(),
+  );
+  removeStateFiles({ dir: stateFilesDir }, name);
+}
+
 // ─── List and prune ──────────────────────────────────────────────────────────
 
 function parseMeta(comment: string | null, database: string): SnapshotMeta | null {
@@ -455,7 +598,7 @@ function parseMeta(comment: string | null, database: string): SnapshotMeta | nul
     return {
       nodalSnapshot: 1,
       of: m.of,
-      kind: m.kind === 'replaced-by-rollback' ? 'replaced-by-rollback' : 'before-migration',
+      kind: SNAPSHOT_KINDS.find((k) => k === m.kind) ?? 'before-migration',
       at: m.at,
       lastMigration: typeof m.lastMigration === 'string' ? m.lastMigration : null,
       lastOpenedBy: typeof m.lastOpenedBy === 'string' ? m.lastOpenedBy : null,
@@ -554,6 +697,15 @@ export interface RestoreSnapshotInput {
   readonly currentLastMigration: string | null;
   /** The version that last opened the current database, when recorded. */
   readonly currentOpenedBy: string | null;
+  /** Why the current database is set aside: a rollback (default) or a restore from a backup. */
+  readonly replacedKind?: 'replaced-by-rollback' | 'replaced-by-restore';
+}
+
+/** A live state file the swap made the copy's (the master key). */
+export interface PutBackFile {
+  readonly path: string;
+  /** `missing`: there was none. `replaced`: the previous one is saved beside the replaced database. */
+  readonly previous: 'missing' | 'replaced';
 }
 
 export interface RestoreSnapshotResult {
@@ -561,8 +713,8 @@ export interface RestoreSnapshotResult {
   readonly restored: Snapshot;
   /** The copy the replaced database became. */
   readonly replaced: Snapshot;
-  /** Live files that were missing and were put back from the copy (the master key). */
-  readonly putBack: readonly string[];
+  /** Live files the swap made the copy's (the master key). */
+  readonly putBack: readonly PutBackFile[];
 }
 
 /**
@@ -589,25 +741,34 @@ export async function restoreSnapshot(
       );
     }
 
-    // The files the database depends on (the master key). The two databases
-    // must each keep the key they were encrypted with: a different one refuses
-    // the swap, a missing one is put back from the copy (created, never
-    // written over).
-    const toCreate: { path: string; text: string; spec: StateFileSpec<unknown> }[] = [];
+    // The files the database depends on (the master key) travel with it. Read
+    // and parsed BEFORE anything moves: a saved copy that cannot be read
+    // refuses the swap. The live ones are saved beside the replaced database
+    // just below, so neither database is left without its key.
+    const toPut: {
+      path: string;
+      text: string;
+      spec: StateFileSpec<unknown>;
+      previous: 'missing' | 'replaced';
+    }[] = [];
     for (const file of input.stateFiles.files) {
       if (!file.boundToDatabase || !chosen.meta.stateFiles.includes(file.name)) continue;
       const savedPath = join(chosen.stateDir, file.name);
       const saved = readFileSync(savedPath, 'utf-8');
+      try {
+        file.spec.parse(saved);
+      } catch (err) {
+        throw new SnapshotError(
+          'SNAPSHOT_FAILED',
+          `${file.spec.label} saved with "${name}" (${savedPath}) is not usable ` +
+            `(${reasonOf(err)}). Nothing was swapped.`,
+        );
+      }
       const live = readLive(file.path);
       if (live === null) {
-        toCreate.push({ path: file.path, text: saved, spec: file.spec });
+        toPut.push({ path: file.path, text: saved, spec: file.spec, previous: 'missing' });
       } else if (saved.trim() !== live.trim()) {
-        throw new SnapshotError(
-          'SNAPSHOT_KEY_MISMATCH',
-          `${file.spec.label} saved with "${name}" (${savedPath}) is not the one in ` +
-            `${file.path}. Each database must keep the key its secrets were encrypted ` +
-            `with, so nothing was swapped.`,
-        );
+        toPut.push({ path: file.path, text: saved, spec: file.spec, previous: 'replaced' });
       }
     }
 
@@ -616,7 +777,7 @@ export async function restoreSnapshot(
     const replacedMeta: SnapshotMeta = {
       nodalSnapshot: 1,
       of: database,
-      kind: 'replaced-by-rollback',
+      kind: input.replacedKind ?? 'replaced-by-rollback',
       at: input.at.toISOString(),
       lastMigration: input.currentLastMigration,
       lastOpenedBy: input.currentOpenedBy,
@@ -650,7 +811,13 @@ export async function restoreSnapshot(
       );
     }
 
-    for (const file of toCreate) createStateFile(file.path, file.text, file.spec);
+    // After the swap: a stop between the two leaves the new database with the
+    // old key, which the next start refuses loudly (master-key-guard), and the
+    // right key is still in the chosen copy's folder.
+    for (const file of toPut) {
+      if (file.previous === 'missing') createStateFile(file.path, file.text, file.spec);
+      else replaceStateFile(file.path, file.text, file.spec);
+    }
 
     const [size] = await sql<{ size: string }[]>`
       SELECT pg_database_size(${replacedName})::text AS size`;
@@ -662,7 +829,7 @@ export async function restoreSnapshot(
         meta: replacedMeta,
         stateDir: join(input.stateFiles.dir, replacedName),
       },
-      putBack: toCreate.map((f) => f.path),
+      putBack: toPut.map((f) => ({ path: f.path, previous: f.previous })),
     };
   });
 }
