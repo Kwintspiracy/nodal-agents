@@ -3,6 +3,17 @@
 import { mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { writeFileAtomically } from './atomic-write';
+import {
+  canonicalEncoding,
+  changedSinceSeen,
+  encodeText,
+  formForEncoding,
+  formOfHead,
+  NEW_FILE_FORM,
+  notTextReason,
+  readExistingFile,
+  type TextForm,
+} from './text-file';
 import { z } from 'zod';
 import type { ToolDefinition } from '../../types';
 import { failureText, writtenFile } from '../../presenters';
@@ -31,6 +42,14 @@ export const FileWriteInputSchema = z.object({
     .optional()
     .default(false)
     .describe('If true, create missing parent directories.'),
+  encoding: z
+    .string()
+    .optional()
+    .describe(
+      'Encoding to write, e.g. "windows-1252" or "utf-16le". Default: an existing file keeps ' +
+        'its own encoding, byte-order mark and line endings; a new file is UTF-8 without ' +
+        'byte-order mark, with the line endings of `content`.',
+    ),
   purpose: z
     .string()
     .optional()
@@ -49,6 +68,10 @@ export type FileWriteOutput =
       written: true;
       bytes: number;
       path: string;
+      /** Un fichier qui existait a-t-il été remplacé ? (false : il a été créé.) */
+      replaced: boolean;
+      /** L'encodage dans lequel il a été écrit (la couche texte, `text-file.ts`). */
+      encoding: string;
       /**
        * La clé du DOCUMENT écrit, quand c'en est un — celle sous laquelle
        * l'intention a rangé son état de vérification, pour que la carte du
@@ -66,9 +89,11 @@ export const fileWriteTool: ToolDefinition<typeof FileWriteInputSchema, FileWrit
     'Create or replace a file safely. For a small change to an existing file, use Edit a workspace file. Maximum write size: 1 MiB.',
   description:
     'Write (or overwrite) a file in the agent workspace. Atomic: writes to a tempfile then ' +
-    'renames over the target, so partial-write failures never corrupt the original. Use ' +
-    '`file_edit` instead when you only need to change part of an existing file — it preserves ' +
-    'lines you do not touch. Max 1 MiB per write.',
+    'renames over the target, so partial-write failures never corrupt the original. An ' +
+    'existing file keeps its encoding, byte-order mark and line endings; a new one is UTF-8. ' +
+    'Replacing a file this job read is refused if it changed since; a file that is not text ' +
+    'is not replaced. Use `file_edit` instead when you only need to change part of an ' +
+    'existing file — it preserves lines you do not touch. Max 1 MiB per write.',
   inputSchema: FileWriteInputSchema,
   riskLevel: 'write',
   egress: 'none',
@@ -136,13 +161,6 @@ export const fileWriteTool: ToolDefinition<typeof FileWriteInputSchema, FileWrit
   },
   execute: async (input, ctx) => {
     try {
-      const bytes = Buffer.byteLength(input.content, 'utf8');
-      if (bytes > MAX_WRITE_BYTES) {
-        return {
-          ok: false,
-          reason: `Refusing to write ${bytes} bytes (max ${MAX_WRITE_BYTES}). Split the content.`,
-        };
-      }
       const path = await resolveAndCheckPath(ctx, input.path);
       // P4 — shared canonical workflow templates are read-only to this tool.
       // See isProtectedWorkflowTemplate (workspace.ts) for the rationale.
@@ -152,6 +170,66 @@ export const fileWriteTool: ToolDefinition<typeof FileWriteInputSchema, FileWrit
       const dir = dirname(path);
       if (input.create_dirs) {
         await mkdir(dir, { recursive: true });
+      }
+      // La forme dans laquelle écrire (la couche texte, `text-file.ts`) : celle
+      // du fichier qui est là — son encodage, sa BOM, ses fins de ligne —, ou
+      // celle d'un fichier nouveau ; l'encodage demandé (`encoding`) quand il
+      // l'est. Et la garde du contenu vu : un fichier qui existe n'est remplacé
+      // que s'il est encore celui que ce job a vu.
+      const declared = input.encoding === undefined ? null : canonicalEncoding(input.encoding);
+      if (input.encoding !== undefined && declared === null) {
+        return {
+          ok: false,
+          reason:
+            `"${input.encoding}" is not an encoding this tool can write (examples: "utf-8", ` +
+            '"utf-16le", "windows-1252", "shift_jis", "gbk"). Nothing was written.',
+        };
+      }
+      const existing = await readExistingFile(path);
+      let form: TextForm;
+      if (existing === null) {
+        form = declared === null ? NEW_FILE_FORM : formForEncoding(declared, null);
+      } else {
+        ctx.reportReadContent?.(path, existing.sha256);
+        const stale = await changedSinceSeen(ctx, path, existing.sha256, input.path);
+        if (stale !== null) return { ok: false, reason: stale };
+        const complete = existing.size <= existing.head.length;
+        let found = formOfHead(existing.head, complete);
+        // Un fichier dont l'encodage n'a pas pu être établi se lit dans celui
+        // qui est donné, s'il l'est : c'est le geste que le refus propose.
+        if (!found.ok && declared !== null) {
+          const retried = formOfHead(existing.head, complete, declared);
+          if (retried.ok) found = retried;
+        }
+        if (!found.ok) {
+          return {
+            ok: false,
+            reason: await notTextReason(
+              input.path,
+              existing.head,
+              found,
+              'Nothing was written. To replace it with text, move it aside with file_move first.',
+              existing.size,
+            ),
+          };
+        }
+        form = declared === null ? found.form : formForEncoding(declared, found.form);
+      }
+      const encoded = encodeText(input.content, form);
+      if (!encoded.ok) {
+        return {
+          ok: false,
+          reason:
+            `"${input.path}" is written in ${form.encoding}, and ${encoded.detail}. Nothing was ` +
+            'written. Use characters it has, or pass "encoding": "utf-8" to convert the file.',
+        };
+      }
+      const bytes = encoded.bytes.length;
+      if (bytes > MAX_WRITE_BYTES) {
+        return {
+          ok: false,
+          reason: `Refusing to write ${bytes} bytes (max ${MAX_WRITE_BYTES}). Split the content.`,
+        };
       }
       // La clé du document, pour la carte (P12) — la même que celle posée
       // par l'intention, calculée par la même fonction. Un fichier de projet
@@ -177,12 +255,14 @@ export const fileWriteTool: ToolDefinition<typeof FileWriteInputSchema, FileWrit
           : null;
       // Atomic write: tempfile in same dir (same filesystem → rename is atomic),
       // last ownership check and written-content fingerprint (#505).
-      await writeFileAtomically(ctx, path, input.content);
+      await writeFileAtomically(ctx, path, encoded.bytes);
       return {
         ok: true,
         written: true,
         bytes,
         path,
+        replaced: existing !== null,
+        encoding: form.encoding,
         ...(deliverableKey !== null ? { deliverable_key: deliverableKey } : {}),
       };
     } catch (err) {
