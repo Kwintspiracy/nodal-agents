@@ -6,8 +6,8 @@
 //   1. a request sent on behalf of a page (it carries an `Origin`) is refused
 //      without a credential, wherever the page lives: a private address, a
 //      port of this machine, a public site, the dashboard's own origin;
-//   2. the same requests with no `Origin` behave as they did before
-//      (`requireRunnerAuth` and the route decide);
+//   2. the same requests with no `Origin` and the install's secret reach their
+//      route (the caller rule itself is caller-proof.test.ts);
 //   3. a body of a type the route does not take is refused, whoever sends it;
 //   4. a paired device's key is a credential: a device client that is a page
 //      keeps being served;
@@ -164,13 +164,14 @@ describe('the runner serves a page only with a credential @cap:se-connecter/mote
       });
     }
 
-    it(`${route.name}: with NO Origin, the request reaches its route as before`, async () => {
+    it(`${route.name}: with NO Origin and the secret, the request reaches its route`, async () => {
       const app = createApp(makeDeps(), baseEnv);
       const res = await send(app, route.method, route.path, {
+        headers: SECRET,
         ...(route.body !== undefined ? { body: route.body, type: JSON_TYPE } : {}),
       });
-      // The route's own validation answers: local-trust lets the caller in,
-      // and the incomplete request is refused by the route, not by the door.
+      // The route's own validation answers: the door lets the caller in, and
+      // the incomplete request is refused by the route, not by the door.
       expect(res.status).toBe(400);
       expect(res.json['error']).toBe('invalid_request');
     });
@@ -238,26 +239,25 @@ describe('a body has the type its route takes @cap:se-connecter/moteur', () => {
   ]) {
     it(`a ${type} body on a JSON route is refused, 415, even with no Origin and the secret`, async () => {
       const app = createApp(makeDeps(), baseEnv);
-      for (const headers of [{}, SECRET]) {
-        const res = await send(app, 'POST', '/api/agent', {
-          headers,
-          body: '{"task":"x"}',
-          type,
-        });
-        expect(res).toEqual({ status: 415, json: { error: 'unsupported_media_type' } });
-      }
+      const res = await send(app, 'POST', '/api/agent', {
+        headers: SECRET,
+        body: '{"task":"x"}',
+        type,
+      });
+      expect(res).toEqual({ status: 415, json: { error: 'unsupported_media_type' } });
     });
   }
 
   it('a body with no type at all is refused, 415', async () => {
     const app = createApp(makeDeps(), baseEnv);
-    const res = await send(app, 'POST', '/api/approve', { body: '{}' });
+    const res = await send(app, 'POST', '/api/approve', { headers: SECRET, body: '{}' });
     expect(res).toEqual({ status: 415, json: { error: 'unsupported_media_type' } });
   });
 
   it('a JSON body with parameters is the JSON type', async () => {
     const app = createApp(makeDeps(), baseEnv);
     const res = await send(app, 'POST', '/api/agent', {
+      headers: SECRET,
       body: '{}',
       type: 'Application/JSON; charset=utf-8',
     });
@@ -272,11 +272,14 @@ describe('a body has the type its route takes @cap:se-connecter/moteur', () => {
       'POST',
       '/api/voice/turns/00000000-0000-4000-8000-000000000000/end',
       {
-        headers: { 'content-length': '0' },
+        headers: { 'content-length': '0', ...SECRET },
       },
     );
     expect(ended.status).not.toBe(415);
-    const listed = await send(app, 'GET', `/api/device-pairings?entityId=${seed.entityId}`);
+    expect(ended.json['error']).not.toBe('proof_required');
+    const listed = await send(app, 'GET', `/api/device-pairings?entityId=${seed.entityId}`, {
+      headers: SECRET,
+    });
     expect(listed.status).toBe(200);
   });
 
@@ -284,13 +287,19 @@ describe('a body has the type its route takes @cap:se-connecter/moteur', () => {
     const app = createApp(makeDeps(), baseEnv);
     const path = '/api/voice/turns/00000000-0000-4000-8000-000000000000/chunks/0';
     const audio = await send(app, 'POST', path, {
+      headers: SECRET,
       body: new Uint8Array([1, 2, 3, 4]),
       type: 'application/octet-stream',
     });
     // Past the door: the route answers about the turn, not about the type.
     expect(audio.status).not.toBe(415);
+    expect(audio.status).not.toBe(401);
     expect(audio.json['error']).not.toBe('unsupported_media_type');
-    const asText = await send(app, 'POST', path, { body: 'abcd', type: 'text/plain' });
+    const asText = await send(app, 'POST', path, {
+      headers: SECRET,
+      body: 'abcd',
+      type: 'text/plain',
+    });
     expect(asText).toEqual({ status: 415, json: { error: 'unsupported_media_type' } });
   });
 });
@@ -310,7 +319,9 @@ describe('a paired device is proved by its key, from a page too @cap:se-connecte
     });
     expect(started.status).toBe(201);
     const { pairingId, deviceCode } = DevicePairStartedSchema.parse(started.json);
+    // The owner's side asks for the install's secret, like every owner route.
     const confirmed = await send(app, 'POST', `/api/device-pairings/${pairingId}/confirm`, {
+      headers: SECRET,
       body: JSON.stringify({ entityId: seed.entityId }),
       type: JSON_TYPE,
     });
@@ -440,6 +451,7 @@ describe('every route of the runner is under the rule @cap:se-connecter/moteur',
     expect(withBody.length).toBeGreaterThan(25);
     for (const r of withBody) {
       const res = await send(fresh, r.method, concrete(r.path), {
+        headers: SECRET,
         body: 'x=1',
         type: 'text/plain',
       });
@@ -483,9 +495,9 @@ describe('the rule holds in the sign-in and bearer modes @cap:se-connecter/moteu
       type: JSON_TYPE,
     });
     expect(withSecret.status).toBe(400);
-    // No Origin, no secret: unchanged, the auth gate answers.
+    // No Origin, no secret: the caller proves nothing, the door answers.
     const anonymous = await send(app, 'POST', '/api/agent', { body: '{}', type: JSON_TYPE });
-    expect(anonymous).toEqual({ status: 401, json: { error: 'AUTH_REQUIRED' } });
+    expect(anonymous).toEqual({ status: 401, json: { error: 'proof_required' } });
   });
 
   it('bearer-token: the API token is a credential; a page without it is refused', async () => {
@@ -528,7 +540,11 @@ describe('on a real socket, the framing is the client own @cap:se-connecter/mote
 
   it('a text body is refused 415, a page 403, and a JSON body reaches the route', async () => {
     const base = await listen(createApp(makeDeps(), baseEnv));
-    const text = await fetch(`${base}/api/agent`, { method: 'POST', body: '{"task":"x"}' });
+    const text = await fetch(`${base}/api/agent`, {
+      method: 'POST',
+      headers: SECRET,
+      body: '{"task":"x"}',
+    });
     expect(text.status).toBe(415);
     expect(await text.json()).toEqual({ error: 'unsupported_media_type' });
 
@@ -542,7 +558,7 @@ describe('on a real socket, the framing is the client own @cap:se-connecter/mote
 
     const json = await fetch(`${base}/api/agent`, {
       method: 'POST',
-      headers: { 'content-type': JSON_TYPE },
+      headers: { 'content-type': JSON_TYPE, ...SECRET },
       body: '{}',
     });
     expect(json.status).toBe(400);
@@ -551,7 +567,9 @@ describe('on a real socket, the framing is the client own @cap:se-connecter/mote
     // A POST with no body, as a device ends its turn: no type needed.
     const ended = await fetch(`${base}/api/voice/turns/00000000-0000-4000-8000-000000000000/end`, {
       method: 'POST',
+      headers: SECRET,
     });
     expect(ended.status).not.toBe(415);
+    expect(ended.status).not.toBe(401);
   });
 });

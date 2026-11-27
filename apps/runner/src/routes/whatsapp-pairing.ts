@@ -11,7 +11,7 @@
 // POST { agentId }      → ensures the socket exists (idempotent) so a QR
 //      starts being generated; the web polls GET afterward.
 //
-// Auth: same requireRunnerAuth gate as /api/agent et al. (wired in
+// Auth: the admission (lib/admission.ts), as /api/agent et al. (wired in
 // server.ts). An untrusted session bearer-token caller may only pair an
 // agent within its OWN entity — mirrors agent.ts's entity-scoping.
 

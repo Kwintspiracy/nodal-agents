@@ -13,7 +13,8 @@
 //                                     owner's routes, the pairing routes, all
 //
 //   no device token                   passes, to the guard the route has:
-//                                     `requireRunnerAuth` (server.ts), or on a
+//                                     the caller the admission proved
+//                                     (lib/admission.ts), or on a
 //                                     device's own routes `authorizeDevice`
 //                                     (devices/device-guard.ts), which wants
 //                                     a device key and nothing else — the

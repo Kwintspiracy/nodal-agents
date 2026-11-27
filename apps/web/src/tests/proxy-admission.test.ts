@@ -12,8 +12,13 @@
 //      under the rule: a foreign page is refused, a body of a type the route
 //      does not take is refused, its own page with the right type is served;
 //   4. the rule holds in local-auth mode too.
+//
+// Every request here comes from a browser that has been let in (it carries
+// the dashboard cookie), unless it says otherwise: what a browser WITHOUT it
+// gets is proxy-launch.test.ts.
 
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, beforeAll } from 'vitest';
+import { dashboardCookieName, mintDashboardCookie } from '@nodal-agents/auth';
 import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -25,6 +30,12 @@ const { proxy } = proxyModule;
 const APP_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'app');
 const OWN = 'http://localhost:3000';
 
+const SECRET = 'install-secret-for-the-proxy-0123456789';
+
+beforeAll(() => {
+  process.env['WORKER_SECRET'] = SECRET;
+});
+
 afterEach(() => {
   delete process.env['AUTH_MODE'];
 });
@@ -35,7 +46,11 @@ function request(
   path: string,
   opts: { host?: string; origin?: string; type?: string; body?: string; action?: boolean } = {},
 ): NextRequest {
-  const headers: Record<string, string> = { host: opts.host ?? 'localhost:3000' };
+  const headers: Record<string, string> = {
+    host: opts.host ?? 'localhost:3000',
+    // A browser that has been let in through a launch link.
+    cookie: `${dashboardCookieName(SECRET)}=${mintDashboardCookie(SECRET, Date.now())}`,
+  };
   if (opts.origin !== undefined) headers['origin'] = opts.origin;
   if (opts.action) headers['next-action'] = 'a'.repeat(42);
   let body: Blob | undefined;

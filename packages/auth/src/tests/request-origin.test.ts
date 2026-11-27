@@ -17,13 +17,18 @@ import {
 
 const APP_URL = 'http://localhost:3000';
 
-/** A request with no Origin, no proof, no body, on a loopback Host. */
+/**
+ * A request with no Origin, no proof, no body, on a loopback Host, on a route
+ * that does not ask for a proof (the caller rule has its own suite below).
+ */
 function facts(over: Partial<RequestFacts>): RequestFacts {
   return {
     origin: null,
     host: '127.0.0.1:3001',
     appUrl: APP_URL,
     proof: null,
+    proofPresented: false,
+    proofRequired: false,
     servesPages: false,
     contentType: null,
     hasBody: false,
@@ -35,6 +40,76 @@ function facts(over: Partial<RequestFacts>): RequestFacts {
 const ORIGIN_REFUSED = { status: 403, reason: 'origin_not_allowed' };
 const HOST_REFUSED = { status: 403, reason: 'host_not_allowed' };
 const TYPE_REFUSED = { status: 415, reason: 'unsupported_media_type' };
+const PROOF_REQUIRED = { status: 401, reason: 'proof_required' };
+const PROOF_INVALID = { status: 401, reason: 'proof_invalid' };
+
+describe('admitRequest: every caller proves who it is @cap:se-connecter/moteur', () => {
+  const required = { proofRequired: true };
+
+  it('no proof at all: 401 proof_required, on either server', () => {
+    for (const servesPages of [false, true]) {
+      expect(admitRequest(facts({ ...required, servesPages }))).toEqual(PROOF_REQUIRED);
+    }
+  });
+
+  it('a proof presented that does not hold: 401 proof_invalid', () => {
+    expect(admitRequest(facts({ ...required, proofPresented: true }))).toEqual(PROOF_INVALID);
+  });
+
+  it('every kind of proof admits a caller that sends no Origin', () => {
+    for (const proof of ['worker_secret', 'api_token', 'device_key', 'launch_cookie'] as const) {
+      expect(admitRequest(facts({ ...required, proof, proofPresented: true })), proof).toBeNull();
+    }
+  });
+
+  it('the launch cookie is never what lets a page in: a foreign Origin is refused with it', () => {
+    for (const servesPages of [false, true]) {
+      expect(
+        admitRequest(
+          facts({
+            ...required,
+            servesPages,
+            host: 'localhost:3000',
+            origin: 'https://pages.example',
+            proof: 'launch_cookie',
+            proofPresented: true,
+          }),
+        ),
+      ).toEqual(ORIGIN_REFUSED);
+    }
+  });
+
+  it("the dashboard's own page with the cookie is served; without it, 401", () => {
+    const own = { ...required, servesPages: true, host: 'localhost:3000', origin: APP_URL };
+    expect(
+      admitRequest(facts({ ...own, proof: 'launch_cookie', proofPresented: true })),
+    ).toBeNull();
+    expect(admitRequest(facts(own))).toEqual(PROOF_REQUIRED);
+  });
+
+  it('a route whose handler checks its own proof is served without one', () => {
+    expect(admitRequest(facts({ proofRequired: false }))).toBeNull();
+  });
+
+  it('Host, then Origin, then the caller, then the body', () => {
+    // A forged Host is refused before anything else.
+    expect(admitRequest(facts({ ...required, host: 'evil.test' }))).toEqual(HOST_REFUSED);
+    // A page without a header proof is an Origin refusal, not a missing proof.
+    expect(admitRequest(facts({ ...required, origin: 'http://localhost:5173' }))).toEqual(
+      ORIGIN_REFUSED,
+    );
+    // A text body with no proof: the missing proof first.
+    expect(admitRequest(facts({ ...required, hasBody: true, contentType: 'text/plain' }))).toEqual(
+      PROOF_REQUIRED,
+    );
+    // With the proof, the body is judged.
+    expect(
+      admitRequest(
+        facts({ ...required, proof: 'worker_secret', hasBody: true, contentType: 'text/plain' }),
+      ),
+    ).toEqual(TYPE_REFUSED);
+  });
+});
 
 describe('admitRequest: a page proves who sends it @cap:se-connecter/moteur', () => {
   const PAGES = [

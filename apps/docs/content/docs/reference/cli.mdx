@@ -32,6 +32,7 @@ cannot. See
 | `nodal-agents down` | Stop all running services gracefully. |
 | `nodal-agents init` | Interactive setup wizard (LLM, ports, bind mode). |
 | `nodal-agents update` | Update to the latest npm version and restart. |
+| `nodal-agents open` | Open the dashboard in a browser: in `local-trust`, a one-time launch link (also printed; `--print` only prints it). |
 | `nodal-agents logs [service]` | Tail logs for `web`, `runner`, or `postgres`. |
 | `nodal-agents checkpoints` | List the snapshots taken before an agent wrote in a folder. |
 | `nodal-agents checkpoints restore <sha>` | Put a workspace back to a snapshot. |
@@ -42,7 +43,7 @@ cannot. See
 
 ### `nodal-agents up`
 
-Starts everything in order: cleans up what a previous run left behind, starts embedded Postgres, applies Drizzle migrations, seeds the default user/entity/agent (local-trust mode only), spawns the runner and web, waits for both `/api/health` checks to pass, then opens the dashboard in your browser.
+Starts everything in order: cleans up what a previous run left behind, starts embedded Postgres, applies Drizzle migrations, seeds the default user/entity/agent (local-trust mode only), spawns the runner and web, waits for both `/api/health` checks to pass, then opens the dashboard in your browser. In `local-trust` it opens a launch link: it works once, within 10 minutes, and leaves a cookie that keeps that browser in. In a terminal, `up` also prints it; `nodal-agents open` makes another.
 
 If a configured port is occupied or reserved by the OS, `up` rotates to the next free port and saves the new value to `~/.nodalai/config.json`. If no config exists yet, it runs the `init` wizard first.
 

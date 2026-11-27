@@ -76,6 +76,7 @@ import {
 } from '../lib/processes.ts';
 import { createClient, assertMasterKeyRestorable } from '@nodal-agents/db';
 import { startHealthWatchdog, probeRunnerHealth, type Watchdog } from '../lib/watchdog.ts';
+import { LAUNCH_TTL_MINUTES, dashboardEntry } from '../lib/dashboard-link.ts';
 
 async function killSilent(child: SpawnResult): Promise<void> {
   // Kill the whole process tree — see killProcessTree for the Windows
@@ -289,6 +290,7 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
     runnerPort: config.ports.runner,
     webPort: config.ports.web,
     dataDir: PG_DATA_DIR,
+    workerSecret: config.workerSecret,
   });
   if (!startVerdict.proceed) {
     logLauncherEvent('refused-kill', `already-running runner=${config.ports.runner}`);
@@ -1047,10 +1049,10 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
 
   try {
     await Promise.all([
-      waitForHealth(runnerUrl, runnerHealthMs).then(() => {
+      waitForHealth(runnerUrl, runnerHealthMs, config.workerSecret).then(() => {
         pending.delete('runner');
       }),
-      waitForHealth(webUrl, webHealthMs).then(() => {
+      waitForHealth(webUrl, webHealthMs, config.workerSecret).then(() => {
         pending.delete('web');
       }),
     ]);
@@ -1061,7 +1063,7 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
     // compile of `/` can take minutes on a cold cache (see assertWebRenders).
     pending.add('web page render');
     healthSpinner.text = describeWait();
-    await assertWebRenders(webUrl, webHealthMs);
+    await assertWebRenders(webUrl, webHealthMs, config.workerSecret);
     pending.delete('web page render');
     clearInterval(ticker);
     healthSpinner.succeed(chalk.green('All services healthy'));
@@ -1135,9 +1137,14 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
   // ── 8. Open browser ───────────────────────────────────────────────────────
   // NODALAI_NO_BROWSER=1 disables this — set it on headless servers / CI
   // runners with no desktop, where `open` would either hang or crash.
+  //
+  // In the mode with no password, what is opened is a launch link made from
+  // the install's secret (lib/dashboard-link.ts): the dashboard lets a browser
+  // in only through one, once, and leaves it a cookie.
+  const entry = dashboardEntry(config);
   if (!process.env['NODALAI_NO_BROWSER']) {
     try {
-      await open(webUrl);
+      await open(entry.url);
     } catch {
       /* best-effort — headless environments without xdg-open shouldn't crash up */
     }
@@ -1153,6 +1160,20 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
   console.log(chalk.bold.green(`  Nodal-Agents ready at ${webUrl}`));
   if (config.bind === 'lan') {
     console.log(chalk.cyan(`  LAN mode — sign up at ${webUrl}/login`));
+  }
+  if (entry.oneTime) {
+    // The link goes to a terminal a person reads, never to a file: when the
+    // output is not a terminal (a service, a log), the command is named.
+    if (process.stdout.isTTY) {
+      console.log(chalk.cyan(`  Open the dashboard: ${entry.url}`));
+      console.log(
+        chalk.gray(
+          `  (works once, within ${LAUNCH_TTL_MINUTES} minutes; \`nodal-agents open\` makes another)`,
+        ),
+      );
+    } else {
+      console.log(chalk.cyan('  Open the dashboard with `nodal-agents open`'));
+    }
   }
 
   // ── 9a. The page renderer, downloaded once (#1082) ───────────────────────
@@ -1212,7 +1233,7 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
   // Foreground uniquement : en --detach le lanceur est déjà sorti, la vérité
   // vit alors dans /api/health (runner ET web pingent la base désormais).
   const watchdog: Watchdog = startHealthWatchdog({
-    probe: () => probeRunnerHealth(runnerUrl),
+    probe: () => probeRunnerHealth(runnerUrl, config.workerSecret),
     onTransition: (state, detail) => {
       const at = new Date().toLocaleTimeString();
       // The terminal gets local time for whoever is watching; the file gets a

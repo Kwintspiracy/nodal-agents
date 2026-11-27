@@ -6,6 +6,7 @@ import { join, dirname, resolve } from 'path';
 import { fileURLToPath } from 'node:url';
 import { PID_DIR, LOG_DIR, CONFIG_DIR } from './config.ts';
 import { rotateLogIfNeeded } from './log-rotation.ts';
+import { installProof } from './install-proof.ts';
 import { childProcessEnv, type ChildEnv } from './env.ts';
 import { runWindowsPowerShell } from './windows-powershell.ts';
 import {
@@ -1324,14 +1325,24 @@ export function clearPids(): void {
 /**
  * Wait until a service's /api/health endpoint returns 200.
  * Polls every 500ms, times out after timeoutMs.
+ *
+ * Asked with the install's proof (`workerSecret`): both servers admit no
+ * caller without it, in every auth mode (packages/auth request-origin.ts).
  */
-export async function waitForHealth(url: string, timeoutMs = 30_000): Promise<void> {
+export async function waitForHealth(
+  url: string,
+  timeoutMs = 30_000,
+  workerSecret: string,
+): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
       const controller = new AbortController();
       const t = setTimeout(() => controller.abort(), 2000);
-      const res = await fetch(`${url}/api/health`, { signal: controller.signal });
+      const res = await fetch(`${url}/api/health`, {
+        headers: installProof(workerSecret),
+        signal: controller.signal,
+      });
       clearTimeout(t);
       if (res.status === 200) return;
     } catch {
@@ -1351,7 +1362,11 @@ export async function waitForHealth(url: string, timeoutMs = 30_000): Promise<vo
  * printed "All services healthy"). GET / follows redirects (login/onboarding
  * are fine landings); anything 5xx after the deadline is a hard failure.
  */
-export async function assertWebRenders(url: string, timeoutMs = 300_000): Promise<void> {
+export async function assertWebRenders(
+  url: string,
+  timeoutMs = 300_000,
+  workerSecret: string,
+): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   let lastStatus = 0;
   while (Date.now() < deadline) {
@@ -1364,7 +1379,10 @@ export async function assertWebRenders(url: string, timeoutMs = 300_000): Promis
       // (live incident, 2026-07-12, right after this probe shipped). The
       // packed build renders in milliseconds and is unaffected.
       const t = setTimeout(() => controller.abort(), 60_000);
-      const res = await fetch(`${url}/`, { signal: controller.signal });
+      const res = await fetch(`${url}/`, {
+        headers: installProof(workerSecret),
+        signal: controller.signal,
+      });
       clearTimeout(t);
       lastStatus = res.status;
       if (res.status < 500) return;

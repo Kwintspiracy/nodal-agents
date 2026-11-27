@@ -21,10 +21,10 @@ import type { RunnerDeps } from '../deps.ts';
 
 export async function cronRoute(c: Context, deps: RunnerDeps): Promise<Response> {
   // F-3 (audit #2): a tick is a GLOBAL system operation (every entity), not
-  // scoped to the caller — requireRunnerAuth still authenticates a plain
+  // scoped to the caller — the admission still authenticates a plain
   // session bearer-token caller (any entity's API user) onto this route, but
   // that's the wrong authorization model here. Restrict to trusted callers:
-  // local-trust (dev, no auth) or a valid WORKER_SECRET bearer — the
+  // a valid WORKER_SECRET bearer, in every auth mode — the
   // credential the external scheduler this route exists for is configured
   // with. An ordinary entity user forcing a global tick is op abuse, not a
   // legitimate use of their own API access.

@@ -33,10 +33,18 @@ afterEach(async () => {
   for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
 });
 
-/** A runner that answers /api/health exactly as the real one does. */
-async function fakeHealthyRunner(): Promise<number> {
+/** The install's secret, which the real runner asks every caller for. */
+const SECRET = 'install-secret-0123456789-0123456789';
+
+/** A runner that answers /api/health exactly as the real one does: to its install's secret only. */
+async function fakeHealthyRunner(secret: string = SECRET): Promise<number> {
   const port = await findFreePort(24100);
   const server = createServer((req, res) => {
+    if (req.headers.authorization !== `Bearer ${secret}`) {
+      res.writeHead(401, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ error: 'proof_required' }));
+      return;
+    }
     if (req.url === '/api/health') {
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ ok: true, db: 'ok' }));
@@ -196,7 +204,12 @@ describe('decideStartFromProbes @cap:installer-et-demarrer/moteur', () => {
     const runnerPort = await fakeHealthyRunner();
     const dataDir = dataDirClaimingLivePostmaster();
 
-    const verdict = await decideStartFromProbes({ runnerPort, webPort: runnerPort, dataDir });
+    const verdict = await decideStartFromProbes({
+      runnerPort,
+      webPort: runnerPort,
+      dataDir,
+      workerSecret: SECRET,
+    });
 
     expect(verdict.proceed, 'a healthy running stack was cleared for cleanup').toBe(false);
     if (verdict.proceed) return;
@@ -209,7 +222,31 @@ describe('decideStartFromProbes @cap:installer-et-demarrer/moteur', () => {
     const runnerPort = await fakeDegradedRunner();
     const dataDir = dataDirClaimingLivePostmaster();
     expect(
-      (await decideStartFromProbes({ runnerPort, webPort: runnerPort, dataDir })).proceed,
+      (
+        await decideStartFromProbes({
+          runnerPort,
+          webPort: runnerPort,
+          dataDir,
+          workerSecret: SECRET,
+        })
+      ).proceed,
+    ).toBe(true);
+  });
+
+  it("the probe carries this install's secret: a runner of ANOTHER install is not this one", async () => {
+    // Our runner answers our secret with 200 (the refusal above); a runner of
+    // another install refuses it, 401, and is not this install already up.
+    const runnerPort = await fakeHealthyRunner('another-install-secret-0123456789-01');
+    const dataDir = dataDirClaimingLivePostmaster();
+    expect(
+      (
+        await decideStartFromProbes({
+          runnerPort,
+          webPort: runnerPort,
+          dataDir,
+          workerSecret: SECRET,
+        })
+      ).proceed,
     ).toBe(true);
   });
 
@@ -217,7 +254,14 @@ describe('decideStartFromProbes @cap:installer-et-demarrer/moteur', () => {
     const runnerPort = await findFreePort(24300);
     const dataDir = dataDirClaimingLivePostmaster();
     expect(
-      (await decideStartFromProbes({ runnerPort, webPort: runnerPort, dataDir })).proceed,
+      (
+        await decideStartFromProbes({
+          runnerPort,
+          webPort: runnerPort,
+          dataDir,
+          workerSecret: SECRET,
+        })
+      ).proceed,
     ).toBe(true);
   });
 
@@ -239,6 +283,7 @@ describe('decideStartFromProbes @cap:installer-et-demarrer/moteur', () => {
       runnerPort: port,
       webPort: port,
       dataDir: emptyDataDir(),
+      workerSecret: SECRET,
     });
 
     expect(verdict.proceed).toBe(true);

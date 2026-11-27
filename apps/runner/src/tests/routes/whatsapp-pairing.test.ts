@@ -55,6 +55,9 @@ const testEnv: RunnerEnv = {
   NODALAI_APPROVAL_GRACE_MS: 0,
 };
 
+/** What the dashboard's server side sends with every runner call: the install's secret. */
+const DASHBOARD_PROOF = { Authorization: `Bearer ${testEnv.WORKER_SECRET}` };
+
 /** A fake manager — configurable per test, no real Baileys/DB polling involved. */
 function makeFakeManager(overrides: Partial<WhatsAppManagerHandle> = {}): WhatsAppManagerHandle {
   return {
@@ -100,7 +103,9 @@ describe('GET /api/whatsapp/pairing — local-trust mode', () => {
   it('503 when no manager is running', async () => {
     const app = createApp(makeDeps(db), testEnv, null);
     const res = await app.fetch(
-      new Request(`http://localhost/api/whatsapp/pairing?agentId=${seed.agentId}`),
+      new Request(`http://localhost/api/whatsapp/pairing?agentId=${seed.agentId}`, {
+        headers: DASHBOARD_PROOF,
+      }),
     );
     expect(res.status).toBe(503);
   });
@@ -108,7 +113,9 @@ describe('GET /api/whatsapp/pairing — local-trust mode', () => {
   it('400 on a malformed agentId', async () => {
     const app = createApp(makeDeps(db), testEnv, makeFakeManager());
     const res = await app.fetch(
-      new Request('http://localhost/api/whatsapp/pairing?agentId=not-a-uuid'),
+      new Request('http://localhost/api/whatsapp/pairing?agentId=not-a-uuid', {
+        headers: DASHBOARD_PROOF,
+      }),
     );
     expect(res.status).toBe(400);
   });
@@ -118,6 +125,7 @@ describe('GET /api/whatsapp/pairing — local-trust mode', () => {
     const res = await app.fetch(
       new Request(
         'http://localhost/api/whatsapp/pairing?agentId=00000000-0000-0000-0000-000000000000',
+        { headers: DASHBOARD_PROOF },
       ),
     );
     expect(res.status).toBe(404);
@@ -128,7 +136,9 @@ describe('GET /api/whatsapp/pairing — local-trust mode', () => {
   it('404 (no_whatsapp_binding) when the manager tracks nothing for this agent', async () => {
     const app = createApp(makeDeps(db), testEnv, makeFakeManager({ getPairingState: () => null }));
     const res = await app.fetch(
-      new Request(`http://localhost/api/whatsapp/pairing?agentId=${seed.agentId}`),
+      new Request(`http://localhost/api/whatsapp/pairing?agentId=${seed.agentId}`, {
+        headers: DASHBOARD_PROOF,
+      }),
     );
     expect(res.status).toBe(404);
     const body = (await res.json()) as { error: string };
@@ -139,7 +149,9 @@ describe('GET /api/whatsapp/pairing — local-trust mode', () => {
     const state: WhatsAppPairingState = { status: 'qr_pending', qr: 'QR_TEST_PAYLOAD' };
     const app = createApp(makeDeps(db), testEnv, makeFakeManager({ getPairingState: () => state }));
     const res = await app.fetch(
-      new Request(`http://localhost/api/whatsapp/pairing?agentId=${seed.agentId}`),
+      new Request(`http://localhost/api/whatsapp/pairing?agentId=${seed.agentId}`, {
+        headers: DASHBOARD_PROOF,
+      }),
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as { status: string; qr: string | null };
@@ -153,7 +165,9 @@ describe('GET /api/whatsapp/pairing — local-trust mode', () => {
     const state: WhatsAppPairingState = { status: 'open', qr: 'STALE_SHOULD_NEVER_LEAK' };
     const app = createApp(makeDeps(db), testEnv, makeFakeManager({ getPairingState: () => state }));
     const res = await app.fetch(
-      new Request(`http://localhost/api/whatsapp/pairing?agentId=${seed.agentId}`),
+      new Request(`http://localhost/api/whatsapp/pairing?agentId=${seed.agentId}`, {
+        headers: DASHBOARD_PROOF,
+      }),
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as { status: string; qr: string | null };
@@ -233,7 +247,7 @@ describe('POST /api/whatsapp/pairing — start pairing', () => {
     const res = await app.fetch(
       new Request('http://localhost/api/whatsapp/pairing', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...DASHBOARD_PROOF },
         body: JSON.stringify({ agentId: seed.agentId }),
       }),
     );
@@ -251,7 +265,7 @@ describe('POST /api/whatsapp/pairing — start pairing', () => {
     const res = await app.fetch(
       new Request('http://localhost/api/whatsapp/pairing', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...DASHBOARD_PROOF },
         body: JSON.stringify({ agentId: seed.agentId }),
       }),
     );
@@ -263,7 +277,7 @@ describe('POST /api/whatsapp/pairing — start pairing', () => {
     const res = await app.fetch(
       new Request('http://localhost/api/whatsapp/pairing', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...DASHBOARD_PROOF },
         body: JSON.stringify({ agentId: '00000000-0000-0000-0000-000000000000' }),
       }),
     );

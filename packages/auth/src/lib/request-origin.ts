@@ -3,7 +3,7 @@
 // runner's `/api/*` middleware (apps/runner/src/lib/admission.ts) and the
 // dashboard's proxy (apps/web/src/proxy.ts), which runs on every path.
 //
-// Three rules, checked in this order:
+// Four rules, checked in this order:
 //
 //   Host   — the request names this machine (loopback, a private address, or
 //     the host APP_URL points at). This is what defeats DNS rebinding, where a
@@ -22,7 +22,16 @@
 //     runner are all refused without a credential. The runner serves no page,
 //     so every request with an `Origin` and no credential is refused there.
 //     A request with NO `Origin` is not sent on behalf of a page, and this rule
-//     does not apply to it.
+//     does not apply to it (the next one does).
+//
+//   Caller — every request proves it holds what only the owner's
+//     operating-system account can read, in every auth mode: the install's
+//     worker secret in an explicit header, the API token in bearer-token mode,
+//     a paired device's key on a route that takes one, or, for the dashboard's
+//     browser in the mode with no password, the launch cookie that a launch
+//     link derived from that secret (launch-link.ts). "No password" never
+//     means "no proof". The only routes out of this rule are those whose
+//     handler checks a proof of its own; each server names them.
 //
 //   Body   — a request that carries a body declares a media type the route
 //     takes (JSON unless the route declares others). The types a page can send
@@ -134,8 +143,21 @@ export function hasRequestBody(headers: { get(name: string): string | null }): b
   return length.trim() !== '0';
 }
 
-/** A credential carried by the request in an explicit header, verified by the server. */
-export type RequestProof = 'worker_secret' | 'api_token' | 'device_key';
+/**
+ * A credential the request carries, verified by the server: the first three in
+ * an explicit header, the last as the dashboard's cookie.
+ */
+export type RequestProof = 'worker_secret' | 'api_token' | 'device_key' | 'launch_cookie';
+
+/**
+ * The proofs that also say who sent a request on behalf of a page. A cookie is
+ * not one: the browser attaches it by itself, to a foreign page's request too.
+ */
+const HEADER_PROOFS: ReadonlySet<RequestProof> = new Set([
+  'worker_secret',
+  'api_token',
+  'device_key',
+]);
 
 /** The media type a route takes in a body unless it declares others. */
 export const JSON_BODY: readonly string[] = ['application/json'];
@@ -153,6 +175,19 @@ export interface RequestFacts {
    */
   proof: RequestProof | null;
   /**
+   * Whether the request presented a credential at all (an `Authorization`
+   * header, a launch cookie), whether or not it held: what tells a wrong proof
+   * from a missing one.
+   */
+  proofPresented: boolean;
+  /**
+   * Whether the route asks its caller to prove who it is here. True on every
+   * route, in every auth mode, except a route whose own handler checks a proof
+   * of its own (its server names them), and the dashboard in the modes with a
+   * sign-in, whose pages and actions check the session themselves.
+   */
+  proofRequired: boolean;
+  /**
    * Whether this server serves pages of its own, under the Host it is reached
    * at. The dashboard does; the runner does not, so no Origin is ever its own.
    */
@@ -169,11 +204,15 @@ export interface RequestFacts {
  * A refusal: a stable HTTP status and a machine-readable reason.
  *   403 host_not_allowed        — the Host does not name this machine
  *   403 origin_not_allowed      — sent on behalf of a page, with no credential
+ *   401 proof_required          — the caller presented no proof
+ *   401 proof_invalid           — the caller presented one that does not hold
  *   415 unsupported_media_type  — a body of a type the route does not take
  */
 export type AdmissionRefusal =
   | { status: 403; reason: 'host_not_allowed' }
   | { status: 403; reason: 'origin_not_allowed' }
+  | { status: 401; reason: 'proof_required' }
+  | { status: 401; reason: 'proof_invalid' }
   | { status: 415; reason: 'unsupported_media_type' };
 
 /** The decision for one request: null when it may be served, else why it is refused. */
@@ -186,9 +225,15 @@ export function admitRequest(facts: RequestFacts): AdmissionRefusal | null {
     // Origin like any other: sent on behalf of a page, and never this
     // server's own.
     const ownPage = facts.servesPages && isSameOrigin(facts.origin, facts.host);
-    if (facts.proof === null && !ownPage) {
+    const headerProof = facts.proof !== null && HEADER_PROOFS.has(facts.proof);
+    if (!headerProof && !ownPage) {
       return { status: 403, reason: 'origin_not_allowed' };
     }
+  }
+  if (facts.proofRequired && facts.proof === null) {
+    return facts.proofPresented
+      ? { status: 401, reason: 'proof_invalid' }
+      : { status: 401, reason: 'proof_required' };
   }
   if (facts.hasBody) {
     const type = mediaTypeOf(facts.contentType);

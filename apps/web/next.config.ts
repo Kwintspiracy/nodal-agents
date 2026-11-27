@@ -25,6 +25,10 @@ function lanIPv4(): string[] {
 
 const nextConfig: NextConfig = {
   output: 'standalone',
+  // A launch link (`?nodal_launch=`, packages/auth/src/lib/launch-link.ts) is
+  // never written to a log: `next dev` logs each request's address, and this
+  // one carries a one-time value until the proxy consumes it.
+  logging: { incomingRequests: { ignore: [/[?&]nodal_launch=/] } },
   // Next.js loads this config from apps/web/. The monorepo root is two
   // levels up. Without this, file-tracing roots at the filesystem drive
   // and the standalone output mirrors the absolute disk layout — breaks

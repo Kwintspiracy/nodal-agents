@@ -973,7 +973,7 @@ describe('the voice turn route — the runner gate @cap:se-connecter/moteur', ()
     ] as const) {
       const res = await call(app, method, path, body, none);
       expect(res.status, `${method} ${path}`).toBe(401);
-      expect(await res.json()).toEqual({ error: 'AUTH_REQUIRED' });
+      expect(await res.json()).toEqual({ error: 'proof_required' });
     }
     expect(openUtterances()).toBe(0);
   });
