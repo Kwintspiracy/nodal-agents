@@ -6,7 +6,7 @@
 // @nodal-agents/test-kit — one scanner, every package, no local copies to drift.
 
 import { describe, it, expect } from 'vitest';
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -15,6 +15,7 @@ import {
   scanForDbDriverImports,
   scanForModuleReferences,
   assertNoViolations,
+  listSourceFiles,
 } from '@nodal-agents/test-kit';
 
 const srcDir = join(fileURLToPath(import.meta.url), '..', '..');
@@ -85,24 +86,18 @@ describe('architecture invariants', () => {
   it('calls the migrator nowhere but packages/db/src/safe-migrate.ts', () => {
     const repoRoot = join(srcDir, '..', '..', '..');
     const allowed = new Set(['packages/db/src/migrate.ts', 'packages/db/src/safe-migrate.ts']);
-    const callers: string[] = [];
-    const walk = (dir: string): void => {
-      for (const name of readdirSync(dir)) {
-        const full = join(dir, name);
-        if (statSync(full).isDirectory()) {
-          if (name !== 'tests' && name !== 'node_modules') walk(full);
-          continue;
-        }
-        if (!/\.(ts|tsx|mts)$/.test(name) || /\.test\./.test(name)) continue;
-        const rel = relative(repoRoot, full).split(sep).join('/');
-        if (allowed.has(rel)) continue;
-        if (/\b(runMigrations|repairMigrations)\s*\(/.test(readFileSync(full, 'utf-8')))
-          callers.push(rel);
-      }
-    };
     const dirs = workspaceSrcDirs(repoRoot);
     expect(dirs).toEqual(expect.arrayContaining([join(repoRoot, 'packages', 'db', 'src')]));
-    for (const dir of dirs) walk(dir);
+    // The shared walk (it skips build output); test files are left out here.
+    const callers = dirs
+      .flatMap((dir) => listSourceFiles(dir, { extensions: ['.ts', '.tsx', '.mts'] }))
+      .map((full) => ({ full, rel: relative(repoRoot, full).split(sep).join('/') }))
+      .filter(({ rel }) => !/(^|\/)tests\//.test(rel) && !/\.test\./.test(rel))
+      .filter(({ rel }) => !allowed.has(rel))
+      .filter(({ full }) =>
+        /\b(runMigrations|repairMigrations)\s*\(/.test(readFileSync(full, 'utf-8')),
+      )
+      .map(({ rel }) => rel);
     expect(callers).toEqual([]);
   });
 
