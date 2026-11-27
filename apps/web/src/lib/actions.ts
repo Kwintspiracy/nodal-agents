@@ -223,10 +223,13 @@ import {
   listMemories,
   createMemory,
   deleteMemory,
-  updateMemory,
+  mutateMemory,
+  latestMemoryVersions,
   keywordSearchMemories,
   MemoryNotFoundError,
   MemoryDuplicateError,
+  type MemoryChange,
+  type MutateMemoryResult,
 } from '@nodal-agents/memory';
 import { encrypt, decrypt, isEncrypted, last4 } from '@nodal-agents/secrets';
 import {
@@ -4321,10 +4324,74 @@ const ListMemoriesSchema = z.object({
   pageSize: z.number().int().min(1).max(200).default(50),
 });
 
+/**
+ * The last change of a fact, when it was not made by the owner: an automatic
+ * pass (the weekly curator, the archiver) or an agent's memory tool. The page
+ * shows it with the text the fact had before, and offers to put that back.
+ */
+export type MemoryLastChange = {
+  versionId: string;
+  changedBy: 'agent' | 'curator' | 'lifecycle';
+  /** The agent, when an agent made the change. */
+  agentName: string | null;
+  action: string;
+  previousFact: string;
+  changedAt: string;
+};
+
 export type MemoryListRow = AgentMemory & {
   agentName: string | null;
   agentSlug: string | null;
+  lastChange: MemoryLastChange | null;
 };
+
+/**
+ * Agent names and the last non-owner change for a page of facts, in two
+ * round-trips. Shared by the list and the search of the Memory page.
+ */
+async function toMemoryListRows(
+  db: ReturnType<typeof getDb>,
+  entityId: string,
+  items: AgentMemory[],
+): Promise<MemoryListRow[]> {
+  const latest = await latestMemoryVersions(
+    db,
+    entityId,
+    items.map((m) => m.id),
+  );
+  const agentIds = new Set<string>();
+  for (const m of items) if (m.agent_id) agentIds.add(m.agent_id);
+  for (const v of latest.values()) if (v.agentId) agentIds.add(v.agentId);
+  const agentLookup = new Map<string, { name: string; slug: string }>();
+  if (agentIds.size > 0) {
+    const rows = await db
+      .select({ id: agents.id, name: agents.name, slug: agents.slug })
+      .from(agents)
+      .where(inArray(agents.id, [...agentIds]));
+    for (const r of rows) agentLookup.set(r.id, { name: r.name, slug: r.slug });
+  }
+  return items.map((m) => {
+    const agent = m.agent_id ? agentLookup.get(m.agent_id) : null;
+    const v = latest.get(m.id);
+    const lastChange: MemoryLastChange | null =
+      v && v.changedBy !== 'owner'
+        ? {
+            versionId: v.id,
+            changedBy: v.changedBy,
+            agentName: v.agentId ? (agentLookup.get(v.agentId)?.name ?? null) : null,
+            action: v.action,
+            previousFact: v.fact,
+            changedAt: v.changedAt,
+          }
+        : null;
+    return {
+      ...m,
+      agentName: agent?.name ?? null,
+      agentSlug: agent?.slug ?? null,
+      lastChange,
+    };
+  });
+}
 
 export type MemoryListResult = {
   items: MemoryListRow[];
@@ -4356,28 +4423,7 @@ export async function listMemoriesAction(
       sort: 'recent',
     });
 
-    // Resolve agent name+slug for each unique agentId in the page so the UI
-    // can render a friendly label instead of a raw uuid. Single roundtrip.
-    const agentIds = Array.from(
-      new Set(result.items.map((m) => m.agent_id).filter((x): x is string => x !== null)),
-    );
-    const agentLookup = new Map<string, { name: string; slug: string }>();
-    if (agentIds.length > 0) {
-      const rows = await db
-        .select({ id: agents.id, name: agents.name, slug: agents.slug })
-        .from(agents)
-        .where(inArray(agents.id, agentIds));
-      for (const r of rows) agentLookup.set(r.id, { name: r.name, slug: r.slug });
-    }
-
-    const items: MemoryListRow[] = result.items.map((m) => {
-      const agent = m.agent_id ? agentLookup.get(m.agent_id) : null;
-      return {
-        ...m,
-        agentName: agent?.name ?? null,
-        agentSlug: agent?.slug ?? null,
-      };
-    });
+    const items = await toMemoryListRows(db, session.entityId, result.items);
 
     return ok({
       items,
@@ -4414,28 +4460,7 @@ export async function searchMemoriesAction(query: string): Promise<ActionResult<
       touch: false,
     });
 
-    const agentIds = Array.from(
-      new Set(items.map((m) => m.agent_id).filter((x): x is string => x !== null)),
-    );
-    const agentLookup = new Map<string, { name: string; slug: string }>();
-    if (agentIds.length > 0) {
-      const rows = await db
-        .select({ id: agents.id, name: agents.name, slug: agents.slug })
-        .from(agents)
-        .where(inArray(agents.id, agentIds));
-      for (const r of rows) agentLookup.set(r.id, { name: r.name, slug: r.slug });
-    }
-
-    const rows: MemoryListRow[] = items.map((m) => {
-      const agent = m.agent_id ? agentLookup.get(m.agent_id) : null;
-      return {
-        ...m,
-        agentName: agent?.name ?? null,
-        agentSlug: agent?.slug ?? null,
-      };
-    });
-
-    return ok(rows);
+    return ok(await toMemoryListRows(db, session.entityId, items));
   } catch (err) {
     console.error('[searchMemoriesAction]', err);
     return fail('db_error', 'Failed to search memories');
@@ -4483,59 +4508,84 @@ export async function createMemoryAction(raw: unknown): Promise<ActionResult<voi
   }
 }
 
-export async function archiveMemoryAction(id: string): Promise<ActionResult<void>> {
-  try {
-    const session = await getSession();
-    if (!z.string().guid().safeParse(id).success) {
-      return fail('validation_failed', 'Invalid memory id');
-    }
-    const db = getDb();
-    await updateMemory(db, id, session.entityId, { archived: true });
-    revalidatePath('/memories');
-    return ok(undefined);
-  } catch (err) {
-    if (err instanceof MemoryNotFoundError) {
-      return fail('not_found', 'Memory not found');
-    }
-    console.error('[archiveMemoryAction]', err);
-    return fail('db_error', 'Failed to archive memory');
-  }
-}
-
-const UpdateMemoryImportanceSchema = z.object({
+const MemoryChangeRefSchema = z.object({
   id: z.string().guid(),
-  importance: z.number().int().min(1).max(5),
+  /** The version the page showed: the change applies to that version only. */
+  version: z.number().int().min(1),
 });
 
 /**
+ * Apply one owner change to a fact through mutateMemory, the function every
+ * path changes a fact through (#1144): it keeps the previous state as a
+ * version, and refuses a change prepared on a version that is no longer the
+ * row's (a page left open while an automatic pass or another tab changed it).
+ */
+async function applyOwnerMemoryChange(
+  label: string,
+  ref: { id: string; version: number },
+  change: MemoryChange,
+): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    const parsed = MemoryChangeRefSchema.safeParse(ref);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    const r: MutateMemoryResult = await mutateMemory(getDb(), {
+      entityId: session.entityId,
+      memoryId: parsed.data.id,
+      readVersion: parsed.data.version,
+      actor: { kind: 'owner' },
+      change,
+    });
+    if (!r.ok) {
+      switch (r.reason) {
+        case 'not_found':
+          return fail('not_found', 'Memory not found');
+        case 'stale':
+          return fail('conflict', 'This memory changed since the page loaded. Reload to see it.');
+        case 'duplicate':
+          return fail('conflict', 'An active memory already says exactly this.');
+        default:
+          return fail('validation_failed', r.detail);
+      }
+    }
+    revalidatePath('/memories');
+    return ok(undefined);
+  } catch (err) {
+    console.error(`[${label}]`, err);
+    return fail('db_error', 'Failed to update memory');
+  }
+}
+
+export async function archiveMemoryAction(
+  id: string,
+  version: number,
+): Promise<ActionResult<void>> {
+  return applyOwnerMemoryChange('archiveMemoryAction', { id, version }, { kind: 'archive' });
+}
+
+const MemoryImportanceSchema = z.number().int().min(1).max(5);
+
+/**
  * User override of a fact's importance — top of the authority chain
- * (agent guess → curator re-score → user pin). Always sets
- * importance_locked=true so the curator never re-scores this fact again.
+ * (agent guess → curator re-score → user pin). Pins the fact
+ * (importance_locked=true) so no automatic pass changes it again.
  */
 export async function updateMemoryImportanceAction(
   id: string,
   importance: number,
+  version: number,
 ): Promise<ActionResult<void>> {
-  try {
-    const session = await getSession();
-    const parsed = UpdateMemoryImportanceSchema.safeParse({ id, importance });
-    if (!parsed.success) {
-      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
-    }
-    const db = getDb();
-    await updateMemory(db, parsed.data.id, session.entityId, {
-      importance: parsed.data.importance,
-      importance_locked: true,
-    });
-    revalidatePath('/memories');
-    return ok(undefined);
-  } catch (err) {
-    if (err instanceof MemoryNotFoundError) {
-      return fail('not_found', 'Memory not found');
-    }
-    console.error('[updateMemoryImportanceAction]', err);
-    return fail('db_error', 'Failed to update importance');
+  const parsed = MemoryImportanceSchema.safeParse(importance);
+  if (!parsed.success) {
+    return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid importance');
   }
+  return applyOwnerMemoryChange(
+    'updateMemoryImportanceAction',
+    { id, version },
+    { kind: 'pin', importance: parsed.data },
+  );
 }
 
 /**
@@ -4543,42 +4593,39 @@ export async function updateMemoryImportanceAction(
  * WITHOUT touching the current importance value, so the fact keeps its
  * last-known score until the curator's next usage-driven pass re-scores it.
  */
-export async function unpinMemoryImportanceAction(id: string): Promise<ActionResult<void>> {
-  try {
-    const session = await getSession();
-    if (!z.string().guid().safeParse(id).success) {
-      return fail('validation_failed', 'Invalid memory id');
-    }
-    const db = getDb();
-    await updateMemory(db, id, session.entityId, { importance_locked: false });
-    revalidatePath('/memories');
-    return ok(undefined);
-  } catch (err) {
-    if (err instanceof MemoryNotFoundError) {
-      return fail('not_found', 'Memory not found');
-    }
-    console.error('[unpinMemoryImportanceAction]', err);
-    return fail('db_error', 'Failed to unpin importance');
-  }
+export async function unpinMemoryImportanceAction(
+  id: string,
+  version: number,
+): Promise<ActionResult<void>> {
+  return applyOwnerMemoryChange('unpinMemoryImportanceAction', { id, version }, { kind: 'unpin' });
 }
 
-export async function unarchiveMemoryAction(id: string): Promise<ActionResult<void>> {
-  try {
-    const session = await getSession();
-    if (!z.string().guid().safeParse(id).success) {
-      return fail('validation_failed', 'Invalid memory id');
-    }
-    const db = getDb();
-    await updateMemory(db, id, session.entityId, { archived: false });
-    revalidatePath('/memories');
-    return ok(undefined);
-  } catch (err) {
-    if (err instanceof MemoryNotFoundError) {
-      return fail('not_found', 'Memory not found');
-    }
-    console.error('[unarchiveMemoryAction]', err);
-    return fail('db_error', 'Failed to unarchive memory');
+/** Restore an archived fact: active again, validity window reopened. */
+export async function unarchiveMemoryAction(
+  id: string,
+  version: number,
+): Promise<ActionResult<void>> {
+  return applyOwnerMemoryChange('unarchiveMemoryAction', { id, version }, { kind: 'restore' });
+}
+
+/**
+ * Put back the state a fact had before a change (its text, category,
+ * importance and archived state): the undo of an automatic pass. The undo is
+ * a change too, kept as a version.
+ */
+export async function restoreMemoryVersionAction(
+  id: string,
+  versionId: string,
+  version: number,
+): Promise<ActionResult<void>> {
+  if (!z.string().guid().safeParse(versionId).success) {
+    return fail('validation_failed', 'Invalid version id');
   }
+  return applyOwnerMemoryChange(
+    'restoreMemoryVersionAction',
+    { id, version },
+    { kind: 'revert', versionId },
+  );
 }
 
 export async function deleteMemoryAction(id: string): Promise<ActionResult<void>> {

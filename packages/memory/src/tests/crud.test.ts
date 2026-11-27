@@ -1,10 +1,11 @@
-// crud.test.ts — createMemory, getMemory, updateMemory, deleteMemory
+// crud.test.ts — createMemory, getMemory, deleteMemory
 
 import { describe, it, expect, beforeAll } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import { agentMemory, eq } from '@nodal-agents/db';
 import type { EmbeddingClient } from '@nodal-agents/llm';
-import { createMemory, getMemory, updateMemory, deleteMemory } from '../crud';
+import { createMemory, getMemory, deleteMemory } from '../crud';
+import { mutateMemory } from '../mutate';
 import { MemoryNotFoundError, MemorySanitationError, MemoryDuplicateError } from '../errors';
 import { computeFactHash } from '../hash';
 
@@ -188,7 +189,14 @@ describe('createMemory — deduplication', () => {
       skill_tags: [],
     });
 
-    await updateMemory(db, original.id, seed.entityId, { archived: true });
+    const archived = await mutateMemory(db, {
+      entityId: seed.entityId,
+      memoryId: original.id,
+      readVersion: original.version,
+      actor: { kind: 'owner' },
+      change: { kind: 'archive' },
+    });
+    expect(archived.ok).toBe(true);
 
     // Same fact, but the prior row is archived → dedup check (archived=false) passes
     const recreated = await createMemory(db, {
@@ -243,124 +251,6 @@ describe('getMemory', () => {
     await expect(getMemory(db, created.id, crypto.randomUUID())).rejects.toThrow(
       MemoryNotFoundError,
     );
-  });
-});
-
-describe('updateMemory', () => {
-  it('updates fact and importance, reads back correct values', async () => {
-    const created = await createMemory(db, {
-      entity_id: seed.entityId,
-      fact: 'Original fact.',
-      category: 'context',
-      importance: 2,
-      source: 'agent',
-      skill_tags: [],
-    });
-
-    const updated = await updateMemory(db, created.id, seed.entityId, {
-      fact: 'Updated fact.',
-      importance: 5,
-    });
-
-    expect(updated.fact).toBe('Updated fact.');
-    expect(updated.importance).toBe(5);
-    expect(updated.id).toBe(created.id);
-
-    // Verify the update persisted in DB
-    const fetched = await getMemory(db, created.id, seed.entityId);
-    expect(fetched.fact).toBe('Updated fact.');
-    expect(fetched.importance).toBe(5);
-  });
-
-  it('updates skill_tags array', async () => {
-    const created = await createMemory(db, {
-      entity_id: seed.entityId,
-      fact: 'Tag update test.',
-      category: 'context',
-      importance: 3,
-      source: 'agent',
-      skill_tags: ['notion'],
-    });
-
-    const updated = await updateMemory(db, created.id, seed.entityId, {
-      skill_tags: ['notion', 'drive'],
-    });
-
-    expect(updated.skill_tags).toEqual(['notion', 'drive']);
-  });
-
-  it('throws MemoryNotFoundError for unknown id', async () => {
-    await expect(
-      updateMemory(db, crypto.randomUUID(), seed.entityId, { fact: 'x' }),
-    ).rejects.toThrow(MemoryNotFoundError);
-  });
-
-  it('sets importance and importance_locked together (user override)', async () => {
-    const created = await createMemory(db, {
-      entity_id: seed.entityId,
-      fact: 'Pin test fact.',
-      category: 'context',
-      importance: 2,
-      source: 'agent',
-      skill_tags: [],
-    });
-    expect(created.importance_locked).toBe(false);
-
-    const updated = await updateMemory(db, created.id, seed.entityId, {
-      importance: 5,
-      importance_locked: true,
-    });
-
-    expect(updated.importance).toBe(5);
-    expect(updated.importance_locked).toBe(true);
-
-    // Verify both persisted in DB
-    const fetched = await getMemory(db, created.id, seed.entityId);
-    expect(fetched.importance).toBe(5);
-    expect(fetched.importance_locked).toBe(true);
-  });
-
-  it('unpins (importance_locked=false) without touching the current importance', async () => {
-    const created = await createMemory(db, {
-      entity_id: seed.entityId,
-      fact: 'Unpin test fact.',
-      category: 'context',
-      importance: 2,
-      source: 'agent',
-      skill_tags: [],
-    });
-    await updateMemory(db, created.id, seed.entityId, {
-      importance: 5,
-      importance_locked: true,
-    });
-
-    const unpinned = await updateMemory(db, created.id, seed.entityId, {
-      importance_locked: false,
-    });
-
-    expect(unpinned.importance_locked).toBe(false);
-    expect(unpinned.importance).toBe(5); // value preserved — only the lock is cleared
-
-    const fetched = await getMemory(db, created.id, seed.entityId);
-    expect(fetched.importance_locked).toBe(false);
-    expect(fetched.importance).toBe(5);
-  });
-
-  it('can archive a memory', async () => {
-    const created = await createMemory(db, {
-      entity_id: seed.entityId,
-      fact: 'To be archived.',
-      category: 'outcome',
-      importance: 3,
-      source: 'agent',
-      skill_tags: [],
-    });
-
-    const archived = await updateMemory(db, created.id, seed.entityId, {
-      archived: true,
-    });
-
-    expect(archived.archived).toBe(true);
   });
 });
 
