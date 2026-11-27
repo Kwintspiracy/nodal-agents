@@ -13,6 +13,7 @@ import type { LanguageModel } from 'ai';
 import { findModelCatalogEntry } from '@nodal-agents/shared';
 import type { ProviderConfig } from '../types';
 import { providerFetch } from '../transport';
+import { resolveProviderEndpoint } from '../endpoint';
 
 /**
  * Set `reasoning_effort` on an outgoing OpenAI body unless already present.
@@ -54,9 +55,10 @@ export function buildOpenAIModel(config: ProviderConfig): LanguageModel {
   const wire =
     effort && effort !== 'off' && control ? (effort === 'max' ? 'high' : effort) : undefined;
 
+  const { baseURL, apiKey } = resolveProviderEndpoint(config);
   const provider = createOpenAI({
-    apiKey: config.apiKey,
-    ...(config.baseURL ? { baseURL: config.baseURL } : {}),
+    apiKey,
+    baseURL,
     fetch: wire ? createOpenAIReasoningFetch(wire) : providerFetch,
   });
 

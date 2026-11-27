@@ -1,7 +1,8 @@
 // @nodal-agents/llm — core types
 
 import type { generateText, streamText, generateObject, ModelMessage } from 'ai';
-import type { ReasoningEffort } from '@nodal-agents/shared';
+import type { ModelProviderName, ReasoningEffort } from '@nodal-agents/shared';
+import { MODEL_PROVIDER_NAMES } from '@nodal-agents/shared';
 
 // ─── Call progress ─────────────────────────────────────────────────────────────
 
@@ -26,36 +27,19 @@ export interface CallProgress {
 
 // ─── Provider names ────────────────────────────────────────────────────────────
 
-export type ProviderName =
-  | 'anthropic'
-  | 'openai'
-  | 'ollama'
-  | 'openai-compatible'
-  | 'google'
-  | 'mistral'
-  | 'groq'
-  | 'openrouter'
-  | 'deepseek'
-  | 'minimax'
-  | 'moonshot';
+/**
+ * Every provider a model key can be saved for. The one list lives in
+ * `@nodal-agents/shared` (`MODEL_PROVIDER_NAMES`), beside the address each one
+ * is reached at (`PROVIDER_ENDPOINTS`), so a new provider cannot exist without
+ * stating where its key goes.
+ */
+export type ProviderName = ModelProviderName;
 
 /**
  * All supported provider names as a runtime array.
  * Used by CLI wizard (Brique 17) and validation utilities.
  */
-export const PROVIDER_NAMES: ProviderName[] = [
-  'anthropic',
-  'openai',
-  'ollama',
-  'openai-compatible',
-  'google',
-  'mistral',
-  'groq',
-  'openrouter',
-  'deepseek',
-  'minimax',
-  'moonshot',
-];
+export const PROVIDER_NAMES: ProviderName[] = [...MODEL_PROVIDER_NAMES];
 
 // ─── Capability flags ──────────────────────────────────────────────────────────
 
@@ -84,9 +68,17 @@ export interface ProviderCapabilities {
 export interface ProviderConfig {
   provider: ProviderName;
   model: string;
-  /** API key — falls back to provider-specific env var if omitted */
+  /**
+   * The stored API key. Required by every hosted provider
+   * (`PROVIDER_ENDPOINTS[provider].keyRequired`): a missing one is a
+   * `ProviderConfigError`, never a key read from the environment.
+   */
   apiKey?: string;
-  /** Base URL — required for openai-compatible; optional override for others */
+  /**
+   * The stored address. Omitted: the provider's official address
+   * (`PROVIDER_ENDPOINTS`), never one read from the environment. Required for
+   * openai-compatible, which has no official address.
+   */
   baseURL?: string;
   /**
    * Enable prompt caching where supported (Anthropic only).

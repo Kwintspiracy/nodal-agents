@@ -31,6 +31,7 @@ import type { LanguageModel } from 'ai';
 import { findModelCatalogEntry } from '@nodal-agents/shared';
 import type { ProviderConfig } from '../types';
 import { providerFetch } from '../transport';
+import { resolveProviderEndpoint } from '../endpoint';
 
 const GOOGLE_HOSTS = new Set(['generativelanguage.googleapis.com']);
 
@@ -115,9 +116,10 @@ export function buildGoogleModel(config: ProviderConfig): LanguageModel {
   const thinkingLevel =
     effort && effort !== 'off' ? (effort === 'max' ? 'high' : effort) : undefined;
 
+  const { baseURL, apiKey } = resolveProviderEndpoint(config);
   const provider = createGoogleGenerativeAI({
-    apiKey: config.apiKey,
-    ...(config.baseURL ? { baseURL: config.baseURL } : {}),
+    apiKey,
+    baseURL,
     fetch: createGoogleFetch({ injectThinking: isReasoning, thinkingLevel }),
   });
 

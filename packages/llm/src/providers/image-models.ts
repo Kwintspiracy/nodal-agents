@@ -16,7 +16,7 @@ import { createOpenRouter } from '@openrouter/ai-sdk-provider';
 import { generateImage } from 'ai';
 import type { ImageModel } from 'ai';
 import type { ProviderConfig } from '../types';
-import { PROVIDER_PRESETS } from './registry';
+import { resolveProviderEndpoint } from '../endpoint';
 import { ProviderConfigError } from '../errors';
 import { providerFetch } from '../transport';
 
@@ -30,22 +30,15 @@ export interface GeneratedImage {
 }
 
 export function buildImageModel(config: ProviderConfig): ImageModel {
-  if (!config.apiKey) {
-    throw new ProviderConfigError(`${config.provider} image provider requires an apiKey`);
-  }
-
   switch (config.provider) {
     case 'openai': {
-      const provider = createOpenAI({
-        apiKey: config.apiKey,
-        ...(config.baseURL ? { baseURL: config.baseURL } : {}),
-        fetch: providerFetch,
-      });
+      const { baseURL, apiKey } = resolveProviderEndpoint(config);
+      const provider = createOpenAI({ apiKey, baseURL, fetch: providerFetch });
       return provider.imageModel(config.model);
     }
     case 'openrouter': {
-      const baseURL = config.baseURL ?? PROVIDER_PRESETS.openrouter.defaultBaseURL;
-      const provider = createOpenRouter({ apiKey: config.apiKey, baseURL, fetch: providerFetch });
+      const { baseURL, apiKey } = resolveProviderEndpoint(config);
+      const provider = createOpenRouter({ apiKey, baseURL, fetch: providerFetch });
       return provider.imageModel(config.model);
     }
     default:

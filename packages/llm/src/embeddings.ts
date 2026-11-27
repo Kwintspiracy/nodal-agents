@@ -4,13 +4,16 @@ import { embed } from 'ai';
 import { createOllama } from 'ollama-ai-provider-v2';
 import { createOpenAI } from '@ai-sdk/openai';
 import { providerFetch } from './transport';
+import { resolveProviderEndpoint } from './endpoint';
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
 export interface EmbeddingProviderConfig {
   provider: 'ollama' | 'openai' | 'keyword';
   model?: string;
+  /** The stored address; omitted, the provider's official one (`PROVIDER_ENDPOINTS`). */
   baseURL?: string;
+  /** The embedding provider's OWN key: required for openai, never another provider's. */
   apiKey?: string;
 }
 
@@ -85,7 +88,6 @@ export function validateEmbeddingDimension(
 // is a real out-of-the-box gap, not a bug in the guard: no widely-available
 // Ollama embedding model natively emits 1536 dims today.
 const OLLAMA_DEFAULT_MODEL = 'mxbai-embed-large';
-const OLLAMA_DEFAULT_BASE_URL = 'http://localhost:11434';
 
 const OPENAI_DEFAULT_MODEL = 'text-embedding-3-small';
 
@@ -101,7 +103,7 @@ export function createEmbeddingClient(config: EmbeddingProviderConfig): Embeddin
 
   if (config.provider === 'ollama') {
     const model = config.model ?? OLLAMA_DEFAULT_MODEL;
-    const baseURL = config.baseURL ?? OLLAMA_DEFAULT_BASE_URL;
+    const { baseURL } = resolveProviderEndpoint({ ...config, provider: config.provider });
     const ollamaProvider = createOllama({ baseURL, fetch: providerFetch });
     const embeddingModel = ollamaProvider.embedding(model);
 
@@ -124,11 +126,8 @@ export function createEmbeddingClient(config: EmbeddingProviderConfig): Embeddin
 
   if (config.provider === 'openai') {
     const model = config.model ?? OPENAI_DEFAULT_MODEL;
-    const openaiProvider = createOpenAI({
-      apiKey: config.apiKey,
-      ...(config.baseURL ? { baseURL: config.baseURL } : {}),
-      fetch: providerFetch,
-    });
+    const { baseURL, apiKey } = resolveProviderEndpoint({ ...config, provider: config.provider });
+    const openaiProvider = createOpenAI({ apiKey, baseURL, fetch: providerFetch });
     const embeddingModel = openaiProvider.embedding(model);
 
     return {

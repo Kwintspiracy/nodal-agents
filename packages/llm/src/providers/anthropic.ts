@@ -18,6 +18,7 @@ import type { LanguageModel } from 'ai';
 import { findModelCatalogEntry, type ReasoningControl } from '@nodal-agents/shared';
 import type { ProviderConfig } from '../types';
 import { providerFetch } from '../transport';
+import { resolveProviderEndpoint } from '../endpoint';
 
 /** Output headroom required ON TOP of the thinking budget (max_tokens > budget_tokens). */
 const ANTHROPIC_OUTPUT_HEADROOM = 4096;
@@ -90,9 +91,10 @@ export function buildAnthropicModel(config: ProviderConfig): LanguageModel {
       ? createAnthropicReasoningFetch(control, effort)
       : undefined;
 
+  const { baseURL, apiKey } = resolveProviderEndpoint(config);
   const provider = createAnthropic({
-    apiKey: config.apiKey,
-    ...(config.baseURL ? { baseURL: config.baseURL } : {}),
+    apiKey,
+    baseURL,
     fetch: reasoningFetch ?? providerFetch,
   });
 
