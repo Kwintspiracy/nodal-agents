@@ -24,7 +24,7 @@ The first run launches an interactive setup wizard that asks for:
 1. **LLM provider** — pick a local model (Ollama, LM Studio, Jan.ai, llama.cpp, vLLM) or a remote one (Anthropic, OpenAI, OpenRouter). You can add more providers later in the dashboard.
 2. **Network mode** — loopback (localhost only, no auth) or LAN (accessible on your network, requires sign-up).
 
-Config is saved to `~/.nodalai/config.json`. Run `nodal-agents init` at any time to re-run the wizard.
+Config is saved to `~/.nodalai/config.json`. Run `nodal-agents init` at any time to re-run the wizard. On an existing install it changes only what you answer (the LLM and the network mode) and keeps everything else as it was: the database password, the secrets, the ports and the sign-in settings.
 
 ## Ports
 
@@ -36,7 +36,7 @@ Default ports (configurable in `~/.nodalai/config.json`):
 | Runner (API)      | 3001         |
 | Embedded Postgres | 25432        |
 
-If a configured port is occupied on startup, `nodal-agents up` automatically rotates to the next free port and saves the new value to config. The dashboard opens at the resolved URL.
+If a configured port is occupied on startup, `nodal-agents up` automatically rotates to the next free port and saves the new value to config. A service is never given a port another service of the same install holds or was given, and a config that names one port for two services is refused. The dashboard opens at the resolved URL.
 
 ## Data directory
 
@@ -44,7 +44,9 @@ All persistent data lives at `~/.nodalai/`, or in the folder the `NODALAI_HOME` 
 
 ```
 ~/.nodalai/
-  config.json      # CLI configuration (ports, auth mode, worker secret)
+  config.json      # CLI configuration (ports, auth mode, secrets, the database password)
+  config.json.last-good  # The version of config.json before its last change
+  secrets.key      # The master key every stored credential is encrypted with
   pg-data/         # Embedded Postgres data files
   pids/            # PID files for runner + web (used by `down`)
   logs/            # Runner and web log files
@@ -60,7 +62,13 @@ nodal-agents down
 rm -rf ~/.nodalai
 ```
 
-Your LLM provider keys, agents, jobs, and memory are all in `pg-data/`.
+Your LLM provider keys, agents, jobs, and memory are all in `pg-data/`. The keys and tokens in it are encrypted with `secrets.key`, and the database opens only with the password in `config.json`: a copy of `pg-data/` is usable only together with those two files.
+
+### If config.json or secrets.key is damaged
+
+These files are replaced whole: a save that is interrupted leaves the previous version, never half of one. A file that exists but cannot be read (an edit that broke the JSON, a value Nodal does not accept) stops every command with an error that names the file and says what is wrong. Nothing is written over it, and Nodal never treats it as a first run. Fix the file, or copy `config.json.last-good` over `config.json`, then run the command again.
+
+At start, Nodal also checks that `secrets.key` is the key this database was encrypted with, and refuses to start with another one.
 
 ## Start and stop
 

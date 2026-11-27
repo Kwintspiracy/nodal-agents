@@ -692,6 +692,20 @@ const READY_TIMEOUT_MS = 180_000;
  * otherwise sit through until the deadline.
  */
 /**
+ * The cluster started and refused the password it was given (SQLSTATE class
+ * 28). The cluster has been stopped again when this is thrown, so the caller
+ * may start it once more with another password it legitimately holds (a
+ * password change left half-way, `up.ts`).
+ */
+export class PostgresAuthError extends Error {
+  readonly code = 'PG_AUTH_FAILED';
+  constructor(message: string) {
+    super(message);
+    this.name = 'PostgresAuthError';
+  }
+}
+
+/**
  * Is this connection error an AUTHENTICATION refusal rather than "not ready
  * yet"?
  *
@@ -833,7 +847,7 @@ export async function startAndWaitUntilReady(
       if (isPostgresAuthFailure(err)) {
         await stopQuietly(pg, watchers);
         const code = (err as { code?: string }).code;
-        throw new Error(
+        throw new PostgresAuthError(
           `Postgres refused the connection: authentication failed (SQLSTATE ${code}). ` +
             'The cluster started and was stopped again. The password the CLI holds does not ' +
             'match the one this data directory was initialised with.',

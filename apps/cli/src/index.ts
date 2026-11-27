@@ -61,7 +61,10 @@ program
 program
   .command('init')
   .description('Interactive wizard — configure LLM, ports, and bind mode')
-  .option('--force', 'Overwrite existing config without confirmation')
+  .option(
+    '--force',
+    'Change an existing config without confirmation (it is edited, never replaced)',
+  )
   .option(
     '--non-interactive',
     'Write a default config without prompting (used by container entrypoints)',

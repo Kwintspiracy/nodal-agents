@@ -44,7 +44,7 @@ cannot. See
 
 Starts everything in order: cleans up what a previous run left behind, starts embedded Postgres, applies Drizzle migrations, seeds the default user/entity/agent (local-trust mode only), spawns the runner and web, waits for both `/api/health` checks to pass, then opens the dashboard in your browser.
 
-If a configured port is occupied or reserved by the OS, `up` rotates to the next free port and saves the new value to `~/.nodalai/config.json`. If no config exists yet, it runs the `init` wizard first.
+If a configured port is occupied or reserved by the OS, `up` rotates to the next free port and saves the new value to `~/.nodalai/config.json`, never giving one service a port another one holds. If no config exists yet, it writes a default one and the dashboard finishes the setup; if the folder already holds an install (a database, a master key), a missing config is refused instead, with what to put back.
 
 | Flag | Effect |
 | ---- | ------ |
@@ -93,10 +93,10 @@ The interactive setup wizard. Walks through: LLM provider preset → endpoint UR
 
 | Flag | Effect |
 | ---- | ------ |
-| `--force` | Overwrite an existing config without the confirmation prompt. |
-| `--non-interactive` | Write a default config without prompting (LAN bind, `local-auth` mode, no LLM preset). Used by container entrypoints / headless servers. |
+| `--force` | Change an existing config without the confirmation prompt. |
+| `--non-interactive` | Ask nothing. On a new install, write a default config (LAN bind, `local-auth` mode, no LLM preset). On an existing one, keep it as it is, or with `--force` apply those same two choices to it. Used by container entrypoints / headless servers. |
 
-Without `--force`, init asks before overwriting an existing config.
+On an existing install, init edits the config: it changes the LLM and the network mode you answer, and keeps everything else as it was (the database password, the secrets, the ports, the sign-in settings, and any setting a newer version wrote). Without `--force`, it asks first. A config that exists but cannot be read stops init with the reason; it is never replaced.
 
 ### `nodal-agents update`
 

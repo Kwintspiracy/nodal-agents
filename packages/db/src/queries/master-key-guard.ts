@@ -21,91 +21,160 @@ import { mcpServers } from '../schema/mcp.ts';
 import { channelBindings } from '../schema/channel-bindings.ts';
 import { agents } from '../schema/agents.ts';
 import { webhookTriggers } from '../schema/webhooks.ts';
-import { isEncrypted, masterKeyFileMissing } from '@nodal-agents/secrets';
+import { getAppSetting, setAppSetting } from '../repos/app-settings.ts';
+import {
+  createMasterKeyFile,
+  decryptsWith,
+  isEncrypted,
+  masterKeyCheckValue,
+  masterKeyMatchesCheck,
+  masterKeyPath,
+  readMasterKeyFile,
+} from '@nodal-agents/secrets';
 import type { AnyDrizzleDb } from '../client.ts';
 
 export interface AssertMasterKeyRestorableOptions {
-  /** Override the master key path — test-only. Defaults to ~/.nodalai/secrets.key. */
+  /** Override the master key path — test-only. Defaults to the home's secrets.key. */
   keyPath?: string;
 }
 
+/** The `app_settings` key holding the master key's check value (FA-07). */
+export const MASTER_KEY_CHECK_SETTING = 'master_key_check';
+
+/** One stored secret, and what it is, for the message that names it. */
+interface EncryptedValue {
+  readonly what: string;
+  readonly blob: string;
+}
+
 /**
- * Throws if the master key file is missing AND the database already has
- * encrypted data that depends on it. No-op (including on a fresh install
- * with zero rows) when the key file is present, or when it's absent but the
- * DB has nothing encrypted yet.
+ * Every value in the database that is encrypted with the master key. The
+ * guard below needs to know whether ANY exists (a missing key would orphan
+ * it) and, on an install that has no check value yet, whether the key file
+ * opens them.
+ */
+async function encryptedValues(db: AnyDrizzleDb): Promise<EncryptedValue[]> {
+  const out: EncryptedValue[] = [];
+  const push = (what: string, blob: string | null | undefined): void => {
+    if (blob && isEncrypted(blob)) out.push({ what, blob });
+  };
+
+  // credentials.payload is ALWAYS an encrypted blob once a row exists (see
+  // schema/credentials.ts) — any row at all means a missing key would orphan it.
+  for (const r of await db.select({ payload: credentials.payload }).from(credentials)) {
+    push('a stored OAuth credential', r.payload);
+  }
+
+  // entity_llm_keys.apiKey is '' until a key is set, then either plaintext
+  // (pre-Brique-26 legacy rows, never touched by secrets.key) or encrypted.
+  // Only the encrypted ones depend on the key.
+  for (const r of await db.select({ apiKey: entityLlmKeys.apiKey }).from(entityLlmKeys)) {
+    push('a stored LLM API key', r.apiKey);
+  }
+
+  // SEC-4 (audit sécu 2026-07-07): the OTHER AES-GCM-encrypted surfaces, or an
+  // install whose ONLY secrets are a connector or MCP server (no OAuth
+  // credential / LLM key) would still get a silent re-mint. connectors.api_key
+  // and mcp_servers.api_key are enc:-prefixed blobs; mcp_servers.env_vars is a
+  // JSON map whose VALUES are individually encrypted (create-mcp.ts).
+  for (const r of await db.select({ apiKey: connectors.apiKey }).from(connectors)) {
+    push('a stored connector API key', r.apiKey);
+  }
+  const mcpRows = await db
+    .select({ apiKey: mcpServers.apiKey, envVars: mcpServers.envVars })
+    .from(mcpServers);
+  for (const r of mcpRows) {
+    push('a stored MCP server secret', r.apiKey);
+    for (const v of Object.values((r.envVars ?? {}) as Record<string, unknown>)) {
+      if (typeof v === 'string') push('a stored MCP server secret', v);
+    }
+  }
+
+  // Channel credentials + the transitional Telegram column, encrypted at rest
+  // since 2026-08-28. A Telegram-only setup has no OAuth credential and may run
+  // on an env-provided LLM key: without these it would sail past the guard and
+  // get a silent re-mint, killing every bot at once. Legacy PLAINTEXT rows are
+  // skipped: they do not depend on the key.
+  const bindingRows = await db
+    .select({ credentials: channelBindings.credentials })
+    .from(channelBindings);
+  for (const r of bindingRows) push('a stored channel credential', r.credentials);
+  for (const r of await db.select({ botToken: agents.telegramBotToken }).from(agents)) {
+    push('a stored channel credential (bot token)', r.botToken);
+  }
+
+  // webhook_triggers.secret is the inbound bearer credential; losing the key
+  // makes every configured webhook un-authenticatable (a permanent 404).
+  for (const r of await db.select({ secret: webhookTriggers.secret }).from(webhookTriggers)) {
+    push('a stored webhook secret', r.secret);
+  }
+  return out;
+}
+
+/**
+ * The master key file and the database must belong together. Called once at
+ * CLI boot (`up`), before the runner and the dashboard are spawned and before
+ * anything reads a secret. Throws, with a message that names the file, when:
+ *
+ *   - the key file is MISSING while the database holds secrets encrypted with
+ *     a key (minting a new one would make them all unreadable, I-6);
+ *   - the key file EXISTS but is unusable (`StateFileError` from its reader);
+ *   - the key file is NOT THE KEY this database's secrets were encrypted with:
+ *     the database's check value does not open with it, or, on an install
+ *     that has no check value yet, none of its secrets does (FA-07).
+ *
+ * Otherwise it makes sure the key file exists (a new install gets its key
+ * here, before the runner and the dashboard could race to mint one) and that
+ * the database holds the check value of that key.
+ *
+ * A database holding NO encrypted value has nothing a key could lose: the
+ * check value is then (re)written for the key on disk, whatever it was.
  */
 export async function assertMasterKeyRestorable(
   db: AnyDrizzleDb,
   options: AssertMasterKeyRestorableOptions = {},
 ): Promise<void> {
-  if (!masterKeyFileMissing(options.keyPath)) return;
+  const keyPath = options.keyPath ?? masterKeyPath();
+  const onDisk = readMasterKeyFile(keyPath);
+  const stored = await getAppSetting(db, MASTER_KEY_CHECK_SETTING);
+  if (onDisk !== null && stored !== '' && masterKeyMatchesCheck(stored, onDisk)) return;
 
-  // credentials.payload is ALWAYS an encrypted blob once a row exists (see
-  // schema/credentials.ts) — any row at all means the missing key would
-  // orphan it.
-  const [credRow] = await db.select({ id: credentials.id }).from(credentials).limit(1);
-  if (credRow) throw missingKeyError('a stored OAuth credential');
-
-  // entity_llm_keys.apiKey is '' until a key is set, then either plaintext
-  // (pre-Brique-26 legacy rows, never touched by secrets.key) or encrypted.
-  // Only the encrypted ones actually depend on the missing key.
-  const llmKeyRows = await db.select({ apiKey: entityLlmKeys.apiKey }).from(entityLlmKeys);
-  const hasEncryptedLlmKey = llmKeyRows.some((r) => r.apiKey !== '' && isEncrypted(r.apiKey));
-  if (hasEncryptedLlmKey) throw missingKeyError('a stored LLM API key');
-
-  // SEC-4 (audit sécu 2026-07-07): the guard also has to cover the OTHER
-  // AES-GCM-encrypted surfaces, or an install whose ONLY secrets are a
-  // connector or MCP server (no OAuth credential / LLM key) would still get a
-  // silent re-mint. connectors.api_key and mcp_servers.api_key are
-  // enc:-prefixed blobs; mcp_servers.env_vars is a JSON map whose VALUES are
-  // individually encrypted (create-mcp.ts).
-  const connectorRows = await db.select({ apiKey: connectors.apiKey }).from(connectors);
-  const hasEncryptedConnector = connectorRows.some((r) => !!r.apiKey && isEncrypted(r.apiKey));
-  if (hasEncryptedConnector) throw missingKeyError('a stored connector API key');
-
-  const mcpRows = await db
-    .select({ apiKey: mcpServers.apiKey, envVars: mcpServers.envVars })
-    .from(mcpServers);
-  const hasEncryptedMcp = mcpRows.some((r) => {
-    if (r.apiKey && isEncrypted(r.apiKey)) return true;
-    const env = (r.envVars ?? {}) as Record<string, unknown>;
-    return Object.values(env).some((v) => typeof v === 'string' && isEncrypted(v));
-  });
-  if (hasEncryptedMcp) throw missingKeyError('a stored MCP server secret');
-
-  // Channel credentials + the transitional Telegram column, encrypted at rest
-  // since 2026-08-28. Same SEC-4 reasoning as connectors/MCP above: an install
-  // whose ONLY secrets are bot tokens — very common, a Telegram-only setup has
-  // no OAuth credential and may run on an env-provided LLM key — would
-  // otherwise sail past this guard and get a silent re-mint, killing every bot
-  // at once. Legacy PLAINTEXT rows are skipped: they do not depend on the key,
-  // so they must not block a boot that would legitimately mint a fresh one.
-  const bindingRows = await db
-    .select({ credentials: channelBindings.credentials })
-    .from(channelBindings);
-  const hasEncryptedBinding = bindingRows.some(
-    (r) => !!r.credentials && isEncrypted(r.credentials),
-  );
-  if (hasEncryptedBinding) throw missingKeyError('a stored channel credential');
-
-  const agentRows = await db.select({ botToken: agents.telegramBotToken }).from(agents);
-  const hasEncryptedBotToken = agentRows.some((r) => !!r.botToken && isEncrypted(r.botToken));
-  if (hasEncryptedBotToken) throw missingKeyError('a stored channel credential (bot token)');
-
-  // webhook_triggers.secret is the inbound bearer credential; losing the key
-  // makes every configured webhook un-authenticatable (a permanent 404).
-  const webhookRows = await db.select({ secret: webhookTriggers.secret }).from(webhookTriggers);
-  const hasEncryptedWebhookSecret = webhookRows.some((r) => !!r.secret && isEncrypted(r.secret));
-  if (hasEncryptedWebhookSecret) throw missingKeyError('a stored webhook secret');
+  const values = await encryptedValues(db);
+  let key: Buffer;
+  if (onDisk === null) {
+    const first = values[0];
+    if (first) throw missingKeyError(keyPath, first.what);
+    key = createMasterKeyFile(keyPath);
+  } else {
+    key = onDisk;
+    // An install from before the check value existed has none: the key is
+    // recognised when it opens a secret the database already holds.
+    const recognised = stored === '' && values.some((v) => decryptsWith(v.blob, onDisk));
+    if (values.length > 0 && !recognised) throw wrongKeyError(keyPath, stored !== '');
+  }
+  await setAppSetting(db, MASTER_KEY_CHECK_SETTING, masterKeyCheckValue(key));
 }
 
-function missingKeyError(what: string): Error {
+function missingKeyError(keyPath: string, what: string): Error {
   return new Error(
-    `~/.nodalai/secrets.key is missing, but the database already has ${what} encrypted with it. ` +
+    `${keyPath} is missing, but the database already has ${what} encrypted with it. ` +
       'Generating a NEW key here would make every existing credential / LLM key permanently ' +
       'undecryptable, with no further warning. Restore the original secrets.key from a backup ' +
       'before running `nodal-agents up` again. If you intend to start fresh, delete the ' +
       'affected rows (or wipe the database) first, then retry.',
+  );
+}
+
+function wrongKeyError(keyPath: string, hadCheck: boolean): Error {
+  const evidence = hadCheck
+    ? "the database's key check does not open with it"
+    : 'none of the secrets stored in the database opens with it';
+  return new Error(
+    `The master key file ${keyPath} is not the key this database was encrypted with: ` +
+      `${evidence}.\n` +
+      'Nothing was changed and Nodal did not start: with this key, every stored credential, ' +
+      'LLM key and bot token would be unreadable.\n' +
+      'Put back the secrets.key that belongs to this database (from the machine or the backup ' +
+      'the database came from), then run `nodal-agents up` again.',
   );
 }

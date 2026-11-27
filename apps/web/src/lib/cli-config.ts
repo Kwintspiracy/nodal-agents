@@ -1,7 +1,8 @@
 import 'server-only';
 
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
-import { nodalHomeEntry } from '@nodal-agents/shared/nodal-home';
+import type { NodalConfig } from '@nodal-agents/shared/nodal-config';
+import { readNodalConfigFile, updateNodalConfigFile } from '@nodal-agents/shared/nodal-config-file';
+import { nodalConfigPath } from '@nodal-agents/shared/state-files';
 
 /**
  * Path to the CLI's config file. Web and CLI co-exist on the same host;
@@ -10,38 +11,31 @@ import { nodalHomeEntry } from '@nodal-agents/shared/nodal-home';
  * `<NODALAI_HOME>/config.json` — the home the CLI handed to this process — and
  * `NODALAI_CONFIG_PATH` still wins for this one file, for the CLI as well.
  */
-export const NODALAI_CONFIG_PATH = nodalHomeEntry('config.json');
+export const NODALAI_CONFIG_PATH = nodalConfigPath();
 
 /**
- * Read the config JSON. Returns null when the file is missing OR malformed —
- * callers decide whether that's a hard error or a soft "first-run".
+ * Read the config. Null means the file does NOT exist, and only that. A file
+ * that exists but cannot be read or understood throws `StateFileError`, whose
+ * message names the file and says how to recover: it is never reported as
+ * missing, and the dashboard never advises `init` over it.
+ *
+ * Same reader as the CLI (`@nodal-agents/shared/nodal-config-file`).
  */
-export function readNodalaiConfig(): Record<string, unknown> | null {
-  if (!existsSync(NODALAI_CONFIG_PATH)) return null;
-  try {
-    const raw = readFileSync(NODALAI_CONFIG_PATH, 'utf-8');
-    const parsed = JSON.parse(raw) as unknown;
-    if (typeof parsed !== 'object' || parsed === null) return null;
-    return parsed as Record<string, unknown>;
-  } catch {
-    return null;
-  }
+export function readNodalaiConfig(): NodalConfig | null {
+  return readNodalConfigFile(NODALAI_CONFIG_PATH);
 }
 
 /**
- * Merge the given partial into the existing config and write it back.
- * Caller passes only the fields they want to change; other top-level keys
- * are preserved as-is so the CLI's untouched fields (LLM, ports, etc.)
- * survive a dashboard-driven update.
+ * Merge the given partial into the existing config and write it back,
+ * atomically, keeping the previous version as `config.json.last-good`.
+ * Caller passes only the fields they want to change; every other key is kept
+ * as it was, including keys this version does not know.
  *
- * Throws if the file doesn't exist (no point creating one from the web —
- * the CLI's `init` is the canonical bootstrap).
+ * Throws `StateFileError`: `STATE_FILE_ABSENT` when there is no file (the CLI
+ * creates it, never the web), `STATE_FILE_INVALID` / `STATE_FILE_UNREADABLE`
+ * when the file is unusable or the merge would make it invalid. Nothing is
+ * written in any of those cases.
  */
-export function mergeNodalaiConfig(patch: Record<string, unknown>): void {
-  const existing = readNodalaiConfig();
-  if (!existing) {
-    throw new Error('cli_config_missing');
-  }
-  const next = { ...existing, ...patch };
-  writeFileSync(NODALAI_CONFIG_PATH, JSON.stringify(next, null, 2), 'utf-8');
+export function mergeNodalaiConfig(patch: Partial<NodalConfig>): void {
+  updateNodalConfigFile(NODALAI_CONFIG_PATH, (current) => ({ ...current, ...patch }));
 }
