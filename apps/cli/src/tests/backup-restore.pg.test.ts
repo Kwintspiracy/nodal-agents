@@ -53,15 +53,8 @@ mkdirSync(user, { recursive: true });
 
 const started: ChildProcess[] = [];
 afterAll(() => {
-  // Only the children started here, by their pid; one already stopped is fine.
-  for (const child of started) {
-    if (child.pid === undefined) continue;
-    try {
-      process.kill(child.pid);
-    } catch {
-      /* already gone */
-    }
-  }
+  // Only the children started here, through their handle: a no-op once one has exited.
+  for (const child of started) child.kill();
   rmSync(root, { recursive: true, force: true });
 });
 
@@ -262,7 +255,7 @@ describe('nodal-agents backup and restore, the real binary @cap:installer-et-dem
           started.push(child);
           const exited = new Promise<void>((done) => child.once('exit', () => done()));
           await waitForFile(marker, { timeoutMs: 120_000, settled: exited });
-          process.kill(child.pid!, 'SIGKILL');
+          child.kill('SIGKILL');
           await exited;
         });
         const left = readdirSync(crashDir);
@@ -309,7 +302,7 @@ describe('nodal-agents backup and restore, the real binary @cap:installer-et-dem
       expect(readFileSync(join(homeA, 'secrets.key')).equals(keyBefore)).toBe(true);
       expect(existsSync(join(homeA, 'snapshots'))).toBe(false);
 
-      process.kill(sleeper.pid!);
+      sleeper.kill();
       rmSync(join(homeA, 'pids', 'processes.json'));
     },
     300_000,
