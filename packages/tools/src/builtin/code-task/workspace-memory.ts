@@ -47,6 +47,7 @@
 import { readFile, readdir, realpath, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
+import { decodeText } from '../file-ops/text-file';
 import { isWithinRoot } from '@nodal-agents/shared';
 
 /** Total size cap of the text handed to the CLI. Our own limit, not Claude's. */
@@ -230,16 +231,22 @@ export async function readWorkspaceMemory(
       });
       return;
     }
-    if (buf.includes(0)) {
+    // La couche texte des outils de fichiers (`file-ops/text-file.ts`) : le
+    // texte dans l'encodage du fichier, sa BOM retirée — ou la raison.
+    const decoded = decodeText(buf);
+    if (!decoded.ok) {
       note({
-        kind: 'file_binary',
+        kind: decoded.kind === 'binary' ? 'file_binary' : 'file_unreadable',
         path: rel(real),
-        detail: 'contains a NUL byte; not a text file, not read',
+        detail:
+          decoded.kind === 'binary'
+            ? `${decoded.detail}; not a text file, not read`
+            : `${decoded.detail}; not read`,
       });
       return;
     }
     seen.add(real);
-    const content = buf.toString('utf8').replace(/^﻿/, '');
+    const content = decoded.text;
     const here = rel(real);
     blocks.push({
       path: here,
