@@ -317,17 +317,34 @@ function renameWithRetry(from: string, to: string): void {
   }
 }
 
-/** Flush the folder so the renamed entry survives a power cut (POSIX). */
-function syncDirectory(dir: string): void {
+/**
+ * The codes a folder sync answers where the platform or the file system cannot
+ * sync a folder at all (Windows refuses to open one for it; some file systems
+ * do not support it). The rename itself is done and the file is whole.
+ */
+const NO_FOLDER_SYNC = new Set(['EINVAL', 'ENOTSUP', 'EISDIR', 'EPERM', 'EACCES']);
+
+/**
+ * Flush the folder of `path` so the renamed entry survives a power cut. Runs
+ * AFTER the rename: its failure cannot mean "nothing was changed", and the
+ * error says so.
+ */
+function syncFolderOf(path: string): void {
   if (process.platform === 'win32') return; // a folder cannot be opened for sync there
-  const fd = openSync(dir, 'r');
+  let fd: number | null = null;
   try {
+    fd = openSync(dirname(path), 'r');
     fsyncSync(fd);
   } catch (err) {
-    // Some file systems cannot sync a folder at all; the rename itself is done.
-    if (!['EINVAL', 'ENOTSUP', 'EISDIR'].includes(errnoOf(err) ?? '')) throw err;
+    if (NO_FOLDER_SYNC.has(errnoOf(err) ?? '')) return;
+    throw new StateFileError(
+      'STATE_FILE_WRITE_FAILED',
+      path,
+      `${path} was saved, but its folder could not be flushed to disk: ${reasonOf(err)}\n` +
+        'A power cut before the system writes it could still undo the change.',
+    );
   } finally {
-    closeSync(fd);
+    if (fd !== null) closeSync(fd);
   }
 }
 
@@ -342,7 +359,6 @@ function replaceAtomically(path: string, data: string, seams: StateFileWriteSeam
     removeQuietly(tmp);
     throw err;
   }
-  syncDirectory(dirname(path));
 }
 
 function writeFailed(path: string, err: unknown): StateFileError {
@@ -396,6 +412,7 @@ export function replaceStateFile<T>(
   } catch (err) {
     throw writeFailed(path, err);
   }
+  syncFolderOf(path);
 }
 
 /**
@@ -442,5 +459,5 @@ export function createStateFile<T>(path: string, text: string, spec: StateFileSp
   } finally {
     removeQuietly(tmp);
   }
-  syncDirectory(dirname(path));
+  syncFolderOf(path);
 }
