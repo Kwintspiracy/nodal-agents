@@ -268,6 +268,40 @@ describe('initGitRepository runs git through the programs it is given @cap:trava
     expect(launches[0]!.file).toBe(await resolveGitBinary());
   });
 
+  it('git init reçoit l’environnement nettoyé et la configuration fixe, jamais les secrets du serveur', async () => {
+    const p = await dossier('environnement');
+    const fakes = { DATABASE_URL: 'postgres://u:fake@h/db', WORKER_SECRET: 'fake-secret' };
+    const saved = Object.fromEntries(Object.keys(fakes).map((k) => [k, process.env[k]]));
+    Object.assign(process.env, fakes);
+    const launches: ProgramRunOptions[] = [];
+    const recording: ProgramRunner = {
+      execFile(file, args, opts) {
+        launches.push(opts);
+        return hostPrograms.execFile(file, args, opts);
+      },
+      spawn: (file, args, opts) => hostPrograms.spawn(file, args, opts),
+    };
+    try {
+      expect(await initGitRepository(p, recording)).toEqual({
+        kind: 'initialised',
+        gitignoreWritten: true,
+      });
+    } finally {
+      for (const [k, v] of Object.entries(saved)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
+    // Le vrai dépôt est là.
+    expect(existsSync(join(p, '.git', 'HEAD'))).toBe(true);
+    const env = launches[0]!.env;
+    expect(Object.keys(env)).not.toContain('DATABASE_URL');
+    expect(Object.keys(env)).not.toContain('WORKER_SECRET');
+    expect(Object.values(env).join('\n')).not.toContain('fake');
+    expect(env['GIT_CONFIG_NOSYSTEM']).toBe('1');
+    expect(Number(env['GIT_CONFIG_COUNT'])).toBeGreaterThan(0);
+  });
+
   it('un `.git` qui est un lien PENDANT est un nom présent : rien n’est lancé, sur tous les systèmes', async () => {
     // `access` suivait le lien : présent sous Windows (jonction), absent sous
     // POSIX (lien symbolique), et `git init` partait. `lstat` lit le nom.

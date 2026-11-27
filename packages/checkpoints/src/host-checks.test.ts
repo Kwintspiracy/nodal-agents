@@ -22,6 +22,7 @@ import { execFile, execFileSync, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import {
+  appendFile,
   link,
   mkdir,
   mkdtemp,
@@ -411,8 +412,9 @@ describe('the scratch index enters the store only checked against the snapshot a
     });
     expect(await snapshot(store, ws, 'one', { programs })).not.toBeNull();
 
-    await writeFile(
-      join(store, 'gitconfig'),
+    // La config du MAGASIN (`GIT_DIR`) : le lanceur ne lit aucune config globale.
+    await appendFile(
+      join(store, 'store', 'config'),
       '[core]\n\ttrustctime = false\n\tcheckStat = minimal\n',
     );
     await writeFile(file, 'BBBB');

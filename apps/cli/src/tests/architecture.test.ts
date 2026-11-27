@@ -15,6 +15,7 @@ import {
   scanForDbDriverImports,
   scanForModuleReferences,
   assertNoViolations,
+  scanForGitSpawnOutsideLauncher,
 } from '@nodal-agents/test-kit';
 
 const srcDir = join(fileURLToPath(import.meta.url), '..', '..');
@@ -32,6 +33,13 @@ function workspaceSrcDirs(repoRoot: string): string[] {
 }
 
 describe('architecture invariants', () => {
+  it('starts git for itself only through the launcher (@nodal-agents/shared/internal-git)', () => {
+    assertNoViolations(
+      'git lancé hors du lanceur',
+      scanForGitSpawnOutsideLauncher({ srcDir: srcDir }),
+    );
+  });
+
   it('no agent or server slug hardcoded in source (invariant #1)', () => {
     assertNoViolations('slugs d\u2019agent', scanForAgentSlugs({ srcDir }));
   });

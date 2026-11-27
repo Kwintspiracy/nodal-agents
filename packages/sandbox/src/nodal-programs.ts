@@ -29,63 +29,42 @@
 // lance (`workspace`), relu à chaque session ; hors espace (le CLI qui
 // restaure un instantané), `noWorkspaceSandbox`.
 //
+// LE CONTENEUR N'EST PAS LA SEULE GARDE. Dans le conteneur comme sur l'hôte,
+// git est lancé par `runInternalGit` (@nodal-agents/shared/internal-git) :
+// configuration fixe, ni configuration de l'utilisateur ni du système,
+// environnement nettoyé. Ce qu'un dépôt nomme n'y est pas exécuté et les
+// secrets du runner n'y sont pas, que ce bac à sable soit là ou non.
+//
 // UNE SESSION PAR OPÉRATION (un instantané, une phase de constat) : ses appels
 // partagent un conteneur par jeu de dossiers (mesuré : ~170 ms pour un
 // conteneur neuf, ~30 ms par appel de plus), et `close()` le tue — rien de ce
 // qu'une commande plantée aurait lancé ne survit à l'opération.
 
-import { execFile as nodeExecFile, spawn as nodeSpawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
-import type { Readable } from 'node:stream';
+import {
+  hostProgramRunner,
+  type ProgramChild,
+  type ProgramLaunch,
+  type ProgramRunner,
+} from '@nodal-agents/shared/internal-git';
 import { JobProcessScope } from './job-scope';
 import type { WorkspaceSandboxReader } from './policy';
 import { createSandbox, type Sandbox } from './status';
 import { mxcBackend } from './windows-mxc';
 
+// La FORME d'un lancement est celle du lanceur de git de Nodal
+// (`@nodal-agents/shared/internal-git`) : c'est lui qui appelle ces
+// programmes, avec un environnement TOUJOURS explicite — aucun lancement ne
+// retombe sur celui du processus.
+export type { ProgramChild, ProgramRunner };
+
 /** Ce qu'un programme de Nodal reçoit pour UN lancement. */
-export interface ProgramRunOptions {
-  readonly cwd?: string;
-  /** L'environnement EXACT du programme ; celui du processus par défaut. */
-  readonly env?: NodeJS.ProcessEnv;
+export type ProgramRunOptions = ProgramLaunch & {
   /** Borne de temps (ms), comme `execFile` : le programme est tué au-delà. */
   readonly timeout?: number;
   /** Borne de sortie (octets), comme `execFile`. */
   readonly maxBuffer?: number;
-  /** Ce que le programme doit pouvoir ÉCRIRE (aucun pour une lecture). */
-  readonly writableRoots: readonly string[];
-  /** Ce qu'il doit pouvoir LIRE, même sous le dossier de données refusé. */
-  readonly readableRoots: readonly string[];
-}
-
-/** Un programme lancé en flux. */
-export interface ProgramChild {
-  readonly stdout: Readable;
-  readonly stderr: Readable;
-  /** Demande l'arrêt. Idempotent. */
-  kill(): void;
-  /** Sa fin : le code de sortie, `null` s'il a été tué. Ne rejette jamais. */
-  readonly closed: Promise<{ code: number | null }>;
-}
-
-/** Lancer un programme de Nodal : la forme d'`execFile` et de `spawn`. */
-export interface ProgramRunner {
-  /**
-   * Comme `execFile` (sortie en texte UTF-8) : rejette sur un code non nul
-   * (`err.code` = le code), un dépassement de borne (`err.killed` = true), ou
-   * un lancement impossible (l'erreur du système, ou `SandboxStartError`).
-   */
-  execFile(
-    file: string,
-    args: readonly string[],
-    opts: ProgramRunOptions,
-  ): Promise<{ stdout: string; stderr: string }>;
-  /** Lance en flux ; rejette si le programme ne peut pas démarrer. */
-  spawn(
-    file: string,
-    args: readonly string[],
-    opts: Omit<ProgramRunOptions, 'timeout' | 'maxBuffer'>,
-  ): Promise<ProgramChild>;
-}
+};
 
 /** Une session : un `ProgramRunner` dont `close()` tue ce qu'elle a ouvert. */
 export interface NodalPrograms extends ProgramRunner {
@@ -96,52 +75,8 @@ export interface NodalPrograms extends ProgramRunner {
 
 // ─── Hors conteneur : Node, tel quel ─────────────────────────────────────────
 
-/** Les programmes sur l'hôte : `execFile` et `spawn` de Node, inchangés. */
-export const hostPrograms: ProgramRunner = {
-  execFile(file, args, opts) {
-    return new Promise((resolve, reject) => {
-      nodeExecFile(
-        file,
-        [...args],
-        {
-          ...(opts.cwd !== undefined ? { cwd: opts.cwd } : {}),
-          ...(opts.env !== undefined ? { env: opts.env } : {}),
-          ...(opts.timeout !== undefined ? { timeout: opts.timeout } : {}),
-          ...(opts.maxBuffer !== undefined ? { maxBuffer: opts.maxBuffer } : {}),
-          windowsHide: true,
-          encoding: 'utf8',
-        },
-        (err, stdout, stderr) => {
-          if (err) reject(err);
-          else resolve({ stdout, stderr });
-        },
-      );
-    });
-  },
-  spawn(file, args, opts) {
-    return new Promise((resolve, reject) => {
-      const child = nodeSpawn(file, [...args], {
-        ...(opts.cwd !== undefined ? { cwd: opts.cwd } : {}),
-        ...(opts.env !== undefined ? { env: opts.env } : {}),
-        windowsHide: true,
-      });
-      const closed = new Promise<{ code: number | null }>((r) =>
-        child.on('close', (code) => r({ code })),
-      );
-      child.once('error', reject);
-      child.once('spawn', () => {
-        child.off('error', reject);
-        child.on('error', () => undefined); // une erreur tardive finit par `close`
-        resolve({
-          stdout: child.stdout,
-          stderr: child.stderr,
-          kill: () => child.kill(),
-          closed,
-        });
-      });
-    });
-  },
-};
+/** Les programmes sur l'hôte : celui du lanceur, le même pour tous. */
+export const hostPrograms: ProgramRunner = hostProgramRunner;
 
 // ─── Dans le bac à sable ─────────────────────────────────────────────────────
 
@@ -187,7 +122,7 @@ export async function openNodalPrograms(opts: NodalProgramsOptions): Promise<Nod
   }
   const scope = new JobProcessScope(`nodal-programs-${++sessions}`, sandbox);
   const spawn: ProgramRunner['spawn'] = async (file, args, opts) => {
-    const env = opts.env ?? process.env;
+    const env = opts.env;
     const container = await scope.container(opts.writableRoots, env, opts.readableRoots);
     const p = await container.start({
       target: { file, args: [...args] },

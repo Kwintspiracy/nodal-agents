@@ -20,7 +20,16 @@
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, readdir, rm, utimes, writeFile } from 'node:fs/promises';
+import {
+  appendFile,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  utimes,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -59,8 +68,9 @@ async function sameTickRewrite(): Promise<string> {
   expect(one).not.toBeNull();
 
   // Seules la taille et la date entière comptent ; la ctime n'aide pas git.
-  await writeFile(
-    join(store, 'gitconfig'),
+  // La config du MAGASIN (`GIT_DIR`) : le lanceur ne lit aucune config globale.
+  await appendFile(
+    join(store, 'store', 'config'),
     '[core]\n\ttrustctime = false\n\tcheckStat = minimal\n',
   );
   // L'index du workspace, daté du même instant que l'entrée : elle est racy.

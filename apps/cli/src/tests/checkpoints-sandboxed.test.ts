@@ -6,12 +6,13 @@
 //
 // Même méthode que packages/tools/src/tests/git-sandboxed.test.ts : le piège
 // est posé par une commande confinée, la commande plantée écrit un marqueur
-// hors de toute racine du conteneur, et un TÉMOIN (la même restauration, git
-// sur l'hôte) prouve qu'il est armé.
+// hors de toute racine du conteneur, et un TÉMOIN (un git lancé en direct sur
+// l'hôte, sans le lanceur de Nodal) prouve qu'il est armé. Sur l'hôte, le
+// lanceur (@nodal-agents/shared/internal-git) ne l'exécute pas non plus.
 
 import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
 import { existsSync, mkdtempSync } from 'node:fs';
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -125,10 +126,18 @@ afterEach(async () => {
 describe.runIf(available)(
   'checkpoints restore runs git in the sandbox: a planted sub-repository never runs on the host @cap:executer-une-commande/moteur (Windows, MXC available)',
   () => {
-    it('TÉMOIN : la même restauration, git sur l’hôte, exécute le piège', async () => {
+    it('TÉMOIN : un git lancé EN DIRECT sur l’hôte (sans le lanceur de Nodal) exécute le piège', async () => {
+      await plantedAndSnapshotted();
+      // Le git du sous-dépôt, appelé comme le fait celui du dossier parent.
+      hostGit(join(ws, 'sub'), 'status', '--porcelain');
+      expect(existsSync(marker), 'the trap is not armed: this test would prove nothing').toBe(true);
+    }, 120_000);
+
+    it('la même restauration, git sur l’hôte par le lanceur, ne lance rien et restaure', async () => {
       const sha = await plantedAndSnapshotted();
       await restoreCheckpoint(store, ws, sha);
-      expect(existsSync(marker), 'the trap is not armed: this test would prove nothing').toBe(true);
+      expect(await readFile(join(ws, 'a.txt'), 'utf8')).toBe('a' + String.fromCharCode(10));
+      expect(existsSync(marker), 'the planted command ran on the HOST').toBe(false);
     }, 120_000);
 
     it('la commande du CLI restaure sans rien lancer sur l’hôte', async () => {

@@ -414,6 +414,73 @@ export function scanForMutatingSpawnOutsideIntent(opts: ScanOptions, pattern: Re
 }
 
 /**
+ * Tout git que Nodal lance pour lui-même passe par UN lanceur :
+ * `runInternalGit` / `spawnInternalGit` (`packages/shared/src/internal-git.ts`).
+ * Lui seul pose la configuration fixe, écarte celle de l'utilisateur et du
+ * système, et nettoie l'environnement ; un git lancé à côté n'aurait rien de
+ * tout cela, et aucun test de comportement ne le verrait.
+ *
+ * Ce que la règle attrape, dans le code livré (les fichiers de test ne sont
+ * pas lus : ils lancent git en direct pour poser leurs dépôts) :
+ *   - la résolution du binaire de git (`resolveGitBinary`, le sous-chemin
+ *     `git-binary`) utilisée hors du lanceur : sans elle, pas de chemin
+ *     absolu de git à lancer ;
+ *   - `git` nommé comme programme d'un appel qui lance un processus
+ *     (`execFile`, `spawn`, `exec`, leurs variantes synchrones, `fork`, et la
+ *     méthode du même nom d'un lanceur de programmes), même sur plusieurs
+ *     lignes ;
+ *   - `git` passé en premier argument d'un appel QUELCONQUE suivi d'une liste
+ *     d'arguments (`run('git', [...])`) : le même lancement sous un autre nom
+ *     (`const run = promisify(execFile)`, un import renommé), la forme qu'il
+ *     a eue dans `packages/checkpoints` jusqu'au lanceur.
+ *
+ * Les commandes git qu'un AGENT lance (`run_command`) ne sont pas concernées :
+ * elles passent par l'outil de l'agent, sous ses règles, et ne nomment pas git
+ * dans le code. Le fichier du lanceur est passé en `skipFiles` par le paquet
+ * qui l'héberge ; ailleurs, rien n'est permis.
+ */
+export const GIT_SPAWN_RULES: ReadonlyArray<{ readonly rule: string; readonly pattern: RegExp }> = [
+  {
+    rule: 'git-binary-outside-launcher',
+    pattern:
+      /from\s+['"](?:@nodal-agents\/shared\/git-binary|\.{1,2}\/(?:[\w.-]+\/)*git-binary)['"]|\bresolveGitBinary\s*\(/g,
+  },
+  {
+    rule: 'git-spawn-outside-launcher',
+    pattern:
+      /\b(?:execFile|execFileSync|spawn|spawnSync|exec|execSync|fork)\s*\(\s*['"`]git(?:\.exe)?(?:['"`]|\s)/g,
+  },
+  {
+    rule: 'git-spawn-outside-launcher',
+    pattern: /\(\s*['"`]git(?:\.exe)?['"`]\s*,\s*\[/g,
+  },
+];
+
+/** Un fichier de test : il pose ses dépôts avec un git en direct, c'est son droit. */
+const TEST_FILE = /\.(?:test|spec)\.[cm]?[jt]sx?$/;
+
+export function scanForGitSpawnOutsideLauncher(opts: ScanOptions): Violation[] {
+  const files = collectTsFiles(
+    opts.srcDir,
+    opts.skipDirs ?? DEFAULT_SKIP,
+    [],
+    opts.extensions ?? ['.ts', '.tsx', '.mts', '.cts', '.js', '.mjs', '.cjs'],
+  ).filter((f) => !isSkipped(f, opts.skipFiles ?? []) && !TEST_FILE.test(f));
+  const out: Violation[] = [];
+  for (const file of files) {
+    const text = readFileSync(file, 'utf-8');
+    const lines = text.split('\n');
+    for (const { rule, pattern } of GIT_SPAWN_RULES) {
+      for (const m of text.matchAll(new RegExp(pattern.source, pattern.flags))) {
+        const line = text.slice(0, m.index).split('\n').length;
+        out.push({ file, line, text: (lines[line - 1] ?? '').trim().slice(0, 120), rule });
+      }
+    }
+  }
+  return out;
+}
+
+/**
  * Le scanner MULTILIGNE — pour les motifs qu'un appel Drizzle étale sur
  * plusieurs lignes (`.update(agentJobs)\n  .set({\n    status: …`). Le scanner
  * ligne par ligne ci-dessus les rate par construction.

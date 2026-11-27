@@ -27,6 +27,7 @@ import {
   RUNNER_NON_TERMINAL_SENDERS,
   scanFilesForDeliverableTypeLiterals,
   formatViolations,
+  scanForGitSpawnOutsideLauncher,
 } from '@nodal-agents/test-kit';
 import { join } from 'node:path';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
@@ -278,5 +279,12 @@ describe('architecture — une porte par transition poussée (#944) @cap:suivre-
     }
     const used = new Set(calls.map((v) => rel(v.file)));
     expect(Object.keys(OUT_OF_PROCESS_WRITERS).filter((f) => !used.has(f))).toEqual([]);
+  });
+});
+
+describe('architecture — git n’est lancé que par le lanceur de Nodal', () => {
+  it('starts git for itself only through the launcher (@nodal-agents/shared/internal-git)', () => {
+    const v = scanForGitSpawnOutsideLauncher({ srcDir: SRC_DIR });
+    if (v.length > 0) expect.fail(formatViolations('git lancé hors du lanceur', v));
   });
 });
