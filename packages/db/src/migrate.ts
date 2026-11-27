@@ -25,6 +25,14 @@ export interface RunMigrationsOptions {
    * Default: false.
    */
   patchVectorAsText?: boolean;
+  /**
+   * The program's migrations folder (the `.sql` files and `meta/_journal.json`).
+   * Defaults to the one bundled with this build (`sourceMigrationsFolder`).
+   * Every reader below (the migrator, the gap check, the schema state) takes
+   * the journal from the SAME folder, so a caller cannot compare a database
+   * with one journal and migrate it with another.
+   */
+  migrationsFolder?: string;
 }
 
 /**
@@ -93,7 +101,7 @@ const dossiersPatches = new Map<string, string>();
 
 /** The folder Drizzle is actually pointed at — patched when pgvector is absent. */
 function effectiveMigrationsFolder(opts: RunMigrationsOptions): string {
-  const source = sourceMigrationsFolder();
+  const source = opts.migrationsFolder ?? sourceMigrationsFolder();
   if (opts.patchVectorAsText !== true) return source;
   const deja = dossiersPatches.get(source);
   if (deja !== undefined) return deja;
@@ -154,7 +162,7 @@ function patchMigrationsForNoVector(sourceFolder: string): string {
 // tel quel dans `created_at` par drizzle, patché ou non.
 
 /** Une entrée de `meta/_journal.json`. */
-interface JournalEntry {
+export interface JournalEntry {
   idx: number;
   when: number;
   tag: string;
@@ -195,6 +203,24 @@ function readJournal(folder: string): JournalEntry[] {
   }
   const brut = JSON.parse(readFileSync(chemin, 'utf8')) as { entries?: JournalEntry[] };
   return brut.entries ?? [];
+}
+
+/** Le journal du programme, celui que `runMigrations` appliquerait avec ces options. */
+export function readProgramJournal(opts: RunMigrationsOptions = {}): JournalEntry[] {
+  return readJournal(effectiveMigrationsFolder(opts));
+}
+
+/**
+ * Les `created_at` que la base a enregistrés, ou `null` quand elle n'a pas de
+ * table d'historique (une base que personne n'a migrée).
+ */
+export async function appliedMigrationTimes(connectionString: string): Promise<number[] | null> {
+  const sql = postgres(connectionString, { max: 1, onnotice: () => {} });
+  try {
+    return await appliedWhen(sql);
+  } finally {
+    await sql.end();
+  }
 }
 
 /** Les `created_at` déjà enregistrés, ou `null` quand la table n'existe pas. */

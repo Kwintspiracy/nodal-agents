@@ -1,5 +1,6 @@
 // postgres.ts — start/stop embedded Postgres using the embedded-postgres package
 
+import type { MigrateDatabaseOptions, MigrateDatabaseResult } from '@nodal-agents/db/safe-migrate';
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { PG_DATA_DIR } from './config.ts';
@@ -1133,42 +1134,17 @@ async function stopThisCluster(dataDir: string): Promise<boolean> {
 // ─── Drizzle migrations ───────────────────────────────────────────────────────
 
 /**
- * Run Drizzle migrations against the given database URL.
- * Delegates to @nodal-agents/db/migrate to respect the architecture rule:
- * only packages/db may import drizzle-orm or postgres directly.
- *
- * @param patchVectorAsText when true, rewrite `vector(N)` columns to `text`
- *   in migration SQL — used when pgvector wasn't loaded (keyword-only mode).
+ * Move the database's schema to this program's journal, the ONE way it is
+ * done (`@nodal-agents/db/safe-migrate`): a database newer than this program
+ * is refused, a skipped migration is refused unless repair is asked, and the
+ * schema never moves over rows without a copy taken first inside the cluster,
+ * with the state files beside it. Lazy, like every database call of the CLI:
+ * only packages/db imports the driver.
  */
-export async function runMigrations(
+export async function migrateDatabase(
   databaseUrl: string,
-  opts: { patchVectorAsText?: boolean } = {},
-): Promise<void> {
-  const { runMigrations: migrate } = await import('@nodal-agents/db/migrate');
-  await migrate(databaseUrl, opts);
-}
-
-/**
- * Les migrations que le journal annonce et que cette base n'a jamais reçues.
- *
- * Le migrateur de drizzle saute en silence une migration mergée après une
- * plus récente (issue #298) ; c'est ce contrôle qui le dit. La règle et sa
- * raison vivent dans `@nodal-agents/db/migrate` — seul `packages/db` importe
- * le pilote Postgres.
- */
-export async function findMigrationGaps(
-  databaseUrl: string,
-  opts: { patchVectorAsText?: boolean } = {},
-): Promise<{ idx: number; tag: string; when: number }[]> {
-  const { findMigrationGaps: chercher } = await import('@nodal-agents/db/migrate');
-  return chercher(databaseUrl, opts);
-}
-
-/** Applique les migrations manquantes, dans l'ordre du journal. Rend la liste. */
-export async function repairMigrations(
-  databaseUrl: string,
-  opts: { patchVectorAsText?: boolean } = {},
-): Promise<{ idx: number; tag: string; when: number }[]> {
-  const { repairMigrations: reparer } = await import('@nodal-agents/db/migrate');
-  return reparer(databaseUrl, opts);
+  opts: MigrateDatabaseOptions,
+): Promise<MigrateDatabaseResult> {
+  const { migrateDatabase: migrate } = await import('@nodal-agents/db/safe-migrate');
+  return migrate(databaseUrl, opts);
 }

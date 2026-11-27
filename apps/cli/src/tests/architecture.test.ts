@@ -6,8 +6,8 @@
 // @nodal-agents/test-kit — one scanner, every package, no local copies to drift.
 
 import { describe, it, expect } from 'vitest';
-import { existsSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   scanForAgentSlugs,
@@ -75,6 +75,35 @@ describe('architecture invariants', () => {
         ],
       }),
     );
+  });
+
+  // The schema moves through ONE function (packages/db/src/safe-migrate.ts):
+  // it refuses a database newer than the program and copies the database
+  // before it migrates. A second caller of the migrator or of the gap repair
+  // would migrate without either, in silence. Test files may call them to
+  // build their databases; product code may not.
+  it('calls the migrator nowhere but packages/db/src/safe-migrate.ts', () => {
+    const repoRoot = join(srcDir, '..', '..', '..');
+    const allowed = new Set(['packages/db/src/migrate.ts', 'packages/db/src/safe-migrate.ts']);
+    const callers: string[] = [];
+    const walk = (dir: string): void => {
+      for (const name of readdirSync(dir)) {
+        const full = join(dir, name);
+        if (statSync(full).isDirectory()) {
+          if (name !== 'tests' && name !== 'node_modules') walk(full);
+          continue;
+        }
+        if (!/\.(ts|tsx|mts)$/.test(name) || /\.test\./.test(name)) continue;
+        const rel = relative(repoRoot, full).split(sep).join('/');
+        if (allowed.has(rel)) continue;
+        if (/\b(runMigrations|repairMigrations)\s*\(/.test(readFileSync(full, 'utf-8')))
+          callers.push(rel);
+      }
+    };
+    const dirs = workspaceSrcDirs(repoRoot);
+    expect(dirs).toEqual(expect.arrayContaining([join(repoRoot, 'packages', 'db', 'src')]));
+    for (const dir of dirs) walk(dir);
+    expect(callers).toEqual([]);
   });
 
   // Invariant #2 is deliberately NOT asserted here. It governs the RUNNER —

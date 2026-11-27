@@ -7,6 +7,7 @@ import { Command } from 'commander';
 import chalk from 'chalk';
 import { assertNodalHomeSettings } from '@nodal-agents/shared/nodal-home';
 import { getInstalledVersion } from './lib/version.ts';
+import { DEFAULT_SNAPSHOTS_KEPT } from '@nodal-agents/shared/nodal-config';
 
 // NODALAI_HOME (ou une variable plus étroite, NODALAI_CONFIG_PATH…) vide ou
 // relative : refusée ICI, avant toute commande, avec le message seul. Chaque
@@ -209,6 +210,36 @@ program
     const { runLogs } = await import('./commands/logs.ts');
     try {
       await runLogs(service);
+    } catch (err) {
+      console.error(chalk.red('Error:'), err instanceof Error ? err.message : String(err));
+      process.exit(1);
+    }
+  });
+
+// ── nodal-agents rollback ─────────────────────────────────────────────────────
+//
+// The way back from a migration: `up` copies the database inside its cluster
+// before every migration (with config.json and secrets.key beside the copy).
+// This lists the copies, or swaps one back in, the current database kept as a
+// copy of its own. Refused while Nodal runs.
+
+program
+  .command('rollback')
+  .description('List the copies of the database taken before migrations, or swap one back in')
+  .argument('[snapshot]', 'The copy to swap back in (omit to list them)')
+  .addHelpText(
+    'after',
+    `
+A copy is taken before every migration of a database that holds data. Nodal keeps
+the last ${DEFAULT_SNAPSHOTS_KEPT} (setting: "snapshots": { "keep": N } in config.json, at least 1);
+older ones are dropped only once a new one is complete. Swapping one back keeps
+the current database as a copy too: nothing is dropped. Stop Nodal first
+(nodal-agents down).`,
+  )
+  .action(async (snapshot: string | undefined) => {
+    const { runRollback } = await import('./commands/rollback.ts');
+    try {
+      await runRollback(snapshot === undefined ? {} : { name: snapshot });
     } catch (err) {
       console.error(chalk.red('Error:'), err instanceof Error ? err.message : String(err));
       process.exit(1);

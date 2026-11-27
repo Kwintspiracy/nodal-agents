@@ -286,6 +286,7 @@ import { requireAuth, LocalAuthProvider, ClaimError } from '@nodal-agents/auth';
 import { env } from './env.ts';
 import { NODALAI_CONFIG_PATH, mergeNodalaiConfig, readNodalaiConfig } from './cli-config.ts';
 import { StateFileError } from '@nodal-agents/shared/state-files';
+import { isNewerVersion } from '@nodal-agents/shared/version-compare';
 import type { NodalConfig } from '@nodal-agents/shared/nodal-config';
 import {
   SERVICE_LOG_NAMES,
@@ -346,8 +347,7 @@ import type { PartialTotal } from './partial-total.ts';
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export type ActionResult<T = void> =
-  | { ok: true; data: T }
-  | { ok: false; code: string; message: string };
+  { ok: true; data: T } | { ok: false; code: string; message: string };
 
 function ok<T>(data: T): ActionResult<T> {
   return { ok: true, data };
@@ -2780,14 +2780,12 @@ export async function getSpaceConversationAction(
         .filter(
           (r) => r.decisionStatus === 'not_configured' || r.decisionStatus === 'pending_approval',
         )
-        .map(
-          (r): VerificationUnconfiguredView => ({
-            deliverableType: r.deliverableType,
-            canonicalKey: r.canonicalKey,
-            displayPath: r.displayPath,
-            reason: r.decisionStatus === 'pending_approval' ? 'pending_approval' : 'not_configured',
-          }),
-        ),
+        .map((r): VerificationUnconfiguredView => ({
+          deliverableType: r.deliverableType,
+          canonicalKey: r.canonicalKey,
+          displayPath: r.displayPath,
+          reason: r.decisionStatus === 'pending_approval' ? 'pending_approval' : 'not_configured',
+        })),
       // P12 — l'état de chaque DOCUMENT, rangé par sa clé canonique.
       deliverables: deliverableStatuses(unconfiguredRows),
     };
@@ -5424,9 +5422,7 @@ export async function updateMcpServerConfigAction(
       const effectiveUrl = (parsed.data.url ?? existing.url ?? '').trim();
       if (!effectiveUrl) return fail('validation_failed', 'Server URL is required');
       const effectiveScheme = (parsed.data.authScheme ?? existing.authScheme ?? 'header') as
-        | 'header'
-        | 'query'
-        | 'bearer';
+        'header' | 'query' | 'bearer';
       const effectiveParam =
         effectiveScheme === 'bearer'
           ? 'Authorization'
@@ -9290,8 +9286,7 @@ export async function previewCommunitySkillUpdateAction(
       return fail('network_error', 'Could not reach the runner — is it running?');
     }
     const body = (await res.json()) as
-      | ({ ok: true } & CommunitySkillUpdatePreview)
-      | { ok: false; error: string; message: string };
+      ({ ok: true } & CommunitySkillUpdatePreview) | { ok: false; error: string; message: string };
     if (!body.ok) return fail(body.error, body.message);
     return ok({
       currentContent: body.currentContent,
@@ -9396,8 +9391,7 @@ export async function acknowledgeSkillUpdateAction(
       return fail('network_error', 'Could not reach the runner — is it running?');
     }
     const body = (await res.json()) as
-      | { ok: true; contentChanged: boolean }
-      | { ok: false; error: string; message: string };
+      { ok: true; contentChanged: boolean } | { ok: false; error: string; message: string };
     if (!body.ok) {
       return fail(body.error, body.message);
     }
@@ -10828,21 +10822,6 @@ export type VersionInfo = {
   latest: string | null;
   updateAvailable: boolean;
 };
-
-// Compare two "X.Y.Z" versions — true when `latest` is strictly newer.
-function isNewerVersion(latest: string, current: string): boolean {
-  const parse = (v: string) =>
-    v
-      .split('-')[0]
-      .split('.')
-      .map((n) => parseInt(n, 10) || 0);
-  const a = parse(latest);
-  const b = parse(current);
-  for (let i = 0; i < 3; i++) {
-    if ((a[i] ?? 0) !== (b[i] ?? 0)) return (a[i] ?? 0) > (b[i] ?? 0);
-  }
-  return false;
-}
 
 // Cache the npm lookup so navigating the dashboard doesn't hit the registry on
 // every sidebar mount. A 30-minute TTL is plenty for an update nudge — but a

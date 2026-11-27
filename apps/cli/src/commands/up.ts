@@ -4,7 +4,7 @@ import chalk from 'chalk';
 import ora from 'ora';
 import open from 'open';
 import { randomBytes } from 'crypto';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, statfsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import {
   readConfig,
@@ -18,9 +18,7 @@ import {
 } from '../lib/config.ts';
 import {
   startEmbeddedPostgres,
-  runMigrations,
-  findMigrationGaps,
-  repairMigrations,
+  migrateDatabase,
   stopOrphanPostgres,
   livePostmasterPid,
   postgresProcessesForDataDir,
@@ -83,6 +81,16 @@ import {
   type ProcessRecord,
 } from '../lib/processes.ts';
 import { createClient, assertMasterKeyRestorable } from '@nodal-agents/db';
+import { DatabaseNewerThanProgramError } from '@nodal-agents/db/schema-state';
+import { MigrationFailedError, MigrationGapError, errorChain } from '@nodal-agents/db/safe-migrate';
+import {
+  DEFAULT_SNAPSHOTS_KEPT,
+  SnapshotError,
+  formatBytes,
+  homeStateFiles,
+} from '@nodal-agents/db/snapshots';
+import { databaseNewerRefusal, migrationFailure, snapshotRefusal } from '../lib/schema-messages.ts';
+import { getInstalledVersion } from '../lib/version.ts';
 import { startHealthWatchdog, probeRunnerHealth, type Watchdog } from '../lib/watchdog.ts';
 
 async function killSilent(child: SpawnResult): Promise<void> {
@@ -197,7 +205,12 @@ export interface RunUpOptions {
   skipRendererInstall?: boolean;
 }
 
-export async function runUp(opts: RunUpOptions = {}): Promise<void> {
+/**
+ * The embedded database's binaries are there and can run: steps 0 and 0b of
+ * `up`, shared with every command that starts the cluster itself
+ * (`rollback`). Throws `EmbeddedPostgresUnavailableError` when they are not.
+ */
+export async function ensureDatabaseBinaries(): Promise<void> {
   // ── 0. Are the database binaries actually there? (issue #247) ─────────────
   //
   // Demandé AVANT tout le reste, config comprise : sans binaires il n'y a rien
@@ -238,6 +251,10 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
       }
     }
   }
+}
+
+export async function runUp(opts: RunUpOptions = {}): Promise<void> {
+  await ensureDatabaseBinaries();
 
   // ── 1. Load config (write a no-friction default if missing) ───────────────
   //
@@ -875,63 +892,85 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
 
   const databaseUrl = buildDatabaseUrl(config.ports.postgres, effectivePgPassword);
 
-  // ── 3. Apply Drizzle migrations ───────────────────────────────────────────
-
-  const migrateSpinner = ora('Applying database migrations…').start();
+  // ── 3. The schema: one function decides, for every way `up` is started ─────
+  //
+  // `migrateDatabase` (@nodal-agents/db/safe-migrate) is the only path that
+  // moves the schema, here and with `--repair-migrations`, `--dev`, and the
+  // restart `update` launches. In order: a database newer than this program
+  // is refused; a migration the migrator skipped (#298) is refused unless
+  // repair is asked; when the schema is about to move over rows, a copy is
+  // taken first inside the cluster with config.json and secrets.key beside it,
+  // and when that copy cannot be made NOTHING is migrated (invariant #4);
+  // then the migrations, the repair, a second reading, and the version that
+  // opened the database is recorded.
+  const schemaSpinner = ora('Checking the database schema…').start();
+  const programVersion = getInstalledVersion();
   try {
-    await runMigrations(databaseUrl, { patchVectorAsText: !pg.vectorAvailable });
-    migrateSpinner.succeed(chalk.green('Migrations applied'));
-  } catch (err) {
-    migrateSpinner.fail('Migration failed');
-    await pg.stop();
-    throw err;
-  }
-
-  // ── 3.2 A migration the migrator SKIPPED (issue #298) ─────────────────────
-  //
-  // `migrate()` only applies entries whose `when` is past the LAST applied
-  // one, so a migration merged after a more recent one is skipped in silence,
-  // for good. On 2026-09-20 that left the owner's database without
-  // `code_projects.init_git`: every write to that table failed, and nothing at
-  // boot said why. A launcher that serves a database it knows to be short of a
-  // migration is a silent smart fallback (invariant #4), so it refuses.
-  //
-  // The check reads the journal against `drizzle.__drizzle_migrations` BY
-  // TIMESTAMP, never by hash: with `patchVectorAsText` the applied files are
-  // rewritten, so the recorded hashes are those of the patched copies.
-  const vectorPatched = { patchVectorAsText: !pg.vectorAvailable };
-  const gapSpinner = ora('Checking the migration journal…').start();
-  let gaps = await findMigrationGaps(databaseUrl, vectorPatched).catch(async (err: unknown) => {
-    gapSpinner.fail('Could not read the migration journal');
-    await pg.stop();
-    throw err;
-  });
-
-  if (gaps.length > 0 && opts.repairMigrations === true) {
-    gapSpinner.text = `Repairing ${gaps.length} skipped migration${gaps.length === 1 ? '' : 's'}…`;
-    try {
-      const repaired = await repairMigrations(databaseUrl, vectorPatched);
-      gapSpinner.succeed(chalk.green(`Repaired: ${repaired.map((g) => g.tag).join(', ')}`));
-    } catch (err) {
-      gapSpinner.fail('Repair failed');
-      await pg.stop();
-      throw err;
+    const result = await migrateDatabase(databaseUrl, {
+      patchVectorAsText: !pg.vectorAvailable,
+      repair: opts.repairMigrations === true,
+      programVersion,
+      keep: config.snapshots?.keep ?? DEFAULT_SNAPSHOTS_KEPT,
+      // The volume the cluster writes the copy to: its data directory's.
+      freeBytes: () => {
+        const fs = statfsSync(PG_DATA_DIR);
+        return Number(fs.bavail) * Number(fs.bsize);
+      },
+      stateFiles: homeStateFiles(),
+      onStep: (text) => {
+        schemaSpinner.text = text;
+      },
+    });
+    const said: string[] = [];
+    if (result.snapshot) {
+      said.push(
+        `copy ${result.snapshot.name} (${formatBytes(result.snapshot.sizeBytes)}) taken first`,
+      );
     }
-    // Relu, jamais déduit : une réparation qui a rendu sans lever ne prouve
-    // pas que la base est complète.
-    gaps = await findMigrationGaps(databaseUrl, vectorPatched);
-  }
-
-  if (gaps.length > 0) {
-    gapSpinner.fail(
-      `${gaps.length} migration${gaps.length === 1 ? '' : 's'} in the journal never reached this database`,
+    if (result.applied.length > 0) {
+      said.push(
+        `${result.applied.length} migration${result.applied.length === 1 ? '' : 's'} applied`,
+      );
+    }
+    if (result.repaired.length > 0) said.push(`repaired: ${result.repaired.join(', ')}`);
+    schemaSpinner.succeed(
+      chalk.green(
+        said.length > 0 ? `Database schema: ${said.join('; ')}` : 'Database schema up to date',
+      ),
     );
+    if (result.pruned.length > 0) {
+      console.log(
+        chalk.gray(
+          `  Older copies removed (keeping ${config.snapshots?.keep ?? DEFAULT_SNAPSHOTS_KEPT}): ${result.pruned.join(', ')}`,
+        ),
+      );
+    }
+  } catch (err) {
     await pg.stop();
-    throw new Error(
-      migrationGapRefusal(gaps, { dev: opts.dev === true, detach: opts.detach === true }),
-    );
+    if (err instanceof DatabaseNewerThanProgramError) {
+      schemaSpinner.fail('This database is newer than this program');
+      throw new Error(databaseNewerRefusal(err, programVersion), { cause: err });
+    }
+    if (err instanceof MigrationGapError) {
+      schemaSpinner.fail(
+        `${err.gaps.length} migration${err.gaps.length === 1 ? '' : 's'} in the journal never reached this database`,
+      );
+      throw new Error(
+        migrationGapRefusal(err.gaps, { dev: opts.dev === true, detach: opts.detach === true }),
+        { cause: err },
+      );
+    }
+    if (err instanceof SnapshotError) {
+      schemaSpinner.fail('No copy of the database could be made: nothing was migrated');
+      throw new Error(snapshotRefusal(err), { cause: err });
+    }
+    if (err instanceof MigrationFailedError) {
+      schemaSpinner.fail('Migration failed');
+      throw new Error(migrationFailure(errorChain(err.cause), err.snapshot), { cause: err });
+    }
+    schemaSpinner.fail('Could not check the database schema');
+    throw err;
   }
-  gapSpinner.succeed(chalk.green('Migration journal complete'));
 
   // ── 3.5 Master-key sanity check (I-6) ─────────────────────────────────────
   // Before anything touches encrypted rows: if ~/.nodalai/secrets.key is
@@ -1124,9 +1163,8 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
   // The race against a short timer ensures this can't stall the output.
   void (async () => {
     try {
-      const { getInstalledVersion, getLatestVersion, isNewerVersion } =
-        await import('../lib/version.ts');
-      const installed = getInstalledVersion();
+      const { getLatestVersion, isNewerVersion } = await import('../lib/version.ts');
+      const installed = programVersion;
       // Timeout already capped inside getLatestVersion() at 5 s; we add an
       // outer race of 3 s here so any internal delay can't push the notice
       // after the ready block.

@@ -16,7 +16,8 @@
     "./nodal-instances": "./src/nodal-instances.ts",
     "./sandbox-settings": "./src/sandbox-settings.ts",
     "./node-guard": "./src/node-guard.ts",
-    "./node-version": "./src/node-version.ts"
+    "./node-version": "./src/node-version.ts",
+    "./version-compare": "./src/version-compare.ts"
   },
   "scripts": {
     "lint": "eslint src",

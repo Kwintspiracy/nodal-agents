@@ -18,6 +18,12 @@
 
 import { z } from 'zod';
 
+/**
+ * How many copies of the database `up` keeps when `snapshots.keep` is not set
+ * (packages/db/src/snapshots.ts takes them; `nodal-agents rollback` lists them).
+ */
+export const DEFAULT_SNAPSHOTS_KEPT = 2;
+
 const PortsSchema = z
   .object({
     web: z.number().int().min(1024).max(65535).default(3000),
@@ -142,6 +148,19 @@ export const NodalConfigSchema = z
     pageRenderer: z
       .object({
         autoInstall: z.boolean().optional(),
+      })
+      .loose()
+      .optional(),
+    /**
+     * The copies of the database `up` takes before it migrates (inside the
+     * cluster, with config.json and secrets.key beside each one). `keep` is
+     * how many complete copies stay; older ones are dropped only once a new
+     * one is complete. Default `DEFAULT_SNAPSHOTS_KEPT` (2). At least 1: the schema never moves
+     * without a copy. Listed and swapped back by `nodal-agents rollback`.
+     */
+    snapshots: z
+      .object({
+        keep: z.number().int().min(1).optional(),
       })
       .loose()
       .optional(),

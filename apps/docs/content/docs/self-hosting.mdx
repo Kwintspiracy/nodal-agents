@@ -53,6 +53,7 @@ All persistent data lives at `~/.nodalai/`, or in the folder the `NODALAI_HOME` 
   logs/postgres/   # The cluster's own log, one subdirectory per data directory
   workspaces/      # One subtree per workspace: shared files, community skills
   checkpoints/     # Shadow git store — snapshots taken before an agent writes
+  snapshots/       # config.json and secrets.key saved with each copy of the database
 ```
 
 To wipe everything and start fresh:
@@ -149,10 +150,24 @@ nodal-agents update
 This command:
 
 1. Fetches the latest version from the npm registry.
-2. If already up to date, prints a notice and exits.
-3. Otherwise, stops the running stack (`nodal-agents down`), installs `nodal-agents@latest` globally, and restarts the stack in the background.
+2. Installs it only when it is **newer** than the installed version. The same version, or an older one (a registry mirror that lags behind, or a pre-release you installed yourself), changes nothing and says so.
+3. Otherwise, stops the running stack (`nodal-agents down`), installs exactly that version globally, and restarts the stack in the background.
 
-Your data in `~/.nodalai/pg-data/` is never touched by the update.
+The update itself does not touch `~/.nodalai/pg-data/`. The **next start** of the new version migrates the database to its schema, in place. Before it does, and only when there is a migration to apply to a database that holds data, `up` copies the database inside its own cluster and saves `config.json` and `secrets.key` beside the copy (in `~/.nodalai/snapshots/`). If that copy cannot be made (another program connected to the database, not enough free disk: the message gives the size of the copy and the free space), nothing is migrated and `up` stops. A copy takes about the size of the database on disk; the last two are kept (`"snapshots": { "keep": N }` in `config.json`).
+
+### Going back after an update
+
+A program older than its database refuses to start on it, and says which version migrated it. To go back:
+
+```bash
+nodal-agents down
+nodal-agents rollback                 # lists the copies, newest first
+nodal-agents rollback <copy-name>     # swaps one back in
+npm install -g nodal-agents@<version> # the version that last opened it, named by the command
+nodal-agents up
+```
+
+The swap keeps the database it replaces as a copy of its own; nothing is dropped. `config.json` is not changed (its database password and ports are the cluster's); the one saved with the copy stays in its folder under `snapshots/`. These copies live in the same cluster, on the same disk: they undo a faulty migration, not a lost disk. Keep your own backup of `~/.nodalai/` for that.
 
 To update without auto-restarting:
 
