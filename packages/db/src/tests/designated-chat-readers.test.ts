@@ -96,16 +96,6 @@ const ADDRESSES_NO_PLATFORM: ReadonlyArray<{ file: string; line: string; why: st
     why: 'the CLI session key of a conversation: a lookup key, never a send target',
   },
   {
-    file: 'apps/runner/src/cli-runtime/run-job.ts',
-    line: 'if (job.chatId && turn.finalText.trim()) {',
-    why: 'whether to resolve a target at all; the target is resolveDeliveryTarget, with chatChannel',
-  },
-  {
-    file: 'apps/runner/src/cron/deliver-results.ts',
-    line: "if (rootStatus === 'completed' && rootJob.chatId && compiledResult.trim()) {",
-    why: 'whether to resolve a target at all; the target is resolveDeliveryTarget, with chatChannel',
-  },
-  {
     file: 'apps/runner/src/delivery/resolve-delivery-target.ts',
     line: "const chatId = job.chatId?.trim() ?? '';",
     why: 'resolveDeliveryTarget itself: the channel is designatedChatChannel a few lines down',
@@ -116,14 +106,9 @@ const ADDRESSES_NO_PLATFORM: ReadonlyArray<{ file: string; line: string; why: st
     why: 'a confirmation was asked for (a chat is present); where it goes is replyDestination',
   },
   {
-    file: 'apps/runner/src/job/execute.ts',
-    line: "if (replyTo.to !== 'channel' || !job.chatId) return null;",
-    why: "replyTo.channel is the chat's recorded channel (replyDestination, designatedChatChannel)",
-  },
-  {
-    file: 'apps/runner/src/job/execute.ts',
-    line: 'return { channel: replyTo.channel, chatId: job.chatId };',
-    why: "replyTo.channel is the chat's recorded channel (replyDestination, designatedChatChannel)",
+    file: 'apps/runner/src/job/channel-delivery.ts',
+    line: 'if (job.chatId != null && isMessagingChannel(job.channel)) {',
+    why: "a request that came FROM a chat: the chat's channel is the job's own channel, a messaging platform (#1215)",
   },
   {
     file: 'apps/runner/src/job/execute.ts',
