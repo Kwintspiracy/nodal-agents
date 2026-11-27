@@ -104,6 +104,7 @@ import {
 } from '@nodal-agents/db';
 import {
   agentJobs,
+  agentTasks,
   entities,
   jobDeliverableVerificationState,
   verificationRuns,
@@ -229,6 +230,7 @@ export interface DeclaredDeliverableFailure {
  * `kind` rendu, lui, est restreint tant que la garde n'est pas branchée.
  */
 export type ObservedOutcome =
+  | 'awaiting_tasks'
   | 'completed'
   | 'completed_unverified'
   | 'review_pending'
@@ -250,8 +252,14 @@ export type ObservedOutcome =
  * `failed` (#509) : un livrable DÉCLARÉ par l'agent n'est pas vert une fois
  * les réparations épuisées. Le statut terminal écrit est `failed`, et
  * `failure` dit pourquoi.
+ *
+ * `awaiting_tasks` : le job a des tâches sur le tableau, et ce qu'on lui
+ * passe n'en rend pas compte (voir `finalizeJobSuccess`). RIEN n'est écrit :
+ * le job reste `processing`, et c'est le tableau qui le finira, avec le
+ * résultat de toutes ses tâches.
  */
 export type FinalizeKind =
+  | 'awaiting_tasks'
   | 'completed'
   | 'completed_unverified'
   | 'already_terminal'
@@ -337,6 +345,13 @@ export type PrepareDelivery = (
     readonly idempotencyKey?: string;
   },
 ) => Promise<void>;
+
+/**
+ * Les statuts d'une tâche du tableau qui n'est pas finie — les mêmes que lisent
+ * les deux faucheurs (`reclaim-jobs.ts`, `reset-orphans.ts`) pour épargner un
+ * job qui attend son tableau.
+ */
+const OPEN_TASK_STATUSES = ['todo', 'in_progress'] as const;
 
 /** Les dépendances, prises en PARAMÈTRE — rien n'est résolu depuis un module global. */
 export interface FinalizeDeps {
@@ -814,7 +829,7 @@ export async function finalizeJobSuccess(
   };
 
   // ─── Transaction 1 : verrous, lecture, capture de G ───────────────────────
-  const opened = await db.transaction(async (tx): Promise<OpenedJob | null> => {
+  const opened = await db.transaction(async (tx): Promise<OpenedJob | 'awaiting_tasks' | null> => {
     const jobRows = await tx
       .select({
         entityId: agentJobs.entityId,
@@ -832,6 +847,28 @@ export async function finalizeJobSuccess(
     // l'horodatage de son premier passage : le refuser sur cette seule trace
     // rendrait un job réessayé infinalisable (trouvé par la suite d'execute).
     if (TERMINAL_STATUSES.includes(job.status as (typeof TERMINAL_STATUSES)[number])) return null;
+
+    // LE TRAVAIL QUE CE JOB A LANCÉ SUR LE TABLEAU. Un job ne finit pas tant
+    // qu'une de ses tâches est ouverte, et il ne finit qu'avec ce qu'elles ont
+    // rendu : seule la compilation de ses tâches (`relay`, posée par le
+    // tableau quand toutes sont finies, `cron/deliver-results.ts`) en rend
+    // compte. Un texte de l'agent (`prose`), quelle que soit la porte qui
+    // l'apporte (fin en texte, `return_result`, runtime CLI, reprise), laisse
+    // donc le job au tableau : rien n'est écrit, le job reste `processing`, et
+    // le tableau le finira. Sans cette règle, un job qui répondait par une
+    // phrase après ses `create_task` finissait `completed`, puis ses tâches
+    // étaient refusées (« root job cancelled ») ou tournaient pour personne.
+    const taches = await tx
+      .select({ status: agentTasks.status })
+      .from(agentTasks)
+      .where(eq(agentTasks.rootJobId, jobId));
+    if (
+      taches.length > 0 &&
+      (input.resultKind !== 'relay' ||
+        taches.some((t) => (OPEN_TASK_STATUSES as readonly string[]).includes(t.status)))
+    ) {
+      return 'awaiting_tasks';
+    }
 
     // LA RÉCLAMATION (verdict d'incomplétude du découpage) : la preuve tourne
     // hors transaction, donc le verrou ci-dessus ne sérialise plus deux
@@ -996,6 +1033,14 @@ export async function finalizeJobSuccess(
   });
 
   if (!opened) return alreadyTerminal;
+  if (opened === 'awaiting_tasks') {
+    return {
+      kind: 'awaiting_tasks',
+      observedOutcome: 'awaiting_tasks',
+      observedDue: false,
+      decisions: [],
+    };
+  }
 
   // ─── Hors transaction : la preuve ─────────────────────────────────────────
   //

@@ -507,6 +507,7 @@ export async function runCliRuntimeJob(args: {
   | { status: 'failed'; error: string }
   | { status: 'cancelled' }
   | { status: 'already_handled' }
+  | { status: 'awaiting_tasks' }
 > {
   const { db, jobId, job, agentRow } = args;
 
@@ -1139,6 +1140,10 @@ export async function runCliRuntimeJob(args: {
     // été écrit, rien ne part — l'ancien code envoyait quand même.
     return { status: 'failed', error: 'already_handled' };
   }
+  // Le job a des tâches sur le tableau : la porte le lui laisse, rien n'est
+  // écrit ni livré (finalize.ts). Une session CLI n'a pas `create_task`
+  // aujourd'hui ; la porte est la même pour tous, il en lit l'issue.
+  if (outcome.kind === 'awaiting_tasks') return { status: 'awaiting_tasks' };
   // Un livrable DÉCLARÉ non vérifié (#509) : la primitive a écrit `failed`.
   // Le runtime CLI n'appelle pas `return_result` et ne déclare donc rien
   // aujourd'hui ; la porte est la même pour tous, il en lit l'issue.
