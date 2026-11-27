@@ -75,7 +75,17 @@ const PENDING: SkillUpdateDetail = {
 /** The footer of the "Comfy (official)" catalog card, for one installed state. */
 function comfyCardFoot(updateAvailable: boolean, updateDetail: SkillUpdateDetail | null) {
   const installed: InstalledSkillInfo[] = [
-    { slug: 'comfy', updateAvailable, updateDetail, hasScripts: false },
+    {
+      id: 'id-comfy',
+      slug: 'comfy',
+      name: 'Comfy',
+      isCommunity: true,
+      contentOverridden: false,
+      content: 'Do the thing.',
+      updateAvailable,
+      updateDetail,
+      hasScripts: false,
+    },
   ];
   const el = render(<CommunitySkillsGrid installedSkills={installed} />);
   const card = el.querySelector('[data-testid^="marketplace-card-comfy-official"]');

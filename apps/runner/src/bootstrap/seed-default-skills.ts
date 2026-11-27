@@ -9,9 +9,15 @@
 //     `default_content` to the new canonical. User had no edits, so they get
 //     the latest version automatically on upgrade.
 //   - Skill exists AND content_overridden = true → UPDATE ONLY `default_content`
-//     to the new canonical, leave `content` untouched. The dashboard's "Reset
-//     to default" button later can copy default_content → content + flip the
-//     flag.
+//     to the new canonical, leave `content` untouched. When that canonical
+//     DIFFERS from the stored default_content, a newer version than the one
+//     the owner edited exists: `update_available` goes true, the same signal a
+//     community skill gets from its source check, so the dashboard shows
+//     "Update available" whatever the skill's origin. Applying it is "Reset to
+//     default" (default_content → content, both flags cleared).
+//     An edited row whose default_content already equals the canonical gets no
+//     flag: which version the owner edited from is not recorded, and is not
+//     guessed.
 //
 // Source of truth = `packages/catalog/src/skills/*.ts`. Adding a new system
 // skill means a new TS file + an entry in `packages/catalog/src/index.ts`,
@@ -78,6 +84,7 @@ export async function seedDefaultSkills(db: AnyDrizzleDb, env: RunnerEnv): Promi
   let created = 0;
   let updatedDefaults = 0;
   let updatedFull = 0;
+  let updatesAnnounced = 0;
 
   for (const skill of systemSkills) {
     // F-6 (audit #2): slug is unique per (entity_id, slug), not globally —
@@ -91,6 +98,8 @@ export async function seedDefaultSkills(db: AnyDrizzleDb, env: RunnerEnv): Promi
       .select({
         id: agentSkills.id,
         contentOverridden: agentSkills.contentOverridden,
+        content: agentSkills.content,
+        defaultContent: agentSkills.defaultContent,
         createdBy: agentSkills.createdBy,
       })
       .from(agentSkills)
@@ -152,11 +161,31 @@ export async function seedDefaultSkills(db: AnyDrizzleDb, env: RunnerEnv): Promi
 
     if (existing.contentOverridden) {
       // User edited this skill — preserve their content. Just refresh the
-      // default so "Reset to default" works against the latest canonical.
+      // default so "Reset to default" works against the latest canonical,
+      // and say so when the canonical moved: the owner would otherwise stop
+      // receiving improvements without ever knowing. An unchanged canonical
+      // leaves the flag as it is — a badge raised on an earlier boot stays
+      // until the owner applies the update. A null default_content records no
+      // base version at all, so nothing is claimed from it; and a text the
+      // owner already has is not a newer version.
+      const newerVersion =
+        existing.defaultContent !== null &&
+        existing.defaultContent !== skill.content &&
+        existing.content !== skill.content;
       await db
         .update(agentSkills)
         .set({
           defaultContent: skill.content,
+          ...(newerVersion
+            ? {
+                updateAvailable: true,
+                updateDetail: {
+                  contentChanged: true,
+                  scriptsChanged: false,
+                  checkedAt: new Date().toISOString(),
+                },
+              }
+            : {}),
           // Also refresh description + requiredBuiltins — those are structural
           // not edit-prone, safe to update even when content is overridden.
           description: skill.description,
@@ -166,13 +195,17 @@ export async function seedDefaultSkills(db: AnyDrizzleDb, env: RunnerEnv): Promi
         })
         .where(eq(agentSkills.id, existing.id));
       updatedDefaults++;
+      if (newerVersion) updatesAnnounced++;
     } else {
-      // No user override → push the new canonical fully.
+      // No user override → push the new canonical fully. The owner is on the
+      // latest version, so no update is pending.
       await db
         .update(agentSkills)
         .set({
           content: skill.content,
           defaultContent: skill.content,
+          updateAvailable: false,
+          updateDetail: null,
           description: skill.description,
           requiredBuiltins: skill.requiredBuiltins ?? [],
           createdBy: 'system',
@@ -185,7 +218,7 @@ export async function seedDefaultSkills(db: AnyDrizzleDb, env: RunnerEnv): Promi
 
   if (created || updatedFull || updatedDefaults) {
     console.warn(
-      `[runner] system skills seeded — created=${created}, updated=${updatedFull}, default-only=${updatedDefaults} (entityId=${targetEntityId})`,
+      `[runner] system skills seeded — created=${created}, updated=${updatedFull}, default-only=${updatedDefaults}, update-available=${updatesAnnounced} (entityId=${targetEntityId})`,
     );
   }
 }
