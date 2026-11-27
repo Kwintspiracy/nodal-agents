@@ -1191,133 +1191,91 @@ describe('finalizeJobSuccess — résultat compilé et livraison', () => {
   });
 });
 
-// ─── La porte terminale d'ÉCHEC : la même couture que le succès (#116) ──────
+// ─── La porte terminale d'ÉCHEC : la notice est commise avec l'échec (#116, #1180) ──
 //
 // `finalizeJobSuccess` pose la ligne d'outbox DANS la transaction qui pose le
 // statut depuis #108. L'échec, lui, écrivait la ligne terminale PUIS préparait
 // la notice : une panne entre les deux laissait un job fini avec rien à livrer,
-// que rien ne pouvait rattraper — le drain ne réclame que des lignes
-// `prepared`, et il n'y en avait pas. Les trois tests ci-dessous sont les
-// miroirs exacts des trois tests de la couture T08 côté succès.
-describe('finalizeJobFailure — la livraison est commise avec l’échec @cap:organiser-equipe/moteur', () => {
-  it('une livraison demandée sans préparateur ⇒ refus fort, rien n’est écrit', async () => {
-    const jobId = await insertJob('processing');
-    await expect(
-      finalizeJobFailure(asDb(), {
-        jobId,
-        errorCode: 'telegram_not_delivered',
-        delivery: { channel: 'telegram', chatId: '42', payload: '[stopped: …]' },
-      }),
-    ).rejects.toThrow(DELIVERY_PREPARE_UNAVAILABLE);
-    expect((await jobRow(jobId)).status).toBe('processing');
-  });
+// que rien ne pouvait rattraper. Depuis #1180, c'est `failJob`, l'unique
+// écrivain de `failed`, qui prépare la notice de CHAQUE échec : aucun appelant
+// ne la demande ni ne la fournit.
+describe('finalizeJobFailure — la notice est commise avec l’échec @cap:organiser-equipe/moteur', () => {
+  /** Un job demandé sur un chat WhatsApp : sa réponse revient sur ce chat. */
+  async function chatJob(status: string): Promise<string> {
+    const jobId = await insertJob(status);
+    await db
+      .update(agentJobs)
+      .set({ channel: 'whatsapp', chatId: '42', chatChannel: 'whatsapp' })
+      .where(eq(agentJobs.id, jobId));
+    return jobId;
+  }
 
-  it('le préparateur écrit DANS la transaction terminale : son échec annule l’échec', async () => {
-    const jobId = await insertJob('processing');
-    await expect(
-      finalizeJobFailure(
-        asDb(),
-        {
-          jobId,
-          errorCode: 'telegram_not_delivered',
-          delivery: { channel: 'telegram', chatId: '42', payload: '[stopped: …]' },
-        },
-        {
-          prepareDelivery: async () => {
-            throw new Error('canal indisponible');
-          },
-        },
-      ),
-    ).rejects.toThrow('canal indisponible');
-    // LE point du résidu 3 : pas de job terminal sans son intention de livrer.
-    const job = await jobRow(jobId);
-    expect(job.status).toBe('processing');
-    expect(job.completedAt).toBeNull();
-    const lignes = await db
-      .select({ id: jobDeliveries.id })
-      .from(jobDeliveries)
-      .where(eq(jobDeliveries.jobId, jobId));
-    expect(lignes).toHaveLength(0);
-  });
-
-  it('l’échec et sa livraison atterrissent ensemble', async () => {
-    const jobId = await insertJob('processing');
-    const landed = await finalizeJobFailure(
-      asDb(),
-      {
-        jobId,
-        errorCode: 'telegram_not_delivered',
-        userMessage: 'rien n’est parti',
-        delivery: {
-          channel: 'telegram',
-          chatId: '42',
-          payload: '[stopped: nothing was delivered on this channel]',
-          idempotencyKey: `${jobId}:harness:not-delivered`,
-        },
-      },
-      {
-        prepareDelivery: async (tx, input) => {
-          await tx.insert(jobDeliveries).values({
-            jobId: input.jobId,
-            channel: input.channel,
-            chatId: input.chatId,
-            payload: input.payload,
-            outcome: 'prepared',
-            idempotencyKey: input.idempotencyKey ?? `${input.jobId}:${input.channel}:0`,
-          });
-        },
-      },
-    );
-
-    expect(landed).toBe(true);
-    const job = await jobRow(jobId);
-    expect(job.status).toBe('failed');
-    expect(job.result).toBe('rien n’est parti');
-    const lignes = await db
+  const notices = (jobId: string) =>
+    db
       .select({
-        outcome: jobDeliveries.outcome,
+        channel: jobDeliveries.channel,
+        chatId: jobDeliveries.chatId,
         payload: jobDeliveries.payload,
         idempotencyKey: jobDeliveries.idempotencyKey,
       })
       .from(jobDeliveries)
       .where(eq(jobDeliveries.jobId, jobId));
-    expect(lignes).toHaveLength(1);
-    expect(lignes[0]?.outcome).toBe('prepared');
-    expect(lignes[0]?.payload).toContain('nothing was delivered');
-    // La clé distingue deux notices du même job — celle-ci et celle du blocage.
-    expect(lignes[0]?.idempotencyKey).toBe(`${jobId}:harness:not-delivered`);
+
+  it('la préparation est DANS la transaction terminale : son échec annule l’échec', async () => {
+    const jobId = await chatJob('processing');
+    // La clé de la notice de ce job est déjà prise : l'INSERT échoue.
+    await db.insert(jobDeliveries).values({
+      jobId,
+      channel: 'whatsapp',
+      chatId: '42',
+      payload: 'déjà là',
+      outcome: 'confirmed',
+      idempotencyKey: `${jobId}:failure`,
+    });
+    await expect(
+      finalizeJobFailure(asDb(), { jobId, errorCode: 'telegram_not_delivered' }),
+    ).rejects.toThrow();
+    // LE point du résidu 3 : pas de job terminal sans son intention de livrer.
+    const job = await jobRow(jobId);
+    expect(job.status).toBe('processing');
+    expect(job.completedAt).toBeNull();
   });
 
-  it('un job DÉJÀ terminal ne reçoit pas de livraison : ce n’est pas notre échec', async () => {
-    const jobId = await insertJob('completed');
-    const landed = await finalizeJobFailure(
-      asDb(),
+  it('l’échec et sa notice atterrissent ensemble : la notice est le résultat que l’échec écrit', async () => {
+    const jobId = await chatJob('processing');
+    await db.update(agentJobs).set({ result: 'Film livré.' }).where(eq(agentJobs.id, jobId));
+    const landed = await finalizeJobFailure(asDb(), {
+      jobId,
+      errorCode: 'deliverable_not_verified',
+      userMessage: 'Film livré.\n\n[not verified: film.mp4]',
+      replaceResult: true,
+      runnerNotes: ['[not verified: film.mp4]'],
+    });
+
+    expect(landed).toBe(true);
+    const job = await jobRow(jobId);
+    expect(job.status).toBe('failed');
+    expect(job.result).toBe('Film livré.\n\n[not verified: film.mp4]');
+    expect(await notices(jobId)).toEqual([
       {
-        jobId,
-        errorCode: 'telegram_not_delivered',
-        delivery: { channel: 'telegram', chatId: '42', payload: '[stopped: …]' },
+        channel: 'whatsapp',
+        chatId: '42',
+        payload: 'Film livré.\n\n[not verified: film.mp4]',
+        idempotencyKey: `${jobId}:failure`,
       },
-      {
-        prepareDelivery: async (tx, input) => {
-          await tx.insert(jobDeliveries).values({
-            jobId: input.jobId,
-            channel: input.channel,
-            chatId: input.chatId,
-            payload: input.payload,
-            outcome: 'prepared',
-            idempotencyKey: `${input.jobId}:doublon`,
-          });
-        },
-      },
-    );
+    ]);
+  });
+
+  it('un job DÉJÀ terminal ne reçoit pas de notice : ce n’est pas notre échec', async () => {
+    const jobId = await chatJob('completed');
+    const landed = await finalizeJobFailure(asDb(), {
+      jobId,
+      errorCode: 'telegram_not_delivered',
+    });
 
     expect(landed).toBe(false);
     expect((await jobRow(jobId)).status).toBe('completed');
-    const lignes = await db
-      .select({ id: jobDeliveries.id })
-      .from(jobDeliveries)
-      .where(eq(jobDeliveries.jobId, jobId));
-    expect(lignes).toHaveLength(0);
+    expect(await notices(jobId)).toEqual([]);
   });
 });
 

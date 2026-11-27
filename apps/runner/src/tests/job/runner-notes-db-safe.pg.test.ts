@@ -66,7 +66,15 @@ describe('runner_notes is written DB-safe by every producer @cap:reprendre-conve
         .returning();
       const [agent] = await db
         .insert(agents)
-        .values({ entityId: entity!.id, name: 'Root', slug: 'root-dbsafe', personality: 'p' })
+        .values({
+          entityId: entity!.id,
+          name: 'Root',
+          slug: 'root-dbsafe',
+          personality: 'p',
+          // A channel credential: a job asked on a chat can be answered there,
+          // and its failure notice prepared (#1180).
+          telegramBotToken: 'fake-token',
+        })
         .returning();
       const [conv] = await db
         .insert(conversations)

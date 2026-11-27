@@ -28,6 +28,7 @@ import {
   entities,
   jobDeliverableVerificationState,
   verificationRuns,
+  jobDeliveries,
   constatedWrites,
 } from '@nodal-agents/db';
 import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
@@ -725,14 +726,15 @@ describe('SANS livrable déclaré, rien ne change @cap:verifier-un-livrable/mote
 });
 
 describe('la porte de finalisation, pour toute porte qui l’appelle @cap:verifier-un-livrable/moteur', () => {
-  it('un texte déjà publié reste, SUIVI de la ligne ; la ligne part vers le canal à outil', async () => {
+  it('un texte déjà publié reste, SUIVI de la ligne ; la notice de l’échec, ce résultat, part là où la demande a été faite', async () => {
     const [job] = await db
       .insert(agentJobs)
       .values({
         entityId: seed.entityId,
         agentId: seed.agentId,
-        channel: 'telegram',
+        channel: 'whatsapp',
         chatId: '42',
+        chatChannel: 'whatsapp',
         task: 'publie le film',
         status: 'processing',
         result: 'Publié : le film est dans ton dossier.',
@@ -749,8 +751,6 @@ describe('la porte de finalisation, pour toute porte qui l’appelle @cap:verifi
       decisionStatus: 'dirty',
       declared: true,
     });
-    const prepared: Array<{ channel: string; chatId: string; payload: string }> = [];
-
     const outcome = await finalizeJobSuccess(
       db as unknown as Parameters<typeof finalizeJobSuccess>[0],
       {
@@ -759,12 +759,6 @@ describe('la porte de finalisation, pour toute porte qui l’appelle @cap:verifi
         resultKind: 'prose',
         // Une porte qui ne sait pas rouvrir son job : la garde joue quand même.
         repairTurn: 'unsupported',
-        noticeTarget: { channel: 'telegram', chatId: '42' },
-      },
-      {
-        prepareDelivery: async (_tx, d) => {
-          prepared.push({ channel: d.channel, chatId: d.chatId, payload: d.payload });
-        },
       },
     );
 
@@ -778,6 +772,17 @@ describe('la porte de finalisation, pour toute porte qui l’appelle @cap:verifi
     expect(row.result).toBe(`Publié : le film est dans ton dossier.
 
 ${line}`);
-    expect(prepared).toEqual([{ channel: 'telegram', chatId: '42', payload: line }]);
+    // La notice est préparée par `failJob`, dans la transaction de l'échec :
+    // le résultat que la page du job montre, sur le chat de la demande (#1180).
+    expect(
+      await db
+        .select({
+          channel: jobDeliveries.channel,
+          chatId: jobDeliveries.chatId,
+          payload: jobDeliveries.payload,
+        })
+        .from(jobDeliveries)
+        .where(eq(jobDeliveries.jobId, job.id)),
+    ).toEqual([{ channel: 'whatsapp', chatId: '42', payload: row.result }]);
   });
 });

@@ -36,7 +36,6 @@ import {
   registerBuiltins,
 } from '@nodal-agents/tools';
 import { generateTaskTools } from '../planner/task-tools';
-import { VERIFY_BEFORE_ASSERT_NUDGE } from '../chain-counters';
 import { generateAssignTools } from '../router/assign-tools';
 import { KNOWN_TOOL_NAME_UNIVERSE } from '../router/tool-availability';
 import { CHANNELS, AUTOMATION_KINDS } from '@nodal-agents/shared';
@@ -2489,8 +2488,6 @@ describe('buildSystemPrompt — the whole prompt names only held tools, on real 
       const cited = deferredCited(prompt);
       if (cited.length > 0) found[c.label] = cited;
     }
-    const nudge = deferredCited(VERIFY_BEFORE_ASSERT_NUDGE);
-    if (nudge.length > 0) found['runner nudge VERIFY_BEFORE_ASSERT'] = nudge;
     expect(found).toEqual({});
   });
 

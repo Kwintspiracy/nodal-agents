@@ -130,7 +130,35 @@ export function delegationDepthExceededMessage(limits: ChainLimits = DEFAULT_LIM
   );
 }
 
-// ─── Guard 1f — non-progress detector (per-tool-call streaks) ────────────────
+/**
+ * How many more delegations a job that has resumed `chainCount` times may
+ * start and still receive the result of (invariant #8). The parent resumes
+ * once per delegation (`resumeDelegated` adds one to `chain_count`), and a job
+ * whose `chain_count` reached `maxChains` is refused at entry. A delegation
+ * that would bring it there is refused at the call instead, before its child
+ * runs and is paid for nothing.
+ */
+export function remainingDelegationResumes(
+  chainCount: number,
+  limits: ChainLimits = DEFAULT_LIMITS,
+): number {
+  return Math.max(0, limits.maxChains - 1 - chainCount);
+}
+
+/** The refusal of a delegation over the resume cap. LLM-channel text. */
+export function delegationResumeLimitMessage(
+  chainCount: number,
+  limits: ChainLimits = DEFAULT_LIMITS,
+): string {
+  return (
+    `delegation_limit_reached: this job has resumed ${chainCount} times and may resume at most ` +
+    `${limits.maxChains - 1} times, so the result of another delegation could not come back ` +
+    `to it. Do the remaining work yourself with your own tools, or call return_result with ` +
+    `what was done and what was not.`
+  );
+}
+
+// ─── Guard 1f — non-progress detector (consecutive failing tool calls) ───────
 //
 // Two live incidents on 2026-07-11 that Guard 1b (identical turn signature)
 // and Guard 1d (per-turn same-tool-only streak, above) both missed — in both
@@ -143,88 +171,29 @@ export function delegationDepthExceededMessage(limits: ChainLimits = DEFAULT_LIM
 //   - Watcher agents burned turns retrying `attach_mcp`/`create_mcp` after
 //     failures instead of reporting the blocker.
 //
-// These two signals track the raw SEQUENCE OF TOOL CALLS (not turns, and not
-// requiring identical inputs/outputs):
-//   S1 — the SAME tool name called this many times in a row (any inputs).
-//   S2 — this many tool calls in a row threw or returned the runtime's error
-//        outcome (ToolExecutionResult.outcome === 'error').
-// Each nudges once per streak, then fails loud if the streak keeps growing
-// past the fail threshold. These are intentionally NOT part of `ChainLimits` /
-// `DEFAULT_LIMITS` — they are per-call reducers, not per-job caps, and keeping
-// them standalone avoids forcing every existing `ChainLimits` literal (see
-// chain-counters.test.ts) to grow four more required fields.
+// The signal kept here reads a FACT the runner holds: this many tool calls in
+// a row threw or returned the runtime's error outcome
+// (ToolExecutionResult.outcome === 'error'). It nudges once per streak, then
+// fails loud if the streak keeps growing past the fail threshold.
 //
-// Calibration: 12/24 and 5/10 both use a 2x nudge→fail ratio, mirroring Guard
-// 1d's nudge-then-fail cadence — enough headroom for a legitimate multi-step
-// retry (a few pagination attempts, a couple of transient 429s) before the
-// runtime intervenes, and a further doubling so a nudged agent that ignores
-// the warning doesn't burn the whole 50-turn budget before the job dies.
-// Override via env — see execute.ts.
+// A second signal, S1, used to count the SAME tool NAME called N times in a
+// row, any inputs, success included, and killed the job at 24: forty file
+// reads, thirty moves or twenty-five calendar events are legitimate work that
+// looks exactly like that. It is gone. What still stops a loop that does not
+// fail: Guard 1b (12 identical turns: same call, same input, same result), the
+// per-turn budget of invariant #8 (`assertTurnToolCallBudget`), `maxTurns`
+// (which delivers what was written), the token budget and the run cost budget;
+// Guard 1d keeps informing a run that uses one tool turn after turn.
+//
+// These are intentionally NOT part of `ChainLimits` / `DEFAULT_LIMITS` — they
+// are per-call reducers, not per-job caps. Override via env — see execute.ts.
 
-/** S1 — nudge threshold: 12 consecutive calls to the same tool. */
-export const NON_PROGRESS_SAME_TOOL_NUDGE_AT = 12;
-/** S1 — fail threshold: 24 consecutive calls to the same tool. */
-export const NON_PROGRESS_SAME_TOOL_FAIL_AT = 24;
 /** S2 — nudge threshold: 5 consecutive failing tool calls. */
 export const NON_PROGRESS_ERROR_STREAK_NUDGE_AT = 5;
 /** S2 — fail threshold: 10 consecutive failing tool calls. */
 export const NON_PROGRESS_ERROR_STREAK_FAIL_AT = 10;
 
-/**
- * Tools exempt from S1 — they neither extend nor break a same-tool streak:
- *   - `return_result` — a model can legitimately emit it more than once while
- *     finalizing (see the duplicate-return_result handling in execute.ts).
- *   - `telegram_send_message` — a multi-part reply legitimately sends several
- *     messages in a row; the per-job delivery ceiling already bounds this.
- * S2 (error streak) has NO exemption — a failing send is still a real failure.
- */
-export const NON_PROGRESS_EXEMPT_TOOLS: ReadonlySet<string> = new Set([
-  'return_result',
-  'telegram_send_message',
-]);
-
 export type NonProgressSignal = 'none' | 'nudge' | 'fail';
-
-/** S1 state — the pure reducer's running same-tool streak. */
-export interface SameToolStreakState {
-  readonly toolName: string | null;
-  readonly streak: number;
-  readonly nudged: boolean;
-}
-
-export const INITIAL_SAME_TOOL_STREAK_STATE: SameToolStreakState = {
-  toolName: null,
-  streak: 0,
-  nudged: false,
-};
-
-/**
- * S1 reducer — call once per tool call, in execution order (a parallel batch
- * within one turn counts in its response order). Returns the next state and
- * whether this call crossed a threshold. `nudge` fires once per streak (not
- * once per call past the threshold); `fail` fires once the streak reaches
- * `failAt` and stays terminal from the caller's perspective (the job dies).
- */
-export function recordSameToolCall(
-  state: SameToolStreakState,
-  toolName: string,
-  nudgeAt: number = NON_PROGRESS_SAME_TOOL_NUDGE_AT,
-  failAt: number = NON_PROGRESS_SAME_TOOL_FAIL_AT,
-): { state: SameToolStreakState; signal: NonProgressSignal } {
-  if (NON_PROGRESS_EXEMPT_TOOLS.has(toolName)) {
-    return { state, signal: 'none' };
-  }
-  const continuing = state.toolName === toolName;
-  const streak = continuing ? state.streak + 1 : 1;
-  const nudged = continuing ? state.nudged : false;
-  if (streak >= failAt) {
-    return { state: { toolName, streak, nudged }, signal: 'fail' };
-  }
-  if (streak >= nudgeAt && !nudged) {
-    return { state: { toolName, streak, nudged: true }, signal: 'nudge' };
-  }
-  return { state: { toolName, streak, nudged }, signal: 'none' };
-}
 
 /** S2 state — the pure reducer's running consecutive-error count. */
 export interface ErrorStreakState {
@@ -237,7 +206,7 @@ export const INITIAL_ERROR_STREAK_STATE: ErrorStreakState = { streak: 0, nudged:
 /**
  * S2 reducer — call once per tool call with whether that call threw or
  * returned the runtime's error outcome. A success resets the streak to 0
- * (and re-arms the nudge for the next streak). Unlike S1, no tool is exempt.
+ * (and re-arms the nudge for the next streak). No tool is exempt.
  */
 export function recordToolOutcome(
   state: ErrorStreakState,
@@ -257,48 +226,6 @@ export function recordToolOutcome(
   }
   return { state: { streak, nudged: state.nudged }, signal: 'none' };
 }
-
-// ─── Guard 1g — verify-before-assert nudge (cancel/undo intent) ─────────────
-//
-// Live incident 2026-07-11: a user asked their agent whether it could post
-// Discord release announcements. The agent called `create_schedule` — a
-// schedule row was created and persisted, active. The user replied "Annule".
-// The agent's ENTIRE response turn was `telegram_send_message` +
-// `return_result` — it never called a read tool (`list_schedules`) to check
-// what actually existed, and asserted "Aucune schedule créée — rien à
-// annuler ✅", directly contradicting its OWN prior turn, visible in the same
-// thread history. Failure class: unverified assertions about platform state
-// / the agent's own past actions.
-//
-// Guard 1g catches this class at the runtime layer: an inbound cancel/undo
-// request answered without a single verification tool call. It is a NUDGE,
-// not a hard fail — a "cancel"/"undo" can legitimately be about conversation
-// content rather than a platform object, so after one nudge the agent is
-// free to answer textually. See job/execute.ts for the wiring (checked ONCE,
-// on the job's first turn only) and Layer 1 (thread-history.ts's action
-// ledger) + Layer 3 (the `verify-before-done` baseline skill) for the other
-// two legs of the fix.
-
-/**
- * FR + EN cancel/undo intent, matched against the first
- * `CANCEL_UNDO_INTENT_SCAN_CHARS` characters of the job's inbound task,
- * case-insensitive. Deliberately broad (annuler/cancel/undo/supprimer/
- * enlever/retirer/désactiver/arrêter) — false positives just cost one
- * advisory nudge, false negatives leave the incident's failure mode open.
- */
-export const CANCEL_UNDO_INTENT_RE =
-  /\b(annule[rz]?|cancel|undo|supprime[rz]?|enl[eè]ve[rz]?|retire[rz]?|d[ée]sactive[rz]?|arr[êe]te[rz]?)\b/i;
-
-/** Chars of the inbound task scanned for cancel/undo intent (Guard 1g). */
-export const CANCEL_UNDO_INTENT_SCAN_CHARS = 200;
-
-/**
- * Guard 1g nudge text — injected once (as a `user`-role message, same
- * mechanism as Guard 1d/1f's forcing messages) when the job's first turn
- * answers a cancel/undo request using only delivery/return tools.
- */
-export const VERIFY_BEFORE_ASSERT_NUDGE =
-  'Runtime notice: the user asked to cancel/undo something. Verify actual platform state with your READ tools (list_schedules, list_conversations, ...) BEFORE asserting what exists or what was done — your own memory of past actions is not a source of truth. Then act on what you find and report precisely what remains.';
 
 /**
  * The per-turn tool-call budget of invariant #8, applied to a turn as a whole

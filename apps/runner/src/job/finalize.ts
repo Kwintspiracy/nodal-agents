@@ -104,6 +104,7 @@ import {
 } from '@nodal-agents/db';
 import {
   agentJobs,
+  agentTasks,
   entities,
   jobDeliverableVerificationState,
   verificationRuns,
@@ -126,7 +127,7 @@ import type {
 } from '../verification/registry.ts';
 import { TERMINAL_STATUSES, answerOfJobRun, completeJob, failJob } from './state.ts';
 import { watchJobEnd } from './process-scopes.ts';
-import { runnerNotesValue, toDbSafeString } from './transcript-text.ts';
+import { toDbSafeString } from './transcript-text.ts';
 
 // ─── Codes journalisés ──────────────────────────────────────────────────────
 
@@ -229,6 +230,7 @@ export interface DeclaredDeliverableFailure {
  * `kind` rendu, lui, est restreint tant que la garde n'est pas branchée.
  */
 export type ObservedOutcome =
+  | 'awaiting_tasks'
   | 'completed'
   | 'completed_unverified'
   | 'review_pending'
@@ -250,8 +252,14 @@ export type ObservedOutcome =
  * `failed` (#509) : un livrable DÉCLARÉ par l'agent n'est pas vert une fois
  * les réparations épuisées. Le statut terminal écrit est `failed`, et
  * `failure` dit pourquoi.
+ *
+ * `awaiting_tasks` : le job a des tâches sur le tableau, et ce qu'on lui
+ * passe n'en rend pas compte (voir `finalizeJobSuccess`). RIEN n'est écrit :
+ * le job reste `processing`, et c'est le tableau qui le finira, avec le
+ * résultat de toutes ses tâches.
  */
 export type FinalizeKind =
+  | 'awaiting_tasks'
   | 'completed'
   | 'completed_unverified'
   | 'already_terminal'
@@ -338,6 +346,13 @@ export type PrepareDelivery = (
   },
 ) => Promise<void>;
 
+/**
+ * Les statuts d'une tâche du tableau qui n'est pas finie — les mêmes que lisent
+ * les deux faucheurs (`reclaim-jobs.ts`, `reset-orphans.ts`) pour épargner un
+ * job qui attend son tableau.
+ */
+const OPEN_TASK_STATUSES = ['todo', 'in_progress'] as const;
+
 /** Les dépendances, prises en PARAMÈTRE — rien n'est résolu depuis un module global. */
 export interface FinalizeDeps {
   /** Le registre. Injectable pour tester un type de livrable sans le brancher. */
@@ -403,16 +418,13 @@ export interface FinalizeInput {
   readonly claim?: { readonly finalizingAt: Date };
   readonly stats?: FinalizeStats;
   readonly messages?: unknown[];
-  /** Livraison à préparer dans la même transaction (T08). */
-  readonly delivery?: TerminalDelivery;
   /**
-   * Où part la ligne de plateforme quand un livrable déclaré n'est pas vérifié
-   * (#509) et qu'aucune `delivery` n'est demandée — le canal à outil du job,
-   * quand il en a un. Sur Telegram, l'agent a DÉJÀ dit « livré » : la seule
-   * façon que la personne apprenne le contraire est que cette ligne parte là
-   * où la promesse est partie. Absent : la ligne n'est que dans `result`.
+   * Livraison à préparer dans la même transaction (T08), quand le job FINIT.
+   * Quand un livrable déclaré n'est pas vérifié (#509), le job échoue : c'est
+   * alors la notice de l'échec que `failJob` prépare (son résultat, qui porte
+   * la ligne), là où la demande a été faite — pas cette livraison.
    */
-  readonly noticeTarget?: { readonly channel: string; readonly chatId: string };
+  readonly delivery?: TerminalDelivery;
 }
 
 /**
@@ -450,8 +462,6 @@ export interface FinalizeFailureInput {
    * du fil ne les mette pas dans la bouche de l'agent.
    */
   readonly runnerNotes?: readonly string[];
-  /** Livraison à préparer dans la même transaction que l'écriture terminale. */
-  readonly delivery?: TerminalDelivery;
 }
 
 // ─── Interne ────────────────────────────────────────────────────────────────
@@ -802,9 +812,6 @@ export async function finalizeJobSuccess(
   if (input.delivery && !deps.prepareDelivery) {
     throw new Error(`${DELIVERY_PREPARE_UNAVAILABLE}: ${input.delivery.channel}`);
   }
-  if (input.noticeTarget && !deps.prepareDelivery) {
-    throw new Error(`${DELIVERY_PREPARE_UNAVAILABLE}: ${input.noticeTarget.channel}`);
-  }
 
   const alreadyTerminal: FinalizeOutcome = {
     kind: 'already_terminal',
@@ -814,7 +821,7 @@ export async function finalizeJobSuccess(
   };
 
   // ─── Transaction 1 : verrous, lecture, capture de G ───────────────────────
-  const opened = await db.transaction(async (tx): Promise<OpenedJob | null> => {
+  const opened = await db.transaction(async (tx): Promise<OpenedJob | 'awaiting_tasks' | null> => {
     const jobRows = await tx
       .select({
         entityId: agentJobs.entityId,
@@ -832,6 +839,28 @@ export async function finalizeJobSuccess(
     // l'horodatage de son premier passage : le refuser sur cette seule trace
     // rendrait un job réessayé infinalisable (trouvé par la suite d'execute).
     if (TERMINAL_STATUSES.includes(job.status as (typeof TERMINAL_STATUSES)[number])) return null;
+
+    // LE TRAVAIL QUE CE JOB A LANCÉ SUR LE TABLEAU. Un job ne finit pas tant
+    // qu'une de ses tâches est ouverte, et il ne finit qu'avec ce qu'elles ont
+    // rendu : seule la compilation de ses tâches (`relay`, posée par le
+    // tableau quand toutes sont finies, `cron/deliver-results.ts`) en rend
+    // compte. Un texte de l'agent (`prose`), quelle que soit la porte qui
+    // l'apporte (fin en texte, `return_result`, runtime CLI, reprise), laisse
+    // donc le job au tableau : rien n'est écrit, le job reste `processing`, et
+    // le tableau le finira. Sans cette règle, un job qui répondait par une
+    // phrase après ses `create_task` finissait `completed`, puis ses tâches
+    // étaient refusées (« root job cancelled ») ou tournaient pour personne.
+    const taches = await tx
+      .select({ status: agentTasks.status })
+      .from(agentTasks)
+      .where(eq(agentTasks.rootJobId, jobId));
+    if (
+      taches.length > 0 &&
+      (input.resultKind !== 'relay' ||
+        taches.some((t) => (OPEN_TASK_STATUSES as readonly string[]).includes(t.status)))
+    ) {
+      return 'awaiting_tasks';
+    }
 
     // LA RÉCLAMATION (verdict d'incomplétude du découpage) : la preuve tourne
     // hors transaction, donc le verrou ci-dessus ne sérialise plus deux
@@ -996,6 +1025,14 @@ export async function finalizeJobSuccess(
   });
 
   if (!opened) return alreadyTerminal;
+  if (opened === 'awaiting_tasks') {
+    return {
+      kind: 'awaiting_tasks',
+      observedOutcome: 'awaiting_tasks',
+      observedDue: false,
+      decisions: [],
+    };
+  }
 
   // ─── Hors transaction : la preuve ─────────────────────────────────────────
   //
@@ -1264,6 +1301,13 @@ export async function finalizeJobSuccess(
           (row?.result ?? '').trim() ||
           answerOfJobRun(input.messages, row?.task ?? '');
         const result = toDbSafeString([texte, line].filter((t) => t !== '').join('\n\n'));
+        // `result` REMPLACE ce qui était écrit : un texte déjà publié y serait
+        // resté SANS la ligne, et il est contenu dans `result`, donc rien n'est
+        // perdu. La ligne est du runner, et `runner_notes` le dit : la relecture
+        // du fil la range dans le relevé du runner, jamais dans les mots de
+        // l'agent (#562). La notice de l'échec (ce résultat, là où la demande a
+        // été faite) est préparée par `failJob`, dans cette transaction ; la
+        // livraison que l'appelant demandait pour un succès n'a plus lieu.
         const failed = await failJob(
           tx,
           jobId,
@@ -1271,36 +1315,18 @@ export async function finalizeJobSuccess(
           input.stats,
           input.messages,
           result,
+          undefined,
+          { replaceResult: true, runnerLines: [line] },
         );
         if (!failed) {
           log(VERIFY_TERMINAL_WRITE_LOST, { jobId });
           throw new Error(`${VERIFY_TERMINAL_WRITE_LOST}: ${jobId}`);
         }
-        // `failJob` ne remplit `result` que s'il est vide ; un texte déjà
-        // publié y serait resté SANS la ligne. `result` contient ce texte-là,
-        // donc il le remplace sans rien perdre. La ligne est du runner, et
-        // `runner_notes` le dit : la relecture du fil la range dans le relevé
-        // du runner, jamais dans les mots de l'agent (#562).
         await tx
           .update(agentJobs)
-          .set({ result, runnerNotes: runnerNotesValue([line]), toolsUsed, updatedAt: new Date() })
+          .set({ toolsUsed, updatedAt: new Date() })
           // Juste après la ligne `failed` que CE run vient de poser (#566).
           .where(ownJobRow(jobId, ['failed']));
-
-        // La ligne part là où la promesse est partie : avec la livraison
-        // demandée s'il y en a une, sinon vers le canal à outil du job.
-        const cible = input.delivery ?? input.noticeTarget;
-        if (cible && deps.prepareDelivery) {
-          await deps.prepareDelivery(tx, {
-            jobId,
-            channel: cible.channel,
-            chatId: cible.chatId,
-            payload: [input.delivery?.payload ?? '', line]
-              .filter((t) => t.trim() !== '')
-              .join('\n\n'),
-            idempotencyKey: `${jobId}:harness:${DELIVERABLE_NOT_VERIFIED}`,
-          });
-        }
         return {
           decisions,
           failure: { errorCode: DELIVERABLE_NOT_VERIFIED, result, line, unverified },
@@ -1402,55 +1428,30 @@ export async function finalizeJobSuccess(
 // ─── La porte terminale d'ÉCHEC ─────────────────────────────────────────────
 
 /**
- * Écrit l'échec terminal d'un job ET, dans la MÊME transaction, l'intention de
- * livrer ce que le harnais a à dire (issue #116, résidu 3).
- *
- * La couture T08 n'existait que du côté succès : `finalizeJobSuccess` pose la
- * ligne `job_deliveries` en `prepared` dans la transaction qui pose le statut.
- * Les chemins d'échec, eux, écrivaient la ligne terminale, PUIS préparaient la
- * notice. Une panne entre les deux laissait un job fini avec rien à livrer, et
- * aucune reprise ne pouvait le rattraper : le drain ne réclame que des lignes
- * `prepared`, et il n'y en avait pas.
- *
- * Même refus qu'au succès, et avant toute écriture : demander une livraison
- * sans fournir le préparateur LÈVE `DELIVERY_PREPARE_UNAVAILABLE` (invariant
- * #4). Une livraison n'est préparée que si l'écriture terminale a ATTERRI —
- * un job qu'un autre écrivain a déjà fini n'est pas le nôtre à commenter.
+ * L'échec terminal d'un job, sous la forme d'un objet. Il passe par `failJob`
+ * (job/state.ts), l'unique écrivain de `failed`, qui pose dans UNE transaction
+ * le statut, le résultat qui l'explique et la notice de cet échec pour la
+ * personne, là où elle a fait sa demande (#1180, et #116 résidu 3 : l'intention
+ * de livrer est commise avec la décision). Aucun appelant ne décide si la
+ * personne est prévenue ; ce qu'elle lit est le résultat.
  *
  * Rend `true` si cette écriture-ci a posé le statut terminal.
  */
 export async function finalizeJobFailure(
   db: AnyDrizzleDb,
   input: FinalizeFailureInput,
-  deps: Pick<FinalizeDeps, 'prepareDelivery'> = {},
 ): Promise<boolean> {
-  if (input.delivery && !deps.prepareDelivery) {
-    throw new Error(`${DELIVERY_PREPARE_UNAVAILABLE}: ${input.delivery.channel}`);
-  }
-  // `inTransaction` (#944) : l'échec annoncé par `failJob` part après le COMMIT.
-  return inTransaction(db, async (tx) => {
-    const landed = await failJob(
-      tx,
-      input.jobId,
-      input.errorCode,
-      input.stats,
-      input.messages,
-      input.userMessage,
-    );
-    if (landed && input.replaceResult && input.userMessage !== undefined) {
-      await tx
-        .update(agentJobs)
-        .set({
-          result: toDbSafeString(input.userMessage),
-          ...(input.runnerNotes ? { runnerNotes: runnerNotesValue(input.runnerNotes) } : {}),
-          updatedAt: new Date(),
-        })
-        // Juste après la ligne `failed` que CE run vient de poser (#566).
-        .where(ownJobRow(input.jobId, ['failed']));
-    }
-    if (landed && input.delivery && deps.prepareDelivery) {
-      await deps.prepareDelivery(tx, { jobId: input.jobId, ...input.delivery });
-    }
-    return landed;
-  });
+  return failJob(
+    db,
+    input.jobId,
+    input.errorCode,
+    input.stats,
+    input.messages,
+    input.userMessage,
+    undefined,
+    {
+      ...(input.replaceResult !== undefined ? { replaceResult: input.replaceResult } : {}),
+      ...(input.runnerNotes ? { runnerLines: input.runnerNotes } : {}),
+    },
+  );
 }

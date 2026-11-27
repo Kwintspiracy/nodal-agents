@@ -50,6 +50,19 @@ vi.mock('@nodal-agents/llm', async (importOriginal) => {
   };
 });
 
+// A channel send reaches no network: the adapter answers as a platform would.
+vi.mock('@nodal-agents/delivery', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@nodal-agents/delivery')>();
+  const adapter = {
+    channel: 'telegram' as const,
+    capabilities: { buttons: true, threads: false, media: true, editMessage: true },
+    sendText: async () => ({ messageId: '1' }),
+    sendMedia: async () => ({ messageId: '2' }),
+    sendApprovalCard: async () => ({ messageId: '3' }),
+  };
+  return { ...actual, getAdapter: () => adapter };
+});
+
 type MockTurn = {
   text?: string;
   reasoning?: string;
@@ -914,7 +927,13 @@ describe('a parent cannot promise over a failed delegation @cap:organiser-equipe
     // ENVOIE son message avant la finalisation ; la ligne d'échec, elle, se pose
     // après, sur la ligne en base. Le destinataire ne la lisait donc jamais —
     // et « rien reçu sur Telegram » est précisément l'incident #107. Le harnais
-    // prépare donc sa propre livraison, que `drainDeliveries` envoie.
+    // prépare donc sa propre livraison, que `drainDeliveries` envoie. L'agent
+    // a le bot Telegram de ce chat : sans lui, aucun canal ne porte la notice,
+    // et la ligne le dit (#1180).
+    await db
+      .update(agents)
+      .set({ telegramBotToken: 'fake-token' })
+      .where(eq(agents.id, seed.agentId));
     const parentId = await insertJob({
       channel: 'telegram',
       chatId: '4242',
@@ -976,9 +995,15 @@ describe('a parent cannot promise over a failed delegation @cap:organiser-equipe
       .select({ payload: jobDeliveries.payload, chatId: jobDeliveries.chatId })
       .from(jobDeliveries)
       .where(eq(jobDeliveries.jobId, parentId));
-    expect(livraisons.length, 'aucune livraison préparée pour dire l’échec').toBeGreaterThan(0);
-    expect(livraisons.map((l) => l.payload).join(' ')).toContain('assign_researcher');
-    expect(livraisons.every((l) => l.chatId === '4242')).toBe(true);
+    // Le bot sert : le message de l'agent part, puis le run s'arrête sur la
+    // délégation jamais résolue. La personne reçoit UNE notice de cet échec, sur
+    // son chat : le résultat que la page du job montre (#1180). Avant, cette
+    // sortie-là (`unresolved_tool_failure`) n'envoyait rien.
+    const row = await jobRow(parentId);
+    expect(row.status).toBe('failed');
+    expect(row.error).toBe('unresolved_tool_failure');
+    expect(livraisons).toEqual([{ payload: row.result, chatId: '4242' }]);
+    await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
   });
 
   it('la promesse rendue en TEXTE SEUL porte l’échec avec elle', async () => {

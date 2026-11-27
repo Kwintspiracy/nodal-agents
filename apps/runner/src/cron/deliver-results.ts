@@ -202,19 +202,24 @@ export async function deliverCompletedRoots(db: AnyDrizzleDb): Promise<number> {
 
     const compiledResult = compileTaskResults(taskRows);
 
-    // Derive the root's status from what the tasks actually did — a root is
-    // only honestly 'completed' when at least one task succeeded (audit
-    // finding #8, 2026-07). agent_tasks has no 'failed' status — 'blocked' is
-    // the failure-equivalent terminal state and 'cancelled' the voluntary
-    // abort. A MIX of done + failed/cancelled tasks is still 'completed': the
-    // compiled body tags each non-done section. Priority when nothing
-    // succeeded: any 'blocked' → 'failed'; all 'cancelled' → 'cancelled'
+    // Derive the root's status from what ALL its tasks did (audit finding #8,
+    // 2026-07; FV1-07, 2026-11). agent_tasks has no 'failed' status —
+    // 'blocked' is the failure-equivalent terminal state and 'cancelled' the
+    // voluntary abort. The root is 'completed' only when every task is done:
+    // one blocked task of three is not a success, and the compiled body tags
+    // each section with what it did. Every task cancelled → 'cancelled'
     // (reporting 'failed' there would itself be dishonest, invariant #4).
+    // Anything else → 'failed', with a code that counts what was done.
     const doneCount = taskRows.filter((t) => t.status === 'done').length;
-    const blockedCount = taskRows.filter((t) => t.status === 'blocked').length;
+    const cancelledCount = taskRows.filter((t) => t.status === 'cancelled').length;
     const rootStatus: 'completed' | 'failed' | 'cancelled' =
-      doneCount > 0 ? 'completed' : blockedCount > 0 ? 'failed' : 'cancelled';
-    const rootError = rootStatus === 'failed' ? `all_tasks_failed (${taskRows.length})` : null;
+      doneCount === taskRows.length
+        ? 'completed'
+        : cancelledCount === taskRows.length
+          ? 'cancelled'
+          : 'failed';
+    const rootError =
+      rootStatus === 'failed' ? `tasks_not_done (${doneCount} of ${taskRows.length} done)` : null;
 
     // ── 1. Réclamation : le marqueur, PAS le statut ────────────────────────
     // Only one tick wins; a concurrent cancel landing between the load and
@@ -308,6 +313,15 @@ export async function deliverCompletedRoots(db: AnyDrizzleDb): Promise<number> {
           },
         },
       );
+      if (outcome.kind === 'awaiting_tasks') {
+        // A task was added between the completeness check and the gate: the
+        // root waits for it. Our marker is lifted so the next tick sees it.
+        await db
+          .update(agentJobs)
+          .set({ finalizingAt: null, updatedAt: new Date() })
+          .where(and(eq(agentJobs.id, rootJobId), eq(agentJobs.finalizingAt, now)));
+        continue;
+      }
       landed = outcome.kind !== 'already_terminal';
       if (outcome.kind === 'failed' && outcome.failure) {
         echecDeclare = { error: outcome.failure.errorCode, result: outcome.failure.result };
@@ -316,7 +330,7 @@ export async function deliverCompletedRoots(db: AnyDrizzleDb): Promise<number> {
       landed = await failJob(
         db,
         rootJobId,
-        rootError ?? 'all_tasks_failed',
+        rootError ?? 'tasks_not_done',
         undefined,
         undefined,
         compiledResult,
@@ -351,7 +365,7 @@ export async function deliverCompletedRoots(db: AnyDrizzleDb): Promise<number> {
           : rootStatus === 'completed'
             ? { status: 'completed', result: compiledResult }
             : rootStatus === 'failed'
-              ? { status: 'failed', error: rootError ?? 'all_tasks_failed', result: compiledResult }
+              ? { status: 'failed', error: rootError ?? 'tasks_not_done', result: compiledResult }
               : { status: 'cancelled' };
       await maybeResumeParent(rootJobId as JobId, resumeOutcome, { db });
     } catch (err) {

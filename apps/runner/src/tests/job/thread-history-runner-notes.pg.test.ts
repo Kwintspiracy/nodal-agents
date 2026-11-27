@@ -183,7 +183,15 @@ describe('migration 0137 fills runner_notes on rows written before it @cap:repre
         .returning();
       const [agent] = await db
         .insert(agents)
-        .values({ entityId: entity!.id, name: 'Root', slug: 'root-multi0137', personality: 'p' })
+        .values({
+          entityId: entity!.id,
+          name: 'Root',
+          slug: 'root-multi0137',
+          personality: 'p',
+          // A channel credential: a job asked on a chat can be answered there,
+          // and its failure notice prepared (#1180).
+          telegramBotToken: 'fake-token',
+        })
         .returning();
       const [conv] = await db
         .insert(conversations)

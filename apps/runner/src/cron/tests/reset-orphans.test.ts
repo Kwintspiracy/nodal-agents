@@ -247,7 +247,9 @@ describe('resetOrphanedJobs', () => {
     expect(row?.error).toBe('orphan_job_reset');
     // D1: the reaper fills a user-facing result — never a silent failure.
     expect((row?.result ?? '').length).toBeGreaterThan(0);
-    expect(row?.result).toMatch(/interrompue/i);
+    // What the reaper read, never a cause it does not know (#1086).
+    expect(row?.result).toMatch(/^\[stopped: status processing, not updated for 10m0\ds\]$/);
+    expect(row?.result).not.toMatch(/restart|redémarr/i);
   });
 
   // F1 regression — Leg 4: orphan reap must stamp completedAt so the row

@@ -12,6 +12,7 @@ import { unconditionalSendOrders } from '../send-orders.ts';
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { MockLanguageModelV3 } from 'ai/test';
 import { generateText } from 'ai';
@@ -40,6 +41,8 @@ import {
   agentSchedules,
   toolCalls,
   channelAllowedConversations,
+  mcpServers,
+  agentMcpServers,
 } from '@nodal-agents/db';
 import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
 import { createEmbeddingClient, validateMessageStructure } from '@nodal-agents/llm';
@@ -65,7 +68,6 @@ import {
 } from '../../job/execute.ts';
 import { ACTION_RECHECK } from '../../llm/action-recheck.ts';
 import type { JobId } from '@nodal-agents/orchestration';
-import { VERIFY_BEFORE_ASSERT_NUDGE } from '@nodal-agents/orchestration';
 
 // ─── Module-level mock registry ───────────────────────────────────────────────
 // Approval-gate regression imports (used in the approval-gate describe block below)
@@ -377,6 +379,14 @@ async function createTestJob(db: TestDb, seed: Awaited<ReturnType<typeof seedMin
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
+
+/** The smallest real MCP server (one tool, `ping`), spawned over stdio. */
+const MCP_FIXTURE = fileURLToPath(
+  new URL(
+    '../../../../../packages/adapters/mcp/src/tests/fixtures/mcp-stdio-server.mjs',
+    import.meta.url,
+  ),
+);
 
 let db: TestDb;
 let seed: Awaited<ReturnType<typeof seedMinimal>>;
@@ -5310,16 +5320,21 @@ describe('incident 2026-09-28 replayed: the real 307-call turn runs none of its 
       .from(toolCalls)
       .where(eq(toolCalls.jobId, job!.id));
     expect(rows).toEqual([]);
-    // Nothing reached the owner: the Telegram transport sent nothing, no delivery row.
+    // None of the 307 calls reached the chat. What the person receives is the
+    // one notice of this failure (#1180): the failed row's result, prepared by
+    // the failure writer, and nothing else.
+    const [failedRow] = await incDb
+      .select({ result: agentJobs.result })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job!.id));
+    const notices = await incDb
+      .select({ payload: jobDeliveries.payload, outcome: jobDeliveries.outcome })
+      .from(jobDeliveries)
+      .where(eq(jobDeliveries.jobId, job!.id));
+    expect(notices.map((n) => n.payload)).toEqual([failedRow!.result]);
     expect(sendTelegramMessageMock.mock.calls.map((c) => (c[0] as { text: string }).text)).toEqual(
-      [],
+      notices[0]!.outcome === 'confirmed' ? [failedRow!.result] : [],
     );
-    expect(
-      await incDb
-        .select({ id: jobDeliveries.id })
-        .from(jobDeliveries)
-        .where(eq(jobDeliveries.jobId, job!.id)),
-    ).toEqual([]);
     // No delegation: no child job, and the Researcher has no job at all.
     expect(
       await incDb
@@ -8430,89 +8445,264 @@ describe('reliability guards', () => {
 // (S1: same tool name N times in a row; S2: N calls in a row erroring) — see
 // chain-counters.ts for the pure reducers and thresholds (12/24, 5/10).
 describe('Guard 1f: non-progress detector', () => {
-  it('S1: 12 consecutive file_list calls → the NEXT LLM request carries a nudge naming the tool and the count; job continues', async () => {
+  // ─── One tool, many different calls, all succeeding: that is work ───────
+  //
+  // Until 2026-11 a reducer (S1) counted the same tool NAME called N times in a
+  // row, any inputs, success included: at 12 the model was told it was
+  // "likely stuck" and to "stop exploring", at 24 the job was failed
+  // `non_progress_detected`. Reading forty files, saving thirty facts or
+  // calling one connector thirty times looks exactly like that. The tests
+  // below prove the work completes, on three tools and both execution paths
+  // (one call per turn, and a whole batch in one turn).
+
+  /** Every text the model received across the run, as one string. */
+  const promptText = (prompts: unknown[]): string => JSON.stringify(prompts);
+  const STUCK_WORDS = ['likely stuck', 'times in a row', 'Stop exploring', 'non_progress'];
+
+  /** The tool results of the persisted transcript, by call id. */
+  async function resultsById(jobId: string): Promise<Map<string, string>> {
+    const [row] = await db
+      .select({ messages: agentJobs.messages })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, jobId));
+    const parts = ((row?.messages ?? []) as Array<{ role: string; content: unknown }>)
+      .filter((m) => m.role === 'tool' && Array.isArray(m.content))
+      .flatMap((m) => m.content as Array<{ toolCallId?: string; output?: unknown }>);
+    return new Map(parts.map((p) => [p.toolCallId ?? '', JSON.stringify(p.output)]));
+  }
+
+  it('forty file_list calls with different inputs, one per turn: the job completes, nothing tells the model it is stuck @cap:suivre-execution/moteur', async () => {
     const job = await createTestJob(db, seed);
     const capturedPrompts: unknown[] = [];
-    // `glob` varies per call (ignored by file_list when `path` is omitted, but
-    // it keeps each call's INPUT distinct) so Guard 1b's identical-turn-
-    // signature detector — whose default threshold also happens to be 12 —
-    // never latches; this test isolates Guard 1f alone.
     const responses: Array<{
       text?: string;
       toolCalls: Array<{ toolCallId: string; toolName: string; args: Record<string, unknown> }>;
-    }> = Array.from({ length: 12 }, (_v, i) => ({
-      toolCalls: [{ toolCallId: `fl-${i}`, toolName: 'file_list', args: { glob: `probe-${i}` } }],
+    }> = Array.from({ length: 40 }, (_v, i) => ({
+      toolCalls: [{ toolCallId: `fl40-${i}`, toolName: 'file_list', args: { glob: `part-${i}` } }],
     }));
     responses.push({
-      text: 'Done.',
+      text: 'Listed.',
       toolCalls: [
-        { toolCallId: 'rr-s1-nudge', toolName: 'return_result', args: { status: 'success' } },
+        { toolCallId: 'rr-fl40', toolName: 'return_result', args: { status: 'success' } },
       ],
     });
-    const llmClient = makeMockLlmClient(responses, capturedPrompts);
-    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
-    expect(result.status).toBe('completed');
+    const result = await executeJob(
+      job.id as JobId,
+      makeDeps(makeMockLlmClient(responses, capturedPrompts)),
+      testEnv,
+    );
 
-    // The 13th call (index 12) is the one made AFTER the 12th file_list call —
-    // its prompt must carry the nudge naming the tool and the exact count.
-    expect(capturedPrompts.length).toBe(13);
-    const nudgedPrompt = JSON.stringify(capturedPrompts[12]);
-    expect(nudgedPrompt).toContain('file_list');
-    expect(nudgedPrompt).toContain('12 times in a row');
+    expect(result.status).toBe('completed');
+    const [row] = await db
+      .select({ status: agentJobs.status, error: agentJobs.error })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+    expect(row).toEqual({ status: 'completed', error: null });
+    // 40 working turns and the closing one: none cut short.
+    expect(capturedPrompts).toHaveLength(41);
+    for (const word of STUCK_WORDS) expect(promptText(capturedPrompts)).not.toContain(word);
+    // Every call ran and kept its own result.
+    const results = await resultsById(job.id);
+    for (let i = 0; i < 40; i++) {
+      expect(results.get(`fl40-${i}`)).toBeDefined();
+      expect(results.get(`fl40-${i}`)).not.toContain('not executed');
+    }
   });
 
-  it('S1: 24 consecutive same-tool calls → fails loud with non_progress_detected naming the tool', async () => {
+  it('thirty save_memory calls with different facts in ONE turn: every fact is written and the job completes', async () => {
     const job = await createTestJob(db, seed);
-    // Distinct `glob` per call keeps Guard 1b (identical-signature, threshold
-    // also 12) from tripping first — this isolates Guard 1f's own fail path.
-    const responses = Array.from({ length: 24 }, (_v, i) => ({
-      toolCalls: [{ toolCallId: `fl2-${i}`, toolName: 'file_list', args: { glob: `probe-${i}` } }],
-    }));
-    const llmClient = makeMockLlmClient(responses);
-    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
-    expect(result.status).toBe('failed');
-    if (result.status === 'failed') {
-      expect(result.error).toContain('non_progress_detected');
-      expect(result.error).toContain('file_list');
-    }
+    const capturedPrompts: unknown[] = [];
+    const marker = `w01-batch-${randomUUID()}`;
+    const result = await executeJob(
+      job.id as JobId,
+      makeDeps(
+        makeMockLlmClient(
+          [
+            {
+              toolCalls: Array.from({ length: 30 }, (_v, i) => ({
+                toolCallId: `sm30-${i}`,
+                toolName: 'save_memory',
+                args: {
+                  fact: `${marker} supplier ${i} ships on day ${i + 1}`,
+                  category: 'context',
+                },
+              })),
+            },
+            {
+              text: 'Saved.',
+              toolCalls: [
+                { toolCallId: 'rr-sm30', toolName: 'return_result', args: { status: 'success' } },
+              ],
+            },
+          ],
+          capturedPrompts,
+        ),
+      ),
+      testEnv,
+    );
 
+    expect(result.status).toBe('completed');
+    const written = await db
+      .select({ fact: agentMemory.fact })
+      .from(agentMemory)
+      .where(sql`${agentMemory.fact} like ${marker + '%'}`);
+    expect(written).toHaveLength(30);
+    expect(capturedPrompts).toHaveLength(2);
+    for (const word of STUCK_WORDS) expect(promptText(capturedPrompts)).not.toContain(word);
+  });
+
+  it('thirty calls of one connector (MCP) tool with different inputs in one turn: all run, the job completes', async () => {
+    const ts = Date.now();
+    const slug = `w01fix${ts}`;
+    const [agent] = await db
+      .insert(agents)
+      .values({
+        entityId: seed.entityId,
+        name: 'W01 connector user',
+        slug: `w01-mcp-${ts}`,
+        personality: 'I call a connector.',
+        llmKeyId: seed.llmKeyId,
+        role: 'agent',
+        systemAgent: true,
+      })
+      .returning();
+    const [server] = await db
+      .insert(mcpServers)
+      .values({
+        entityId: seed.entityId,
+        name: 'W01 fixture',
+        slug,
+        transport: 'stdio',
+        command: process.execPath,
+        args: [MCP_FIXTURE],
+        envVars: {},
+        active: true,
+      })
+      .returning();
+    await db.insert(agentMcpServers).values({
+      entityId: seed.entityId,
+      agentId: agent!.id,
+      mcpServerId: server!.id,
+      enabledTools: null,
+    });
+    const tool = `${slug}__ping`;
+    await db.insert(approvalRules).values({
+      entityId: seed.entityId,
+      agentId: agent!.id,
+      toolName: tool,
+      action: 'auto_approve',
+    });
+    const [job] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: agent!.id,
+        channel: 'api',
+        task: 'Ping the fixture thirty times',
+        status: 'pending',
+        messages: [],
+        chainCount: 0,
+      })
+      .returning();
+
+    const capturedPrompts: unknown[] = [];
+    const result = await executeJob(
+      job!.id as JobId,
+      makeDeps(
+        makeMockLlmClient(
+          [
+            {
+              toolCalls: Array.from({ length: 30 }, (_v, i) => ({
+                toolCallId: `mcp30-${i}`,
+                toolName: tool,
+                args: { purpose: `Check reachability, probe ${i}.` },
+              })),
+            },
+            {
+              text: 'Pinged.',
+              toolCalls: [
+                { toolCallId: 'rr-mcp30', toolName: 'return_result', args: { status: 'success' } },
+              ],
+            },
+          ],
+          capturedPrompts,
+        ),
+      ),
+      testEnv,
+    );
+
+    expect(result.status).toBe('completed');
+    const results = await resultsById(job!.id);
+    for (let i = 0; i < 30; i++) expect(results.get(`mcp30-${i}`)).toContain('pong');
+    for (const word of STUCK_WORDS) expect(promptText(capturedPrompts)).not.toContain(word);
+  }, 60_000);
+
+  // ─── What still stops a loop: facts the runner holds ──────────────────────
+
+  it('a true runaway (the same failing call with the same input, turn after turn) is still stopped, by the error streak (S2)', async () => {
+    const job = await createTestJob(db, seed);
+    // save_memory with {} is invalid input: the same call, failing the same way.
+    const result = await executeJob(
+      job.id as JobId,
+      makeDeps(makeMockLlmClient(repeatToolCall('save_memory', {}, 40))),
+      testEnv,
+    );
+    expect(result.status).toBe('failed');
     const [row] = await db
-      .select({ status: agentJobs.status, error: agentJobs.error, messages: agentJobs.messages })
+      .select({ status: agentJobs.status, error: agentJobs.error, turn: agentJobs.turn })
       .from(agentJobs)
       .where(eq(agentJobs.id, job.id));
     expect(row?.status).toBe('failed');
-    expect(row?.error).toContain('non_progress_detected');
-    expect(row?.error).toContain('file_list');
-    // #561 : la transcription persistée à l'échec garde chaque tool_use avec son résultat.
-    expect(() => validateMessageStructure(row!.messages as never)).not.toThrow();
+    expect(row?.error).toBe(
+      'non_progress_detected: 10 consecutive failing tool calls (last: save_memory)',
+    );
+    expect(row?.turn).toBe(10);
   });
 
-  it('S1 regression: alternating tools for 30 calls never nudges or fails', async () => {
+  it('the same succeeding call with the same result, turn after turn, is still stopped by the identical-turn detector (1b)', async () => {
     const job = await createTestJob(db, seed);
-    const capturedPrompts: unknown[] = [];
-    const responses: Array<{
-      text?: string;
-      toolCalls: Array<{ toolCallId: string; toolName: string; args: Record<string, unknown> }>;
-    }> = Array.from({ length: 30 }, (_v, i) => ({
-      toolCalls: [
-        {
-          toolCallId: `alt-${i}`,
-          toolName: i % 2 === 0 ? 'file_list' : 'list_schedules',
-          args: {},
-        },
-      ],
-    }));
-    responses.push({
-      text: 'Done.',
-      toolCalls: [{ toolCallId: 'rr-alt', toolName: 'return_result', args: { status: 'success' } }],
-    });
-    const llmClient = makeMockLlmClient(responses, capturedPrompts);
-    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
-    expect(result.status).toBe('completed');
+    const result = await executeJob(
+      job.id as JobId,
+      makeDeps(makeMockLlmClient(repeatToolCall('file_list', { glob: 'same' }, 40))),
+      testEnv,
+    );
+    expect(result.status).toBe('failed');
+    const [row] = await db
+      .select({ status: agentJobs.status, error: agentJobs.error, turn: agentJobs.turn })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+    expect(row).toEqual({ status: 'failed', error: 'no_progress_detected', turn: 12 });
+  });
 
-    const allPrompts = JSON.stringify(capturedPrompts);
-    expect(allPrompts).not.toContain('times in a row');
-    expect(allPrompts).not.toContain('non_progress_detected');
+  it('the same call repeated past the per-turn budget of invariant #8 in one turn is refused whole, none of it runs', async () => {
+    const job = await createTestJob(db, seed);
+    const marker = `w01-overbudget-${randomUUID()}`;
+    const result = await executeJob(
+      job.id as JobId,
+      makeDeps(
+        makeMockLlmClient([
+          {
+            toolCalls: Array.from({ length: 51 }, (_v, i) => ({
+              toolCallId: `ob-${i}`,
+              toolName: 'save_memory',
+              args: { fact: `${marker} same`, category: 'context' },
+            })),
+          },
+        ]),
+      ),
+      testEnv,
+    );
+    expect(result.status).toBe('failed');
+    const [row] = await db
+      .select({ error: agentJobs.error })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+    expect(row?.error).toContain('tool_call_limit_exceeded');
+    const written = await db
+      .select({ id: agentMemory.id })
+      .from(agentMemory)
+      .where(sql`${agentMemory.fact} like ${marker + '%'}`);
+    expect(written).toHaveLength(0);
   });
 
   it('S2: 5 consecutive failing tool calls → the NEXT LLM request carries the error-streak nudge', async () => {
@@ -8608,396 +8798,109 @@ describe('Guard 1f: non-progress detector', () => {
     expect(capturedPrompts.length).toBe(6);
     expect(JSON.stringify(capturedPrompts[5])).not.toContain('consecutive tool calls have failed');
   });
-
-  it('S1 exemption: 5 parallel telegram_send_message calls never count toward or break a same-tool streak', async () => {
-    await db
-      .update(agents)
-      .set({ telegramBotToken: 'fake-token' })
-      .where(eq(agents.id, seed.agentId));
-
-    const [tgJob] = await db
-      .insert(agentJobs)
-      .values({
-        entityId: seed.entityId,
-        agentId: seed.agentId,
-        channel: 'telegram',
-        chatId: '12345',
-        chatChannel: 'telegram',
-        task: 'Guard 1f S1 exemption test',
-        status: 'pending',
-        messages: [],
-        chainCount: 0,
-      })
-      .returning();
-    if (!tgJob) throw new Error('Failed to create telegram test job');
-
-    const capturedPrompts: unknown[] = [];
-    // Distinct `glob` per call (ignored by file_list without `path`, but keeps
-    // each call's INPUT distinct) so Guard 1b's identical-signature detector
-    // never interferes with this Guard 1f-only test.
-    const fileListCall = (id: string, i: number) => ({
-      toolCalls: [{ toolCallId: id, toolName: 'file_list', args: { glob: `probe-${id}-${i}` } }],
-    });
-    const responses = [
-      // Turns 1-6: build a file_list streak of 6.
-      ...Array.from({ length: 6 }, (_v, i) => fileListCall(`pre-${i}`, i)),
-      // Turn 7: 5 PARALLEL telegram_send_message calls, no file_list — exempt
-      // from S1, must be transparent (neither extend nor break the streak).
-      {
-        toolCalls: Array.from({ length: 5 }, (_v, i) => ({
-          toolCallId: `tg-${i}`,
-          toolName: 'telegram_send_message',
-          args: { text: `part ${i}` },
-        })),
-      },
-      // Turns 8-13: 6 more file_list calls — if the exemption held, the streak
-      // resumes from 6 and reaches 12 on the last of these (turn 13).
-      ...Array.from({ length: 6 }, (_v, i) => fileListCall(`post-${i}`, i)),
-      // Turn 14: finalize.
-      {
-        text: 'Done.',
-        toolCalls: [
-          { toolCallId: 'rr-exempt', toolName: 'return_result', args: { status: 'success' } },
-        ],
-      },
-    ];
-    const llmClient = makeMockLlmClient(responses, capturedPrompts);
-    sendTelegramMessageMock.mockClear();
-    const result = await executeJob(tgJob.id as JobId, makeDeps(llmClient), testEnv);
-    expect(result.status).toBe('completed');
-
-    // 14 turns total — the nudge (fired on turn 13, the 12th cumulative
-    // file_list call) must be visible in the prompt for turn 14.
-    expect(capturedPrompts.length).toBe(14);
-    const nudgedPrompt = JSON.stringify(capturedPrompts[13]);
-    expect(nudgedPrompt).toContain('file_list');
-    expect(nudgedPrompt).toContain('12 times in a row');
-    // The 5 telegram sends actually went out (exemption is orthogonal to
-    // delivery working) — confirms this isn't passing by the calls having
-    // silently failed/no-op'd.
-    expect(sendTelegramMessageMock).toHaveBeenCalledTimes(5);
-
-    await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
-  });
 });
 
-// ─── Guard 1g — verify-before-assert nudge (cancel/undo intent) ──────────────
+// ─── No guard reads the words of a request ───────────────────────────────────
 //
-// Live incident 2026-07-11: a user asked their agent whether it could post
-// Discord release announcements. The agent created a schedule. The user said
-// "Annule". The agent's ENTIRE response turn was telegram_send_message +
-// return_result — it never called a read tool, and asserted "rien à annuler",
-// contradicting its own prior turn. Guard 1g nudges the agent to verify
-// platform state before asserting, when an inbound cancel/undo request is
-// answered without any verification tool call on the job's first turn.
+// A runner guard ("Guard 1g", 2026-07-12) matched a list of French and English
+// verbs (annuler, cancel, undo, supprimer, enlever, retirer, désactiver,
+// arrêter) in the first 200 characters of a request, and held a first turn
+// that had finished, ordering platform reads. It is removed: a guard stops or
+// holds a run only on a fact the runner holds, never on the look of the words.
+// The case it was added for (an agent denying its own earlier action) is now
+// carried by the exchange record replayed with the conversation history
+// (thread-history.ts, exchange-record.ts: every past tool call of the thread,
+// with the head of its result) and by the "read before you assert" rule of the
+// verify-before-done baseline skill.
 
-describe('Guard 1g — verify-before-assert nudge (cancel/undo intent)', () => {
-  async function createTelegramJob(task: string) {
+describe('a finished first turn ends as it is, whatever words its request uses @cap:parler-par-canal-externe/moteur', () => {
+  const REQUESTS = [
+    'Annule la routine de ce matin.',
+    'Please cancel the reminder.',
+    'Undo what you just did.',
+    'Supprime le brouillon.',
+    'Enlève cette ligne du rapport.',
+    'Retire mon nom de la liste.',
+    'Désactive la notification.',
+    'Arrête de m’envoyer le résumé.',
+    'Storniere den Termin.',
+  ];
+
+  it('a send and return_result on turn 1 complete the job on turn 1, for every one of these requests', async () => {
     await db
       .update(agents)
       .set({ telegramBotToken: 'fake-token' })
       .where(eq(agents.id, seed.agentId));
+    try {
+      for (const [i, task] of REQUESTS.entries()) {
+        const [tgJob] = await db
+          .insert(agentJobs)
+          .values({
+            entityId: seed.entityId,
+            agentId: seed.agentId,
+            channel: 'telegram',
+            chatId: '12345',
+            chatChannel: 'telegram',
+            task,
+            status: 'pending',
+            messages: [],
+            chainCount: 0,
+          })
+          .returning();
+        const capturedPrompts: unknown[] = [];
+        sendTelegramMessageMock.mockClear();
+        const result = await executeJob(
+          tgJob!.id as JobId,
+          makeDeps(
+            makeMockLlmClient(
+              [
+                {
+                  toolCalls: [
+                    {
+                      toolCallId: `tg-v${i}`,
+                      toolName: 'telegram_send_message',
+                      args: { text: `Done (${i}).` },
+                    },
+                    {
+                      toolCallId: `rr-v${i}`,
+                      toolName: 'return_result',
+                      args: { status: 'success' },
+                    },
+                  ],
+                },
+                // Never reached: a held turn would ask for a second one.
+                {
+                  text: 'second turn',
+                  toolCalls: [
+                    {
+                      toolCallId: `rr2-v${i}`,
+                      toolName: 'return_result',
+                      args: { status: 'success' },
+                    },
+                  ],
+                },
+              ],
+              capturedPrompts,
+            ),
+          ),
+          testEnv,
+        );
 
-    const [tgJob] = await db
-      .insert(agentJobs)
-      .values({
-        entityId: seed.entityId,
-        agentId: seed.agentId,
-        channel: 'telegram',
-        chatId: '12345',
-        chatChannel: 'telegram',
-        task,
-        status: 'pending',
-        messages: [],
-        chainCount: 0,
-      })
-      .returning();
-    if (!tgJob) throw new Error('Failed to create telegram test job');
-    return tgJob;
-  }
-
-  async function loadMessages(jobId: string) {
-    const [row] = await db
-      .select({ messages: agentJobs.messages })
-      .from(agentJobs)
-      .where(eq(agentJobs.id, jobId));
-    return (row?.messages ?? []) as Array<{ role: string; content: unknown }>;
-  }
-
-  it('cancel-intent task + first turn with only telegram_send_message → nudge injected before the next request', async () => {
-    const tgJob = await createTelegramJob("Mais non je ne t'ai pas demandé ça. Annule.");
-
-    const llmClient = makeMockLlmClient([
-      {
-        toolCalls: [
-          {
-            toolCallId: 'tc-tg1',
-            toolName: 'telegram_send_message',
-            args: { text: 'Annulé, rien à faire.' },
-          },
-        ],
-      },
-      {
-        text: 'Done.',
-        toolCalls: [
-          { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
-        ],
-      },
-    ]);
-
-    const result = await executeJob(tgJob.id as JobId, makeDeps(llmClient), testEnv);
-    expect(result.status).toBe('completed');
-
-    const msgs = await loadMessages(tgJob.id as string);
-    const nudgeMsg = msgs.find(
-      (m) => m.role === 'user' && m.content === VERIFY_BEFORE_ASSERT_NUDGE,
-    );
-    expect(nudgeMsg).toBeDefined();
-
-    await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
-  });
-
-  it('task without cancel/undo words → no nudge', async () => {
-    const tgJob = await createTelegramJob('Envoie un résumé du projet.');
-
-    const llmClient = makeMockLlmClient([
-      {
-        toolCalls: [
-          {
-            toolCallId: 'tc-tg1',
-            toolName: 'telegram_send_message',
-            args: { text: 'Voici le résumé.' },
-          },
-        ],
-      },
-      {
-        text: 'Done.',
-        toolCalls: [
-          { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
-        ],
-      },
-    ]);
-
-    const result = await executeJob(tgJob.id as JobId, makeDeps(llmClient), testEnv);
-    expect(result.status).toBe('completed');
-
-    const msgs = await loadMessages(tgJob.id as string);
-    const nudgeMsg = msgs.find(
-      (m) => m.role === 'user' && m.content === VERIFY_BEFORE_ASSERT_NUDGE,
-    );
-    expect(nudgeMsg).toBeUndefined();
-
-    await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
-  });
-
-  it('first turn WITH a read tool (list_schedules) → no nudge', async () => {
-    const tgJob = await createTelegramJob('Annule cette automation.');
-
-    const llmClient = makeMockLlmClient([
-      { toolCalls: [{ toolCallId: 'tc-ls', toolName: 'list_schedules', args: {} }] },
-      {
-        text: 'Done.',
-        toolCalls: [
-          {
-            toolCallId: 'tc-tg1',
-            toolName: 'telegram_send_message',
-            args: { text: 'Vérifié : aucune automation.' },
-          },
-          { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
-        ],
-      },
-    ]);
-
-    const result = await executeJob(tgJob.id as JobId, makeDeps(llmClient), testEnv);
-    expect(result.status).toBe('completed');
-
-    const msgs = await loadMessages(tgJob.id as string);
-    const nudgeMsg = msgs.find(
-      (m) => m.role === 'user' && m.content === VERIFY_BEFORE_ASSERT_NUDGE,
-    );
-    expect(nudgeMsg).toBeUndefined();
-
-    await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
-  });
-
-  it('nudge fires at most once, even if the second turn also skips verification', async () => {
-    const tgJob = await createTelegramJob("Annule, j'ai changé d'avis.");
-
-    const llmClient = makeMockLlmClient([
-      {
-        toolCalls: [
-          { toolCallId: 'tc-tg1', toolName: 'telegram_send_message', args: { text: 'ok annulé' } },
-        ],
-      },
-      {
-        toolCalls: [
-          { toolCallId: 'tc-tg2', toolName: 'telegram_send_message', args: { text: 'confirmé' } },
-        ],
-      },
-      {
-        text: 'Done.',
-        toolCalls: [
-          { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
-        ],
-      },
-    ]);
-
-    const result = await executeJob(tgJob.id as JobId, makeDeps(llmClient), testEnv);
-    expect(result.status).toBe('completed');
-
-    const msgs = await loadMessages(tgJob.id as string);
-    const nudges = msgs.filter(
-      (m) => m.role === 'user' && m.content === VERIFY_BEFORE_ASSERT_NUDGE,
-    );
-    expect(nudges).toHaveLength(1);
-
-    await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
-  });
-
-  // ─── Guard 1g HOLD — the exact incident shape ────────────────────────────
-  // Live incident 2026-07-11: turn 1 was [telegram_send_message, return_result]
-  // IN THE SAME turn — the job completed before the k-ter nudge (above) ever
-  // got a chance to fire. The HOLD intercepts exactly this shape: defers
-  // return_result once, injects the nudge, and lets the loop run one more turn.
-
-  it('EXACT incident shape: return_result in the SAME turn as telegram_send_message → held once, completes on turn 2', async () => {
-    const tgJob = await createTelegramJob("Mais non je t'ai pas demandé ça . Annule");
-
-    const capturedPrompts: unknown[] = [];
-    const llmClient = makeMockLlmClient(
-      [
-        {
-          text: 'Done.',
-          toolCalls: [
-            {
-              toolCallId: 'tc-tg1',
-              toolName: 'telegram_send_message',
-              args: { text: 'Aucune schedule créée — rien à annuler.' },
-            },
-            { toolCallId: 'tc-rr1', toolName: 'return_result', args: { status: 'success' } },
-          ],
-        },
-        {
-          text: 'Done.',
-          toolCalls: [
-            { toolCallId: 'tc-rr2', toolName: 'return_result', args: { status: 'success' } },
-          ],
-        },
-      ],
-      capturedPrompts,
-    );
-
-    sendTelegramMessageMock.mockClear();
-    const result = await executeJob(tgJob.id as JobId, makeDeps(llmClient), testEnv);
-    expect(result.status).toBe('completed');
-
-    // Two LLM calls happened — the job did NOT finalize on turn 1's
-    // return_result, it looped once more.
-    expect(capturedPrompts.length).toBe(2);
-
-    // The nudge is visible in the persisted transcript, between the two turns.
-    const msgs = await loadMessages(tgJob.id as string);
-    const nudgeMsg = msgs.find(
-      (m) => m.role === 'user' && m.content === VERIFY_BEFORE_ASSERT_NUDGE,
-    );
-    expect(nudgeMsg).toBeDefined();
-
-    // return_result's FIRST call got a "deferred" tool-result, not an
-    // "acknowledged" one — it was genuinely held, not silently dropped.
-    const heldResult = msgs.find(
-      (m) =>
-        m.role === 'tool' &&
-        Array.isArray(m.content) &&
-        (m.content as Array<Record<string, unknown>>).some(
-          (p) =>
-            p['toolCallId'] === 'tc-rr1' && JSON.stringify(p['output'] ?? '').includes('deferred'),
-        ),
-    );
-    expect(heldResult).toBeDefined();
-
-    // The send actually went out exactly once — the hold didn't re-send or
-    // drop the delivery.
-    expect(sendTelegramMessageMock).toHaveBeenCalledOnce();
-
-    await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
-  });
-
-  it('regression: cancel-intent with a read tool (list_schedules) alongside return_result on turn 1 → completes normally, no hold', async () => {
-    const tgJob = await createTelegramJob('Annule cette automation.');
-
-    const capturedPrompts: unknown[] = [];
-    const llmClient = makeMockLlmClient(
-      [
-        {
-          text: 'Done.',
-          toolCalls: [
-            { toolCallId: 'tc-ls', toolName: 'list_schedules', args: {} },
-            {
-              toolCallId: 'tc-tg',
-              toolName: 'telegram_send_message',
-              args: { text: 'Vérifié : aucune automation.' },
-            },
-            { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
-          ],
-        },
-      ],
-      capturedPrompts,
-    );
-
-    const result = await executeJob(tgJob.id as JobId, makeDeps(llmClient), testEnv);
-    expect(result.status).toBe('completed');
-
-    // ONE LLM call — return_result finalized straight away, no hold/re-loop.
-    expect(capturedPrompts.length).toBe(1);
-
-    const msgs = await loadMessages(tgJob.id as string);
-    const nudgeMsg = msgs.find(
-      (m) => m.role === 'user' && m.content === VERIFY_BEFORE_ASSERT_NUDGE,
-    );
-    expect(nudgeMsg).toBeUndefined();
-
-    await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
-  });
-
-  it('the hold fires at most once, even if turn 2 answers again with no verification', async () => {
-    const tgJob = await createTelegramJob('Annule tout de suite.');
-
-    const capturedPrompts: unknown[] = [];
-    const llmClient = makeMockLlmClient(
-      [
-        {
-          // Turn 1: same incident shape — held once.
-          text: 'Done.',
-          toolCalls: [
-            { toolCallId: 'tc-tg1', toolName: 'telegram_send_message', args: { text: 'annulé' } },
-            { toolCallId: 'tc-rr1', toolName: 'return_result', args: { status: 'success' } },
-          ],
-        },
-        {
-          // Turn 2: STILL no verification tool — must pass through unconditionally.
-          text: 'Done.',
-          toolCalls: [
-            { toolCallId: 'tc-tg2', toolName: 'telegram_send_message', args: { text: 'confirmé' } },
-            { toolCallId: 'tc-rr2', toolName: 'return_result', args: { status: 'success' } },
-          ],
-        },
-      ],
-      capturedPrompts,
-    );
-
-    const result = await executeJob(tgJob.id as JobId, makeDeps(llmClient), testEnv);
-    expect(result.status).toBe('completed');
-
-    // Exactly 2 LLM calls — turn 2's return_result was NOT held again.
-    expect(capturedPrompts.length).toBe(2);
-
-    const msgs = await loadMessages(tgJob.id as string);
-    const nudges = msgs.filter(
-      (m) => m.role === 'user' && m.content === VERIFY_BEFORE_ASSERT_NUDGE,
-    );
-    expect(nudges).toHaveLength(1);
-
-    await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
+        expect(result.status, task).toBe('completed');
+        expect(capturedPrompts, task).toHaveLength(1);
+        expect(sendTelegramMessageMock, task).toHaveBeenCalledTimes(1);
+        const [row] = await db
+          .select({ status: agentJobs.status, turn: agentJobs.turn, messages: agentJobs.messages })
+          .from(agentJobs)
+          .where(eq(agentJobs.id, tgJob!.id));
+        expect(row?.status, task).toBe('completed');
+        expect(row?.turn, task).toBe(1);
+        expect(JSON.stringify(row?.messages), task).not.toContain('Verify actual platform state');
+        expect(JSON.stringify(row?.messages), task).not.toContain('deferred: verify platform');
+      }
+    } finally {
+      await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
+    }
   });
 });
 

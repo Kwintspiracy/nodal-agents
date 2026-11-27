@@ -24,10 +24,10 @@ import {
 } from '@nodal-agents/db';
 import {
   reclaimJobsOfDeadRunners,
-  runnerRestartedStopLine,
   RUNNER_LIVENESS_WINDOW_MS,
   RUNNER_RESTARTED_CODE,
 } from '../../cron/reclaim-jobs.ts';
+import { sweptJobStopLine } from '../../cron/stop-line.ts';
 import { DELEGATION_FAILED_MARKER } from '@nodal-agents/orchestration';
 
 let db: TestDb;
@@ -129,9 +129,9 @@ describe('un job que plus aucun runner ne tient @cap:parler-a-un-agent/moteur', 
     const row = await jobRow(jobId);
     expect(row.status).toBe('failed');
     expect(row.error).toBe(RUNNER_RESTARTED_CODE);
-    expect(row.result ?? '').toContain('[stopped: runner restarted');
+    expect(row.result ?? '').toContain('[stopped: status processing, not updated for ');
     expect(row.result ?? '').toContain('status processing');
-    expect(row.result ?? '').toContain('no heartbeat for');
+    expect(row.result ?? '').toContain('not updated for');
   });
 
   it('un job qui BAT ENCORE n’est pas touché', async () => {
@@ -326,7 +326,7 @@ describe('le parent d’un enfant repris @cap:organiser-equipe/moteur', () => {
 
     const child = await jobRow(childId);
     expect(child.result ?? '').toContain('La voix off est générée, je vérifie le fichier.');
-    expect(child.result ?? '').toContain('[stopped: runner restarted');
+    expect(child.result ?? '').toContain('[stopped: status processing, not updated for ');
 
     const parent = await jobRow(parentId);
     const last = (parent.messages as Array<{ role: string; content: unknown[] }>).at(-1)!;
@@ -336,7 +336,7 @@ describe('le parent d’un enfant repris @cap:organiser-equipe/moteur', () => {
       files_written: unknown;
     };
     expect(record.summary).toContain('La voix off est générée, je vérifie le fichier.');
-    expect(record.summary).toContain('[stopped: runner restarted');
+    expect(record.summary).toContain('[stopped: status processing, not updated for ');
     expect(record.files_written).toEqual([
       {
         kind: 'file',
@@ -407,16 +407,37 @@ describe('le parent d’un enfant repris @cap:organiser-equipe/moteur', () => {
   });
 });
 
-describe('les faits d’un runner redémarré, mis en mots @cap:parler-a-un-agent/moteur', () => {
-  it('la ligne lue par la personne est une ligne de plateforme, entre crochets', () => {
-    expect(runnerRestartedStopLine({ status: 'processing', idleMs: 192_000 })).toBe(
-      '[stopped: runner restarted — status processing, no heartbeat for 3m12s]',
+describe('les faits d’un job que personne ne tient, mis en mots @cap:parler-a-un-agent/moteur', () => {
+  it('la ligne lue par la personne est une ligne de plateforme, entre crochets, sans cause devinée', () => {
+    expect(sweptJobStopLine({ status: 'processing', idleMs: 192_000 })).toBe(
+      '[stopped: status processing, not updated for 3m12s]',
     );
   });
 
   it('sous la minute, elle le dit en secondes', () => {
-    expect(runnerRestartedStopLine({ status: 'processing', idleMs: 45_000 })).toBe(
-      '[stopped: runner restarted — status processing, no heartbeat for 45s]',
+    expect(sweptJobStopLine({ status: 'processing', idleMs: 45_000 })).toBe(
+      '[stopped: status processing, not updated for 45s]',
+    );
+  });
+
+  it('elle dit comment a fini le job délégué attendu, ou qu’il n’existe plus', () => {
+    expect(
+      sweptJobStopLine({
+        status: 'awaiting_delegation',
+        idleMs: 420_000,
+        awaitedJob: { status: 'cancelled' },
+      }),
+    ).toBe(
+      '[stopped: status awaiting_delegation, not updated for 7m00s; the delegated job it waited on is cancelled]',
+    );
+    expect(
+      sweptJobStopLine({
+        status: 'awaiting_delegation',
+        idleMs: 1_000,
+        awaitedJob: { status: null },
+      }),
+    ).toBe(
+      '[stopped: status awaiting_delegation, not updated for 1s; the delegated job it waited on no longer exists]',
     );
   });
 });

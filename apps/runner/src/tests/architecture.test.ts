@@ -280,3 +280,53 @@ describe('architecture — une porte par transition poussée (#944) @cap:suivre-
     expect(Object.keys(OUT_OF_PROCESS_WRITERS).filter((f) => !used.has(f))).toEqual([]);
   });
 });
+
+// ─── #1180 : un seul écrivain de `failed`, et c'est lui qui prépare la notice ──
+//
+// Une trentaine de sorties d'échec (la boucle, le runtime CLI, le tableau, les
+// faucheurs) ; seules quelques-unes prévenaient la personne, chacune à sa façon.
+// La règle : `failed` s'écrit à UN endroit (`writeFailure`, job/state.ts, sous
+// `failJob`), et cet endroit prépare la notice dans la transaction qui l'écrit.
+// Une sortie nouvelle n'a donc rien à faire pour que la personne l'apprenne ;
+// une écriture de `failed` ailleurs serait un échec que personne n'apprend.
+
+/** `.update(agentJobs).set({ … status: 'failed' … })`, avant son WHERE. */
+const JOB_FAILED_WRITE =
+  /\.update\(agentJobs\)\s*\.set\(\{(?:(?!\.where\()[\s\S]){0,600}?\bstatus:\s*'failed'/g;
+
+describe('architecture — un seul écrivain de `failed`, qui prépare la notice (#1180) @cap:parler-par-canal-externe/moteur', () => {
+  it('`failed` n’est écrit sur agent_jobs qu’une fois, dans writeFailure, qui prépare la notice avant d’annoncer', () => {
+    const files = scanRoots(new RegExp(JOB_FAILED_WRITE.source), 'job-failed-write').map((v) =>
+      rel(v.file),
+    );
+    expect([...new Set(files)]).toEqual(['apps/runner/src/job/state.ts']);
+
+    const src = readFileSync(join(REPO, 'apps/runner/src/job/state.ts'), 'utf-8');
+    expect([...src.matchAll(JOB_FAILED_WRITE)]).toHaveLength(1);
+    const start = src.indexOf('async function writeFailure(');
+    const end = src.indexOf('\n}\n', start);
+    const body = src.slice(start, end);
+    expect(start).toBeGreaterThan(-1);
+    expect(body).toMatch(new RegExp(JOB_FAILED_WRITE.source));
+    const prepare = body.indexOf('await prepareFailureNotice(');
+    const announce = body.indexOf('await announceTransitions(');
+    expect(prepare).toBeGreaterThan(-1);
+    expect(announce).toBeGreaterThan(prepare);
+  });
+
+  it('aucune sortie d’échec ne prépare sa propre notice : la clé de la notice n’a qu’un auteur', () => {
+    const outside = WRITER_ROOTS.flatMap((root) =>
+      scanForPattern(
+        { srcDir: join(REPO, root) },
+        {
+          pattern: /failureNoticeKey\(|:harness:|notifyJobFailure\(/,
+          rule: 'failure-notice-elsewhere',
+        },
+      ),
+    )
+      .filter((v) => !isTestFile(v.file))
+      .map((v) => rel(v.file))
+      .filter((f) => f !== 'apps/runner/src/job/failure-notice.ts');
+    expect(outside).toEqual([]);
+  });
+});
