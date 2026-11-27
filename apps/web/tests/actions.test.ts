@@ -2610,6 +2610,9 @@ describe('createOrAssignOAuthConnectorAction — I-10 error detail leak (audit #
         id: credentialId,
         ownerUserId: '00000000-0000-0000-0000-000000000001',
         type: 'google-oauth',
+        // A grant that covers Drive, so the action reaches its INSERT (the
+        // path this test is about) instead of stopping at the grant check.
+        payload: JSON.stringify({ scopes: 'https://www.googleapis.com/auth/drive' }),
       },
     ]) as unknown as { insert: unknown };
     db.insert = vi.fn(() => {

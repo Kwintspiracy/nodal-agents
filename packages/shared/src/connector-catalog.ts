@@ -107,6 +107,8 @@ export const CONNECTOR_CATALOG: CatalogEntry[] = [
     credentialType: 'google-oauth',
     category: 'Productivity',
     docsHint: 'OAuth flow — uses your Google credential (create one under Credentials).',
+    scopeDisclosure:
+      'Grants access to your WHOLE mailbox: read, send, draft, label, archive and permanently delete any email. Google grants permanent deletion only with full mailbox access.',
   },
   {
     slug: 'google-calendar',
@@ -153,6 +155,8 @@ export const CONNECTOR_CATALOG: CatalogEntry[] = [
     credentialType: 'microsoft-oauth',
     category: 'Productivity',
     docsHint: 'OAuth flow — uses your Microsoft credential (create one under Credentials).',
+    scopeDisclosure:
+      'Grants access to your WHOLE mailbox: read, change, move, delete and send any email.',
   },
   {
     slug: 'airtable',

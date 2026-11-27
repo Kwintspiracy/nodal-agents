@@ -157,7 +157,7 @@ export const OAUTH_GUIDES: Record<
       },
       {
         number: 4,
-        text: 'In the Scopes section, check the four scopes: data.records:read, data.records:write, schema.bases:read, schema.bases:write — then save / update the integration so the scopes are persisted.',
+        text: 'In the Scopes section, check the three scopes: data.records:read, data.records:write, schema.bases:read — then save / update the integration so the scopes are persisted.',
         hint: 'If the scopes are not saved, Airtable returns "invalid_scope" during the OAuth flow.',
       },
       {
@@ -210,7 +210,7 @@ export const OAUTH_GUIDES: Record<
       },
       {
         number: 7,
-        text: 'Go to API permissions → Add a permission → Microsoft Graph → Delegated permissions, then add: Mail.ReadWrite, Mail.Send, MailboxSettings.Read, offline_access.',
+        text: 'Go to API permissions → Add a permission → Microsoft Graph → Delegated permissions, then add: Mail.ReadWrite, Mail.Send, offline_access.',
       },
       {
         number: 8,

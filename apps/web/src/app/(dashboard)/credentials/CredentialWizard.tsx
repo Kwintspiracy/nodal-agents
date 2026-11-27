@@ -10,6 +10,9 @@ import TextInput from '@/components/ui/TextInput';
 import FieldLabel from '@/components/ui/FieldLabel';
 import CopyButton from '@/components/ui/CopyButton';
 import ScopeDisclosure from '@/components/ScopeDisclosure.tsx';
+import Select from '@/components/ui/Select';
+import { CONNECTOR_CATALOG } from '@/lib/connector-catalog.ts';
+import { getOAuthProvider } from '@/lib/oauth-providers.ts';
 
 export type CredentialWizardType =
   | 'google-oauth'
@@ -89,9 +92,11 @@ interface Props {
   /** Pre-select a credential type, skipping step 1. */
   initialType?: CredentialWizardType;
   /**
-   * If set, after credential creation the OAuth callback will redirect to
-   * /connectors?connected={slug}&credentialId={id} for auto-assignment.
-   * If unset, the callback redirects to /credentials?created={id}.
+   * The connector the credential is created for: the authorisation asks for
+   * ITS scopes, and after creation the OAuth callback redirects to
+   * /connectors?connectorSlug={slug}&credentialId={id} for auto-assignment.
+   * If unset (opened from the Credentials page), the person picks the service
+   * in the form, and the callback redirects to /credentials?created={id}.
    */
   returnToConnectorSlug?: string;
   /**
@@ -136,6 +141,17 @@ export default function CredentialWizard({
   }
 
   const config = selectedType ? PROVIDER_CONFIGS[selectedType] : null;
+
+  // An authorisation is asked for one connector: the services this credential
+  // type backs, one of which the person names when no card opened the wizard.
+  const services = selectedType
+    ? CONNECTOR_CATALOG.filter((c) => c.authType === 'oauth2' && c.credentialType === selectedType)
+    : [];
+  const [chosenService, setChosenService] = useState<string>('');
+  const connector =
+    returnToConnectorSlug ??
+    (services.length === 1 ? services[0]!.slug : chosenService !== '' ? chosenService : null);
+  const requestedScopes = connector ? (getOAuthProvider(connector)?.scopes ?? []) : [];
 
   // returnTo value propagated into the OAuth state cookie.
   const returnTo = returnToConnectorSlug
@@ -223,6 +239,31 @@ export default function CredentialWizard({
               field required for the browser's own POST redirect into the
               OAuth flow; not a visible field, no design-system counterpart. */}
           <input type="hidden" name="returnTo" value={returnTo} />
+          {connector && (
+            // eslint-disable-next-line no-restricted-syntax -- same native POST as above.
+            <input type="hidden" name="connector" value={connector} />
+          )}
+
+          {/* Which service the authorisation is for, when no card said it. */}
+          {!returnToConnectorSlug && services.length > 1 && (
+            <div>
+              <FieldLabel>Service</FieldLabel>
+              <Select
+                value={chosenService}
+                onChange={(e) => setChosenService(e.target.value)}
+                required
+              >
+                <option value="" disabled>
+                  Choose the service to connect
+                </option>
+                {services.map((c) => (
+                  <option key={c.slug} value={c.slug}>
+                    {c.label}
+                  </option>
+                ))}
+              </Select>
+            </div>
+          )}
 
           {/* Instructions */}
           <div className="space-y-2">
@@ -242,6 +283,23 @@ export default function CredentialWizard({
               <CopyButton value={redirectUri} className="shrink-0" />
             </div>
           </div>
+
+          {/* What will be asked of the provider for this service. */}
+          {requestedScopes.length > 0 && (
+            <div className="space-y-1">
+              <p className="text-xs text-ink-3">Access requested</p>
+              <div className="flex flex-wrap gap-1">
+                {requestedScopes.map((scope) => (
+                  <span
+                    key={scope}
+                    className="px-1.5 py-0.5 bg-hover text-ink-3 rounded text-mono-11"
+                  >
+                    {scope}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Form fields */}
           <div className="space-y-3 border-t border-rule-2 pt-4">
@@ -276,7 +334,7 @@ export default function CredentialWizard({
                 Back
               </PrimaryButton>
             )}
-            <PrimaryButton variant="ink" type="submit">
+            <PrimaryButton variant="ink" type="submit" disabled={!connector}>
               Continue with {config.label}
             </PrimaryButton>
           </ModalFooter>

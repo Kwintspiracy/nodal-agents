@@ -69,7 +69,7 @@ import {
   personAnswersOfCalls,
   recordedPersonAnswers,
 } from '@nodal-agents/shared';
-import { ADAPTER_REGISTRY } from '@nodal-agents/runner-adapters';
+import { ADAPTER_REGISTRY, connectorAccessFor } from '@nodal-agents/runner-adapters';
 import {
   createMcpTools,
   createLazyMcpTools,
@@ -2460,6 +2460,8 @@ async function runJobTracked(
     //   - connectors.credentialId → credentials.payload.accessToken (OAuth)
     //   - connectors.api_key      → decrypted api_key column (PAT / api_key)
     // null enabledOperations → all tools; array → whitelist on tool.name.
+    // An OAuth connector never offers an operation its credential's granted
+    // scopes do not cover (`connectorAccessFor`, the dashboard's rule too).
     // Adapters without a registry entry are skipped silently.
     const connectorAssignments = await db
       .select({
@@ -2479,6 +2481,10 @@ async function runJobTracked(
 
       let accessToken: string | null = null;
       let credentialIdForResolver: string | null = null;
+      // The operations the credential's grant does not cover are withheld:
+      // the provider would refuse every call (missing scope), so the agent is
+      // never offered them. Same rule as the dashboard's card and grid.
+      let withheld: ReadonlySet<string> = new Set();
       if (entry.credentialType === 'api_key') {
         // PAT / api_key path: decrypt connectors.api_key directly.
         if (!ca.apiKey) continue;
@@ -2506,6 +2512,8 @@ async function runJobTracked(
         if (!decrypted) continue;
         accessToken = decrypted.payload.accessToken;
         credentialIdForResolver = ca.credentialId;
+        const access = connectorAccessFor(ca.slug, decrypted.payload.scopes);
+        if (access.kind === 'needs_access') withheld = new Set(access.missingOperations);
       }
 
       if (!accessToken) continue;
@@ -2533,8 +2541,9 @@ async function runJobTracked(
             })
           : entry.toolFactory(accessToken);
       const enabled = ca.enabledOperations;
-      const filtered =
-        enabled === null ? allTools : allTools.filter((t) => enabled.includes(t.name));
+      const filtered = allTools.filter(
+        (t) => !withheld.has(t.name) && (enabled === null || enabled.includes(t.name)),
+      );
 
       capabilityTools.push(...filtered);
     }

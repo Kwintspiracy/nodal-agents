@@ -77,7 +77,9 @@ describe('generateState', () => {
 function makePayload(overrides: Partial<StatePayload> = {}): StatePayload {
   return {
     v: 1,
-    slug: 'google-drive',
+    slug: 'google-oauth',
+    connector: 'google-drive',
+    requestedScopes: 'https://www.googleapis.com/auth/drive openid',
     entityId: 'aaaaaaaa-0000-0000-0000-000000000001',
     state: generateState(),
     codeVerifier: generatePkce().codeVerifier,
@@ -88,6 +90,26 @@ function makePayload(overrides: Partial<StatePayload> = {}): StatePayload {
     ...overrides,
   };
 }
+
+describe('verifyStateCookie — the connector the grant is for', () => {
+  it('refuses a cookie that does not name its connector (written before per-connector starts)', () => {
+    _resetMasterKeyCacheForTests();
+    _setMasterKeyForTests(randomBytes(32));
+    const { connector: _connector, ...withoutConnector } = makePayload();
+    const cookie = signStatePayload(withoutConnector as StatePayload);
+    expect(verifyStateCookie(cookie)).toBeNull();
+  });
+
+  it('keeps the connector, the requested scopes and the credential to update', () => {
+    _resetMasterKeyCacheForTests();
+    _setMasterKeyForTests(randomBytes(32));
+    const payload = makePayload({ connector: 'gmail', credentialId: 'cred-1' });
+    const result = verifyStateCookie(signStatePayload(payload));
+    expect(result?.connector).toBe('gmail');
+    expect(result?.credentialId).toBe('cred-1');
+    expect(result?.requestedScopes).toBe(payload.requestedScopes);
+  });
+});
 
 describe('signStatePayload + verifyStateCookie roundtrip', () => {
   it('returns the original payload on valid cookie', () => {

@@ -91,8 +91,10 @@ test.describe('Connector scope disclosure @cap:connecter-un-service/ecran', () =
     await expect(page.getByRole('dialog').getByText(/entire google drive/i)).toBeVisible();
   });
 
-  test('Google Sheets and Docs disclose their reach too', async ({ page }) => {
-    for (const label of ['Google Sheets', 'Google Docs']) {
+  test('Google Sheets, Docs and Gmail disclose their reach too', async ({ page }) => {
+    // Gmail asks for what its operations need, and permanent deletion exists
+    // only under the full mailbox scope: its reach is the whole mailbox.
+    for (const label of ['Google Sheets', 'Google Docs', 'Gmail']) {
       const opened = await openConnectorInstallDialog(page, label);
       console.log(`[scope] ${label} ouvre : ${opened}`);
       await expectDisclosure(page, opened, label);
@@ -101,11 +103,11 @@ test.describe('Connector scope disclosure @cap:connecter-un-service/ecran', () =
   });
 
   test('a connector whose reach matches its name shows NO disclosure', async ({ page }) => {
-    // Gmail asks only for readonly + send, which is what "connect Gmail" already
-    // implies. A banner there would be noise, and noise is what teaches people
-    // to skip the banner that matters.
-    const opened = await openConnectorInstallDialog(page, 'Gmail');
-    console.log(`[scope] Gmail ouvre : ${opened}`);
+    // Airtable asks for records and base schemas, which is what "connect
+    // Airtable" already implies. A banner there would be noise, and noise is
+    // what teaches people to skip the banner that matters.
+    const opened = await openConnectorInstallDialog(page, 'Airtable (OAuth)');
+    console.log(`[scope] Airtable (OAuth) ouvre : ${opened}`);
     await expect(page.getByRole('dialog').getByText(/what this connector can reach/i)).toHaveCount(
       0,
     );

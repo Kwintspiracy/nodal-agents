@@ -11,7 +11,22 @@
 //                 irreversible outbound side-effect, owner's decision on #711),
 //                 outlook_delete_draft (permanent, unlike outlook_delete_message)
 
-import type { OperationDescriptor } from '@nodal-agents/shared';
+import type { OperationDescriptor, ScopeRequirement } from '@nodal-agents/shared';
+
+// OAuth rights, from the Microsoft Graph permissions of each call (delegated).
+// First = the permission Nodal asks for; the others are the ones Graph also
+// accepts for the same call. Reading asks for Mail.ReadWrite, which the
+// changing operations need anyway, and accepts the narrower Mail.Read. A
+// granted Graph permission may come back in the token's `scope` without its
+// resource prefix, so both forms count.
+const GRAPH = 'https://graph.microsoft.com/';
+const both = (permission: string): [string, string] => [`${GRAPH}${permission}`, permission];
+/** list / get messages, list drafts, list mail folders, get attachment */
+const READ_MAIL: ScopeRequirement = [...both('Mail.ReadWrite'), ...both('Mail.Read')];
+/** create / update / delete drafts, update / move / delete messages */
+const WRITE_MAIL: ScopeRequirement = both('Mail.ReadWrite');
+/** sendMail, send a draft, reply, forward */
+const SEND_MAIL: ScopeRequirement = both('Mail.Send');
 
 export const OUTLOOK_MAIL_OPERATIONS: OperationDescriptor[] = [
   // ─── Read (5) ────────────────────────────────────────────────────────────────
@@ -20,6 +35,7 @@ export const OUTLOOK_MAIL_OPERATIONS: OperationDescriptor[] = [
     name: 'List messages',
     risk: 'read',
     requiresApproval: false,
+    scopes: [READ_MAIL],
     description: 'Search and list Outlook emails, optionally scoped to a folder.',
   },
   {
@@ -27,6 +43,7 @@ export const OUTLOOK_MAIL_OPERATIONS: OperationDescriptor[] = [
     name: 'Get message',
     risk: 'read',
     requiresApproval: false,
+    scopes: [READ_MAIL],
     description: 'Retrieve a single Outlook email by ID.',
   },
   {
@@ -34,6 +51,7 @@ export const OUTLOOK_MAIL_OPERATIONS: OperationDescriptor[] = [
     name: 'List drafts',
     risk: 'read',
     requiresApproval: false,
+    scopes: [READ_MAIL],
     description: 'List Outlook email drafts.',
   },
   {
@@ -41,6 +59,7 @@ export const OUTLOOK_MAIL_OPERATIONS: OperationDescriptor[] = [
     name: 'List folders',
     risk: 'read',
     requiresApproval: false,
+    scopes: [READ_MAIL],
     description: 'List all Outlook mail folders.',
   },
   {
@@ -48,6 +67,7 @@ export const OUTLOOK_MAIL_OPERATIONS: OperationDescriptor[] = [
     name: 'Get attachment',
     risk: 'read',
     requiresApproval: false,
+    scopes: [READ_MAIL],
     description: 'Download an email attachment by ID.',
   },
 
@@ -57,6 +77,7 @@ export const OUTLOOK_MAIL_OPERATIONS: OperationDescriptor[] = [
     name: 'Delete message',
     risk: 'write',
     requiresApproval: false,
+    scopes: [WRITE_MAIL],
     description: 'Move a message to the Deleted Items folder (reversible).',
   },
   {
@@ -64,6 +85,7 @@ export const OUTLOOK_MAIL_OPERATIONS: OperationDescriptor[] = [
     name: 'Update message',
     risk: 'write',
     requiresApproval: false,
+    scopes: [WRITE_MAIL],
     description: "Update a message's read status and/or categories.",
   },
   {
@@ -71,6 +93,7 @@ export const OUTLOOK_MAIL_OPERATIONS: OperationDescriptor[] = [
     name: 'Move message',
     risk: 'write',
     requiresApproval: false,
+    scopes: [WRITE_MAIL],
     description: 'Move a message to a different mail folder.',
   },
   {
@@ -78,6 +101,7 @@ export const OUTLOOK_MAIL_OPERATIONS: OperationDescriptor[] = [
     name: 'Create draft',
     risk: 'write',
     requiresApproval: false,
+    scopes: [WRITE_MAIL],
     description: 'Compose an Outlook email draft without sending.',
   },
   {
@@ -85,6 +109,7 @@ export const OUTLOOK_MAIL_OPERATIONS: OperationDescriptor[] = [
     name: 'Update draft',
     risk: 'write',
     requiresApproval: false,
+    scopes: [WRITE_MAIL],
     description: 'Update an existing Outlook email draft.',
   },
 
@@ -94,6 +119,7 @@ export const OUTLOOK_MAIL_OPERATIONS: OperationDescriptor[] = [
     name: 'Reply to message',
     risk: 'destructive',
     requiresApproval: true,
+    scopes: [SEND_MAIL],
     description: 'Send a reply (or reply-all) to an Outlook message.',
   },
   {
@@ -101,6 +127,7 @@ export const OUTLOOK_MAIL_OPERATIONS: OperationDescriptor[] = [
     name: 'Forward message',
     risk: 'destructive',
     requiresApproval: true,
+    scopes: [SEND_MAIL],
     description: 'Forward an Outlook message to new recipients.',
   },
   {
@@ -108,6 +135,7 @@ export const OUTLOOK_MAIL_OPERATIONS: OperationDescriptor[] = [
     name: 'Send email',
     risk: 'destructive',
     requiresApproval: true,
+    scopes: [SEND_MAIL],
     description: 'Send an email from the connected Outlook mailbox (irreversible).',
   },
   {
@@ -115,6 +143,7 @@ export const OUTLOOK_MAIL_OPERATIONS: OperationDescriptor[] = [
     name: 'Send draft',
     risk: 'destructive',
     requiresApproval: true,
+    scopes: [SEND_MAIL],
     description: 'Send a saved draft (irreversible).',
   },
   {
@@ -122,6 +151,7 @@ export const OUTLOOK_MAIL_OPERATIONS: OperationDescriptor[] = [
     name: 'Delete draft',
     risk: 'destructive',
     requiresApproval: true,
+    scopes: [WRITE_MAIL],
     description: 'Permanently delete an Outlook email draft.',
   },
 ];

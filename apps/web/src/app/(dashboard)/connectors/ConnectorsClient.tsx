@@ -19,7 +19,7 @@ type Tab = 'installed' | 'marketplace';
 type Props = {
   instances: ConnectorRow[];
   catalog: ConnectorCatalogItem[];
-  credsByType: Record<string, CompatibleCredential[]>;
+  credsBySlug: Record<string, CompatibleCredential[]>;
 };
 
 /**
@@ -27,7 +27,7 @@ type Props = {
  * Mirrors screen-conn.jsx v4: PillTabs2 (Installed | Marketplace), search,
  * ChipRow category filter on the Marketplace tab.
  */
-export default function ConnectorsClient({ instances, catalog, credsByType }: Props) {
+export default function ConnectorsClient({ instances, catalog, credsBySlug }: Props) {
   const [tab, setTab] = useState<Tab>(instances.length > 0 ? 'installed' : 'marketplace');
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState('All');
@@ -109,13 +109,13 @@ export default function ConnectorsClient({ instances, catalog, credsByType }: Pr
         ) : filteredInstalled.length === 0 ? (
           <EmptySearch />
         ) : (
-          <ConnectorsInstalledTable instances={filteredInstalled} credsByType={credsByType} />
+          <ConnectorsInstalledTable instances={filteredInstalled} credsBySlug={credsBySlug} />
         )
       ) : (
         <ConnectorsMarketplaceGrid
           catalog={filteredMarketplace}
           instances={instances}
-          credsByType={credsByType}
+          credsBySlug={credsBySlug}
         />
       )}
     </PageShell>
