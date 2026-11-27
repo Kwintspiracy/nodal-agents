@@ -20,6 +20,9 @@ interface Props {
    *  (e.g. the agent's name) before the confirm button enables. Reserve it
    *  for the truly irreversible deletes. */
   typeToConfirm?: string;
+  /** Keeps the confirm button disabled while a choice that belongs to this
+   *  decision (made in `extra`) is still missing. */
+  confirmDisabled?: boolean;
   /**
    * Extra content under the message — for a choice that BELONGS to the
    * decision being confirmed, e.g. how wide a standing grant should reach.
@@ -47,6 +50,7 @@ export default function ConfirmDialog({
   cancelLabel = 'Cancel',
   destructive = true,
   typeToConfirm,
+  confirmDisabled = false,
   extra,
   onConfirm,
   onCancel,
@@ -65,7 +69,7 @@ export default function ConfirmDialog({
     if (open) setTyped('');
   }
 
-  const confirmBlocked = Boolean(typeToConfirm) && typed !== typeToConfirm;
+  const confirmBlocked = confirmDisabled || (Boolean(typeToConfirm) && typed !== typeToConfirm);
 
   useEffect(() => {
     // SSR-safe portal gate: createPortal needs document, which is only present

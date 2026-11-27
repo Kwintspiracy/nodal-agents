@@ -1,0 +1,14 @@
+-- 0174 — the full file list of an installed community skill.
+--
+-- An installed skill is a folder. Until now only SKILL.md and the scripts
+-- present at install were tracked (installed_scripts), so an update or a
+-- reinstall could not tell a file the source shipped from a file the owner or
+-- an agent added later, and replaced the whole folder.
+--
+-- installed_files is the manifest of what the source shipped at install or at
+-- the last update: one { path, sha256 } per regular file of the skill folder
+-- (posix-style path relative to the folder). A file on disk that is not in it
+-- was added locally and is kept by every update. NULL for skills installed
+-- before this column existed: their first update keeps every file already in
+-- the folder and asks about every file that differs from the new version.
+ALTER TABLE "agent_skills" ADD COLUMN IF NOT EXISTS "installed_files" jsonb;
