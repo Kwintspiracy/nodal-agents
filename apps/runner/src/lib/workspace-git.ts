@@ -27,7 +27,7 @@ import {
   type ProgramRunner,
   type WorkspaceSandboxReader,
 } from '@nodal-agents/sandbox';
-import { resolveGitBinary } from '@nodal-agents/shared/git-binary';
+import { runInternalGit } from '@nodal-agents/shared/internal-git';
 
 /** A probe that hangs must not hold a job's start. */
 const GIT_TIMEOUT_MS = 5_000;
@@ -54,29 +54,19 @@ export interface WorkspaceGitState {
 }
 
 async function git(programs: ProgramRunner, cwd: string, args: string[]): Promise<string | null> {
-  // QUEL git est lancé — le chemin ABSOLU du git du système, jamais le nom nu
-  // (issue #251). `cwd` est le workspace : un dossier où l'agent écrit, donc un
-  // dossier où un `git.exe` peut être déposé. Passer le nom nu laisserait le
-  // système chercher le programme, et sur un runtime dont la recherche regarde
-  // encore le répertoire courant, cette sonde décrirait un dépôt inventé à
-  // l'agent, dans le bloc même qu'il croit avant d'écrire.
-  const binaire = await resolveGitBinary();
-  // Pas de git sur le PATH : c'est une des trois façons de n'avoir « aucune
-  // réponse utilisable », au même titre que « pas un dépôt » et que la borne de
-  // temps ci-dessous. Le contrat du module est inchangé — null, l'appelant ne
-  // rend rien, aucun job n'échoue pour ça. Ce qui est EXCLU, c'est de retomber
-  // sur le nom nu : ce serait exactement le repli silencieux (invariant #4) que
-  // la résolution existe pour fermer.
-  if (binaire === null) return null;
   try {
-    // DANS le bac à sable quand il est là (#628, audit P1-2) : le workspace est
-    // un dossier où des commandes confinées écrivent, son `.git/config` peut
-    // nommer une commande que `status` exécute (`core.fsmonitor`, un filtre).
-    // Seul le dossier sondé est inscriptible — git doit pouvoir y `chdir` —,
-    // celui que les commandes du job écrivent déjà. Un dépôt enraciné AU-DESSUS
-    // n'y est pas : son `status` y échoue et le bloc dit « inconnu » plutôt que
-    // d'ouvrir à git un dossier que le job ne peut pas écrire.
-    const { stdout } = await programs.execFile(binaire, args, {
+    // Par LE lanceur de git de Nodal (`runInternalGit`) : le chemin ABSOLU du
+    // git du système (#251), la configuration fixe, l'environnement nettoyé.
+    // `cwd` est le workspace, un dossier où l'agent écrit : ce que son
+    // `.git/config` nomme n'est pas exécuté, et les secrets du runner ne sont
+    // pas dans l'environnement de git.
+    //
+    // DANS le bac à sable quand il est là (#628, audit P1-2). Seul le dossier
+    // sondé est inscriptible — git doit pouvoir y `chdir` —, celui que les
+    // commandes du job écrivent déjà. Un dépôt enraciné AU-DESSUS n'y est pas :
+    // son `status` y échoue et le bloc dit « inconnu » plutôt que d'ouvrir à
+    // git un dossier que le job ne peut pas écrire.
+    const { stdout } = await runInternalGit(programs, args, {
       cwd,
       timeout: GIT_TIMEOUT_MS,
       writableRoots: [cwd],
@@ -84,8 +74,10 @@ async function git(programs: ProgramRunner, cwd: string, args: string[]): Promis
     });
     return stdout.trim();
   } catch {
-    // Not a repo, no git on PATH, timeout — all mean "no usable answer", and
-    // none of them should surface as a job failure. The caller renders nothing.
+    // Not a repo, no git on PATH, a configuration that cannot be read,
+    // timeout — all mean "no usable answer", and none of them should surface
+    // as a job failure. The caller renders nothing. Never the bare name: that
+    // is the silent fallback (invariant #4) the resolution exists to close.
     return null;
   }
 }

@@ -123,6 +123,9 @@ describe.runIf(available)(
       await plantedRepo();
       await hostPrograms.execFile(git, ['status', '--porcelain'], {
         cwd: ws,
+        env: Object.fromEntries(
+          Object.entries(process.env).filter((e): e is [string, string] => e[1] !== undefined),
+        ),
         writableRoots: [],
         readableRoots: [],
       });
@@ -170,13 +173,21 @@ describe.runIf(available)(
           `fs.writeFileSync('a.txt', 'changed ' + Date.now());\n`,
       );
 
-    it('TÉMOIN : une photo prise sur l’hôte exécute le piège du sous-dépôt', async () => {
+    it('TÉMOIN : un git lancé EN DIRECT sur l’hôte (sans le lanceur de Nodal) exécute le piège du sous-dépôt', async () => {
+      await plantedSubRepo();
+      await touchSub();
+      // Le git du sous-dépôt, appelé comme le fait celui du dossier parent.
+      hostGit(join(ws, 'sub'), 'status', '--porcelain');
+      expect(existsSync(marker), 'the trap is not armed: this test would prove nothing').toBe(true);
+    });
+
+    it('une photo prise sur l’hôte par le lanceur ne lance rien, et photographie', async () => {
       await plantedSubRepo();
       const store = join(root, 'checkpoints');
-      await snapshot(store, ws, 'one');
+      expect(await snapshot(store, ws, 'one')).not.toBeNull();
       await touchSub();
-      await snapshot(store, ws, 'two');
-      expect(existsSync(marker), 'the trap is not armed: this test would prove nothing').toBe(true);
+      expect(await snapshot(store, ws, 'two')).not.toBeNull();
+      expect(existsSync(marker), 'the planted command ran on the HOST').toBe(false);
     });
 
     it('la photo de deux tours ne lance rien sur l’hôte', async () => {

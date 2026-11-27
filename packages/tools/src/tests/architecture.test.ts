@@ -17,6 +17,7 @@ import {
   scanForProjectKeyCopies,
   scanForMutatingSpawnOutsideIntent,
   formatViolations,
+  scanForGitSpawnOutsideLauncher,
 } from '@nodal-agents/test-kit';
 
 const SRC_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -77,5 +78,12 @@ describe('architecture — le moteur shell est PUR', () => {
     for (const forbidden of ["from '../types'", '@nodal-agents/db', 'file-ops/workspace']) {
       expect(src.includes(forbidden), `shell-engine.ts importe ${forbidden}`).toBe(false);
     }
+  });
+});
+
+describe('architecture — git n’est lancé que par le lanceur de Nodal', () => {
+  it('starts git for itself only through the launcher (@nodal-agents/shared/internal-git)', () => {
+    const v = scanForGitSpawnOutsideLauncher({ srcDir: SRC_DIR });
+    if (v.length > 0) expect.fail(formatViolations('git lancé hors du lanceur', v));
   });
 });
