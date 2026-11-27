@@ -34,6 +34,7 @@ export * from './model-catalog';
 export * from './model-image-budget';
 export * from './mcp-catalog';
 export * from './timezone';
+export * from './schedule-change';
 export * from './redact-secrets';
 export * from './approval-impact';
 export * from './approval-explain';
