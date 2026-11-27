@@ -22,12 +22,17 @@ import {
   constatedWrites,
   jobDeliverableVerificationState,
 } from '@nodal-agents/db';
+import { randomUUID } from 'node:crypto';
+import { runnerInstances } from '@nodal-agents/db';
 import {
   reclaimJobsOfDeadRunners,
   runnerRestartedStopLine,
-  RUNNER_LIVENESS_WINDOW_MS,
   RUNNER_RESTARTED_CODE,
 } from '../../cron/reclaim-jobs.ts';
+import { JOB_LIVENESS } from '../../job/liveness.ts';
+
+/** La fenêtre de silence d'une instance (#1204). */
+const RUNNER_LIVENESS_WINDOW_MS = JOB_LIVENESS.silentInstanceMs;
 import { DELEGATION_FAILED_MARKER } from '@nodal-agents/orchestration';
 
 let db: TestDb;
@@ -129,15 +134,21 @@ describe('un job que plus aucun runner ne tient @cap:parler-a-un-agent/moteur', 
     const row = await jobRow(jobId);
     expect(row.status).toBe('failed');
     expect(row.error).toBe(RUNNER_RESTARTED_CODE);
-    expect(row.result ?? '').toContain('[stopped: runner restarted');
+    expect(row.result ?? '').toContain('[stopped: no live runner holds this job');
     expect(row.result ?? '').toContain('status processing');
-    expect(row.result ?? '').toContain('no heartbeat for');
+    // Aucun détenteur inscrit (une prise d'avant #1204) : la ligne le DIT.
+    expect(row.result ?? '').toContain('no holder recorded');
   });
 
-  it('un job qui BAT ENCORE n’est pas touché', async () => {
-    // Le battement d'un runner vivant est de 60 s : ce job a été touché il y a
-    // dix secondes, il est tenu par quelqu'un.
-    const jobId = await insertJob({ status: 'processing', updatedAt: ilY(10_000) });
+  it('un job tenu par une instance qui BAT ENCORE n’est pas touché, même sans battement du job depuis une heure', async () => {
+    // #1204 : vivant = tenu par une instance qui tourne, jamais l'âge du job.
+    const vivante = randomUUID();
+    await db.insert(runnerInstances).values({ id: vivante, host: 'h', pid: 1 });
+    const jobId = await insertJob({
+      status: 'processing',
+      claimedBy: vivante,
+      updatedAt: ilY(3_600_000),
+    });
 
     await reclaimJobsOfDeadRunners(db);
 
@@ -326,7 +337,7 @@ describe('le parent d’un enfant repris @cap:organiser-equipe/moteur', () => {
 
     const child = await jobRow(childId);
     expect(child.result ?? '').toContain('La voix off est générée, je vérifie le fichier.');
-    expect(child.result ?? '').toContain('[stopped: runner restarted');
+    expect(child.result ?? '').toContain('[stopped: no live runner holds this job');
 
     const parent = await jobRow(parentId);
     const last = (parent.messages as Array<{ role: string; content: unknown[] }>).at(-1)!;
@@ -336,7 +347,7 @@ describe('le parent d’un enfant repris @cap:organiser-equipe/moteur', () => {
       files_written: unknown;
     };
     expect(record.summary).toContain('La voix off est générée, je vérifie le fichier.');
-    expect(record.summary).toContain('[stopped: runner restarted');
+    expect(record.summary).toContain('[stopped: no live runner holds this job');
     expect(record.files_written).toEqual([
       {
         kind: 'file',
@@ -407,16 +418,54 @@ describe('le parent d’un enfant repris @cap:organiser-equipe/moteur', () => {
   });
 });
 
-describe('les faits d’un runner redémarré, mis en mots @cap:parler-a-un-agent/moteur', () => {
-  it('la ligne lue par la personne est une ligne de plateforme, entre crochets', () => {
-    expect(runnerRestartedStopLine({ status: 'processing', idleMs: 192_000 })).toBe(
-      '[stopped: runner restarted — status processing, no heartbeat for 3m12s]',
+describe('les faits d’un détenteur parti, mis en mots (#1204) @cap:parler-a-un-agent/moteur', () => {
+  const id = 'abcdef12-3456-4789-8abc-def012345678';
+
+  it('arrêté proprement : lequel, et quand', () => {
+    expect(
+      runnerRestartedStopLine({
+        status: 'processing',
+        holder: {
+          kind: 'gone',
+          id,
+          how: 'stopped',
+          lastSeenAt: new Date('2026-11-28T09:59:00.000Z'),
+          stoppedAt: new Date('2026-11-28T10:00:00.000Z'),
+        },
+      }),
+    ).toBe(
+      '[stopped: no live runner holds this job — status processing, runner abcdef12 stopped at 2026-11-28T10:00:00.000Z]',
     );
   });
 
-  it('sous la minute, elle le dit en secondes', () => {
-    expect(runnerRestartedStopLine({ status: 'processing', idleMs: 45_000 })).toBe(
-      '[stopped: runner restarted — status processing, no heartbeat for 45s]',
+  it('muet : son dernier battement, sur l’horloge de la base', () => {
+    expect(
+      runnerRestartedStopLine({
+        status: 'processing',
+        holder: {
+          kind: 'gone',
+          id,
+          how: 'silent',
+          lastSeenAt: new Date('2026-11-28T09:00:00.000Z'),
+          stoppedAt: null,
+        },
+      }),
+    ).toBe(
+      '[stopped: no live runner holds this job — status processing, runner abcdef12 last seen at 2026-11-28T09:00:00.000Z]',
+    );
+  });
+
+  it('aucun détenteur inscrit, ou cette instance qui n’en exécute rien : dit tel quel', () => {
+    expect(
+      runnerRestartedStopLine({
+        status: 'processing',
+        holder: { kind: 'gone', id: null, how: 'none', lastSeenAt: null, stoppedAt: null },
+      }),
+    ).toBe('[stopped: no live runner holds this job — status processing, no holder recorded]');
+    expect(
+      runnerRestartedStopLine({ status: 'processing', holder: { kind: 'self', held: false } }),
+    ).toBe(
+      '[stopped: no live runner holds this job — status processing, runner (this one) runs none of it]',
     );
   });
 });

@@ -7,6 +7,7 @@
 //   - already todo task → unchanged
 
 import { describe, it, expect, beforeAll } from 'vitest';
+import { randomUUID } from 'node:crypto';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { eq } from '@nodal-agents/db';
@@ -18,6 +19,8 @@ import {
   failStalePendingJobs,
   expireStaleApprovals,
 } from '../reset-orphans.ts';
+import { reclaimJobsOfDeadRunners } from '../reclaim-jobs.ts';
+import { JOB_LIVENESS, createPresence } from '../../job/liveness.ts';
 
 let db: TestDb;
 let seed: Awaited<ReturnType<typeof seedMinimal>>;
@@ -210,7 +213,14 @@ describe('resetOrphanedTasks', () => {
 
 // ─── resetOrphanedJobs ────────────────────────────────────────────────────────
 
-async function createJob(overrides: { status: string; updatedAt?: Date }) {
+async function createJob(overrides: {
+  status: string;
+  updatedAt?: Date;
+  createdAt?: Date;
+  claimGeneration?: number;
+  pendingDelegation?: Record<string, unknown>;
+  result?: string;
+}) {
   const [row] = await db
     .insert(agentJobs)
     .values({
@@ -224,22 +234,59 @@ async function createJob(overrides: { status: string; updatedAt?: Date }) {
       // pglite + DEFAULT now() in DDL means a value passed as updatedAt is
       // honored. We pass it directly.
       updatedAt: overrides.updatedAt ?? new Date(),
+      ...(overrides.createdAt ? { createdAt: overrides.createdAt } : {}),
+      ...(overrides.claimGeneration !== undefined
+        ? { claimGeneration: overrides.claimGeneration }
+        : {}),
+      ...(overrides.pendingDelegation ? { pendingDelegation: overrides.pendingDelegation } : {}),
+      ...(overrides.result !== undefined ? { result: overrides.result } : {}),
     })
     .returning();
   if (!row) throw new Error('Failed to seed job');
   return row;
 }
 
-describe('resetOrphanedJobs', () => {
-  it('marks a stale processing job as failed with orphan_job_reset', async () => {
-    const staleDate = new Date(Date.now() - 10 * 60 * 1000);
-    const job = await createJob({ status: 'processing', updatedAt: staleDate });
+/**
+ * The observing instance, with a monotonic clock the test moves (#1204): a
+ * row is judged on how long THIS process has seen it unchanged, never on the
+ * age of a date.
+ */
+function observer() {
+  const mono = { t: 0 };
+  const presence = createPresence({
+    instanceId: randomUUID(),
+    holds: () => false,
+    monotonicNow: () => mono.t,
+  });
+  return {
+    presence,
+    /** Two sweeps, one `stuckRowMs` apart: the second one decides. */
+    twice: async <T>(sweep: (p: typeof presence) => Promise<T>): Promise<T> => {
+      await sweep(presence);
+      mono.t += JOB_LIVENESS.stuckRowMs;
+      return sweep(presence);
+    },
+  };
+}
 
-    const count = await resetOrphanedJobs(db, 5);
+const TEN_MIN_AGO = () => new Date(Date.now() - 10 * 60 * 1000);
+
+describe('resetOrphanedJobs @cap:organiser-equipe/moteur', () => {
+  it('marks an awaiting_delegation job that records no delegation as failed with orphan_job_reset', async () => {
+    const job = await createJob({ status: 'awaiting_delegation', updatedAt: TEN_MIN_AGO() });
+
+    const o = observer();
+    const count = await o.twice((presence) => resetOrphanedJobs(db, { presence }));
     expect(count).toBeGreaterThanOrEqual(1);
 
     const [row] = await db
-      .select({ status: agentJobs.status, error: agentJobs.error, result: agentJobs.result })
+      .select({
+        status: agentJobs.status,
+        error: agentJobs.error,
+        result: agentJobs.result,
+        completedAt: agentJobs.completedAt,
+        observed: agentJobs.sweeperObserved,
+      })
       .from(agentJobs)
       .where(eq(agentJobs.id, job.id));
 
@@ -247,73 +294,44 @@ describe('resetOrphanedJobs', () => {
     expect(row?.error).toBe('orphan_job_reset');
     // D1: the reaper fills a user-facing result — never a silent failure.
     expect((row?.result ?? '').length).toBeGreaterThan(0);
-    expect(row?.result).toMatch(/interrompue/i);
-  });
-
-  // F1 regression — Leg 4: orphan reap must stamp completedAt so the row
-  // is treated as terminal by dashboards / "in-flight" filters.
-  it('Leg 4: reap sets completedAt on orphaned processing job', async () => {
-    const staleDate = new Date(Date.now() - 10 * 60 * 1000);
-    const job = await createJob({ status: 'processing', updatedAt: staleDate });
-
-    const before = Date.now();
-    await resetOrphanedJobs(db, 5);
-    const after = Date.now();
-
-    const [row] = await db
-      .select({
-        status: agentJobs.status,
-        error: agentJobs.error,
-        completedAt: agentJobs.completedAt,
-      })
-      .from(agentJobs)
-      .where(eq(agentJobs.id, job.id));
-
-    expect(row?.status).toBe('failed');
-    expect(row?.error).toBe('orphan_job_reset');
-    // completedAt must be non-null and within the test window.
+    // F1 regression — Leg 4: the reap stamps completedAt.
     expect(row?.completedAt).not.toBeNull();
-    const ts = row?.completedAt?.getTime() ?? 0;
-    expect(ts).toBeGreaterThanOrEqual(before);
-    expect(ts).toBeLessThanOrEqual(after);
+    // #1204: what the sweeper saw is written on the row.
+    expect(row?.observed).toMatchObject({ outcome: 'failed', reason: 'no_delegation_recorded' });
   });
 
-  it('marks a stale awaiting_delegation job as failed', async () => {
-    const staleDate = new Date(Date.now() - 10 * 60 * 1000);
-    const job = await createJob({ status: 'awaiting_delegation', updatedAt: staleDate });
-
-    await resetOrphanedJobs(db, 5);
-
+  it('seen once, nothing is decided: the normal wake-up may be on its way', async () => {
+    const job = await createJob({ status: 'awaiting_delegation', updatedAt: TEN_MIN_AGO() });
+    await resetOrphanedJobs(db, { presence: observer().presence });
     const [row] = await db
-      .select({ status: agentJobs.status, error: agentJobs.error })
+      .select({ status: agentJobs.status })
       .from(agentJobs)
       .where(eq(agentJobs.id, job.id));
-
-    expect(row?.status).toBe('failed');
-    expect(row?.error).toBe('orphan_job_reset');
+    expect(row?.status).toBe('awaiting_delegation');
   });
 
-  it('does NOT touch a fresh processing job (1 min old)', async () => {
-    const freshDate = new Date(Date.now() - 60 * 1000);
-    const job = await createJob({ status: 'processing', updatedAt: freshDate });
+  it('does NOT touch a processing job, however old: reclaimJobsOfDeadRunners judges it on its holder', async () => {
+    const job = await createJob({
+      status: 'processing',
+      updatedAt: new Date(Date.now() - 60 * 60 * 1000),
+    });
 
-    await resetOrphanedJobs(db, 5);
+    await observer().twice((presence) => resetOrphanedJobs(db, { presence }));
 
     const [row] = await db
       .select({ status: agentJobs.status })
       .from(agentJobs)
       .where(eq(agentJobs.id, job.id));
-
     expect(row?.status).toBe('processing');
   });
 
   it('does NOT touch jobs in terminal states (completed/failed/cancelled)', async () => {
-    const staleDate = new Date(Date.now() - 10 * 60 * 1000);
+    const staleDate = TEN_MIN_AGO();
     const completed = await createJob({ status: 'completed', updatedAt: staleDate });
     const failed = await createJob({ status: 'failed', updatedAt: staleDate });
     const cancelled = await createJob({ status: 'cancelled', updatedAt: staleDate });
 
-    await resetOrphanedJobs(db, 5);
+    await observer().twice((presence) => resetOrphanedJobs(db, { presence }));
 
     for (const j of [completed, failed, cancelled]) {
       const [row] = await db
@@ -324,266 +342,221 @@ describe('resetOrphanedJobs', () => {
     }
   });
 
-  it('does NOT touch awaiting_approval jobs (humans may resolve them later)', async () => {
+  it('does NOT touch an awaiting_approval job with no answered request (humans may resolve it later)', async () => {
     const staleDate = new Date(Date.now() - 60 * 60 * 1000); // 1 hour
     const job = await createJob({ status: 'awaiting_approval', updatedAt: staleDate });
 
-    await resetOrphanedJobs(db, 5);
+    await observer().twice((presence) => resetOrphanedJobs(db, { presence }));
 
     const [row] = await db
       .select({ status: agentJobs.status })
       .from(agentJobs)
       .where(eq(agentJobs.id, job.id));
-
     // awaiting_approval is gated on a human acting; its TTL is enforced
     // separately via approval_requests.expires_at — this cron must not
     // pre-empt that.
     expect(row?.status).toBe('awaiting_approval');
   });
 
-  it('returns count of jobs reset', async () => {
-    const staleDate = new Date(Date.now() - 10 * 60 * 1000);
-    await createJob({ status: 'processing', updatedAt: staleDate });
-    await createJob({ status: 'awaiting_delegation', updatedAt: staleDate });
-
-    const count = await resetOrphanedJobs(db, 5);
-    // ≥ 2 because earlier tests in this file may have left stale rows.
-    expect(count).toBeGreaterThanOrEqual(2);
-  });
-
   // Regression for live bug observed on job 58e38faa (2026-05-13):
   // a parent in awaiting_delegation whose Summarizer sub-job took 7.5 min
   // for a deep research got nuked by the cron at the 5-min mark, killing
-  // the resume path. The fix: skip the reset when the sub-job is still
-  // alive, bump updated_at instead to push back the staleness check.
+  // the resume path. A parent whose sub-job is alive is never touched.
   it('does NOT reset awaiting_delegation parent when its sub-job is still running', async () => {
-    const staleDate = new Date(Date.now() - 10 * 60 * 1000);
-    // 1. Sub-job is processing (still alive, no terminal status)
     const subJob = await createJob({ status: 'processing', updatedAt: new Date() });
-    // 2. Parent is stale awaiting_delegation, pending_delegation references the sub
-    const [parent] = await db
-      .insert(agentJobs)
-      .values({
-        entityId: seed.entityId,
-        agentId: seed.agentId,
-        channel: 'api',
-        task: 'orchestrator waiting for long sub-job',
-        status: 'awaiting_delegation',
-        updatedAt: staleDate,
-        pendingDelegation: {
-          toolUseId: 'tu_test',
-          toolName: 'assign_summarizer',
-          subJobId: subJob.id,
-        },
-      })
-      .returning();
-    if (!parent) throw new Error('Failed to seed parent');
+    const parent = await createJob({
+      status: 'awaiting_delegation',
+      updatedAt: TEN_MIN_AGO(),
+      pendingDelegation: {
+        toolUseId: 'tu_test',
+        toolName: 'assign_summarizer',
+        subJobId: subJob.id,
+      },
+    });
 
-    await resetOrphanedJobs(db, 5);
+    await observer().twice((presence) => resetOrphanedJobs(db, { presence }));
 
     const [parentAfter] = await db
-      .select({ status: agentJobs.status, updatedAt: agentJobs.updatedAt })
+      .select({ status: agentJobs.status })
       .from(agentJobs)
       .where(eq(agentJobs.id, parent.id));
-
-    // Parent should NOT have been marked failed — its sub is still alive.
     expect(parentAfter?.status).toBe('awaiting_delegation');
-    // And updated_at should have been bumped past the cutoff so next tick re-evaluates.
-    expect(parentAfter?.updatedAt?.getTime() ?? 0).toBeGreaterThan(staleDate.getTime());
-  });
-
-  it('does NOT reset a processing planner parent that still has outstanding tasks', async () => {
-    const staleDate = new Date(Date.now() - 10 * 60 * 1000);
-    // A planner orchestrator, stale in `processing`, that fanned out tasks and
-    // gets no heartbeat while waiting. An outstanding task means it's
-    // legitimately waiting — reaping it would seal the fan-in dead.
-    const parent = await createJob({ status: 'processing', updatedAt: staleDate });
-    await createTask({ status: 'in_progress', rootJobId: parent.id });
-
-    await resetOrphanedJobs(db, 5);
-
-    const [after] = await db
-      .select({ status: agentJobs.status, updatedAt: agentJobs.updatedAt, error: agentJobs.error })
-      .from(agentJobs)
-      .where(eq(agentJobs.id, parent.id));
-    expect(after?.status).toBe('processing');
-    expect(after?.error).toBeNull();
-    // Bumped so the next tick re-evaluates without re-querying every time.
-    expect(after?.updatedAt?.getTime() ?? 0).toBeGreaterThan(staleDate.getTime());
-  });
-
-  it('DOES reset a stale processing job once none of its tasks are outstanding', async () => {
-    const staleDate = new Date(Date.now() - 10 * 60 * 1000);
-    const parent = await createJob({ status: 'processing', updatedAt: staleDate });
-    // All tasks terminal — nothing left to wait for. (In production
-    // deliverCompletedRoots completes the parent first; in isolation the reaper
-    // is the fallback for a genuinely stuck row.)
-    await createTask({ status: 'done', rootJobId: parent.id });
-
-    await resetOrphanedJobs(db, 5);
-
-    const [after] = await db
-      .select({ status: agentJobs.status, error: agentJobs.error })
-      .from(agentJobs)
-      .where(eq(agentJobs.id, parent.id));
-    expect(after?.status).toBe('failed');
-    expect(after?.error).toBe('orphan_job_reset');
   });
 
   it('DOES NOT touch pending jobs (those are recovered, not failed — see findPendingJobsToRecover)', async () => {
-    const staleDate = new Date(Date.now() - 10 * 60 * 1000);
-    const job = await createJob({ status: 'pending', updatedAt: staleDate });
+    const job = await createJob({ status: 'pending', updatedAt: TEN_MIN_AGO() });
 
-    await resetOrphanedJobs(db, 5);
+    await observer().twice((presence) => resetOrphanedJobs(db, { presence }));
 
     const [after] = await db
       .select({ status: agentJobs.status, error: agentJobs.error })
       .from(agentJobs)
       .where(eq(agentJobs.id, job.id));
-    // Pending stays pending — this phase only touches processing/awaiting_*.
     expect(after?.status).toBe('pending');
     expect(after?.error).toBeNull();
   });
 
-  it('DOES reset awaiting_delegation parent when sub-job already completed (truly orphaned resume)', async () => {
-    const staleDate = new Date(Date.now() - 10 * 60 * 1000);
-    // Sub-job completed but the resume path never fired (e.g. runner crashed
-    // after the child completed). Parent must be reset — otherwise it sits
-    // forever in awaiting_delegation.
-    const subJob = await createJob({ status: 'completed', updatedAt: staleDate });
-    const [parent] = await db
-      .insert(agentJobs)
-      .values({
-        entityId: seed.entityId,
-        agentId: seed.agentId,
-        channel: 'api',
-        task: 'orchestrator with completed-but-unresumed sub',
-        status: 'awaiting_delegation',
-        updatedAt: staleDate,
-        pendingDelegation: {
-          toolUseId: 'tu_test_orphan',
-          toolName: 'assign_summarizer',
-          subJobId: subJob.id,
-        },
-      })
-      .returning();
-    if (!parent) throw new Error('Failed to seed parent');
+  // B31-16: the sub-job completed but the resume path never fired (a crash
+  // after the child completed, a caught throw). The parent used to be failed
+  // "the service restarted", the child's result left unused. It is now given
+  // that result, as by the normal end of a delegation.
+  it('gives the parent the result of a sub-job that already completed, instead of failing it', async () => {
+    const subJob = await createJob({
+      status: 'completed',
+      updatedAt: TEN_MIN_AGO(),
+      result: 'summary of the sub-job',
+    });
+    const parent = await createJob({
+      status: 'awaiting_delegation',
+      updatedAt: TEN_MIN_AGO(),
+      pendingDelegation: {
+        toolUseId: 'tu_test_orphan',
+        toolName: 'assign_summarizer',
+        subJobId: subJob.id,
+      },
+    });
+    await db.update(agentJobs).set({ parentJobId: parent.id }).where(eq(agentJobs.id, subJob.id));
 
-    await resetOrphanedJobs(db, 5);
+    await observer().twice((presence) => resetOrphanedJobs(db, { presence }));
+
+    const [parentAfter] = await db
+      .select({ status: agentJobs.status, error: agentJobs.error, messages: agentJobs.messages })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, parent.id));
+    expect(parentAfter?.status).toBe('pending');
+    expect(parentAfter?.error).toBeNull();
+    expect(JSON.stringify(parentAfter?.messages)).toContain('summary of the sub-job');
+  });
+
+  it('a sub-job that was cancelled cancels its waiting parent, as the normal path does', async () => {
+    const subJob = await createJob({ status: 'cancelled', updatedAt: TEN_MIN_AGO() });
+    const parent = await createJob({
+      status: 'awaiting_delegation',
+      updatedAt: TEN_MIN_AGO(),
+      pendingDelegation: { toolUseId: 'tu_c', toolName: 'assign_summarizer', subJobId: subJob.id },
+    });
+    await db.update(agentJobs).set({ parentJobId: parent.id }).where(eq(agentJobs.id, subJob.id));
+
+    await observer().twice((presence) => resetOrphanedJobs(db, { presence }));
 
     const [parentAfter] = await db
       .select({ status: agentJobs.status, error: agentJobs.error })
       .from(agentJobs)
       .where(eq(agentJobs.id, parent.id));
-
-    expect(parentAfter?.status).toBe('failed');
-    expect(parentAfter?.error).toBe('orphan_job_reset');
+    expect(parentAfter).toEqual({ status: 'cancelled', error: null });
   });
 });
 
-describe('findPendingJobsToRecover', () => {
+describe('reclaimJobsOfDeadRunners and the task board @cap:organiser-equipe/moteur', () => {
+  it('does NOT take a processing planner parent that still has outstanding tasks', async () => {
+    // A planner orchestrator that fanned out tasks stays `processing` and no
+    // run holds it while it waits. An outstanding task means it is waiting —
+    // reaping it would seal the fan-in dead.
+    const parent = await createJob({ status: 'processing', updatedAt: TEN_MIN_AGO() });
+    await createTask({ status: 'in_progress', rootJobId: parent.id });
+
+    await observer().twice((presence) => reclaimJobsOfDeadRunners(db, { presence }));
+
+    const [after] = await db
+      .select({ status: agentJobs.status, error: agentJobs.error })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, parent.id));
+    expect(after?.status).toBe('processing');
+    expect(after?.error).toBeNull();
+  });
+
+  it('does NOT take it either once all its tasks ended: the board’s fan-in ends it (#1204)', async () => {
+    const parent = await createJob({ status: 'processing', updatedAt: TEN_MIN_AGO() });
+    // All tasks terminal, waiting to be compiled by deliverCompletedRoots —
+    // failing (or replaying) the root here would throw that work away.
+    await createTask({ status: 'done', rootJobId: parent.id });
+
+    await observer().twice((presence) => reclaimJobsOfDeadRunners(db, { presence }));
+
+    const [after] = await db
+      .select({ status: agentJobs.status, error: agentJobs.error })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, parent.id));
+    expect(after).toEqual({ status: 'processing', error: null });
+  });
+});
+
+describe('findPendingJobsToRecover @cap:parler-a-un-agent/moteur', () => {
   // Regression — 2026-05-26: the Telegram poller fires `triggerWorker`
   // fire-and-forget over HTTP and swallows fetch failures (.catch(()=>{})).
   // On Windows a zombie sibling on port 3001 (Ctrl+C didn't tree-kill)
   // can intercept the request, leaving the job pending forever. The
   // recovery query must surface those rows so the next cron tick drives
   // them through executeJob directly (no HTTP roundtrip).
-  it('returns ids of pending jobs older than the lower bound (in the recovery window)', async () => {
-    // 1 min old — comfortably past the 30s lower bound and well within
-    // the default 5min upper bound. (Use 5min flat AT the upper bound
-    // and you get edge-case off-by-one flakes; aim for the middle.)
-    const job = await createJob({
-      status: 'pending',
-      updatedAt: new Date(Date.now() - 60 * 1000),
-    });
+  it('returns a pending job seen unchanged for stuckRowMs (its wake-up was lost)', async () => {
+    const job = await createJob({ status: 'pending', updatedAt: new Date(Date.now() - 60 * 1000) });
 
-    const ids = await findPendingJobsToRecover(db, 30);
+    const ids = await observer().twice((presence) => findPendingJobsToRecover(db, { presence }));
     expect(ids).toContain(job.id);
   });
 
-  it('does NOT return pending jobs that were just inserted (fresh trigger in flight)', async () => {
-    // A pending row whose updated_at is well within the threshold —
-    // the worker fetch is probably already running. Triggering AGAIN
-    // would race with claimJob and waste an LLM call. Skip it.
+  it('does NOT return a pending job on its first sighting (a trigger may be in flight)', async () => {
+    // Triggering AGAIN would race with claimJob and waste an LLM call.
     const job = await createJob({ status: 'pending', updatedAt: new Date() });
 
-    const ids = await findPendingJobsToRecover(db, 30);
+    const ids = await findPendingJobsToRecover(db, { presence: observer().presence });
     expect(ids).not.toContain(job.id);
   });
 
   it('does NOT return rows in any non-pending status', async () => {
-    const staleDate = new Date(Date.now() - 10 * 60 * 1000);
+    const staleDate = TEN_MIN_AGO();
     const processing = await createJob({ status: 'processing', updatedAt: staleDate });
     const completed = await createJob({ status: 'completed', updatedAt: staleDate });
     const failed = await createJob({ status: 'failed', updatedAt: staleDate });
     const cancelled = await createJob({ status: 'cancelled', updatedAt: staleDate });
     const awaiting = await createJob({ status: 'awaiting_delegation', updatedAt: staleDate });
 
-    const ids = await findPendingJobsToRecover(db, 30);
+    const ids = await observer().twice((presence) => findPendingJobsToRecover(db, { presence }));
     for (const id of [processing.id, completed.id, failed.id, cancelled.id, awaiting.id]) {
       expect(ids).not.toContain(id);
     }
   });
 
-  it('uses updated_at (not created_at) so resumed-pending rows respect the threshold', async () => {
-    // A job that was awaiting_delegation last week, just got bumped to
-    // pending by resumeDelegated 10s ago — updated_at is fresh but
-    // created_at is old. Recovery must skip it.
+  it('starts a job the system put back in the queue, however old its request (#1204)', async () => {
+    // A job resumed after a restart, or a parent given its child's result:
+    // a continuation, never an abandoned request.
     const job = await createJob({
       status: 'pending',
-      updatedAt: new Date(Date.now() - 10 * 1000),
+      claimGeneration: 3,
+      createdAt: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
+      updatedAt: new Date(Date.now() - 60 * 60 * 1000),
     });
-    // Force created_at way back to confirm the query keys on updated_at.
-    await db
-      .update(agentJobs)
-      .set({
-        createdAt: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
-      })
-      .where(eq(agentJobs.id, job.id));
 
-    const ids = await findPendingJobsToRecover(db, 30);
-    expect(ids).not.toContain(job.id);
+    const ids = await observer().twice((presence) => findPendingJobsToRecover(db, { presence }));
+    expect(ids).toContain(job.id);
   });
 
-  it('does NOT recover pending older than the upper bound (abandoned)', async () => {
+  it('does NOT recover a request no runner ever claimed that is older than pendingAbandonMs', async () => {
     // Regression — 2026-05-26: a pending job created 4 days earlier
     // (job 03cd4304) got silently resurrected when the recovery had no
     // upper age bound. The user had moved on; waking it up created
-    // ghost work they didn't ask for. The fix excludes anything older
-    // than ~5min from recovery so failStalePendingJobs can mark them
-    // abandoned instead.
+    // ghost work they didn't ask for. It is left to failStalePendingJobs.
     const fourDaysAgo = new Date(Date.now() - 4 * 24 * 60 * 60 * 1000);
-    const job = await createJob({ status: 'pending', updatedAt: fourDaysAgo });
+    const job = await createJob({
+      status: 'pending',
+      createdAt: fourDaysAgo,
+      updatedAt: fourDaysAgo,
+    });
 
-    // Default upper bound = 5 minutes.
-    const ids = await findPendingJobsToRecover(db, 30, 5 * 60);
+    const ids = await observer().twice((presence) => findPendingJobsToRecover(db, { presence }));
     expect(ids).not.toContain(job.id);
-  });
-
-  it('recovers pending in the legit window (older than lower, younger than upper)', async () => {
-    // 2 minutes old — past the 30s lower bound, before the 5min upper.
-    // This is the Windows-zombie-runner case: triggerWorker fetch
-    // failed silently, job sat for a couple minutes, next cron tick
-    // catches it.
-    const twoMinAgo = new Date(Date.now() - 2 * 60 * 1000);
-    const job = await createJob({ status: 'pending', updatedAt: twoMinAgo });
-
-    const ids = await findPendingJobsToRecover(db, 30, 5 * 60);
-    expect(ids).toContain(job.id);
   });
 });
 
-describe('failStalePendingJobs', () => {
+describe('failStalePendingJobs @cap:parler-a-un-agent/moteur', () => {
   // Regression — 2026-05-26: an unbounded recovery (no upper age) tried
-  // to wake a 4-day-old pending job (03cd4304). With this fix, jobs
-  // older than the staleness threshold get a terminal status instead
-  // of being silently resurrected — preserves the "user-moved-on"
-  // invariant.
-  it('marks pending older than the threshold as failed with stale_pending_abandoned', async () => {
-    const staleDate = new Date(Date.now() - 10 * 60 * 1000); // 10 min old
-    const job = await createJob({ status: 'pending', updatedAt: staleDate });
+  // to wake a 4-day-old pending job (03cd4304). Requests no runner ever
+  // claimed, older than the setting, get a terminal status instead of being
+  // silently resurrected — preserves the "user-moved-on" invariant.
+  it('marks a never-claimed request older than pendingAbandonMs as failed with stale_pending_abandoned', async () => {
+    const job = await createJob({ status: 'pending', createdAt: TEN_MIN_AGO() });
 
-    const n = await failStalePendingJobs(db, 5 * 60);
+    const n = await failStalePendingJobs(db, { presence: observer().presence });
     expect(n).toBeGreaterThanOrEqual(1);
 
     const [after] = await db
@@ -603,7 +576,7 @@ describe('failStalePendingJobs', () => {
 
   it('does NOT touch fresh pending jobs', async () => {
     const fresh = await createJob({ status: 'pending', updatedAt: new Date() });
-    await failStalePendingJobs(db, 5 * 60);
+    await failStalePendingJobs(db, { presence: observer().presence });
     const [after] = await db
       .select({ status: agentJobs.status })
       .from(agentJobs)
@@ -611,13 +584,28 @@ describe('failStalePendingJobs', () => {
     expect(after?.status).toBe('pending');
   });
 
-  it('does NOT touch jobs in non-pending statuses', async () => {
-    const staleDate = new Date(Date.now() - 10 * 60 * 1000);
-    const processing = await createJob({ status: 'processing', updatedAt: staleDate });
-    const completed = await createJob({ status: 'completed', updatedAt: staleDate });
-    const cancelled = await createJob({ status: 'cancelled', updatedAt: staleDate });
+  it('does NOT abandon a job that was claimed once and put back in the queue (#1204)', async () => {
+    const requeued = await createJob({
+      status: 'pending',
+      claimGeneration: 1,
+      createdAt: new Date(Date.now() - 60 * 60 * 1000),
+      updatedAt: new Date(Date.now() - 60 * 60 * 1000),
+    });
+    await failStalePendingJobs(db, { presence: observer().presence });
+    const [after] = await db
+      .select({ status: agentJobs.status })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, requeued.id));
+    expect(after?.status).toBe('pending');
+  });
 
-    await failStalePendingJobs(db, 5 * 60);
+  it('does NOT touch jobs in non-pending statuses', async () => {
+    const staleDate = TEN_MIN_AGO();
+    const processing = await createJob({ status: 'processing', createdAt: staleDate });
+    const completed = await createJob({ status: 'completed', createdAt: staleDate });
+    const cancelled = await createJob({ status: 'cancelled', createdAt: staleDate });
+
+    await failStalePendingJobs(db, { presence: observer().presence });
 
     for (const j of [processing, completed, cancelled]) {
       const [after] = await db

@@ -90,6 +90,18 @@ async function seedPair(): Promise<Ctx> {
       parentJobId: parent!.id,
     })
     .returning();
+  // La délégation nomme son enfant, comme `handleDelegation` l'écrit (#1204).
+  await db
+    .update(agentJobs)
+    .set({
+      pendingDelegation: {
+        type: 'single',
+        toolUseId: TOOL_USE_ID,
+        toolName: 'assign_test_agent',
+        subJobId: child!.id,
+      },
+    })
+    .where(eq(agentJobs.id, parent!.id));
   return { entityId: entity!.id, parentJobId: parent!.id, childJobId: child!.id };
 }
 
