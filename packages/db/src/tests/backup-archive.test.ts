@@ -7,6 +7,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
+import { gzipSync } from 'node:zlib';
 import {
   BackupError,
   BackupReader,
@@ -124,8 +125,14 @@ describe('backup archive: the format @cap:installer-et-demarrer/moteur', () => {
   it('bytes added after the end record: refused', async () => {
     const path = file();
     await write(path);
-    writeFileSync(path, Buffer.concat([readFileSync(path), Buffer.from('trailing')]));
-    expect((await refusal(readAll(path))).code).toBe('BACKUP_DAMAGED');
+    const full = readFileSync(path);
+    const junk = file();
+    writeFileSync(junk, Buffer.concat([full, Buffer.from('trailing')]));
+    expect((await refusal(readAll(junk))).code).toBe('BACKUP_DAMAGED');
+    // A second, well-formed gzip member: gzip reads it as more of the same stream.
+    const member = file();
+    writeFileSync(member, Buffer.concat([full, gzipSync(Buffer.from('more records'))]));
+    expect((await refusal(readAll(member))).code).toBe('BACKUP_DAMAGED');
   });
 
   it('a writer stopped before finish leaves a file no reader takes for complete', async () => {
