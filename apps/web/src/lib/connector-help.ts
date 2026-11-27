@@ -67,7 +67,7 @@ export const OAUTH_GUIDES: Record<
       {
         number: 3,
         text: 'In the left menu, go to APIs & Services → OAuth consent screen. Choose User Type: External and fill in the app name. Then, under Audience, click Publish app so the publishing status reads In production.',
-        hint: 'Left in Testing, Google ends every authorisation seven days after consent and your agents stop working. When you connect, Google warns that the app is not verified: it is your own app, continue past the warning.',
+        hint: 'Left in Testing, Google ends every authorisation seven days after consent and your agents stop working. When you connect, Google warns that the app is not verified: it is your own app, continue past the warning (Google lets 100 accounts in all authorise an unverified app).',
       },
       {
         number: 4,

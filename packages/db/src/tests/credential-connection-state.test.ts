@@ -148,6 +148,32 @@ describe('a credential has a state, written by the refresh @cap:connecter-un-ser
     expect(String(fetchMock.mock.calls[0]![0])).toContain('login.microsoftonline.com');
   });
 
+  it('a refusal of the app’s own credentials (invalid_client, an expired secret) is its own cause', async () => {
+    const id = await insertExpiredCredential('microsoft-oauth');
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      tokenResponse({ error: 'invalid_client', error_description: 'client secret expired' }, 401),
+    );
+    await expect(getDecryptedCredentialById(db, id)).rejects.toBeInstanceOf(
+      ConnectionUnavailableError,
+    );
+    expect(await readConnectionState(db, { kind: 'credential', id })).toMatchObject({
+      state: 'needs_reauth',
+      cause: 'client_refused',
+    });
+  });
+
+  it('a 409 after a recent refresh (a provider that rotates) does not end the grant, and the stored refresh token is kept', async () => {
+    const id = await insertExpiredCredential('airtable-oauth');
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(tokenResponse({ error: 'conflict' }, 409));
+    await expect(getDecryptedCredentialById(db, id)).rejects.toBeInstanceOf(
+      ConnectionUnavailableError,
+    );
+    const state = await readConnectionState(db, { kind: 'credential', id });
+    expect(state).toMatchObject({ state: 'unreachable', cause: 'provider_unavailable' });
+    expect(state.retryAfter!.getTime()).toBeGreaterThan(Date.now());
+    expect((await storedPayload(id))['refreshToken']).toBe('old-refresh');
+  });
+
   it('an unreachable token endpoint is unreachable with a retry time, and is not asked again before it', async () => {
     const id = await insertExpiredCredential();
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockRejectedValue(

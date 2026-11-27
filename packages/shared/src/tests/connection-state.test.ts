@@ -23,7 +23,7 @@ import type { OperationDescriptor } from '../types/operation';
 const now = new Date('2026-11-28T12:00:00Z');
 
 describe('a token endpoint’s answer (RFC 6749 §5.2), the same for every provider', () => {
-  for (const code of ['invalid_grant', 'invalid_client', 'unauthorized_client']) {
+  for (const code of ['invalid_grant', 'unauthorized_client']) {
     it(`${code} means the grant no longer stands: needs_reauth, with the provider’s words`, () => {
       const s = tokenEndpointFailure(
         400,
@@ -38,6 +38,15 @@ describe('a token endpoint’s answer (RFC 6749 §5.2), the same for every provi
       expect(attemptDue(s, now)).toBe(false);
     });
   }
+  it('invalid_client refuses the app’s own credentials (an expired client secret): its own cause', () => {
+    const s = tokenEndpointFailure(
+      401,
+      JSON.stringify({ error: 'invalid_client', error_description: 'secret expired' }),
+      now,
+    );
+    expect(s).toMatchObject({ state: 'needs_reauth', cause: 'client_refused' });
+    expect(attemptDue(s, now)).toBe(false);
+  });
   it('a 5xx is the provider being unavailable: unreachable, retried after a minute', () => {
     const s = tokenEndpointFailure(503, 'Service Unavailable', now);
     expect(s).toMatchObject({ state: 'unreachable', cause: 'provider_unavailable' });
@@ -45,6 +54,14 @@ describe('a token endpoint’s answer (RFC 6749 §5.2), the same for every provi
     expect(attemptDue(s, now)).toBe(false);
     expect(attemptDue(s, new Date(now.getTime() + 60_001))).toBe(true);
   });
+  for (const status of [408, 409, 429]) {
+    it(`${status} says "not now", never that the grant ended: unreachable`, () => {
+      expect(tokenEndpointFailure(status, '{}', now)).toMatchObject({
+        state: 'unreachable',
+        cause: 'provider_unavailable',
+      });
+    });
+  }
 });
 
 describe('a provider API’s answer', () => {

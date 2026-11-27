@@ -116,6 +116,7 @@ function ConnectorRow({
     instance.connection.state === 'needs_reauth' &&
     instance.connection.cause !== 'rights_missing' &&
     instance.connection.cause !== 'credential_removed' &&
+    instance.connection.cause !== 'client_refused' &&
     instance.credentialId !== null &&
     instance.credentialType !== null;
   const scopeList = instance.credentialScopes

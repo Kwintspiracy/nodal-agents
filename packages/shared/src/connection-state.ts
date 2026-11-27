@@ -38,6 +38,7 @@ export const CONNECTION_CAUSES = {
   working: ['not_checked', 'authorised', 'succeeded'],
   needs_reauth: [
     'grant_refused',
+    'client_refused',
     'rights_missing',
     'credential_removed',
     'key_missing',
@@ -191,12 +192,23 @@ function unreachable(
 }
 
 /**
+ * Statuses that say "not now" rather than "no": a time-out, a conflict (a
+ * provider that rotates refresh tokens answers 409 to a refresh made just
+ * after another one), a pace limit. The grant may stand; the next attempt,
+ * after `retryAfter`, re-reads the credential first.
+ */
+const NOT_NOW_STATUSES = new Set([408, 409, 425, 429]);
+
+/**
  * The state a token endpoint's refusal puts a credential in (RFC 6749 §5.2).
- * `invalid_grant` (the refresh token is expired, revoked or was issued to
- * another client), `invalid_client` and `unauthorized_client` mean the grant
- * no longer stands: the person must authorise again. A 5xx is the provider
- * being unavailable. Anything else the endpoint answers is a refusal too: an
- * endpoint that turns a refresh down gives no other way to obtain a token.
+ * `invalid_client` ("client authentication failed") refuses the app's OWN
+ * credentials, its client id or secret (an expired secret answers this):
+ * authorising again with the same secret cannot work, a new credential with a
+ * new secret can (`client_refused`). Any other refusal (`invalid_grant`: the
+ * refresh token is expired, revoked or was issued to another client;
+ * `unauthorized_client`; an answer without a code) means the grant no longer
+ * stands: the person must authorise again (`grant_refused`). A 5xx and the
+ * "not now" statuses are the provider being unavailable for this attempt.
  */
 export function tokenEndpointFailure(
   status: number,
@@ -213,7 +225,11 @@ export function tokenEndpointFailure(
     // Not JSON: the status alone speaks.
   }
   const detail = [`${status}`, code, description].filter(Boolean).join(' ');
-  if (status >= 500) return unreachable('provider_unavailable', detail, now);
+  if (status >= 500 || NOT_NOW_STATUSES.has(status)) {
+    return unreachable('provider_unavailable', detail, now);
+  }
+  if (code === 'invalid_client')
+    return connectionState('needs_reauth', 'client_refused', detail, now);
   return connectionState('needs_reauth', 'grant_refused', detail, now);
 }
 
@@ -320,6 +336,8 @@ function reasonForModel(c: ConnectionState): string {
   switch (c.cause) {
     case 'grant_refused':
       return `the provider refused its authorisation${said}`;
+    case 'client_refused':
+      return `the provider refused the app's own credentials, its client secret may have expired${said}`;
     case 'rights_missing':
       return `its authorisation lacks rights it needs${said}`;
     case 'credential_removed':

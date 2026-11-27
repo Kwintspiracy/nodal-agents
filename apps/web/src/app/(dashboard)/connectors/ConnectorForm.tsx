@@ -98,12 +98,14 @@ export default function ConnectorForm({
   const missingAccess = instance.access?.kind === 'needs_access' ? instance.access : null;
   // Reconnect repairs THIS connector: a credential that can be read is
   // authorised again in place (every connector and agent on it works again);
-  // one that is gone or unreadable is replaced by a new credential bound to
-  // this same row. Never a second connector.
+  // one that is gone or unreadable, or whose app credentials the provider
+  // refuses (the stored client secret would be sent again), is replaced by a
+  // new credential bound to this same row. Never a second connector.
   const credentialReadable =
     connectedCredentialId !== null &&
     instance.connection.cause !== 'credential_removed' &&
-    instance.connection.cause !== 'undecryptable';
+    instance.connection.cause !== 'undecryptable' &&
+    instance.connection.cause !== 'client_refused';
 
   function performDelete() {
     setConfirmOpen(false);

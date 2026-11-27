@@ -58,6 +58,15 @@ describe('the status pill of a connection, one per state @cap:connecter-un-servi
     expect(html).toContain('bg-warn-bg');
   });
 
+  it('the app’s own credentials refused: Reconnect, saying a new secret is needed', () => {
+    const { text } = render(
+      state('needs_reauth', 'client_refused', { detail: '401 invalid_client' }),
+    );
+    expect(text).toContain('Reconnect');
+    expect(text).toContain('its client secret may have expired');
+    expect(text).toContain('Reconnect with a new credential');
+  });
+
   it('a missing right: Needs access, the scopes named', () => {
     const { text } = render(
       state('needs_reauth', 'rights_missing', {

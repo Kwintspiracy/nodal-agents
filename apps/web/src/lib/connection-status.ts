@@ -58,6 +58,8 @@ export function connectionReason(c: ConnectionState): string | null {
       return c.observedAt ? `Last worked ${when(c.observedAt)}.` : null;
     case 'grant_refused':
       return `The provider no longer accepts this authorisation. Reconnect to authorise again.${said}`;
+    case 'client_refused':
+      return `The provider refused this app's own credentials (its client secret may have expired). Create a new secret at the provider, then Reconnect with a new credential.${said}`;
     case 'rights_missing':
       return `The authorisation lacks rights this connector needs. Use Add access to ask for them.${
         c.detail ? ` Missing: ${c.detail}` : ''
