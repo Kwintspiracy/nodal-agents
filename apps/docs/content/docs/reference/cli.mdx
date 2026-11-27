@@ -133,7 +133,7 @@ These copies live in the same cluster, on the same disk: they undo a migration, 
 
 Writes everything this install needs to live again into one file: the rows of every table, the schema they belong to, the master key (`secrets.key`) and `config.json`, and, with `--with-workspaces`, the `workspaces/` folder. It reads the database through its driver in one consistent snapshot, so it works while Nodal runs or not, and needs no dump tool.
 
-The file is written under a temporary name, **read back and compared with the database** (row count and checksum of every table, every file), and only then given its final name, `nodal-backup-<UTC time>.nodalbak`. An interrupted backup, or one whose read-back differs, leaves no file with that name. It refuses to make a backup that could not be restored: a database newer than the program, or a `secrets.key` that does not open the database's secrets.
+The file is written under a temporary name, **read back and compared with the database** (row count and checksum of every table, every file), and only then given its final name, `nodal-backup-<time>.nodalbak` (the time in UTC). An interrupted backup, or one whose read-back differs, leaves no file with that name. It refuses to make a backup that could not be restored: a database newer than the program, or a `secrets.key` that does not open the database's secrets.
 
 <Callout type="warn" title="The file holds the master key">
   Whoever has a backup can read every stored credential, LLM key and bot token in it. Keep it where
