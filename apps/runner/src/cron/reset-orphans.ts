@@ -3,20 +3,33 @@
 // suspended laptop). Without these, the dashboard accumulates stuck rows that
 // can never recover on their own.
 //   - resetOrphanedTasks: tasks claimed but never executed → back to `todo`
-//   - resetOrphanedJobs:  jobs in `processing` / `awaiting_delegation` with
-//                         no recent activity → marked `failed`
+//   - resetOrphanedJobs:  jobs waiting (`awaiting_delegation`,
+//                         `awaiting_approval`) for something that already
+//                         happened → given it; unrepairable → `failed`
+// What is dead and what is stuck is decided by `decideJob` (job/liveness.ts).
 
-import { and, eq, gte, inArray, isNull, lt, or } from '@nodal-agents/db';
-import { agentJobs, agentTasks, approvalRequests, CALL_GATE_KINDS } from '@nodal-agents/db';
+import { and, eq, inArray, isNull, lt, or, sql } from '@nodal-agents/db';
+import {
+  agentJobs,
+  agentTasks,
+  approvalRequests,
+  CALL_GATE_KINDS,
+  gatesACall,
+} from '@nodal-agents/db';
 import { expirePendingRequests } from '@nodal-agents/db';
-import type { AnyDrizzleDb } from '@nodal-agents/db';
+import type { AnyDrizzleDb, SweeperObservation } from '@nodal-agents/db';
 import { appendDeliveredVerdicts, readJobDeliverable } from '@nodal-agents/orchestration';
+import type { JobId } from '@nodal-agents/orchestration';
 import { sendTelegramMessage } from '@nodal-agents/delivery';
 import { failJob } from '../job/state.ts';
 import { resumeJobAfterApprovalResolution } from '../approvals/resume.ts';
 import { closeElicitationsOfLostJobs } from '../approvals/elicitation.ts';
 import { takeLostRun } from './take-lost-run.ts';
 import { resolveTelegramDeliveryTarget } from '../approvals/notify.ts';
+import { maybeResumeParent } from '../job/execute.ts';
+import type { ExecuteJobResult } from '../job/execute.ts';
+import { DB_NOW_MS, JOB_LIVENESS, decideJob, processPresence } from '../job/liveness.ts';
+import type { JobFacts, JobLivenessSettings, JobVerdict, Presence } from '../job/liveness.ts';
 import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
 
@@ -148,111 +161,219 @@ export async function resetOrphanedTasks(db: AnyDrizzleDb, staleMinutes = 5): Pr
 
 // ─── resetOrphanedJobs ────────────────────────────────────────────────────────
 
-/**
- * Mark as `failed` any job stuck in `processing` or `awaiting_delegation`
- * whose `updated_at` is older than `staleMinutes` minutes (default 5).
- *
- * Covers Ctrl+C / crash / laptop-suspend during execution: the runner died
- * mid-loop and nothing else will ever advance these rows, so they pile up in
- * the dashboard. Marking them `failed` (not `cancelled`) is intentional — the
- * job started, then state was lost; that's a failure outcome.
- *
- * Both `processing → failed` and `awaiting_delegation → failed` are valid
- * transitions (see job/state.ts VALID_TRANSITIONS).
- *
- * IMPORTANT: a parent in `awaiting_delegation` whose sub-job is still alive
- * (not in a terminal state) is NOT orphaned — it's legitimately waiting.
- * Caught live on job `58e38faa` whose Summarizer sub-job took 7.5 min for
- * a deep research. Without this guard the parent gets nuked at the 5-min
- * mark even though everything is working fine. For those rows we bump
- * `updated_at` so the staleness timer restarts (next tick re-evaluates).
- *
- * @returns count of jobs actually reset (not bumped)
- */
-export async function resetOrphanedJobs(db: AnyDrizzleDb, staleMinutes = 5): Promise<number> {
-  const cutoff = new Date(Date.now() - staleMinutes * 60 * 1000);
+/** Ce qu'un job en attente attend, lu pour `decideJob`. */
+interface WaitingRow {
+  readonly id: string;
+  readonly status: 'awaiting_delegation' | 'awaiting_approval';
+  readonly claimGeneration: number;
+  readonly claimedBy: string | null;
+  readonly dbNow: Date;
+  readonly facts: JobFacts;
+  readonly signature: string;
+  /** L'enfant attendu, pour une délégation enregistrée. */
+  readonly child: ChildRow | null;
+}
 
-  // 1. Find candidate stale jobs (current criteria — same as before).
+interface ChildRow {
+  readonly id: string;
+  readonly status: string | null;
+  readonly result: string | null;
+  readonly error: string | null;
+  readonly toolsUsed: string[] | null;
+}
+
+/**
+ * L'issue d'un enfant terminé telle que SA ligne la dit, dans la forme que le
+ * chemin normal donne à `maybeResumeParent` : la même réparation que la fin
+ * normale d'une délégation, jamais une forme à part.
+ */
+function outcomeOfEndedChild(
+  child: ChildRow,
+): Extract<ExecuteJobResult, { status: 'completed' | 'failed' | 'cancelled' }> | null {
+  switch (child.status) {
+    case 'completed':
+      return { status: 'completed', result: child.result ?? '', toolsUsed: child.toolsUsed ?? [] };
+    case 'failed':
+      return {
+        status: 'failed',
+        error: child.error ?? 'unknown',
+        ...(child.result !== null ? { result: child.result } : {}),
+        toolsUsed: child.toolsUsed ?? [],
+      };
+    case 'cancelled':
+      return { status: 'cancelled' };
+    default:
+      return null;
+  }
+}
+
+/**
+ * Les jobs qui ATTENDENT quelque chose qui a peut-être déjà eu lieu (#1204) :
+ *   - un parent `awaiting_delegation` dont l'enfant a fini, mais dont la
+ *     reprise s'est perdue (un crash entre la fin de l'enfant et
+ *     `maybeResumeParent`, une exception rattrapée) : il REÇOIT le résultat
+ *     de son enfant, par `maybeResumeParent`, la fonction du chemin normal —
+ *     jamais plus l'échec « le service a redémarré » d'avant, avec le résultat
+ *     de l'enfant resté inutilisé en base (B31-16) ;
+ *   - un job `awaiting_approval` dont toutes les demandes ont été tranchées
+ *     ou ont expiré sans que le job reparte (B31-10) : il REPART, par
+ *     `resumeJobAfterApprovalResolution`, la fonction des chemins humain et
+ *     d'expiration.
+ * Seul ce que rien ne peut réparer échoue : un parent qui n'enregistre aucune
+ * délégation, ou dont l'enfant n'existe pas. La décision est `decideJob`, et
+ * aucune n'est prise sur l'âge d'une date : une ligne qu'aucun run de ce
+ * processus n'exécute, vue inchangée assez longtemps sur l'horloge monotone de
+ * ce processus, est une ligne dont le réveil s'est perdu.
+ *
+ * Un job `processing` n'est plus regardé ici : il appartient à
+ * `reclaimJobsOfDeadRunners`, qui le juge sur son détenteur.
+ *
+ * @returns le nombre de jobs passés en `failed`
+ */
+export async function resetOrphanedJobs(
+  db: AnyDrizzleDb,
+  opts: { presence?: Presence; settings?: JobLivenessSettings; runnerEnv?: RunnerEnv } = {},
+): Promise<number> {
+  const presence = opts.presence ?? processPresence;
+  const settings = opts.settings ?? JOB_LIVENESS;
+
   const candidates = await db
     .select({
       id: agentJobs.id,
       status: agentJobs.status,
       claimGeneration: agentJobs.claimGeneration,
+      claimedBy: agentJobs.claimedBy,
+      updatedAt: agentJobs.updatedAt,
       pendingDelegation: agentJobs.pendingDelegation,
+      dbNowMs: DB_NOW_MS,
     })
     .from(agentJobs)
-    .where(
-      and(
-        inArray(agentJobs.status, ['processing', 'awaiting_delegation']),
-        lt(agentJobs.updatedAt, cutoff),
-      ),
-    );
+    .where(inArray(agentJobs.status, ['awaiting_delegation', 'awaiting_approval']));
 
-  // Sub-job statuses that mean "still alive, parent is legitimately waiting".
-  // Anything else (completed/failed/cancelled or missing row) means the parent
-  // is truly orphaned — its child won't ever resume it.
-  const ACTIVE_SUBJOB_STATUSES = [
-    'pending',
-    'processing',
-    'awaiting_delegation',
-    'awaiting_approval',
-    'awaiting_tasks',
-  ];
-
-  const toReset: { id: string; status: string; claimGeneration: number }[] = [];
-  const toBump: string[] = [];
-
+  const rows: WaitingRow[] = [];
   for (const c of candidates) {
+    const dbNow = new Date(Number(c.dbNowMs));
+    const base = `${c.status ?? ''}|${String(c.claimGeneration)}|${String(c.updatedAt?.getTime() ?? 0)}`;
     if (c.status === 'awaiting_delegation') {
-      const pending = c.pendingDelegation as { subJobId?: string } | null;
-      const subId = pending?.subJobId;
+      const subId = (c.pendingDelegation as { subJobId?: string } | null)?.subJobId ?? null;
+      let child: ChildRow | null = null;
       if (subId) {
         const [sub] = await db
-          .select({ status: agentJobs.status })
+          .select({
+            id: agentJobs.id,
+            status: agentJobs.status,
+            result: agentJobs.result,
+            error: agentJobs.error,
+            toolsUsed: agentJobs.toolsUsed,
+          })
           .from(agentJobs)
           .where(eq(agentJobs.id, subId))
           .limit(1);
-        if (sub && ACTIVE_SUBJOB_STATUSES.includes(sub.status ?? '')) {
-          // Sub still running — parent waits legitimately. Skip the reset
-          // AND bump updated_at so the next cron tick doesn't immediately
-          // re-evaluate this row (avoids burning a select per tick on every
-          // long-running delegation).
-          toBump.push(c.id);
-          continue;
-        }
+        child = sub ?? { id: subId, status: null, result: null, error: null, toolsUsed: null };
       }
-    }
-
-    // A planner orchestrator that fanned out via create_task sits in
-    // `processing` while its task board runs — and gets NO heartbeat once it
-    // hands off. If it still has outstanding (non-terminal) tasks rooted at it,
-    // it is legitimately waiting, NOT orphaned. Reaping it here would be fatal:
-    // the reap stamps completed_at, and deliverCompletedRoots (gated on
-    // completed_at IS NULL) would then skip the fan-in forever, leaving the
-    // parent stuck `failed`. Bump instead — same as the awaiting_delegation
-    // guard. (Live: parent 7aa6ad96 reaped at the 5-min mark while its 4 tasks
-    // still ran.)
-    const [outstandingTask] = await db
-      .select({ id: agentTasks.id })
-      .from(agentTasks)
-      .where(
-        and(eq(agentTasks.rootJobId, c.id), inArray(agentTasks.status, ['todo', 'in_progress'])),
-      )
-      .limit(1);
-    if (outstandingTask) {
-      toBump.push(c.id);
+      rows.push({
+        id: c.id,
+        status: 'awaiting_delegation',
+        claimGeneration: c.claimGeneration,
+        claimedBy: c.claimedBy,
+        dbNow,
+        child,
+        signature: `${base}|${child?.id ?? ''}|${child?.status ?? ''}`,
+        facts: {
+          status: 'awaiting_delegation',
+          inFlightHere: presence.holds(c.id) || (child !== null && presence.holds(child.id)),
+          child: child === null ? null : { status: child.status },
+          stuckForMs: null,
+        },
+      });
       continue;
     }
-
-    toReset.push({
+    const demandes = await db
+      .select({ status: approvalRequests.status, executedAt: approvalRequests.executedAt })
+      .from(approvalRequests)
+      .where(and(eq(approvalRequests.jobId, c.id), gatesACall()));
+    const ouvertes = demandes.filter((d) => d.status === 'pending').length;
+    // Tranchée ou échue, et pas encore exécutée : la même lecture que
+    // `reviveJobIfApprovalResolvedDuringSuspend` (job/execute.ts).
+    const tranchees = demandes.filter(
+      (d) =>
+        (d.status === 'approved' || d.status === 'rejected' || d.status === 'expired') &&
+        d.executedAt === null,
+    ).length;
+    rows.push({
       id: c.id,
-      status: c.status ?? 'processing',
+      status: 'awaiting_approval',
       claimGeneration: c.claimGeneration,
+      claimedBy: c.claimedBy,
+      dbNow,
+      child: null,
+      signature: `${base}|${String(ouvertes)}|${String(tranchees)}`,
+      facts: {
+        status: 'awaiting_approval',
+        inFlightHere: presence.holds(c.id),
+        openRequests: ouvertes,
+        resolvedRequests: tranchees,
+        stuckForMs: null,
+      },
     });
   }
 
-  if (toBump.length > 0) {
-    await db.update(agentJobs).set({ updatedAt: new Date() }).where(inArray(agentJobs.id, toBump));
+  const vus = presence.stuck.waiting.observe(rows, presence.monotonicNow());
+
+  const toReset: { row: WaitingRow; reason: SweeperObservation['reason']; detail?: string }[] = [];
+  let repaired = 0;
+  for (const row of rows) {
+    const verdict = decideJob({ ...row.facts, stuckForMs: vus.get(row.id) ?? null }, settings);
+    switch (verdict.kind) {
+      case 'give_child_result': {
+        const child = row.child;
+        const outcome = child ? outcomeOfEndedChild(child) : null;
+        if (!child || !outcome) break;
+        try {
+          await maybeResumeParent(child.id as JobId, outcome, { db }, opts.runnerEnv);
+        } catch (err) {
+          // Le résultat existe et le parent le refuse (une ligne d'avant les
+          // champs de délégation, un autre enfant attendu) : rien ne le
+          // réparera. DIT, puis échoué avec ce fait.
+          const detail = err instanceof Error ? err.message : String(err);
+          console.error(
+            `[reset-orphans] parent=${row.id} child=${child.id} — the child's result could not be given: ${detail}`,
+          );
+          const [encore] = await db
+            .select({ status: agentJobs.status })
+            .from(agentJobs)
+            .where(eq(agentJobs.id, row.id))
+            .limit(1);
+          if (encore?.status === 'awaiting_delegation') {
+            toReset.push({ row, reason: 'child_result_refused', detail });
+          }
+          break;
+        }
+        repaired += 1;
+        console.warn(
+          `[reset-orphans] parent=${row.id} given the result of child=${child.id} (${child.status ?? ''})`,
+        );
+        break;
+      }
+      case 'resume_after_approval': {
+        const r = await resumeJobAfterApprovalResolution(db, row.id, opts.runnerEnv);
+        if (r.resumed === 'worker') {
+          repaired += 1;
+          console.warn(`[reset-orphans] job=${row.id} resumed after its approval was resolved`);
+        }
+        break;
+      }
+      case 'fail':
+        toReset.push({ row, reason: verdict.reason });
+        break;
+      default:
+        break;
+    }
+  }
+  if (repaired > 0) {
+    console.warn(
+      `[reset-orphans] ${String(repaired)} waiting job(s) resumed with what they waited for`,
+    );
   }
 
   // Finalize each via failJob rather than one blanket UPDATE (D1/D2, audit
@@ -262,11 +383,16 @@ export async function resetOrphanedJobs(db: AnyDrizzleDb, staleMinutes = 5): Pro
   // and (b) fills the user-facing `result` with an explanation so the outcome is
   // never silent (D1). Then deliver that notice to the job's channel.
   let reset = 0;
-  for (const seen of toReset) {
-    const jobId = seen.id;
+  for (const { row, reason, detail } of toReset) {
+    const jobId = row.id;
+    const seen = {
+      id: row.id,
+      status: row.status,
+      claimGeneration: row.claimGeneration,
+    };
     // Avant l'écriture, la règle des faucheurs (`takeLostRun`) : la ligne
     // prise au run perdu et ses processus morts, ou rien.
-    if ((await takeLostRun(db, seen, cutoff)) === null) continue;
+    if ((await takeLostRun(db, seen, presence.instanceId)) === null) continue;
     const landed = await failJob(
       db,
       jobId,
@@ -277,6 +403,25 @@ export async function resetOrphanedJobs(db: AnyDrizzleDb, staleMinutes = 5): Pro
     );
     if (landed) {
       reset += 1;
+      // Le FAIT, porté par le job (#1204) : ce que le faucheur a constaté.
+      await db
+        .update(agentJobs)
+        .set({
+          sweeperObserved: {
+            outcome: 'failed',
+            reason,
+            holder: row.claimedBy,
+            holderState: null,
+            holderLastSeenAt: null,
+            holderStoppedAt: null,
+            childJobId: row.child?.id ?? null,
+            childStatus: row.child?.status ?? null,
+            ...(detail !== undefined ? { detail } : {}),
+            observedBy: presence.instanceId,
+            observedAt: row.dbNow.toISOString(),
+          },
+        })
+        .where(eq(agentJobs.id, jobId));
       await closeElicitationsOfLostJobs(db, [jobId]);
       await notifyJobFailure(db, jobId, ORPHAN_RESET_NOTICE);
     }
@@ -287,9 +432,58 @@ export async function resetOrphanedJobs(db: AnyDrizzleDb, staleMinutes = 5): Pro
 
 // ─── pending recovery ─────────────────────────────────────────────────────────
 
+/** Les jobs `pending`, avec ce que `decideJob` en sait. */
+async function pendingVerdicts(
+  db: AnyDrizzleDb,
+  presence: Presence,
+  settings: JobLivenessSettings,
+): Promise<
+  {
+    id: string;
+    claimGeneration: number;
+    dbNow: Date;
+    verdict: JobVerdict;
+  }[]
+> {
+  const rows = await db
+    .select({
+      id: agentJobs.id,
+      claimGeneration: agentJobs.claimGeneration,
+      updatedAt: agentJobs.updatedAt,
+      // L'âge de la DEMANDE, sur la seule horloge de la base : `created_at`
+      // est posé par elle (DEFAULT now()), et lu contre son `now()`.
+      requestAgeMs: sql<string>`(extract(epoch from (now() - ${agentJobs.createdAt})) * 1000)::bigint`,
+      dbNowMs: DB_NOW_MS,
+    })
+    .from(agentJobs)
+    .where(eq(agentJobs.status, 'pending'));
+  const vus = presence.stuck.pending.observe(
+    rows.map((r) => ({
+      id: r.id,
+      signature: `${String(r.claimGeneration)}|${String(r.updatedAt?.getTime() ?? 0)}`,
+    })),
+    presence.monotonicNow(),
+  );
+  return rows.map((r) => ({
+    id: r.id,
+    claimGeneration: r.claimGeneration,
+    dbNow: new Date(Number(r.dbNowMs)),
+    verdict: decideJob(
+      {
+        status: 'pending',
+        inFlightHere: presence.holds(r.id),
+        neverClaimed: r.claimGeneration === 0,
+        requestAgeMs: Number(r.requestAgeMs),
+        stuckForMs: vus.get(r.id) ?? null,
+      },
+      settings,
+    ),
+  }));
+}
+
 /**
- * Find `pending` jobs within the "stuck-but-still-relevant" age window
- * and return their IDs for the caller to drive through executeJob.
+ * The `pending` jobs whose wake-up was lost, for the caller to drive through
+ * executeJob.
  *
  * Why this exists: the Telegram poller (and other job creators) call
  * `triggerWorker(jobId)` fire-and-forget over HTTP to `/api/worker`.
@@ -304,17 +498,15 @@ export async function resetOrphanedJobs(db: AnyDrizzleDb, staleMinutes = 5): Pro
  * zombie runner on port 3001 instead of the live one, fetch silently
  * failed, job sat pending for 3+ minutes with no recovery path.
  *
- * Age bounds matter:
- *   - Lower (default 30s): pending → processing should normally happen
- *     within ~50ms of insert; anything older than 30s is almost
- *     certainly a missed trigger and worth a recovery attempt.
- *   - Upper (default 5min, same as `resetOrphanedJobs`): older pending
- *     rows are abandoned, NOT recovered. Silently waking up a 4-day-old
- *     task because the user typed it before the runner zombie-locked
- *     would be a horror-show UX (live miss 2026-05-26, job 03cd4304
- *     created 4 days earlier and silently resurrected by an earlier
- *     version of this recovery). Caller passes those to
- *     `failStalePendingJobs` below to mark them failed instead.
+ * Which rows (`decideJob`, #1204): a `pending` row that no run of this
+ * process is executing, seen unchanged by this process for
+ * `JOB_LIVENESS.stuckRowMs` on its monotonic clock — never the age of a date,
+ * which a clock step shortens. A request that no runner ever claimed and that
+ * is older than `JOB_LIVENESS.pendingAbandonMs` is left to
+ * `failStalePendingJobs` instead: silently waking up a 4-day-old task would
+ * be a horror-show UX (live miss 2026-05-26, job 03cd4304). A job the system
+ * put back in the queue (a resume after a restart, a parent given its child's
+ * result) is a continuation, and is started whatever its age.
  *
  * We DON'T touch the row here — the caller passes each id to
  * executeJob, which atomically claims via `claimJob` (status flip with
@@ -322,35 +514,21 @@ export async function resetOrphanedJobs(db: AnyDrizzleDb, staleMinutes = 5): Pro
  */
 export async function findPendingJobsToRecover(
   db: AnyDrizzleDb,
-  staleSecondsLower = 30,
-  staleSecondsUpper = 5 * 60,
+  opts: { presence?: Presence; settings?: JobLivenessSettings } = {},
 ): Promise<string[]> {
-  const lowerCutoff = new Date(Date.now() - staleSecondsLower * 1000);
-  const upperCutoff = new Date(Date.now() - staleSecondsUpper * 1000);
-  // `updated_at` (not `created_at`) so jobs bumped back to pending by
-  // resumeDelegated / approval / self-chain reset are evaluated against
-  // their LAST touch, not their original insert.
-  // `updated_at < lowerCutoff` = older than 30s ago.
-  // `updated_at >= upperCutoff` = NOT older than 5min ago.
-  const rows = await db
-    .select({ id: agentJobs.id })
-    .from(agentJobs)
-    .where(
-      and(
-        eq(agentJobs.status, 'pending'),
-        lt(agentJobs.updatedAt, lowerCutoff),
-        gte(agentJobs.updatedAt, upperCutoff),
-      ),
-    );
-  return rows.map((r) => r.id);
+  const presence = opts.presence ?? processPresence;
+  const settings = opts.settings ?? JOB_LIVENESS;
+  const verdicts = await pendingVerdicts(db, presence, settings);
+  return verdicts.filter((v) => v.verdict.kind === 'start').map((v) => v.id);
 }
 
 /**
- * Mark `pending` jobs older than `staleSeconds` as failed with a
- * dedicated error code, so they don't sit forever in the DB as junk and
- * — more importantly — don't get silently resurrected by recovery on a
- * later boot. Threshold matches `resetOrphanedJobs`: anything stuck >5min
- * past its last update is abandoned, full stop.
+ * Mark as failed the `pending` requests that no runner ever claimed and that
+ * are older than `JOB_LIVENESS.pendingAbandonMs` on the database's clock, so
+ * they don't sit forever in the DB as junk and — more importantly — don't get
+ * silently resurrected by recovery on a later boot. A job that was claimed
+ * once (`claim_generation > 0`) and put back in the queue is never abandoned
+ * here: it is a continuation, and the recovery starts it (#1204).
  *
  * The error code is distinct from `orphan_job_reset` (which is for
  * processing/awaiting jobs) so the dashboard can tell users "this job
@@ -359,24 +537,27 @@ export async function findPendingJobsToRecover(
  */
 export async function failStalePendingJobs(
   db: AnyDrizzleDb,
-  staleSeconds = 5 * 60,
+  opts: { presence?: Presence; settings?: JobLivenessSettings } = {},
 ): Promise<number> {
-  const cutoff = new Date(Date.now() - staleSeconds * 1000);
+  const presence = opts.presence ?? processPresence;
+  const settings = opts.settings ?? JOB_LIVENESS;
   // Select the candidates, then finalize each via failJob so the user gets a
   // `result` explanation AND a channel notice — never a silent abandon (D1).
   // failJob's non-terminal guard also protects against a job that flipped out of
   // pending between this select and the write.
-  const stale = await db
-    .select({ id: agentJobs.id, claimGeneration: agentJobs.claimGeneration })
-    .from(agentJobs)
-    .where(and(eq(agentJobs.status, 'pending'), lt(agentJobs.updatedAt, cutoff)));
+  const stale = (await pendingVerdicts(db, presence, settings)).filter(
+    (v) => v.verdict.kind === 'fail',
+  );
 
   let failed = 0;
-  for (const { id, claimGeneration } of stale) {
+  for (const { id, claimGeneration, dbNow } of stale) {
     // Avant l'écriture, la règle des faucheurs (`takeLostRun`) : la ligne
     // prise (un job prenable est pris, comme un worker le prendrait) et ses
     // processus morts, ou rien — un worker l'a pris entre-temps.
-    if ((await takeLostRun(db, { id, status: 'pending', claimGeneration }, cutoff)) === null) {
+    if (
+      (await takeLostRun(db, { id, status: 'pending', claimGeneration }, presence.instanceId)) ===
+      null
+    ) {
       continue;
     }
     const landed = await failJob(
@@ -389,6 +570,23 @@ export async function failStalePendingJobs(
     );
     if (landed) {
       failed += 1;
+      // Le FAIT, porté par le job (#1204) : jamais pris, demandé il y a trop
+      // longtemps — sur l'horloge de la base.
+      await db
+        .update(agentJobs)
+        .set({
+          sweeperObserved: {
+            outcome: 'failed',
+            reason: 'never_claimed',
+            holder: null,
+            holderState: null,
+            holderLastSeenAt: null,
+            holderStoppedAt: null,
+            observedBy: presence.instanceId,
+            observedAt: dbNow.toISOString(),
+          },
+        })
+        .where(eq(agentJobs.id, id));
       await notifyJobFailure(db, id, STALE_PENDING_NOTICE);
     }
   }

@@ -14,6 +14,45 @@ import {
 } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 import type { InboxEntry, JobResultKind, ReplyRendering } from '@nodal-agents/shared';
+
+/**
+ * What a sweeper observed when it changed a job it did not run
+ * (`agent_jobs.sweeper_observed`, migration 0173). Instants are ISO strings
+ * read on the database's clock. A typed fact, never a sentence.
+ */
+export interface SweeperObservation {
+  /** What the sweeper did with the job. */
+  readonly outcome: 'resumed' | 'failed';
+  /** The fact the decision rests on. */
+  readonly reason:
+    | 'holder_gone'
+    | 'not_held'
+    | 'no_delegation_recorded'
+    | 'child_missing'
+    | 'child_result_refused'
+    | 'never_claimed';
+  /** The instance that held the job (`claimed_by`), or null when none was recorded. */
+  readonly holder: string | null;
+  /**
+   * How that holder was shown to be gone: it stopped cleanly, it has no
+   * instance record, it stopped beating while the observer kept beating, or
+   * no holder was recorded. Null when the decision is not about a holder.
+   */
+  readonly holderState: 'stopped' | 'no_record' | 'silent' | 'none' | null;
+  /** The holder's last beat, when it has one. */
+  readonly holderLastSeenAt: string | null;
+  /** When the holder stopped, when it did so cleanly. */
+  readonly holderStoppedAt: string | null;
+  /** For a waiting parent: the child it waited for, and that child's status. */
+  readonly childJobId?: string | null;
+  readonly childStatus?: string | null;
+  /** The error that refused a repair, when one did. */
+  readonly detail?: string;
+  /** The instance whose sweeper decided. */
+  readonly observedBy: string;
+  /** When it decided. */
+  readonly observedAt: string;
+}
 import { entities } from './entities.ts';
 import { agents } from './agents.ts';
 import { agentSchedules } from './schedules.ts';
@@ -430,6 +469,22 @@ export const agentJobs = pgTable(
      * qu'un autre run tient ce job, et celui-ci n'a plus le droit d'agir.
      */
     claimGeneration: integer('claim_generation').notNull().default(0),
+    /**
+     * The runner instance that made the current claim (migration 0173): the
+     * `runner_instances.id` of the process that won `claimJob`. A job is alive
+     * while this instance is running, whatever the age of `updated_at`. NULL:
+     * claimed by a version that did not record it, or never claimed. No FK: an
+     * instance row may be pruned, and a holder with no row is a holder nobody
+     * can show to be running.
+     */
+    claimedBy: uuid('claimed_by'),
+    /**
+     * What a sweeper observed when it took this job from its holder (migration
+     * 0173): which holder, in what state, since when, seen by which instance.
+     * A typed FACT, written next to the error code; NULL when no sweeper took
+     * the job.
+     */
+    sweeperObserved: jsonb('sweeper_observed').$type<SweeperObservation>(),
     /**
      * Les outils que le tour interrompu par la mort du runner avait déjà
      * exécutés et qui ne font pas que lire (#443) : rejouer ce tour les

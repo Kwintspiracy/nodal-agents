@@ -259,6 +259,10 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       checkpoint_tool_seq bigint,
       -- mirrors migration 0135 (#566) : le numéro de la prise en cours
       claim_generation integer NOT NULL DEFAULT 0,
+      -- mirrors migration 0173 : l'instance de runner qui tient la prise, et ce
+      -- qu'un faucheur a constaté en la lui reprenant.
+      claimed_by uuid,
+      sweeper_observed jsonb,
       -- project_id (0093) references code_projects, created further below — la
       -- FK est ajoutée par un ALTER TABLE juste après cette table, comme pour
       -- schedule_id ci-dessus.
@@ -1227,6 +1231,17 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       ON verification_runs (job_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_verification_runs_source_job
       ON verification_runs (source_job_id);
+
+    -- runner_instances (migration 0173) — les processus runner qui tiennent
+    -- des jobs : leur battement est écrit à l'horloge de la base.
+    CREATE TABLE IF NOT EXISTS runner_instances (
+      id uuid PRIMARY KEY,
+      host text NOT NULL,
+      pid integer NOT NULL,
+      started_at timestamptz NOT NULL DEFAULT now(),
+      last_seen_at timestamptz NOT NULL DEFAULT now(),
+      stopped_at timestamptz
+    );
 
     -- job_deliveries (migration 0090) — mirrors migration 0090. L'outbox de la
     -- livraison : la finalisation du job pose 'prepared' dans SA transaction,

@@ -5,7 +5,7 @@
 // run vivant ne tient, et c'est pour cela qu'il vit ici, hors des racines
 // « run » que garde own-job-row.test.ts — comme les faucheurs qui l'appellent.
 
-import { and, eq, lt, sql } from '@nodal-agents/db';
+import { and, eq, sql } from '@nodal-agents/db';
 import { agentJobs } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { releaseProcessesOfLostJob } from '../job/process-scopes.ts';
@@ -26,9 +26,11 @@ export interface LostRunSeen {
  * la décision, elle, porte sur un RUN. Les deux se rejoignent par la prise
  * (`claim_generation`), le mécanisme qui dit déjà quel run tient un job :
  *   1. le faucheur PREND la ligne au run qu'il a jugé perdu, par une écriture
- *      conditionnée sur exactement ce qu'il a lu — même statut, même prise,
- *      toujours sans battement depuis `staleBefore`. La prise monte d'un cran,
- *      comme quand un worker prend un job : le run perdu, s'il vit encore,
+ *      conditionnée sur exactement ce qu'il a lu — même statut, même prise
+ *      (toute prise la monte d'un cran : même prise, même détenteur ; #1204,
+ *      jamais l'âge d'une date). La prise monte d'un cran et passe à
+ *      l'instance du faucheur (`takenBy`), comme quand un worker prend un
+ *      job : le run perdu, s'il vit encore,
  *      n'a plus le droit d'agir (il relit sa prise avant chaque effet) ; une
  *      ligne prenable (`pending`) devient `processing`, et aucun worker ne
  *      peut plus la prendre ;
@@ -37,14 +39,13 @@ export interface LostRunSeen {
  *   3. le faucheur écrit ensuite la ligne finale (échec, ou remise en file
  *      sous SA prise, rendue en dernier).
  * Si le run est revenu entre la lecture et l'écriture (il s'est remis en
- * file, suspendu, un worker l'a pris, son battement est reparti), la prise
- * refuse : rien n'est tué, rien n'est écrit. Rend la prise du faucheur, ou
- * `null`.
+ * file, suspendu, un worker l'a pris), la prise refuse : rien n'est tué,
+ * rien n'est écrit. Rend la prise du faucheur, ou `null`.
  */
 export async function takeLostRun(
   db: AnyDrizzleDb,
   seen: LostRunSeen,
-  staleBefore: Date,
+  takenBy: string,
 ): Promise<number | null> {
   const rows = await db
     .update(agentJobs)
@@ -53,13 +54,13 @@ export async function takeLostRun(
       // garde son statut — elle n'était déjà prenable par personne.
       status: seen.status === 'pending' ? 'processing' : seen.status,
       claimGeneration: sql`${agentJobs.claimGeneration} + 1`,
+      claimedBy: takenBy,
     })
     .where(
       and(
         eq(agentJobs.id, seen.id),
         eq(agentJobs.status, seen.status),
         eq(agentJobs.claimGeneration, seen.claimGeneration),
-        lt(agentJobs.updatedAt, staleBefore),
       ),
     )
     .returning({ claimGeneration: agentJobs.claimGeneration });

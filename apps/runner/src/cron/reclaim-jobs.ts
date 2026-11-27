@@ -9,22 +9,17 @@
 // échoue l'enfant sans jamais prévenir le parent, qui se fait faucher à son tour
 // cinq minutes plus tard — sa transcription et sa décision avec lui.
 //
-// CE QUI PROUVE QU'UN JOB N'A PLUS DE PROPRIÉTAIRE. Il n'y a pas de colonne de
-// possession sur `agent_jobs`, et il n'en faut pas : un runner vivant BAT le
-// cœur de chaque job qu'il tient, toutes les 60 secondes, de la prise du job
-// jusqu'à ce qu'il le lâche, quoi que le job fasse entre les deux (#565,
-// `holdJobHeartbeat`, apps/runner/src/job/heartbeat.ts — runtime CLI compris).
-// Un job `processing` dont `updated_at` n'a pas bougé depuis plus de deux
-// battements n'est donc tenu par personne. C'est la même preuve que le
-// faucheur, lue plus tôt.
-//
-// CE QUE LA RÈGLE SUPPOSE, ET QUI EST VRAI AUJOURD'HUI : un runner par base. Le
-// produit en démarre un, et le mode LAN expose CE runner-là, il n'en ajoute pas.
-// Même si un second tournait sur la même base, la règle resterait sûre tant
-// qu'il bat : un job qu'il tient ne franchit jamais la fenêtre. Ce qu'elle ne
-// couvrirait pas, c'est un runner vivant mais GELÉ, qui ne bat plus — son job
-// serait repris alors qu'il pourrait repartir. Le prix est assumé : un job qui
-// ne bat plus depuis deux minutes et demie n'avance plus, pour de bon.
+// CE QUI PROUVE QU'UN JOB N'A PLUS DE PROPRIÉTAIRE (#1204). La prise inscrit
+// l'instance de runner qui la fait (`agent_jobs.claimed_by`), et un job est
+// vivant tant que cette instance tourne — jamais selon l'âge d'une date. C'est
+// `judgeHolder` (job/liveness.ts) qui le dit : un job qu'un run de CE processus
+// exécute n'est jamais repris ; celui d'une autre instance ne l'est qu'une fois
+// cette instance montrée partie (arrêtée proprement, sans inscription, ou
+// muette sur l'horloge de la base pendant que celle-ci battait sans trou).
+// Avant, la preuve était « `updated_at` n'a pas bougé depuis deux battements
+// et demi », lue à l'horloge murale : un portable mis en veille, une horloge
+// recalée ou deux hôtes décalés faisaient reprendre au runner les jobs qu'il
+// exécutait lui-même, et tuer leurs commandes.
 //
 // CE QU'ON EN FAIT (#443) : une seule décision, `orphanDecision`. Un job qui a
 // un point de reprise — au moins un tour complet sauvegardé — et qui n'a pas
@@ -36,15 +31,17 @@
 // ÉCHOUE : l'échec typé remonte au parent par le porteur de la PR #170, avec
 // ce que le job avait écrit (#491), et c'est le PARENT qui décide.
 
-import { and, asc, eq, gt, inArray, isNull, lt, or } from '@nodal-agents/db';
+import { and, asc, eq, gt, isNull, or } from '@nodal-agents/db';
 import {
   agentJobs,
   agentTasks,
   agents,
   approvalRequests,
   gatesACall,
+  runnerInstances,
   toolCalls,
 } from '@nodal-agents/db';
+import type { SweeperObservation } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { resumeDelegated } from '@nodal-agents/orchestration';
 import type { JobId } from '@nodal-agents/orchestration';
@@ -53,16 +50,16 @@ import { budgetDeliverable } from '../job/execute.ts';
 import { notifyJobFailure } from './reset-orphans.ts';
 import { restartResumeOf } from '../lib/runtime-restart.ts';
 import type { RestartResume } from '../lib/runtime-restart.ts';
-import { RUNNER_HEARTBEAT_MS } from '../job/heartbeat.ts';
 import { closeElicitationsOfLostJobs } from '../approvals/elicitation.ts';
 import { takeLostRun } from './take-lost-run.ts';
-
-/**
- * Au-delà de cette fenêtre sans battement, aucun runner vivant ne tient ce job.
- * Deux battements plus une marge : un battement manqué (une requête lente, un
- * `setInterval` en retard) ne suffit pas à déclarer un job abandonné.
- */
-export const RUNNER_LIVENESS_WINDOW_MS = 2 * RUNNER_HEARTBEAT_MS + 30_000;
+import {
+  DB_NOW_MS,
+  JOB_LIVENESS,
+  decideJob,
+  judgeHolder,
+  processPresence,
+} from '../job/liveness.ts';
+import type { Holder, JobLivenessSettings, Presence } from '../job/liveness.ts';
 
 /** Le code machine, pour `agent_jobs.error` — celui que l'issue nomme. */
 export const RUNNER_RESTARTED_CODE = 'runner_restarted';
@@ -200,25 +197,53 @@ async function effectsAfterCheckpoint(
   return noms;
 }
 
-/** Des millisecondes en minutes et secondes, jamais négatives. */
-function duree(ms: number): string {
-  const total = Math.max(0, Math.round(ms / 1000));
-  const min = Math.floor(total / 60);
-  const sec = total % 60;
-  return min > 0 ? `${min}m${String(sec).padStart(2, '0')}s` : `${sec}s`;
+/** Les huit premiers caractères d'une identité d'instance : de quoi la reconnaître. */
+function court(id: string): string {
+  return id.slice(0, 8);
 }
 
 /**
- * La ligne que la personne lit quand son travail est mort avec le runner.
+ * Ce que le faucheur a constaté du détenteur, en champs typés (#1204) : quelle
+ * instance, dans quel état, depuis quand — sur l'horloge de la base.
+ */
+function faitDuDetenteur(holder: Holder): string {
+  switch (holder.kind) {
+    case 'self':
+      return 'runner (this one) runs none of it';
+    case 'gone':
+      if (holder.id === null) return 'no holder recorded';
+      switch (holder.how) {
+        case 'stopped':
+          return `runner ${court(holder.id)} stopped at ${holder.stoppedAt?.toISOString() ?? '?'}`;
+        case 'silent':
+          return `runner ${court(holder.id)} last seen at ${holder.lastSeenAt?.toISOString() ?? '?'}`;
+        case 'no_record':
+          return `runner ${court(holder.id)} has no instance record`;
+        case 'none':
+          return 'no holder recorded';
+      }
+      break;
+    case 'alive':
+    case 'undecided':
+      // Jamais repris : `decideJob` ne rend pas `take_from_holder` pour eux.
+      return `runner ${court(holder.id)} last seen at ${holder.lastSeenAt.toISOString()}`;
+  }
+  return 'holder unknown';
+}
+
+/**
+ * La ligne que la personne lit quand son travail a été repris à un détenteur
+ * parti.
  *
  * Même nature que `timeoutStopLine` et `providerRejectionStopLine` dans le
  * runner : une ligne de PLATEFORME, entre crochets, faite de CHAMPS TYPÉS — le
- * statut où le job a été trouvé, et depuis combien de temps il ne battait plus.
- * Le harnais ne raconte rien, il pose les faits qu'il a (invariant #2).
+ * statut où le job a été trouvé, et ce qu'on sait de son détenteur (#1204 :
+ * lequel, arrêté ou muet depuis quand), jamais une cause devinée. Le harnais
+ * ne raconte rien, il pose les faits qu'il a (invariant #2).
  */
 export function runnerRestartedStopLine(faits: {
   status: string;
-  idleMs: number;
+  holder: Holder;
   /** Faux quand aucun texte de CE run n'a pu être relu (#491). */
   textRecovered?: boolean;
   /** Le nombre de reprises après redémarrage déjà épuisées, quand il l'est (#443). */
@@ -241,7 +266,31 @@ export function runnerRestartedStopLine(faits: {
     faits.runtimeNotResumable !== undefined
       ? `; runtime ${faits.runtimeNotResumable} cannot resume`
       : '';
-  return `[stopped: runner restarted — status ${faits.status}, no heartbeat for ${duree(faits.idleMs)}${reprises}${effets}${runtime}${perte}]`;
+  return `[stopped: no live runner holds this job — status ${faits.status}, ${faitDuDetenteur(faits.holder)}${reprises}${effets}${runtime}${perte}]`;
+}
+
+/**
+ * Le constat écrit sur la ligne du job repris (`agent_jobs.sweeper_observed`,
+ * #1204) : le même fait que la ligne d'arrêt, en champs.
+ */
+export function observationOfHolder(
+  holder: Holder,
+  outcome: SweeperObservation['outcome'],
+  claimedBy: string | null,
+  observedBy: string,
+  dbNow: Date,
+): SweeperObservation {
+  const gone = holder.kind === 'gone' ? holder : null;
+  return {
+    outcome,
+    reason: gone ? 'holder_gone' : 'not_held',
+    holder: claimedBy,
+    holderState: gone?.how ?? null,
+    holderLastSeenAt: gone?.lastSeenAt?.toISOString() ?? null,
+    holderStoppedAt: gone?.stoppedAt?.toISOString() ?? null,
+    observedBy,
+    observedAt: dbNow.toISOString(),
+  };
 }
 
 /** Ce qu'une passe de reprise a fait, pour le tick et pour les journaux. */
@@ -257,27 +306,29 @@ export interface ReclaimResult {
 }
 
 /**
- * Reprend les jobs `processing` qu'aucun runner vivant ne tient : ceux qui ont
- * un point de reprise repartent de leur dernier tour sauvegardé (#443) ; les
- * autres ÉCHOUENT avec leur code, et le parent qui les attendait repart avec
- * cet échec dans son enregistrement de délégation.
+ * Reprend les jobs `processing` qu'aucun runner vivant ne tient (#1204 : leur
+ * détenteur est parti, ou c'est CETTE instance et aucun de ses runs ne les
+ * exécute) : ceux qui ont un point de reprise repartent de leur dernier tour
+ * sauvegardé (#443) ; les autres ÉCHOUENT avec leur code, et le parent qui les
+ * attendait repart avec cet échec dans son enregistrement de délégation.
  *
  * Appelée AU DÉMARRAGE (le cas de l'issue : le processus qui les tenait vient
- * de mourir) et à chaque tour de cron, qui est sa seconde chance.
+ * de mourir) et à chaque tour de cron, qui est sa seconde chance. La décision
+ * est celle de `decideJob`, la même pour tout job et tout runtime.
  */
 export async function reclaimJobsOfDeadRunners(
   db: AnyDrizzleDb,
-  opts: { livenessWindowMs?: number; now?: Date } = {},
+  opts: { presence?: Presence; settings?: JobLivenessSettings } = {},
 ): Promise<ReclaimResult> {
-  const windowMs = opts.livenessWindowMs ?? RUNNER_LIVENESS_WINDOW_MS;
-  const now = opts.now ?? new Date();
-  const cutoff = new Date(now.getTime() - windowMs);
+  const presence = opts.presence ?? processPresence;
+  const settings = opts.settings ?? JOB_LIVENESS;
 
   const candidates = await db
     .select({
       id: agentJobs.id,
       status: agentJobs.status,
       claimGeneration: agentJobs.claimGeneration,
+      claimedBy: agentJobs.claimedBy,
       updatedAt: agentJobs.updatedAt,
       parentJobId: agentJobs.parentJobId,
       task: agentJobs.task,
@@ -286,30 +337,71 @@ export async function reclaimJobsOfDeadRunners(
       restartResumes: agentJobs.restartResumes,
       checkpointToolSeq: agentJobs.checkpointToolSeq,
       runtime: agents.runtime,
+      holderId: runnerInstances.id,
+      holderLastSeenAt: runnerInstances.lastSeenAt,
+      holderStoppedAt: runnerInstances.stoppedAt,
+      dbNowMs: DB_NOW_MS,
     })
     .from(agentJobs)
     .leftJoin(agents, eq(agents.id, agentJobs.agentId))
-    .where(and(eq(agentJobs.status, 'processing'), lt(agentJobs.updatedAt, cutoff)));
+    .leftJoin(runnerInstances, eq(runnerInstances.id, agentJobs.claimedBy))
+    .where(eq(agentJobs.status, 'processing'));
 
   const out: ReclaimResult = { reclaimed: 0, parentsResumed: 0, resumed: 0, resumedJobIds: [] };
 
+  // Depuis combien de temps CE processus voit chaque ligne inchangée, sur son
+  // horloge monotone : ce qui dit qu'un job pris par cette instance, et
+  // qu'aucun de ses runs n'exécute, ne bougera plus.
+  const vus = presence.stuck.processing.observe(
+    candidates.map((c) => ({
+      id: c.id,
+      signature: `${String(c.claimGeneration)}|${c.claimedBy ?? ''}|${String(c.updatedAt?.getTime() ?? 0)}`,
+    })),
+    presence.monotonicNow(),
+  );
+
   for (const job of candidates) {
+    const dbNow = new Date(Number(job.dbNowMs));
+    const holder = judgeHolder(
+      {
+        jobId: job.id,
+        claimedBy: job.claimedBy,
+        record:
+          job.holderId !== null && job.holderLastSeenAt !== null
+            ? { lastSeenAt: job.holderLastSeenAt, stoppedAt: job.holderStoppedAt }
+            : null,
+        dbNow,
+      },
+      presence,
+      settings,
+    );
     // Un orchestrateur qui a réparti son travail sur le tableau de tâches reste
-    // `processing` et NE BAT PLUS — il attend son tableau, il n'est pas mort.
-    // Le faucheur le protège déjà à cinq minutes ; le protéger ici aussi est
-    // obligatoire, la fenêtre étant bien plus courte (reset-orphans.ts dit
-    // l'incident : le parent 7aa6ad96 fauché pendant que ses quatre tâches
-    // tournaient).
+    // `processing` et aucun run ne le tient — il attend son tableau, il n'est
+    // pas mort (reset-orphans.ts disait l'incident : le parent 7aa6ad96 fauché
+    // pendant que ses quatre tâches tournaient). Sa fin appartient à la
+    // compilation du tableau (`deliverCompletedRoots`), que ses tâches tournent
+    // encore ou attendent d'être compilées (#1204).
     const [tacheEnCours] = await db
       .select({ id: agentTasks.id })
       .from(agentTasks)
-      .where(
-        and(eq(agentTasks.rootJobId, job.id), inArray(agentTasks.status, ['todo', 'in_progress'])),
-      )
+      .where(eq(agentTasks.rootJobId, job.id))
       .limit(1);
-    if (tacheEnCours) continue;
+    const verdict = decideJob(
+      {
+        status: 'processing',
+        holder,
+        onBoard: tacheEnCours !== undefined,
+        stuckForMs: vus.get(job.id) ?? null,
+      },
+      settings,
+    );
+    if (verdict.kind !== 'take_from_holder') continue;
+    const vu = {
+      id: job.id,
+      status: 'processing',
+      claimGeneration: job.claimGeneration,
+    };
 
-    const idleMs = now.getTime() - (job.updatedAt?.getTime() ?? now.getTime());
     const resume = restartResumeOf(job.runtime);
     const decision = orphanDecision({
       resume,
@@ -333,11 +425,7 @@ export async function reclaimJobsOfDeadRunners(
       // La règle des faucheurs (`takeLostRun`, #750) : la ligne est prise au
       // run perdu et ses processus meurent, ou rien ne se passe ; elle n'est
       // rendue à la file qu'ensuite, sous la prise du faucheur.
-      const prise = await takeLostRun(
-        db,
-        { id: job.id, status: 'processing', claimGeneration: job.claimGeneration },
-        cutoff,
-      );
+      const prise = await takeLostRun(db, vu, presence.instanceId);
       if (prise === null) continue;
       const repris = await db
         .update(agentJobs)
@@ -345,7 +433,14 @@ export async function reclaimJobsOfDeadRunners(
           status: 'pending',
           resumedFromTurn: decision.fromTurn,
           restartResumes: (job.restartResumes ?? 0) + 1,
-          updatedAt: now,
+          sweeperObserved: observationOfHolder(
+            holder,
+            'resumed',
+            job.claimedBy,
+            presence.instanceId,
+            dbNow,
+          ),
+          updatedAt: new Date(),
         })
         .where(
           and(
@@ -375,7 +470,7 @@ export async function reclaimJobsOfDeadRunners(
     const texte = lastTextOfRun(job.messages, job.task ?? '');
     const ligne = runnerRestartedStopLine({
       status: job.status ?? 'processing',
-      idleMs,
+      holder,
       textRecovered: texte !== '',
       ...(decision.resumesExhausted ? { resumesExhausted: job.restartResumes ?? 0 } : {}),
       ...(decision.blockedBy.length > 0 ? { sideEffects: decision.blockedBy } : {}),
@@ -389,27 +484,29 @@ export async function reclaimJobsOfDeadRunners(
     // vient de se terminer entre la lecture et ici n'est pas écrasé. Avant
     // elle, la règle des faucheurs (`takeLostRun`) : la ligne prise au run
     // perdu et ses processus morts, ou rien.
-    if (
-      (await takeLostRun(
-        db,
-        { id: job.id, status: 'processing', claimGeneration: job.claimGeneration },
-        cutoff,
-      )) === null
-    ) {
+    if ((await takeLostRun(db, vu, presence.instanceId)) === null) {
       continue;
     }
     const landed = await failJob(db, job.id, decision.code, undefined, undefined, livrable);
     if (!landed) continue;
     await closeElicitationsOfLostJobs(db, [job.id]);
     out.reclaimed += 1;
-    // Le FAIT, porté par le job : quels outils déjà exécutés ont empêché la
-    // reprise (#443). L'écran le dira (#444).
-    if (decision.blockedBy.length > 0) {
-      await db
-        .update(agentJobs)
-        .set({ restartBlockedBy: [...decision.blockedBy] })
-        .where(eq(agentJobs.id, job.id));
-    }
+    // Les FAITS, portés par le job : quel détenteur était parti, et depuis
+    // quand (#1204) ; quels outils déjà exécutés ont empêché la reprise
+    // (#443, l'écran le dira, #444).
+    await db
+      .update(agentJobs)
+      .set({
+        sweeperObserved: observationOfHolder(
+          holder,
+          'failed',
+          job.claimedBy,
+          presence.instanceId,
+          dbNow,
+        ),
+        ...(decision.blockedBy.length > 0 ? { restartBlockedBy: [...decision.blockedBy] } : {}),
+      })
+      .where(eq(agentJobs.id, job.id));
     await notifyJobFailure(db, job.id, ligne);
 
     if (await resumeParentOfReclaimedChild(db, job.id, job.parentJobId, livrable, decision.code)) {

@@ -220,9 +220,11 @@ export async function runCronTick(deps: RunnerDeps, maxTasksPerTick = 5): Promis
     { reclaimed: 0, parentsResumed: 0, resumed: 0, resumedJobIds: [] },
   );
 
+  // Les jobs qui attendent ce qui a déjà eu lieu (#1204) : un parent dont
+  // l'enfant a fini reçoit son résultat, et repart tout de suite.
   const orphanJobsReset = await guardPhase(
     'resetOrphanedJobs',
-    () => resetOrphanedJobs(deps.db),
+    () => resetOrphanedJobs(deps.db, { runnerEnv: resolveRunnerEnvForTrigger() }),
     0,
   );
 

@@ -19,7 +19,10 @@ import { resolveApprovalDecision } from '../../approvals/resolve.ts';
 import { createRequestUserInput } from '../../approvals/elicitation.ts';
 import { ELICITATION_MESSAGE_MAX } from '@nodal-agents/shared';
 import { expireStaleApprovals, resetOrphanedJobs } from '../../cron/reset-orphans.ts';
-import { reclaimJobsOfDeadRunners, RUNNER_LIVENESS_WINDOW_MS } from '../../cron/reclaim-jobs.ts';
+import { randomUUID } from 'node:crypto';
+import { runnerInstances } from '@nodal-agents/db';
+import { reclaimJobsOfDeadRunners } from '../../cron/reclaim-jobs.ts';
+import { JOB_LIVENESS, createPresence } from '../../job/liveness.ts';
 import { reviveJobIfApprovalResolvedDuringSuspend } from '../../job/execute.ts';
 import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';
@@ -402,12 +405,15 @@ describe('les lecteurs du runner : une élicitation n’est pas un appel qui att
 
 // Une question vit tant que l'appel qui l'a posée vit, et cet appel vit tant
 // qu'un runner tient son job. La seule preuve qu'un runner ne le tient plus
-// est celle de la reprise des jobs (#186) : plus de battement depuis
-// RUNNER_LIVENESS_WINDOW_MS. Revue Codex passe 1 de #660 : la fermeture au
+// est celle de la reprise des jobs (#186) : l'instance qui le tient est
+// partie (#1204). Revue Codex passe 1 de #660 : la fermeture au
 // démarrage visait TOUTES les questions ouvertes, celles qu'un autre runner
 // vivant attendait comprises.
 describe('une question vit tant que son appel vit @cap:approuver-une-action/moteur', () => {
-  async function jobOf(updatedAt: Date): Promise<string> {
+  async function jobOf(
+    updatedAt: Date,
+    extra: { claimedBy?: string; status?: string } = {},
+  ): Promise<string> {
     const [row] = await db
       .insert(agentJobs)
       .values({
@@ -419,20 +425,24 @@ describe('une question vit tant que son appel vit @cap:approuver-une-action/mote
         messages: [],
         chainCount: 0,
         updatedAt,
+        ...extra,
       } as never)
       .returning({ id: agentJobs.id });
     return row!.id;
   }
 
   it('le passage de démarrage ne ferme pas la question d’un appel qu’un runner vivant tient', async () => {
-    const live = await jobOf(new Date());
+    const vivante = randomUUID();
+    await db.insert(runnerInstances).values({ id: vivante, host: 'h', pid: 1 });
+    const live = await jobOf(new Date(), { claimedBy: vivante });
     const question = await insertElicitation({ jobId: live });
     await reclaimJobsOfDeadRunners(db as unknown as RunnerDeps['db']);
     expect((await readRow(question.id)).status).toBe('pending');
   });
 
   it('la question d’un job que plus aucun runner ne tient est fermée avec lui, pas ses approbations', async () => {
-    const dead = await jobOf(new Date(Date.now() - RUNNER_LIVENESS_WINDOW_MS - 60_000));
+    // Aucun détenteur inscrit : une prise d'un processus parti.
+    const dead = await jobOf(new Date(Date.now() - JOB_LIVENESS.silentInstanceMs - 60_000));
     const question = await insertElicitation({ jobId: dead });
     const [gate] = await db
       .insert(approvalRequests)
@@ -453,10 +463,21 @@ describe('une question vit tant que son appel vit @cap:approuver-une-action/mote
     expect((await readRow(gate!.id)).status).toBe('pending');
   });
 
-  it('le faucheur à cinq minutes ferme aussi la question du job qu’il échoue', async () => {
-    const stale = await jobOf(new Date(Date.now() - 10 * 60_000));
+  it('le faucheur des attentes ferme aussi la question du job qu’il échoue', async () => {
+    // Un parent qui n'enregistre aucune délégation : rien ne le réparera.
+    const stale = await jobOf(new Date(Date.now() - 10 * 60_000), {
+      status: 'awaiting_delegation',
+    });
     const question = await insertElicitation({ jobId: stale });
-    await resetOrphanedJobs(db as unknown as RunnerDeps['db']);
+    const mono = { t: 0 };
+    const presence = createPresence({
+      instanceId: randomUUID(),
+      holds: () => false,
+      monotonicNow: () => mono.t,
+    });
+    await resetOrphanedJobs(db as unknown as RunnerDeps['db'], { presence });
+    mono.t += JOB_LIVENESS.stuckRowMs;
+    await resetOrphanedJobs(db as unknown as RunnerDeps['db'], { presence });
     const stored = await readRow(question.id);
     expect(stored.status).toBe('expired');
     expect(stored.resolvedBy).toBe('system:runner_restarted');
