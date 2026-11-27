@@ -44,7 +44,7 @@
 
 import postgres from 'postgres';
 import { existsSync, readdirSync, readFileSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import {
   createStateFile,
   masterKeyFilePath,
@@ -95,6 +95,14 @@ export interface SnapshotStateFile {
   /** Where the live one is. */
   readonly path: string;
   readonly spec: StateFileSpec<unknown>;
+  /**
+   * The database depends on this file (the master key its secrets are
+   * encrypted with). Going back to a copy whose saved file differs from the
+   * live one is refused; a live one that is missing is put back from the copy
+   * (created, never written over). A file without this flag (the config: its
+   * password and ports are the cluster's) is never put back.
+   */
+  readonly boundToDatabase: boolean;
 }
 
 /** The state files of an install, and where their copies go. */
@@ -109,8 +117,18 @@ export function homeStateFiles(): SnapshotStateFiles {
   return {
     dir: nodalHomePath('snapshots'),
     files: [
-      { name: 'config.json', path: nodalConfigPath(), spec: NODAL_CONFIG_FILE },
-      { name: 'secrets.key', path: masterKeyFilePath(), spec: MASTER_KEY_FILE },
+      {
+        name: basename(nodalConfigPath()),
+        path: nodalConfigPath(),
+        spec: NODAL_CONFIG_FILE,
+        boundToDatabase: false,
+      },
+      {
+        name: basename(masterKeyFilePath()),
+        path: masterKeyFilePath(),
+        spec: MASTER_KEY_FILE,
+        boundToDatabase: true,
+      },
     ],
   };
 }
@@ -543,12 +561,8 @@ export interface RestoreSnapshotResult {
   readonly restored: Snapshot;
   /** The copy the replaced database became. */
   readonly replaced: Snapshot;
-  /** True when the master key was missing and was put back from the snapshot. */
-  readonly keyRestored: boolean;
-}
-
-function sameKey(a: string, b: string): boolean {
-  return Buffer.from(a.trim(), 'base64').equals(Buffer.from(b.trim(), 'base64'));
+  /** Live files that were missing and were put back from the copy (the master key). */
+  readonly putBack: readonly string[];
 }
 
 /**
@@ -575,23 +589,24 @@ export async function restoreSnapshot(
       );
     }
 
-    // The master key. The two databases must each keep the key they were
-    // encrypted with: a different key refuses the swap, a missing one is put
-    // back from the snapshot (created, never written over).
-    const keyFile = input.stateFiles.files.find((f) => f.name === 'secrets.key');
-    let keyRestored = false;
-    let keyToCreate: { path: string; text: string; spec: StateFileSpec<unknown> } | null = null;
-    if (keyFile !== undefined && chosen.meta.stateFiles.includes('secrets.key')) {
-      const saved = readFileSync(join(chosen.stateDir, 'secrets.key'), 'utf-8');
-      const live = readLive(keyFile.path);
+    // The files the database depends on (the master key). The two databases
+    // must each keep the key they were encrypted with: a different one refuses
+    // the swap, a missing one is put back from the copy (created, never
+    // written over).
+    const toCreate: { path: string; text: string; spec: StateFileSpec<unknown> }[] = [];
+    for (const file of input.stateFiles.files) {
+      if (!file.boundToDatabase || !chosen.meta.stateFiles.includes(file.name)) continue;
+      const savedPath = join(chosen.stateDir, file.name);
+      const saved = readFileSync(savedPath, 'utf-8');
+      const live = readLive(file.path);
       if (live === null) {
-        keyToCreate = { path: keyFile.path, text: saved, spec: keyFile.spec };
-      } else if (!sameKey(saved, live)) {
+        toCreate.push({ path: file.path, text: saved, spec: file.spec });
+      } else if (saved.trim() !== live.trim()) {
         throw new SnapshotError(
           'SNAPSHOT_KEY_MISMATCH',
-          `the master key saved with "${name}" (${join(chosen.stateDir, 'secrets.key')}) is not ` +
-            `the one in ${keyFile.path}. Each database must keep the key its secrets were ` +
-            `encrypted with, so nothing was swapped.`,
+          `${file.spec.label} saved with "${name}" (${savedPath}) is not the one in ` +
+            `${file.path}. Each database must keep the key its secrets were encrypted ` +
+            `with, so nothing was swapped.`,
         );
       }
     }
@@ -635,10 +650,7 @@ export async function restoreSnapshot(
       );
     }
 
-    if (keyToCreate !== null) {
-      createStateFile(keyToCreate.path, keyToCreate.text, keyToCreate.spec);
-      keyRestored = true;
-    }
+    for (const file of toCreate) createStateFile(file.path, file.text, file.spec);
 
     const [size] = await sql<{ size: string }[]>`
       SELECT pg_database_size(${replacedName})::text AS size`;
@@ -650,7 +662,7 @@ export async function restoreSnapshot(
         meta: replacedMeta,
         stateDir: join(input.stateFiles.dir, replacedName),
       },
-      keyRestored,
+      putBack: toCreate.map((f) => f.path),
     };
   });
 }

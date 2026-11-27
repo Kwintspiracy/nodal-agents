@@ -16,7 +16,7 @@
 import chalk from 'chalk';
 import { randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { readConfig, writeConfig, CONFIG_FILE, PG_DATA_DIR } from '../lib/config.ts';
 import { livePostmasterPid, startEmbeddedPostgres } from '../lib/postgres.ts';
 import { finishPasswordChange, startWithPassword } from '../lib/pg-password.ts';
@@ -150,9 +150,10 @@ export async function runRollback(opts: RollbackOptions = {}): Promise<void> {
       `  The database it replaced is kept as ${result.replaced.name} ` +
         `(${formatBytes(result.replaced.sizeBytes)}): \`nodal-agents rollback ${result.replaced.name}\` swaps it back.`,
     );
-    if (result.keyRestored)
-      console.log('  secrets.key was missing and was put back from the copy.');
-    const savedConfig = join(result.restored.stateDir, 'config.json');
+    for (const path of result.putBack) {
+      console.log(`  ${path} was missing and was put back from the copy.`);
+    }
+    const savedConfig = join(result.restored.stateDir, basename(CONFIG_FILE));
     if (existsSync(savedConfig)) {
       console.log(
         chalk.gray(

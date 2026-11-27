@@ -146,8 +146,8 @@ function stateFiles(): SnapshotStateFiles & { configPath: string; keyPath: strin
     configPath,
     keyPath,
     files: [
-      { name: 'config.json', path: configPath, spec: NODAL_CONFIG_FILE },
-      { name: 'secrets.key', path: keyPath, spec: MASTER_KEY_FILE },
+      { name: 'config.json', path: configPath, spec: NODAL_CONFIG_FILE, boundToDatabase: false },
+      { name: 'secrets.key', path: keyPath, spec: MASTER_KEY_FILE, boundToDatabase: true },
     ],
   };
 }
