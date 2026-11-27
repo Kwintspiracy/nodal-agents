@@ -38,7 +38,7 @@ export type TrialRecords =
   | { readonly attached: false; readonly why: string }
   | {
       readonly attached: true;
-      /** Les demandes de l'essai qui attendent, de la plus ancienne à la plus récente. */
+      /** Les demandes de l'essai qui tiennent (en attente, ou soumises), de la plus ancienne à la plus récente. */
       readonly live: readonly PrintedRequest[];
       /** Ce qui n'a pas pu être cru dans le dossier (voir `readRecords`). */
       readonly problems: readonly string[];
@@ -75,7 +75,7 @@ export async function readTrialRecords(
     (r) =>
       r.record.receivedAtMs >= startedMs &&
       r.record.receivedAtMs <= endedMs &&
-      r.record.status === 'pending',
+      r.record.status !== 'replaced',
   );
   return { attached: true, live: await Promise.all(mine.map(printed)), problems: read.problems };
 }

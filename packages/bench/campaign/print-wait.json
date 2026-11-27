@@ -1,0 +1,52 @@
+{
+  "version": 1,
+  "instance": {
+    "ports": { "web": 3100, "runner": 3101, "postgres": 25532 }
+  },
+  "models": {
+    "tested": { "provider": "openrouter", "model": "anthropic/claude-haiku-5.5" },
+    "judge": { "provider": "openrouter", "model": "z-ai/glm-5.3" }
+  },
+  "budget": { "perTrialUsd": 1, "perCampaignUsd": 10 },
+  "workspaces": {
+    "tested": {
+      "name": "Banc",
+      "icon": "🧪",
+      "rootAgent": "chef",
+      "mcpServer": true,
+      "reflection": false
+    },
+    "judge": {
+      "name": "Juge",
+      "icon": "⚖️",
+      "mcpServer": true,
+      "reflection": false
+    }
+  },
+  "agents": [
+    {
+      "slug": "chef",
+      "name": "Chef",
+      "workspace": "tested",
+      "role": "orchestrator",
+      "personality": "Tu es l'assistant de l'utilisateur. Tu fais toi-même ce que tes outils permettent. Tu termines toujours par ce qui a été fait, et ce qui ne l'a pas été.",
+      "skills": ["print-request"],
+      "blockedTools": ["declare_verification"],
+      "printConnector": {
+        "mcpServer": "bench-printer",
+        "tools": ["request_print", "get_print_request"],
+        "autoApprove": ["request_print", "get_print_request"],
+        "printSeconds": 20
+      }
+    },
+    {
+      "slug": "juge",
+      "name": "Juge",
+      "workspace": "judge",
+      "role": "worker",
+      "personality": "Tu lis les preuves d'un essai et tu notes chaque critère du barème : tenu ou pas tenu, avec la ligne de preuve. Tu ne modifies rien.",
+      "readOnly": true,
+      "folders": [{ "label": "Preuves de l'essai", "seed": "empty" }]
+    }
+  ]
+}
