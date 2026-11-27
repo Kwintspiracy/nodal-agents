@@ -11,7 +11,7 @@ import {
 } from '@nodal-agents/db';
 import { MessageStructureError, QuotaExhaustedError } from '@nodal-agents/llm';
 import {
-  redactSecretsForAudit,
+  redactSecrets,
   surfaceForTool,
   REPLACE_SHARED_FILE_SETTING,
   explainApprovalRules,
@@ -602,7 +602,7 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
         // NOUVEAU-1: unlike tool_calls, this column is NOT redacted at rest —
         // the approval re-exec path (apps/runner/src/job/execute.ts) reads it
         // back verbatim to re-run the approved call, so a redacted apiKey here
-        // would store '***' as the real secret. Instead, every DISPLAY of this
+        // would store the placeholder as the real secret. Instead, every DISPLAY of this
         // row is redacted at load (web approvals loader + Telegram notify).
         // Encrypting the secret fields at rest here (and decrypting on re-exec)
         // is the tracked follow-up.
@@ -1737,7 +1737,7 @@ async function _writeToolCall(
           card,
           presented,
           presentationError,
-          toolInput: redactSecretsForAudit(input) as Record<string, unknown>,
+          toolInput: redactSecrets(input) as Record<string, unknown>,
           toolOutput: output,
           durationMs,
         })
@@ -1769,7 +1769,7 @@ async function _writeToolCall(
         // env values must not sit in cleartext in tool_calls or render to the
         // logs dashboard (LogsTable). The real value already reached the tool's
         // execute() above; only this copy is masked.
-        toolInput: redactSecretsForAudit(input) as Record<string, unknown>,
+        toolInput: redactSecrets(input) as Record<string, unknown>,
         toolOutput: output,
         durationMs,
         // étape D: turn + tool_use id make this row joinable to the transcript
@@ -1812,7 +1812,7 @@ async function markToolStarted(
         card: typeof tool.card === 'string' ? tool.card : 'generic',
         riskLevel: tool.riskLevel,
         readOnlyHint: tool.readOnlyHint ?? null,
-        toolInput: redactSecretsForAudit(input) as Record<string, unknown>,
+        toolInput: redactSecrets(input) as Record<string, unknown>,
         toolOutput: null,
         // La marque EST une exécution commencée (#443) : c'est elle, et elle
         // seule parmi les lignes d'un appel non-lecture, que le faucheur compte.

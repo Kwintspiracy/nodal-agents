@@ -272,3 +272,4 @@ export {
   min,
   getTableColumns,
 } from 'drizzle-orm';
+export * from './outbound-columns.ts';

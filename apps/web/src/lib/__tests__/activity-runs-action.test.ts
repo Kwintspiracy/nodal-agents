@@ -424,20 +424,20 @@ describe('listRunCallsAction @cap:suivre-execution/moteur', () => {
     expect(r.ok).toBe(true);
     if (!r.ok) return;
 
-    const masque = 'git clone https://[secret masqué] (gh*_)@github.com/exemple/depot.git';
+    const masque = 'git clone https://[secret hidden]@github.com/exemple/depot.git';
     const appel = r.data.items[0];
     expect(appel?.kind === 'tool' && appel.step.presented).toEqual({
       card: 'terminal',
       command: masque,
       exitCode: 0,
       timedOut: false,
-      stdoutTail: 'remote: jeton [secret masqué] (gh*_) accepté',
+      stdoutTail: 'remote: jeton [secret hidden] accepté',
       stdoutTruncated: false,
       stderrTail: '',
       stderrTruncated: false,
     });
     expect(appel?.kind === 'tool' && appel.step.outputText).toBe(
-      'remote: jeton [secret masqué] (gh*_) accepté',
+      'remote: jeton [secret hidden] accepté',
     );
     expect(appel?.kind === 'tool' && appel.step.input).toEqual({ command: masque });
     expect(JSON.stringify(r.data)).not.toContain(secret);

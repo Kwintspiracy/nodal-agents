@@ -81,7 +81,7 @@ describe('le titre d’un run ne montre aucun secret @cap:parler-par-canal-exter
     const cle = 'sk-ant-api03-ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'; // secrets:allow (fixture : clé factice)
     const titre = runTitle(`Déployer avec ${cle}`);
     expect(titre).not.toContain(cle);
-    expect(titre).toContain('[secret masqué]');
+    expect(titre).toContain('[secret hidden]');
     // Le reste de la phrase survit : une ligne entièrement masquée ne dirait
     // plus de quel run il s'agit.
     expect(titre).toContain('Déployer avec');
@@ -91,7 +91,7 @@ describe('le titre d’un run ne montre aucun secret @cap:parler-par-canal-exter
     const cle = 'sk-ant-api03-ZYXWVUTSRQPONMLKJIHGFEDCBA9876543210'; // secrets:allow (fixture : clé factice)
     const titre = runTitle(`**${cle}**`);
     expect(titre).not.toContain(cle);
-    expect(titre).toContain('[secret masqué]');
+    expect(titre).toContain('[secret hidden]');
   });
 
   it('ne laisse pas passer le DÉBUT d’une clé par la coupe', () => {
@@ -100,7 +100,7 @@ describe('le titre d’un run ne montre aucun secret @cap:parler-par-canal-exter
     const cle = 'ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'; // secrets:allow (fixture : jeton factice)
     const titre = runTitle(`${cle} puis ${'x'.repeat(300)}`);
     expect(titre).not.toContain('ghp_ABCDEFGHIJ');
-    expect(titre.startsWith('[secret masqué]')).toBe(true);
+    expect(titre.startsWith('[secret hidden]')).toBe(true);
   });
 
   it('laisse une tâche ordinaire mot pour mot', () => {

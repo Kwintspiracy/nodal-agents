@@ -22,13 +22,16 @@ import {
   llmCalls,
   approvalRequests,
   approvalsOldestFirst,
+  outboundColumn,
+  outboundColumns,
+  serverOnly,
 } from '@nodal-agents/db';
 import {
   parseReviewVerdictOutput,
   REVIEW_VERDICT_TOOL,
   type ReviewVerdictRecord,
 } from '@nodal-agents/orchestration';
-import { redactTranscriptForDisplay, redactSecretsInText } from '@nodal-agents/shared';
+import { redactSecrets, redactSecretsInText } from '@nodal-agents/shared';
 import type { JobTriggerContext } from '@nodal-agents/db';
 import { buildConversationFeed } from './conversation-feed.ts';
 import type { ConversationFeed } from './conversation-feed.ts';
@@ -217,7 +220,7 @@ async function lireVerdictsLivres(
   if (jobIds.length === 0) return parJob;
 
   const rows = await db
-    .select({ jobId: toolCalls.jobId, toolOutput: toolCalls.toolOutput })
+    .select({ jobId: toolCalls.jobId, toolOutput: serverOnly(toolCalls.toolOutput) })
     .from(toolCalls)
     .where(
       and(
@@ -270,12 +273,12 @@ export async function assembleJobFeeds(
         agentSlug: agents.slug,
         agentAvatarUrl: agents.avatarUrl,
         status: agentJobs.status,
-        task: agentJobs.task,
-        result: agentJobs.result,
-        error: agentJobs.error,
+        task: outboundColumn(agentJobs.task),
+        result: outboundColumn(agentJobs.result),
+        error: outboundColumn(agentJobs.error),
         // Le geste que le runner a écrit sur cet échec (#193) : le bloc de la
         // délégation le DIT, il ne le devine plus du code d'erreur.
-        failureHint: agentJobs.failureHint,
+        failureHint: outboundColumn(agentJobs.failureHint),
         createdAt: agentJobs.createdAt,
         completedAt: agentJobs.completedAt,
       })
@@ -288,12 +291,12 @@ export async function assembleJobFeeds(
         jobId: toolCalls.jobId,
         toolCallId: toolCalls.toolCallId,
         toolName: toolCalls.toolName,
-        card: toolCalls.card,
-        presented: toolCalls.presented,
+        card: outboundColumn(toolCalls.card),
+        presented: outboundColumn(toolCalls.presented),
         durationMs: toolCalls.durationMs,
         turn: toolCalls.turn,
-        toolInput: toolCalls.toolInput,
-        toolOutput: toolCalls.toolOutput,
+        toolInput: outboundColumn(toolCalls.toolInput),
+        toolOutput: outboundColumn(toolCalls.toolOutput),
         createdAt: toolCalls.createdAt,
       })
       .from(toolCalls)
@@ -347,7 +350,7 @@ export async function assembleJobFeeds(
         id: approvalRequests.id,
         jobId: approvalRequests.jobId,
         status: approvalRequests.status,
-        toolInput: approvalRequests.toolInput,
+        toolInput: outboundColumn(approvalRequests.toolInput),
         response: approvalRequests.response,
         resolvedBy: approvalRequests.resolvedBy,
         expiresAt: approvalRequests.expiresAt,
@@ -388,7 +391,7 @@ export async function assembleJobFeeds(
   if (depth < CHILD_FEED_DEPTH && openable.length > 0) {
     const childJobs = await db
       .select({
-        job: agentJobs,
+        job: outboundColumns(agentJobs),
         agentName: agents.name,
         agentSlug: agents.slug,
         agentAvatarUrl: agents.avatarUrl,
@@ -453,13 +456,16 @@ export async function assembleJobFeeds(
       job.channel === 'cron' && triggerContext?.type === 'cron'
         ? triggerContext.scheduleName
         : null;
-    const messages = redactTranscriptForDisplay(
+    const messages = redactSecrets(
       Array.isArray(job.messages) ? (job.messages as Record<string, unknown>[]) : [],
-    );
+    ) as Record<string, unknown>[];
     // La tâche passe par la MÊME rédaction que les messages : le modèle trouve
     // la demande en comparant les deux (`content === task`), et une demande qui
     // contient un secret serait masquée d'un côté seulement (revue passe 18).
-    const [redactedRequest] = redactTranscriptForDisplay([{ role: 'user', content: job.task }]);
+    const [redactedRequest] = redactSecrets([{ role: 'user', content: job.task }]) as Array<{
+      role: string;
+      content: unknown;
+    }>;
     const displayTask =
       typeof redactedRequest?.content === 'string' ? redactedRequest.content : job.task;
 

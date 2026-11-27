@@ -47,7 +47,7 @@ describe('vendor words are masked where they enter Nodal @cap:parler-a-un-agent/
     ]) {
       expect(m).not.toContain(OR_KEY);
       expect(m).toBe(
-        'openrouter x-ai/grok-voice-tts-1.0: HTTP 401 — Incorrect API key provided: [secret masqué] (sk-)',
+        'openrouter x-ai/grok-voice-tts-1.0: HTTP 401 — Incorrect API key provided: [secret hidden]',
       );
     }
   });
@@ -62,7 +62,7 @@ describe('vendor words are masked where they enter Nodal @cap:parler-a-un-agent/
       await messageOf(googleSpeechAdapter.listModels!(answering(400, plain))),
     ]) {
       expect(m).not.toContain(GOOGLE_KEY);
-      expect(m).toContain('API key not valid: [secret masqué] (AIza)');
+      expect(m).toContain('API key not valid: [secret hidden]');
     }
   });
 
@@ -74,6 +74,6 @@ describe('vendor words are masked where they enter Nodal @cap:parler-a-un-agent/
       ),
     );
     expect(m).not.toContain(OR_KEY);
-    expect(m).toContain('[secret masqué] (sk-)');
+    expect(m).toContain('[secret hidden]');
   });
 });

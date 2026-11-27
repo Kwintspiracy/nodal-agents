@@ -188,6 +188,9 @@ import {
   showConversationsTo,
   workspaceSandboxReader,
   isSingleUserInstall,
+  outboundColumn,
+  outboundColumns,
+  serverOnly,
 } from '@nodal-agents/db';
 import {
   deliverableStatuses,
@@ -262,7 +265,7 @@ import {
   ShellGateReasonsSchema,
   type ShellGateReason,
   type ShellPolicy,
-  redactSecretsForAudit,
+  redactSecrets,
   explainApproval,
   explainApprovalRules,
   REPLACE_SHARED_FILE_SETTING,
@@ -319,7 +322,7 @@ import {
 import { originOfRun, inTimeOrder, type RunOrigin } from './activity-runs.ts';
 import { aggregateSpaceCost, costOfCalls, type SpaceCostView } from './space-cost.ts';
 import { assembleJobFeed, collectDescendants } from './job-feed.ts';
-import { redactAuditRow, redactPresented } from './redact-presented.ts';
+import { redactAuditRow } from './redact-presented.ts';
 import { readReviewVerdicts, type ReviewVerdictView } from './review-verdicts.ts';
 // P2bis — le récapitulatif de livraison d'un run est posé par la fonction du
 // fil d'une conversation, jamais par une seconde lecture des mêmes lignes.
@@ -2218,9 +2221,9 @@ export async function listJobsAction(
         agentId: agentJobs.agentId,
         status: agentJobs.status,
         channel: agentJobs.channel,
-        task: agentJobs.task,
-        result: agentJobs.result,
-        error: agentJobs.error,
+        task: outboundColumn(agentJobs.task),
+        result: outboundColumn(agentJobs.result),
+        error: outboundColumn(agentJobs.error),
         chainCount: agentJobs.chainCount,
         inputTokens: agentJobs.inputTokens,
         outputTokens: agentJobs.outputTokens,
@@ -2250,7 +2253,7 @@ export async function getJobDetailAction(id: string): Promise<ActionResult<JobDe
     // may have a null agent_id.
     const [row] = await db
       .select({
-        job: agentJobs,
+        job: outboundColumns(agentJobs),
         agentName: agents.name,
         agentSlug: agents.slug,
       })
@@ -2267,8 +2270,8 @@ export async function getJobDetailAction(id: string): Promise<ActionResult<JobDe
         agentName: agents.name,
         agentSlug: agents.slug,
         status: agentJobs.status,
-        result: agentJobs.result,
-        error: agentJobs.error,
+        result: outboundColumn(agentJobs.result),
+        error: outboundColumn(agentJobs.error),
         createdAt: agentJobs.createdAt,
         completedAt: agentJobs.completedAt,
       })
@@ -2316,7 +2319,7 @@ const SPACE_LIST_SELECT = {
   agentSlug: agents.slug,
   agentAvatarUrl: agents.avatarUrl,
   channel: agentJobs.channel,
-  task: agentJobs.task,
+  task: outboundColumn(agentJobs.task),
   status: agentJobs.status,
   costUsd: agentJobs.totalCostUsd,
   inputTokens: agentJobs.inputTokens,
@@ -2325,7 +2328,7 @@ const SPACE_LIST_SELECT = {
   completedAt: agentJobs.completedAt,
   conversationId: agentJobs.conversationId,
   scheduleId: agentJobs.scheduleId,
-  triggerContext: agentJobs.triggerContext,
+  triggerContext: outboundColumn(agentJobs.triggerContext),
 };
 
 type SpaceListDbRow = {
@@ -2555,7 +2558,7 @@ export async function getSpaceConversationAction(
 
     const [row] = await db
       .select({
-        job: agentJobs,
+        job: outboundColumns(agentJobs),
         agentName: agents.name,
         agentSlug: agents.slug,
         agentAvatarUrl: agents.avatarUrl,
@@ -2653,7 +2656,7 @@ export async function getSpaceConversationAction(
           // LE MESSAGE lui-même, et le reçu qui dit pourquoi il n'est pas parti
           // (18/09) : la file d'envoi annonçait un message sans jamais le
           // montrer. Le texte est masqué à l'AFFICHAGE, comme le reste.
-          payload: jobDeliveries.payload,
+          payload: outboundColumn(jobDeliveries.payload),
           receipt: jobDeliveries.receipt,
           createdAt: jobDeliveries.createdAt,
           updatedAt: jobDeliveries.updatedAt,
@@ -2704,14 +2707,14 @@ export async function getSpaceConversationAction(
         .select({
           jobId: toolCalls.jobId,
           toolName: toolCalls.toolName,
-          card: toolCalls.card,
-          presented: toolCalls.presented,
+          card: outboundColumn(toolCalls.card),
+          presented: outboundColumn(toolCalls.presented),
           // Le tour : c'est par lui que la ligne rejoint son constat
           // d'écriture, dont la clé est (job, tour, chemin) — #197.
           turn: toolCalls.turn,
           riskLevel: toolCalls.riskLevel,
-          toolInput: toolCalls.toolInput,
-          toolOutput: toolCalls.toolOutput,
+          toolInput: outboundColumn(toolCalls.toolInput),
+          toolOutput: outboundColumn(toolCalls.toolOutput),
         })
         .from(toolCalls)
         .where(and(eq(toolCalls.entityId, session.entityId), inArray(toolCalls.jobId, relevantIds)))
@@ -2932,8 +2935,8 @@ export async function getJobStatusAction(
     const [row] = await db
       .select({
         status: agentJobs.status,
-        result: agentJobs.result,
-        error: agentJobs.error,
+        result: outboundColumn(agentJobs.result),
+        error: outboundColumn(agentJobs.error),
       })
       .from(agentJobs)
       .where(and(eq(agentJobs.id, id), eq(agentJobs.entityId, session.entityId)));
@@ -6265,7 +6268,7 @@ export async function listApprovalsAction(
         agentName: agents.name,
         agentSlug: agents.slug,
         toolName: approvalRequests.toolName,
-        toolInput: approvalRequests.toolInput,
+        toolInput: outboundColumn(approvalRequests.toolInput),
         kind: approvalRequests.kind,
         answer: approvalRequests.answer,
         response: approvalRequests.response,
@@ -6275,8 +6278,8 @@ export async function listApprovalsAction(
         resolvedBy: approvalRequests.resolvedBy,
         expiresAt: approvalRequests.expiresAt,
         notes: approvalRequests.notes,
-        gateReasons: approvalRequests.gateReasons,
-        jobTask: agentJobs.task,
+        gateReasons: outboundColumn(approvalRequests.gateReasons),
+        jobTask: outboundColumn(agentJobs.task),
         jobChannel: agentJobs.channel,
         conversationId: agentJobs.conversationId,
         conversationChannel: conversations.channel,
@@ -6409,7 +6412,7 @@ export async function listApprovalsAction(
         // may leak a secret — create_connector/create_mcp API keys and stdio
         // env values are masked here, the single loader feeding both the
         // approvals page and the sidebar/NotificationsBell provider.
-        const safeInput = redactSecretsForAudit(r.toolInput) as typeof r.toolInput;
+        const safeInput = redactSecrets(r.toolInput) as typeof r.toolInput;
         const ctx = mcpByTool.get(mcpKey(r.agentId, r.toolName)) ?? null;
         // `jobParentJobId` ne sort PAS de l'action : il n'a servi qu'à remonter
         // la chaîne, et les deux champs de tête disent déjà ce que l'écran en
@@ -6537,7 +6540,7 @@ export async function resolveApprovalAction(raw: unknown): Promise<
       .select({
         id: approvalRequests.id,
         kind: approvalRequests.kind,
-        toolInput: approvalRequests.toolInput,
+        toolInput: serverOnly(approvalRequests.toolInput),
       })
       .from(approvalRequests)
       .where(
@@ -10056,9 +10059,9 @@ export async function listActivityRunsAction(
         agentName: agents.name,
         agentSlug: agents.slug,
         agentAvatarUrl: agents.avatarUrl,
-        task: agentJobs.task,
+        task: outboundColumn(agentJobs.task),
         channel: agentJobs.channel,
-        triggerContext: agentJobs.triggerContext,
+        triggerContext: outboundColumn(agentJobs.triggerContext),
         conversationId: agentJobs.conversationId,
         status: agentJobs.status,
         durationMs: agentJobs.totalDurationMs,
@@ -10203,12 +10206,12 @@ export async function listRunCallsAction(raw: unknown): Promise<ActionResult<Run
           id: toolCalls.id,
           toolName: toolCalls.toolName,
           toolCallId: toolCalls.toolCallId,
-          toolInput: toolCalls.toolInput,
-          toolOutput: toolCalls.toolOutput,
+          toolInput: outboundColumn(toolCalls.toolInput),
+          toolOutput: outboundColumn(toolCalls.toolOutput),
           durationMs: toolCalls.durationMs,
           turn: toolCalls.turn,
-          card: toolCalls.card,
-          presented: toolCalls.presented,
+          card: outboundColumn(toolCalls.card),
+          presented: outboundColumn(toolCalls.presented),
           createdAt: toolCalls.createdAt,
         })
         .from(toolCalls)
@@ -10261,8 +10264,8 @@ export async function listRunCallsAction(raw: unknown): Promise<ActionResult<Run
           // un secret caché dans le fil restait lisible ici. Les comptes plus
           // bas lisent la ligne BRUTE : masquer change le texte, jamais le
           // nombre de lignes écrites.
-          presented: parsePresented(redactPresented(r.presented)),
-          input: redactPresented(r.toolInput),
+          presented: parsePresented(redactSecrets(r.presented)),
+          input: redactSecrets(r.toolInput),
           outputText: r.toolOutput === null ? null : redactSecretsInText(r.toolOutput),
           outcome,
           durationMs: r.durationMs,
@@ -14020,10 +14023,10 @@ export async function listCodingProcessesAction(): Promise<ActionResult<CodingPr
       .select({
         jobId: toolCalls.jobId,
         toolName: toolCalls.toolName,
-        toolInput: toolCalls.toolInput,
+        toolInput: outboundColumn(toolCalls.toolInput),
         // Needed to tell an executed call from a REFUSED one — a write the
         // harness rejected must not count as a file changed (isRefusedToolCall).
-        toolOutput: toolCalls.toolOutput,
+        toolOutput: outboundColumn(toolCalls.toolOutput),
       })
       .from(toolCalls)
       .where(
@@ -14191,7 +14194,7 @@ export async function listCodingProcessesAction(): Promise<ActionResult<CodingPr
           agentName: agents.name,
           channel: agentJobs.channel,
           status: agentJobs.status,
-          task: agentJobs.task,
+          task: outboundColumn(agentJobs.task),
           createdAt: agentJobs.createdAt,
           updatedAt: agentJobs.updatedAt,
         })
@@ -14333,7 +14336,7 @@ export async function listCodingProcessesAction(): Promise<ActionResult<CodingPr
       const verdictRows =
         allRelevantIds.length > 0
           ? await db
-              .select({ jobId: toolCalls.jobId, toolOutput: toolCalls.toolOutput })
+              .select({ jobId: toolCalls.jobId, toolOutput: serverOnly(toolCalls.toolOutput) })
               .from(toolCalls)
               .where(
                 and(
@@ -14589,7 +14592,7 @@ export async function getCodingProcessDetailAction(
           agentName: agents.name,
           channel: agentJobs.channel,
           status: agentJobs.status,
-          task: agentJobs.task,
+          task: outboundColumn(agentJobs.task),
           createdAt: agentJobs.createdAt,
           totalDurationMs: agentJobs.totalDurationMs,
           verificationSkippedSurfaces: agentJobs.verificationSkippedSurfaces,
@@ -14664,8 +14667,8 @@ export async function getCodingProcessDetailAction(
           id: toolCalls.id,
           jobId: toolCalls.jobId,
           toolName: toolCalls.toolName,
-          toolInput: toolCalls.toolInput,
-          toolOutput: toolCalls.toolOutput,
+          toolInput: outboundColumn(toolCalls.toolInput),
+          toolOutput: outboundColumn(toolCalls.toolOutput),
           durationMs: toolCalls.durationMs,
           createdAt: toolCalls.createdAt,
         })
@@ -14851,12 +14854,11 @@ export async function getCodingProcessDetailAction(
       for (const tc of toolCallRows) {
         // RÉDIGÉ AVANT D'ÊTRE LU (Reviewer C, #164). Ces écritures sont
         // DESSINÉES : la plaque du bloc Files rend `old_string`, `new_string`
-        // et `content` tels quels. Le masquage d'écriture ne les couvre pas —
-        // `redactSecretsForAudit` masque par NOM de champ, et aucun de ces
-        // trois-là ne s'annonce comme un secret — tandis que la frise juste en
+        // et `content` tels quels. Une ligne écrite avant que l'entrée ne soit
+        // masquée à l'écriture porte ces champs en clair, et la frise juste en
         // dessous rédige depuis #158. Une clé écrite dans un fichier se lisait
         // donc EN CLAIR dans Files et masquée dans Activity, sur le même appel.
-        const change = extractChange(tc.toolName, redactPresented(tc.toolInput));
+        const change = extractChange(tc.toolName, redactSecrets(tc.toolInput));
         if (!change) continue;
         const attempted: ChangeRef = { rawPath: change.filePath, workspaces: wsOfCall(tc.jobId) };
         attemptedTargets.push(attempted);
@@ -14973,7 +14975,7 @@ export async function getCodingProcessDetailAction(
             toolName: tc.toolName,
             // Rédigés comme dans le fil et dans Activity : l'écran d'un
             // processus Code montrait la sortie brute (Reviewer C, #158).
-            toolInput: redactPresented(tc.toolInput),
+            toolInput: redactSecrets(tc.toolInput),
             toolOutput: tc.toolOutput === null ? null : redactSecretsInText(tc.toolOutput),
             durationMs: tc.durationMs,
             createdAt: tc.createdAt ? tc.createdAt.toISOString() : null,

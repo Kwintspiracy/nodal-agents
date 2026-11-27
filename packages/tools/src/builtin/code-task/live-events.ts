@@ -13,7 +13,7 @@
 
 import { toolCalls } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
-import { redactSecretsForAudit, redactSecretsInText } from '@nodal-agents/shared';
+import { redactSecrets, redactSecretsInText } from '@nodal-agents/shared';
 import type { ToolCard } from '@nodal-agents/shared';
 
 /**
@@ -167,15 +167,14 @@ export function makeLiveToolRecorder(args: {
         // n a que la ligne d evenement, pas une sortie structuree ; l ecran
         // montre l entree et la sortie brutes et le dit.
         card: cliToolCard(started.name),
-        toolInput: redactSecretsForAudit(started.input) as Record<string, unknown>,
-        // La SORTIE aussi, et elle porte le vrai risque : redactSecretsForAudit
-        // masque par NOM DE CHAMP, ce qui ne dit rien d un texte libre. Or ces
-        // lignes-la n existaient pas avant — un code_task n ecrivait qu une
-        // ligne finale. Enregistrer chaque appel interne fait entrer dans l
-        // audit le contenu de chaque fichier lu, jeton compris. redactSecretsInText
-        // masque les formes de credentials dans du texte, et rend la chaine
-        // inchangee quand rien ne matche.
-        toolOutput: redactSecretsInText((parsed.event.output ?? '').slice(0, MAX_OUTPUT_CHARS)),
+        // L entree par noms de champ ET par forme sur chaque chaine : l entree
+        // d un CLI est du texte libre (une commande, le contenu d un fichier).
+        toolInput: redactSecrets(started.input) as Record<string, unknown>,
+        // La SORTIE aussi, et elle porte le vrai risque : enregistrer chaque
+        // appel interne fait entrer dans l audit le contenu de chaque fichier
+        // lu, jeton compris. Masquee AVANT la coupe : une valeur a cheval sur
+        // le plafond ne serait plus reconnue, et son debut resterait lisible.
+        toolOutput: redactSecretsInText(parsed.event.output ?? '').slice(0, MAX_OUTPUT_CHARS),
         durationMs: Date.now() - started.startedAt,
         toolCallId: parsed.event.id,
       })

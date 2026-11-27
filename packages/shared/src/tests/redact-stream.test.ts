@@ -6,8 +6,8 @@
 // d'appels.
 
 import { describe, it, expect } from 'vitest';
-import { createStreamRedactor } from '../redact-stream';
-import { REDACTED_TEXT, redactSecretsInText } from '../redact-transcript';
+import { fakeBearer, fakeHex, fakeSecret } from '@nodal-agents/test-kit';
+import { createStreamRedactor, REDACTED_TEXT, redactSecretsInText } from '../redact-secrets';
 
 /** Tout ce que le masqueur a laissé sortir pour ces fragments. */
 function emitted(chunks: readonly string[]): string {
@@ -61,8 +61,7 @@ describe('createStreamRedactor', () => {
   // (until #974). Masking masked text must change nothing: the placeholder
   // matches no credential shape.
   it('masking already-masked text is a no-op, whole and in fragments', () => {
-    const raw =
-      'Keys: sk-or-v1-abcdefghijklmnopqrstu, ghp_abcdefghijklmnop1234 and Bearer abcdefghijklmnopqrstuvwx.';
+    const raw = `Keys: ${fakeSecret('openRouter', fakeHex(32))}, ${fakeSecret('github', 'abcdefghijklmnop1234')} and ${fakeBearer('abcdefghijklmnopqrstuvwx')}.`;
     const once = redactSecretsInText(raw);
     expect(once).not.toBe(raw);
     expect(redactSecretsInText(once)).toBe(once);

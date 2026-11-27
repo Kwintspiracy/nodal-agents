@@ -26,6 +26,8 @@ import {
   parseApprovalCallbackData,
 } from '../../telegram/approval-callback.ts';
 import { describeGatedAction, approvalCallbackData } from '../../approvals/notify.ts';
+import { explainApprovalRequest } from '../../approvals/explain-request.ts';
+import { fakeBearer, fakeCredentialUrl, fakeSecret } from '@nodal-agents/test-kit';
 
 // Every Telegram API call (answerCallbackQuery/editMessageText) and the
 // triggerWorker resume hit fetch — stub it to a generic ok so tests are hermetic.
@@ -165,6 +167,44 @@ describe('describeGatedAction', () => {
         copy: true,
       }),
     ).toBe('file_move: copy docs/scan.pdf → shared/scan.pdf');
+  });
+});
+
+describe('the approval card and explanation show no secret @cap:approuver-une-action/moteur', () => {
+  const jeton = fakeSecret('github', 'G'.repeat(36));
+
+  it('a token inside a command is masked by its shape, the command stays readable', () => {
+    const card = describeGatedAction('run_command', {
+      command: `curl -H "Authorization: ${fakeBearer(jeton)}" https://api.example.com/repos`,
+    });
+    expect(card).not.toContain(jeton);
+    expect(card).toContain('https://api.example.com/repos');
+  });
+
+  it('a credential in an argument list is masked before the card cuts the input', () => {
+    // The generic case prints the input as JSON and cuts it at 300 characters:
+    // the mask comes first, so a value that straddles the cut leaves nothing.
+    const card = describeGatedAction('create_mcp', {
+      name: 'postgres',
+      transport: 'stdio',
+      command: 'npx',
+      args: [
+        '-y',
+        'x'.repeat(230),
+        fakeCredentialUrl('postgresql', 'admin', 'H'.repeat(40), 'db.internal/prod'),
+      ],
+      botToken: 'plain-value',
+    });
+    expect(card).not.toContain('HHHH');
+    expect(card).not.toContain('plain-value');
+  });
+
+  it('the explanation every surface reads masks the input the same way', async () => {
+    const failingDb = {} as unknown as Parameters<typeof explainApprovalRequest>[0];
+    const explanation = await explainApprovalRequest(failingDb, 'entity', null, 'run_command', {
+      command: `git push ${fakeCredentialUrl('https', 'x-access-token', jeton, 'github.com/acme/repo.git')}`,
+    });
+    expect(JSON.stringify(explanation)).not.toContain(jeton);
   });
 });
 

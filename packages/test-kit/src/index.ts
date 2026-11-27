@@ -38,6 +38,7 @@ export * from './builders';
 export * from './gate';
 export * from './trust-boundary';
 export * from './architecture';
+export * from './outbound-exits';
 // What is SOURCE in the repository, for every scanner: git's own view.
 export * from './source-files';
 export * from './real-postgres';
@@ -55,3 +56,5 @@ export * from './pdf';
 export * from './bounded-io';
 // A wait for a file that says so when the file does not come, never a silent return (#1042).
 export * from './wait-for-file';
+// Credential-shaped test values assembled at run time, never written whole (#1185).
+export * from './fake-secrets';

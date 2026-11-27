@@ -52,6 +52,7 @@ import {
   renameDeviceRoute,
 } from './routes/device-pairing.ts';
 import { bindDeviceSink } from '@nodal-agents/delivery';
+import { outboundResponses } from './routes/outbound-responses.ts';
 import { transitionListener } from './events/publish.ts';
 import { voiceReplyRoute } from './routes/voice-reply.ts';
 import { speakFinishedJob } from './chat/job-reply-voice.ts';
@@ -132,6 +133,10 @@ export function createApp(
   whatsappManager: WhatsAppManagerHandle | null = null,
 ): Hono {
   const app = new Hono();
+
+  // Every answer leaves through the outbound seam (routes/outbound-responses.ts):
+  // first, so that it wraps every other middleware and every route.
+  app.use('*', outboundResponses);
 
   // #944 — ce que les portes annoncent (un job fini, une demande tranchée ou
   // expirée), une fois commis, devient le flux de `GET /api/events`. Un job
