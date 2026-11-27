@@ -3,7 +3,12 @@
 // job's tool list) and the dashboard (connector card, binding actions,
 // operations grid) ask the question, so both say the same thing.
 
-import { connectorAccess, parseScopes, type ConnectorAccess } from '@nodal-agents/shared';
+import {
+  connectorAccess,
+  getOAuthProvider,
+  parseScopes,
+  type ConnectorAccess,
+} from '@nodal-agents/shared';
 import { ADAPTER_REGISTRY } from './registry';
 
 /**
@@ -20,5 +25,5 @@ export function connectorAccessFor(
     throw new Error(`connectorAccessFor: no adapter is registered for connector '${slug}'`);
   }
   const scopes = typeof granted === 'string' || granted == null ? parseScopes(granted) : granted;
-  return connectorAccess(entry.operations, scopes);
+  return connectorAccess(entry.operations, scopes, getOAuthProvider(slug)?.grantedScopeForm);
 }

@@ -40,19 +40,58 @@ export function unionScopes(...lists: ReadonlyArray<readonly string[]>): string[
   return out;
 }
 
-function requirementMet(requirement: ScopeRequirement, granted: ReadonlySet<string>): boolean {
-  return requirement.some((scope) => granted.has(scope));
+/**
+ * How a provider writes the scopes it granted, when that differs from how they
+ * are asked for. Data on the provider entry, never a branch on its name.
+ *
+ * `resourcePrefix`: a scope may come back without it (Microsoft documents
+ * `User.Read` as equivalent to `https://graph.microsoft.com/User.Read`).
+ * `caseInsensitive`: the provider does not distinguish case in scope names.
+ * Absent: scopes compare exactly, as RFC 6749 §3.3 defines them.
+ */
+export type GrantedScopeForm = {
+  resourcePrefix?: string;
+  caseInsensitive?: boolean;
+};
+
+/** One scope in the form comparisons use. Percent-encoding is undone first. */
+export function canonicalScope(scope: string, form?: GrantedScopeForm): string {
+  let s = scope;
+  if (s.includes('%')) {
+    try {
+      s = decodeURIComponent(s);
+    } catch {
+      // Not valid percent-encoding: the scope is compared as written.
+    }
+  }
+  if (form?.caseInsensitive) s = s.toLowerCase();
+  const prefix = form?.resourcePrefix
+    ? form.caseInsensitive
+      ? form.resourcePrefix.toLowerCase()
+      : form.resourcePrefix
+    : undefined;
+  if (prefix && s.startsWith(prefix)) s = s.slice(prefix.length);
+  return s;
+}
+
+function requirementMet(
+  requirement: ScopeRequirement,
+  granted: ReadonlySet<string>,
+  form: GrantedScopeForm | undefined,
+): boolean {
+  return requirement.some((scope) => granted.has(canonicalScope(scope, form)));
 }
 
 /** The rights an operation lacks under a grant: the scope Nodal asks for, per unmet requirement. */
 export function missingScopesOf(
   operation: OperationDescriptor,
   granted: readonly string[],
+  form?: GrantedScopeForm,
 ): string[] {
-  const grantedSet = new Set(granted);
+  const grantedSet = new Set(granted.map((scope) => canonicalScope(scope, form)));
   return unionScopes(
     (operation.scopes ?? [])
-      .filter((requirement) => !requirementMet(requirement, grantedSet))
+      .filter((requirement) => !requirementMet(requirement, grantedSet, form))
       .map((requirement) => requirement[0]),
   );
 }
@@ -85,12 +124,13 @@ export type ConnectorAccess =
 export function connectorAccess(
   operations: readonly OperationDescriptor[],
   granted: readonly string[],
+  form?: GrantedScopeForm,
 ): ConnectorAccess {
   const grantedOperations: string[] = [];
   const missingOperations: string[] = [];
   const missing: string[][] = [];
   for (const op of operations) {
-    const lacking = missingScopesOf(op, granted);
+    const lacking = missingScopesOf(op, granted, form);
     if (lacking.length === 0) {
       grantedOperations.push(op.slug);
     } else {

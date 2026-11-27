@@ -13,20 +13,19 @@
 
 import type { OperationDescriptor, ScopeRequirement } from '@nodal-agents/shared';
 
-// OAuth rights, from the Microsoft Graph permissions of each call (delegated).
-// First = the permission Nodal asks for; the others are the ones Graph also
-// accepts for the same call. Reading asks for Mail.ReadWrite, which the
-// changing operations need anyway, and accepts the narrower Mail.Read. A
-// granted Graph permission may come back in the token's `scope` without its
-// resource prefix, so both forms count.
+// OAuth rights, from the Microsoft Graph permissions of each call (delegated,
+// graph/api/*?view=graph-rest-1.0). First = the permission Nodal asks for; the
+// others are the ones Graph also accepts for the same call. Reading asks for
+// Mail.ReadWrite, which the changing operations need anyway, and accepts
+// Mail.Read. How Microsoft writes a granted permission (prefix, case) is the
+// provider entry's `grantedScopeForm`, not this list's concern.
 const GRAPH = 'https://graph.microsoft.com/';
-const both = (permission: string): [string, string] => [`${GRAPH}${permission}`, permission];
 /** list / get messages, list drafts, list mail folders, get attachment */
-const READ_MAIL: ScopeRequirement = [...both('Mail.ReadWrite'), ...both('Mail.Read')];
+const READ_MAIL: ScopeRequirement = [`${GRAPH}Mail.ReadWrite`, `${GRAPH}Mail.Read`];
 /** create / update / delete drafts, update / move / delete messages */
-const WRITE_MAIL: ScopeRequirement = both('Mail.ReadWrite');
+const WRITE_MAIL: ScopeRequirement = [`${GRAPH}Mail.ReadWrite`];
 /** sendMail, send a draft, reply, forward */
-const SEND_MAIL: ScopeRequirement = both('Mail.Send');
+const SEND_MAIL: ScopeRequirement = [`${GRAPH}Mail.Send`];
 
 export const OUTLOOK_MAIL_OPERATIONS: OperationDescriptor[] = [
   // ─── Read (5) ────────────────────────────────────────────────────────────────

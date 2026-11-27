@@ -3,6 +3,7 @@
 // No runner imports, no user-facing strings except `label`.
 
 import type { CredentialType } from '../entities/credential.ts';
+import type { GrantedScopeForm } from './scopes.ts';
 
 export type OAuthProvider = {
   slug: string;
@@ -23,6 +24,11 @@ export type OAuthProvider = {
    * offline access. Never part of a connector's requirements.
    */
   accountScopes: readonly string[];
+  /**
+   * How the provider writes the scopes it granted, when it is not how they are
+   * asked (see `GrantedScopeForm`). Absent: compared exactly.
+   */
+  grantedScopeForm?: GrantedScopeForm;
   /** 'pkce-s256' for Google + Airtable; 'none' for Notion */
   pkce: 'pkce-s256' | 'none';
   /** How credentials are sent to tokenUrl */
@@ -236,6 +242,11 @@ export const OAUTH_PROVIDERS: Record<string, OAuthProvider> = {
       'https://graph.microsoft.com/Mail.Send',
     ],
     accountScopes: ['offline_access', 'openid', 'email', 'profile'],
+    // Microsoft's token response writes a Graph permission with or without its
+    // resource prefix ("scope=User.Read is equivalent to
+    // https://graph.microsoft.com/User.Read", identity platform docs), and its
+    // examples change the case between request and response.
+    grantedScopeForm: { resourcePrefix: 'https://graph.microsoft.com/', caseInsensitive: true },
     pkce: 'pkce-s256',
     tokenAuth: 'body',
     tokenBodyType: 'form',
