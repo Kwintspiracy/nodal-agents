@@ -76,6 +76,7 @@ export async function runSkillUpdateCheckTick(
       source: agentSkills.source,
       defaultContent: agentSkills.defaultContent,
       installedScripts: agentSkills.installedScripts,
+      installedFiles: agentSkills.installedFiles,
     })
     .from(agentSkills)
     .where(
@@ -109,6 +110,7 @@ export async function runSkillUpdateCheckTick(
           source: row.source,
           defaultContent: row.defaultContent,
           installedScripts: row.installedScripts,
+          installedFiles: row.installedFiles,
         },
         skillStoreDir: skillStoreDir(row.entityId),
       });

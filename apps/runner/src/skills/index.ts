@@ -21,6 +21,9 @@ export type {
   ApplySkillUpdateResult,
   AcknowledgeSkillUpdateOptions,
   AcknowledgeSkillUpdateResult,
+  PreviewSkillUpdateResult,
+  FileChange,
+  ConflictChoice,
 } from './install';
 export { checkSkillUpdate } from './check-updates';
 export type { SkillUpdateCheckSkill, SkillUpdateCheckOutcome } from './check-updates';

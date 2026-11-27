@@ -1156,6 +1156,13 @@
       "when": 1786437400000,
       "tag": "0168_render_pdf_rules",
       "breakpoints": true
+    },
+    {
+      "idx": 174,
+      "version": "7",
+      "when": 1786800000000,
+      "tag": "0174_skill_installed_files",
+      "breakpoints": true
     }
   ]
 }

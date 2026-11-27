@@ -32,6 +32,7 @@ describe.skipIf(!process.env['LIVE_SKILL_INSTALL'])(
       });
 
       // Result shape
+      if (result.status !== 'installed') throw new Error('expected a fresh install');
       expect(result.slug).toBe('frontend-slides');
       expect(result.name).toBe('frontend-slides');
       expect(result.fileCount).toBeGreaterThan(20);
@@ -91,6 +92,7 @@ describe.skipIf(!process.env['LIVE_SKILL_INSTALL'])(
           entityId: seed.entityId,
         });
         expect(result.slug).toBeTruthy();
+        if (result.status !== 'installed') throw new Error('expected a fresh install');
         expect(result.fileCount).toBeGreaterThan(0);
 
         const [row] = await db

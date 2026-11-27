@@ -8,6 +8,7 @@ import { installCommunitySkillAction, type CommunitySkillInstallResult } from '@
 import Modal, { ModalFooter } from '@/components/ui/Modal';
 import PrimaryButton from '@/components/ui/PrimaryButton';
 import TextInput from '@/components/ui/TextInput';
+import SkillUpdateAction from './SkillUpdateAction.tsx';
 
 type Props = {
   open: boolean;
@@ -23,6 +24,10 @@ type Props = {
  * Calls installCommunitySkillAction and renders a script-warning block when
  * the installed skill bundles executable scripts (which run only for an agent
  * with the command-execution capability, once authorized and per-run approved).
+ *
+ * A source that is already installed is not installed again: that would be an
+ * update, so the modal offers the update review instead (SkillUpdateAction),
+ * the same one as the Skills list — files added here kept, conflicts asked.
  */
 export default function InstallCommunitySkillModal({ open, onClose }: Props) {
   const router = useRouter();
@@ -52,12 +57,10 @@ export default function InstallCommunitySkillModal({ open, onClose }: Props) {
         return;
       }
       setSuccessSkill(result.data);
-      toast.success(
-        result.data.reinstalled
-          ? `Skill "${result.data.name}" reinstalled`
-          : `Skill "${result.data.name}" installed`,
-      );
-      router.refresh();
+      if (result.data.status === 'installed') {
+        toast.success(`Skill "${result.data.name}" installed`);
+        router.refresh();
+      }
     });
   }
 
@@ -126,13 +129,41 @@ export default function InstallCommunitySkillModal({ open, onClose }: Props) {
           </div>
         )}
 
+        {/* Already installed: installing again is an update, reviewed first */}
+        {successSkill?.status === 'already_installed' && (
+          <div
+            className="space-y-3 rounded-lg border border-rule-2 bg-hover px-3.5 py-3"
+            data-testid="skill-already-installed"
+          >
+            <p className="text-medium-13 leading-[1.5]! text-ink-2">
+              <span className="font-semibold">{successSkill.name}</span> is already installed from
+              this source. Nothing was changed.
+            </p>
+            <p className="text-body-13 leading-[1.4]! text-ink-3">
+              Installing it again is an update: review what would change first. Files added to this
+              skill are kept.
+            </p>
+            <SkillUpdateAction
+              slug={successSkill.slug}
+              name={successSkill.name}
+              updateDetail={successSkill.updateDetail}
+              hasScripts={successSkill.hasScripts}
+            >
+              {({ onClick, pending }) => (
+                <PrimaryButton variant="coral" onClick={onClick} disabled={pending}>
+                  {pending ? 'Loading…' : 'Review update'}
+                </PrimaryButton>
+              )}
+            </SkillUpdateAction>
+          </div>
+        )}
+
         {/* Success state — show script warning if applicable */}
-        {successSkill && (
+        {successSkill?.status === 'installed' && (
           <div className="space-y-3">
             <div className="rounded-lg border border-ok/30 bg-ok/10 px-3.5 py-3">
               <p className="text-medium-13 leading-[1.5]! text-ok">
-                {successSkill.reinstalled ? 'Reinstalled' : 'Installed'}:{' '}
-                <span className="font-semibold">{successSkill.name}</span>
+                Installed: <span className="font-semibold">{successSkill.name}</span>
               </p>
               {successSkill.description && (
                 <p className="mt-1 text-body-13 leading-[1.4]! text-ok/70">

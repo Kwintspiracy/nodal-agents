@@ -44,6 +44,15 @@ const UpdateRequestSchema = z.object({
     .string()
     .regex(/^[0-9a-f]{64}$/)
     .optional(),
+  /** The preview's upstreamFilesHash: same contract, for the files. */
+  expectedFilesHash: z
+    .string()
+    .regex(/^[0-9a-f]{64}$/)
+    .optional(),
+  /** One choice per file the preview listed as a conflict, keyed by path. */
+  conflictChoices: z
+    .record(z.string().min(1).max(1024), z.enum(['keep-local', 'take-upstream']))
+    .optional(),
 });
 
 const PreviewRequestSchema = z.object({
@@ -139,8 +148,10 @@ export async function uninstallSkillRoute(
 // ─── POST /api/skills/update ────────────────────────────────────────────────
 //
 // Applies a pending upstream update to an already-installed community skill:
-// re-downloads the source, replaces the store-dir files, and updates the DB
-// row (defaultContent always; content only when not owner-overridden). If the
+// re-downloads the source, applies the file plan the preview showed (files
+// added locally kept, conflicts per the owner's choices) by building the new
+// folder beside the old one and switching it in with the DB row, and updates
+// the row (defaultContent always; content only when not owner-overridden). If the
 // skill's bundled scripts changed, revokes scripts_authorized on every
 // agent×skill assignment for it — see applySkillUpdate (skills/install.ts)
 // for the full security rationale.
@@ -168,6 +179,12 @@ export async function updateSkillRoute(
       ...(parsed.data.expectedContentHash === undefined
         ? {}
         : { expectedContentHash: parsed.data.expectedContentHash }),
+      ...(parsed.data.expectedFilesHash === undefined
+        ? {}
+        : { expectedFilesHash: parsed.data.expectedFilesHash }),
+      ...(parsed.data.conflictChoices === undefined
+        ? {}
+        : { conflictChoices: parsed.data.conflictChoices }),
     });
     return c.json({ ok: true, ...result }, 200);
   } catch (err) {

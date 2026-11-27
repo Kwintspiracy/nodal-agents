@@ -31,7 +31,7 @@ import RowActionButton from '@/components/ui/RowActionButton';
 import Modal from '@/components/ui/Modal.tsx';
 import AssignSkillModal from './AssignSkillModal.tsx';
 import SkillForm from './SkillForm.tsx';
-import SkillUpdateAction, { SkillKeepLocalAction } from './SkillUpdateAction.tsx';
+import SkillUpdateAction, { SkillKeepLocalAction, hasFileConflict } from './SkillUpdateAction.tsx';
 import SkillSourceProblemPill from './SkillSourceProblemPill.tsx';
 
 type Props = {
@@ -164,7 +164,7 @@ function SkillTableRow({ skill, agents }: { skill: SkillRow; agents: AgentRow[] 
                   square
                   icon={<ArrowClockwise size={16} />}
                   title={
-                    skill.updateDetail?.scriptsState === 'conflict'
+                    hasFileConflict(skill.updateDetail)
                       ? 'Update available (replaces your edited scripts)'
                       : 'Update available'
                   }
@@ -174,21 +174,19 @@ function SkillTableRow({ skill, agents }: { skill: SkillRow; agents: AgentRow[] 
               )}
             </SkillUpdateAction>
           )}
-          {skill.isCommunity &&
-            skill.updateAvailable &&
-            skill.updateDetail?.scriptsState === 'conflict' && (
-              <SkillKeepLocalAction slug={skill.slug} name={skill.name}>
-                {({ onClick, pending }) => (
-                  <RowActionButton
-                    square
-                    icon={<ShieldCheck size={16} />}
-                    title="Keep your version"
-                    disabled={pending}
-                    onClick={onClick}
-                  />
-                )}
-              </SkillKeepLocalAction>
-            )}
+          {skill.isCommunity && skill.updateAvailable && hasFileConflict(skill.updateDetail) && (
+            <SkillKeepLocalAction slug={skill.slug} name={skill.name}>
+              {({ onClick, pending }) => (
+                <RowActionButton
+                  square
+                  icon={<ShieldCheck size={16} />}
+                  title="Keep your version"
+                  disabled={pending}
+                  onClick={onClick}
+                />
+              )}
+            </SkillKeepLocalAction>
+          )}
           <RowActionButton
             square
             icon={<UserPlus size={16} />}

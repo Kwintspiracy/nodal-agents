@@ -68,9 +68,9 @@ export async function hashFile(p: string): Promise<string | null> {
 /**
  * Stamp each detected script with the sha256 of its file under `skillDirAbs`
  * (a freshly extracted upstream copy). This is the ORIGIN hash persisted in
- * `agent_skills.installed_scripts` at install/update time — the baseline the
- * three-way update check (computeScriptsState) compares both upstream and the
- * local store-dir against.
+ * `agent_skills.installed_scripts` at install/update time. The whole folder
+ * is compared through the file manifest (manifest.ts); these per-script hashes
+ * remain the origin of scripts for a skill installed before the manifest.
  */
 export async function hashScripts(
   skillDirAbs: string,
@@ -87,87 +87,4 @@ export async function hashScripts(
     out.push({ path: s.path, language: s.language, sha256: h });
   }
   return out;
-}
-
-/**
- * Three-way state of a skill's bundled scripts, comparing upstream (fresh
- * download), the install-time ORIGIN (sha256 stored in installed_scripts) and
- * the local store-dir files:
- *
- *   - 'clean'      — upstream == origin and local == origin: nothing to do.
- *   - 'update'     — upstream moved, local untouched: safe to apply.
- *   - 'conflict'   — upstream moved AND local was patched: applying overwrites
- *                    the local patches — surface the choice, never auto-pick.
- *   - 'local-only' — local was patched but upstream has NOT moved: there is
- *                    nothing new to install, so this must NOT raise the update
- *                    badge (the pre-three-way checker did, inviting users to
- *                    overwrite their own fixes with an identical upstream).
- *
- * Legacy rows installed before origin hashes existed (no `sha256` on any
- * entry) can't distinguish "upstream moved" from "local patched" — for those
- * the origin falls back to the LOCAL file hash (the historical local-vs-fresh
- * compare), and any difference reports as 'update'. One apply/acknowledge
- * stamps real origin hashes and the row graduates to true three-way.
- */
-export async function computeScriptsState(
-  localDir: string,
-  freshSkillDir: string,
-  freshScripts: DetectedScript[],
-  storedScripts: Array<{ path: string; language: string; sha256?: string }>,
-): Promise<'clean' | 'update' | 'conflict' | 'local-only'> {
-  const freshPaths = new Set(freshScripts.map((s) => s.path));
-  const storedPaths = new Set(storedScripts.map((s) => s.path));
-  // A changed SET of scripts is an upstream restructure: report as an
-  // upstream change (update/conflict depending on local state below).
-  let upstreamChanged =
-    freshPaths.size !== storedPaths.size || [...freshPaths].some((p) => !storedPaths.has(p));
-
-  let localPatched = false;
-  for (const stored of storedScripts) {
-    const [freshHash, localHash] = await Promise.all([
-      freshPaths.has(stored.path) ? hashFile(join(freshSkillDir, stored.path)) : null,
-      hashFile(join(localDir, stored.path)),
-    ]);
-    // Legacy entry without an origin hash: fall back to the local file as the
-    // baseline (historical behavior — see doc comment above).
-    const originHash = stored.sha256 ?? localHash;
-    if (freshPaths.has(stored.path) && freshHash !== originHash) upstreamChanged = true;
-    if (stored.sha256 !== undefined && localHash !== stored.sha256) localPatched = true;
-  }
-
-  if (upstreamChanged) return localPatched ? 'conflict' : 'update';
-  return localPatched ? 'local-only' : 'clean';
-}
-
-/**
- * True if the upstream skill's bundled scripts differ from what's currently
- * installed on disk — either the SET of script paths changed (added/removed)
- * or a script present in both has different content (sha256 compare).
- *
- * Read-only: never writes to `localDir`. `freshSkillDir` is a freshly
- * downloaded/extracted upstream copy (e.g. a temp dir from downloadAndExtract);
- * `localDir` is the skill's actual store dir on disk (skillStoreDir(entityId)/slug).
- */
-export async function computeScriptsChanged(
-  localDir: string,
-  freshSkillDir: string,
-  freshScripts: DetectedScript[],
-  storedScripts: Array<{ path: string; language: string }>,
-): Promise<boolean> {
-  const freshPaths = new Set(freshScripts.map((s) => s.path));
-  const storedPaths = new Set(storedScripts.map((s) => s.path));
-  if (freshPaths.size !== storedPaths.size) return true;
-  for (const p of freshPaths) if (!storedPaths.has(p)) return true;
-
-  for (const script of freshScripts) {
-    const [freshHash, localHash] = await Promise.all([
-      hashFile(join(freshSkillDir, script.path)),
-      hashFile(join(localDir, script.path)),
-    ]);
-    // freshHash === null would mean we just downloaded the file but can't
-    // read it back — shouldn't happen, but fail toward "changed" (safer to
-    // over-flag / re-request script authorization than to silently trust).
-    if (freshHash === null || freshHash !== localHash) return true;
-  }
-  return false;
 }

@@ -26,6 +26,21 @@ import { connectors } from './connectors.ts';
  */
 export type SkillSourceProblem = 'source_not_found' | 'identity_changed';
 
+/** One file a community skill's source shipped (agent_skills.installed_files). */
+export interface SkillFileManifestEntry {
+  /** Posix-style path relative to the skill folder. */
+  path: string;
+  sha256: string;
+}
+
+/**
+ * Three-way state of a skill's whole folder (every file, not only scripts):
+ * 'conflict' when a file was changed both locally and upstream, 'update' when
+ * upstream changed files the owner left alone, 'local-only' when only local
+ * changes or additions exist, 'clean' otherwise.
+ */
+export type SkillFilesState = 'clean' | 'update' | 'conflict' | 'local-only';
+
 /** What the last update check of a community skill found (agent_skills.update_detail). */
 export type SkillUpdateDetail =
   | {
@@ -40,6 +55,9 @@ export type SkillUpdateDetail =
        * three-way checker shipped.
        */
       scriptsState?: 'clean' | 'update' | 'conflict' | 'local-only';
+      /** Same three-way state over EVERY file of the folder. Absent on rows
+       *  checked before the file manifest shipped (migration 0174). */
+      filesState?: SkillFilesState;
       checkedAt: string;
     }
   | {
@@ -50,6 +68,7 @@ export type SkillUpdateDetail =
       contentChanged?: undefined;
       scriptsChanged?: undefined;
       scriptsState?: undefined;
+      filesState?: undefined;
       checkedAt: string;
     };
 
@@ -89,6 +108,13 @@ export const agentSkills = pgTable(
       jsonb('installed_scripts').$type<
         Array<{ path: string; language: string; sha256?: string }>
       >(),
+    // installedFiles: the manifest of every regular file the source shipped,
+    // recorded at install and at each update (migration 0174). Paths are
+    // posix-style, relative to the skill folder. A file in the folder that is
+    // not listed here was added locally (by the owner or an agent's
+    // skill_file_write) and is kept by every update. NULL for skills installed
+    // before the manifest existed: see planSkillFiles (runner, skills/manifest.ts).
+    installedFiles: jsonb('installed_files').$type<SkillFileManifestEntry[]>(),
     // ─── Community skill update tracking (migration 0069) ───────────────────
     // updateAvailable: set by checkSkillUpdate (skills/check-updates.ts) when
     //   the upstream source diverges from what's installed (content and/or

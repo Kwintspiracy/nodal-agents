@@ -14,7 +14,7 @@ import MarketplaceCard from '@/components/ui/MarketplaceCard';
 import MarketplaceCardActions from '@/components/ui/MarketplaceCardActions';
 import StatusPill from '@/components/ui/StatusPill';
 import EmptyState from '@/components/ui/EmptyState';
-import SkillUpdateAction from './SkillUpdateAction.tsx';
+import SkillUpdateAction, { hasFileConflict } from './SkillUpdateAction.tsx';
 import SkillSourceProblemPill from './SkillSourceProblemPill.tsx';
 
 /** Per-installed-skill update state, keyed by slug — just enough to drive the
@@ -124,6 +124,13 @@ function CommunitySkillCard({
         toast.error(result.message);
         return;
       }
+      if (result.data.status === 'already_installed') {
+        // Nothing was written: this screen was out of date. The refreshed card
+        // offers the update, through its review, when one exists.
+        toast.info(`${entry.name} is already installed`);
+        router.refresh();
+        return;
+      }
       setJustInstalled(true);
       toast.success(`${entry.name} installed — assign it to an agent`);
       router.refresh();
@@ -157,7 +164,7 @@ function CommunitySkillCard({
                     <StatusPill
                       variant="warn"
                       label={
-                        installed.updateDetail?.scriptsState === 'conflict'
+                        hasFileConflict(installed.updateDetail)
                           ? 'Update conflicts with your edits'
                           : 'Update available'
                       }
