@@ -87,8 +87,9 @@ import { seedDefaultSkills } from './bootstrap/seed-default-skills.ts';
 import { closeAllJobProcessScopes, getSandboxStatus } from '@nodal-agents/sandbox';
 import { closeAllRenderers } from '@nodal-agents/page-render';
 import { startJobProcessSweep } from './job/process-scopes.ts';
-import { AuthError, checkRequestOrigin } from '@nodal-agents/auth';
+import { AuthError } from '@nodal-agents/auth';
 import { isValidWorkerSecret } from './lib/worker-secret.ts';
+import { createAdmission } from './lib/admission.ts';
 import './lib/runner-auth-context.ts';
 import type { RunnerDeps } from './deps.ts';
 
@@ -141,51 +142,18 @@ export function createApp(
   // par ce même bus.
   bindDeviceSink(createDeviceSink(deps.db));
 
-  // ── requireTrustedOrigin ─────────────────────────────────────────────────────
+  // ── admission ───────────────────────────────────────────────────────────────
   //
-  // NETWORK-001 (audit 2026-08-07). Binding to 127.0.0.1 keeps the runner off the
-  // network but NOT out of the user's own browser: any page they visit can POST
-  // to http://127.0.0.1:3001/api/agent. Measured on a real install in the DEFAULT
-  // configuration (bind=loopback → local-trust): a request with no Authorization,
-  // a hostile Origin, a forged Host, or a `text/plain` body (a CORS "simple"
-  // request, so no preflight the server could refuse) all returned 202 and the
-  // log showed `[exec …] enter` — the agent actually ran.
+  // First of all, on every `/api/*` route, in every auth mode: the Host names
+  // this machine, a request sent on behalf of a page (it carries an `Origin`)
+  // proves who sends it with a credential in the request, and a body has the
+  // media type its route takes. The runner has no browser client of its own:
+  // the dashboard calls it from its server side. See lib/admission.ts, and the
+  // decision itself in packages/auth/src/lib/request-origin.ts.
   //
-  // So `local-trust` must keep meaning "no user authentication", not "accept
-  // instructions from any web page". This gate runs BEFORE requireRunnerAuth and
-  // is independent of AUTH_MODE. See packages/auth/src/lib/request-origin.ts for
-  // why Origin and Host are both needed (Origin stops CSRF; Host stops DNS
-  // rebinding, where the two agree and an Origin-vs-Host comparison passes).
-  //
-  // Applied to /api/* only. `/webhooks/:slug/:secret` is deliberately excluded:
-  // it exists to be called by third-party services that legitimately arrive with
-  // an arbitrary Host (a tunnel hostname, a reverse proxy), and its auth is the
-  // slug+secret pair checked against the webhook_triggers row.
-  const requireTrustedOrigin = async (
-    c: Context,
-    next: () => Promise<void>,
-  ): Promise<Response | void> => {
-    // The authority can arrive two ways: the `Host` header on HTTP/1.1, or the
-    // `:authority` pseudo-header on HTTP/2 — where `Host` is absent entirely.
-    // Hono always reflects whichever one it got into `c.req.url`, so that is the
-    // reliable source; the header is preferred when present because it is the
-    // literal bytes the client sent.
-    const host = c.req.header('host') ?? new URL(c.req.url).host;
-    const rejection = checkRequestOrigin({
-      origin: c.req.header('origin'),
-      host,
-      appUrl: runnerEnv.APP_URL,
-    });
-    if (rejection) {
-      // Invariant 2: no user-facing prose from the runner — a machine-readable
-      // code only. 403 rather than 401: this is not about who is calling, it is
-      // about where the call came from, and no credential fixes it.
-      return c.json({ error: rejection }, 403);
-    }
-    await next();
-  };
-
-  app.use('/api/*', requireTrustedOrigin);
+  // `/webhooks/:slug/:secret` is outside `/api/*`: it is called by third-party
+  // services with any Host, and proved by the secret in its path.
+  app.use('/api/*', createAdmission(deps, runnerEnv));
 
   // ── deviceGate (#946) ─────────────────────────────────────────────────────────
   //

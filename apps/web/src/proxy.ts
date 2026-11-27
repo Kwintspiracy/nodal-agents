@@ -1,18 +1,60 @@
 /**
  * Next.js 16 proxy (NOT middleware.ts — that name is deprecated).
  *
- * Responsibilities:
- *  1. In local-trust mode (AUTH_MODE=local-trust, default): pass all requests
- *     through — no auth check needed, the server trusts any local request.
- *  2. In local-auth / bearer-token modes: gate /(dashboard)/* routes and
- *     redirect to /login if no session cookie is present.
+ * It runs on EVERY request: no `config.matcher` is exported, so no path is
+ * skipped because of what its name looks like — a page, a route handler, a
+ * server action, a static file alike.
  *
- * Note: Server Actions (POST with Next-Action header) are exempt from redirect
- * logic — they handle auth failures via requireAuth() inside the action.
+ * Responsibilities, in this order:
+ *  1. Admission, in every auth mode: the one decision both servers share
+ *     (`admitRequest`, packages/auth/src/lib/request-origin.ts). The Host
+ *     names this machine; a request sent on behalf of a page (it carries an
+ *     `Origin`) comes from a page this dashboard serves itself; a body has the
+ *     media type its route takes.
+ *  2. In local-trust mode (AUTH_MODE=local-trust, default): nothing more.
+ *  3. In local-auth / bearer-token modes: send a page request with no session
+ *     cookie to /login. This is a convenience, not a guard: the dashboard
+ *     layout and every action validate the session themselves.
  */
 
 import { type NextRequest, NextResponse } from 'next/server';
-import { isAllowedHost } from '@nodal-agents/auth';
+import { admitRequest, bodyTypesFor, hasRequestBody, type BodyRoute } from '@nodal-agents/auth';
+
+/** The dashboard's route handlers that take a body of another type than JSON. */
+const DASHBOARD_BODY_ROUTES: readonly BodyRoute[] = [
+  // The audio of a spoken turn, relayed to the runner as it came.
+  {
+    method: 'POST',
+    path: '/api/voice/turns/:turnId/chunks/:seq',
+    types: ['application/octet-stream'],
+  },
+  // The credential wizard's native form, which the browser posts itself to
+  // start an OAuth flow (CredentialWizard.tsx).
+  {
+    method: 'POST',
+    path: '/api/oauth/:provider/start',
+    types: ['application/x-www-form-urlencoded'],
+  },
+];
+
+/**
+ * What a server action is posted as, on a page path: the encodings Next itself
+ * sends (a fetch action, a form with or without JavaScript). These are all
+ * types a page can send without a preflight: what proves a server action is
+ * the Origin rule above, which only lets the dashboard's own pages in.
+ */
+const SERVER_ACTION_BODY: readonly string[] = [
+  'text/plain',
+  'multipart/form-data',
+  'application/x-www-form-urlencoded',
+];
+
+/** The media types the request's path takes in a body. */
+function bodyTypesOf(method: string, pathname: string): readonly string[] {
+  return pathname.startsWith('/api/')
+    ? bodyTypesFor(method, pathname, DASHBOARD_BODY_ROUTES)
+    : SERVER_ACTION_BODY;
+}
 
 // Public paths that never require authentication.
 function isPublicPath(pathname: string): boolean {
@@ -28,34 +70,43 @@ function isPublicPath(pathname: string): boolean {
   );
 }
 
+/**
+ * A read of a static file (an image, a font, a source map), which the login
+ * redirect leaves alone so that the login page itself can show its images.
+ * Used by that redirect ONLY: admission has already run on this request.
+ */
+function isStaticFileRead(method: string, pathname: string): boolean {
+  return (
+    (method === 'GET' || method === 'HEAD') &&
+    /\.(?:png|jpg|jpeg|gif|webp|svg|ico|woff2?|ttf|map)$/.test(pathname)
+  );
+}
+
 export async function proxy(request: NextRequest): Promise<NextResponse> {
   const pathname = request.nextUrl.pathname;
   const authMode = process.env['AUTH_MODE'] ?? 'local-trust';
 
-  // ── Host admission control (NETWORK-001, audit 2026-08-07) ─────────────────
+  // ── Admission ─────────────────────────────────────────────────────────────
   //
-  // Next's own server-action guard compares `Origin` against `Host`, and only
-  // consults `serverActions.allowedOrigins` when the two DIFFER. Measured on a
-  // real packed install:
-  //
-  //   Origin: http://evil.test  +  Host: 127.0.0.1:3210  → 500  (allowlist wins)
-  //   Origin: http://evil.test  +  Host: evil.test       → 200  (short-circuit)
-  //
-  // The second pair is exactly what a browser sends during DNS rebinding, where
-  // the attacker points their own hostname at 127.0.0.1. Origin and Host agree,
-  // the equality check passes, and the allowlist is never reached — so
-  // `allowedOrigins` alone CANNOT close this. Validating `Host` here, before any
-  // handler runs, is what does: `evil.test` is not a name that can mean this
-  // machine.
-  //
-  // Runs before the auth branch on purpose. This is not about WHO is calling —
-  // no credential fixes a forged Host — and it must hold in local-trust, which
-  // is the default a normal install gets.
-  const host = request.headers.get('host');
-  if (!isAllowedHost(host, process.env['NEXT_PUBLIC_APP_URL'])) {
+  // Runs before the auth branch on purpose, and in local-trust, which is the
+  // default a normal install gets: no credential fixes a forged Host, and a
+  // foreign page is refused whoever is signed in. A session cookie is never a
+  // proof here: the browser attaches it on its own, to a foreign page's
+  // request too.
+  const refusal = admitRequest({
+    origin: request.headers.get('origin'),
+    host: request.headers.get('host'),
+    appUrl: process.env['NEXT_PUBLIC_APP_URL'],
+    proof: null,
+    servesPages: true,
+    contentType: request.headers.get('content-type'),
+    hasBody: hasRequestBody(request.headers),
+    bodyTypes: bodyTypesOf(request.method, pathname),
+  });
+  if (refusal) {
     // Invariant 2: a machine-readable code, no user-facing prose.
-    return new NextResponse(JSON.stringify({ error: 'host_not_allowed' }), {
-      status: 403,
+    return new NextResponse(JSON.stringify({ error: refusal.reason }), {
+      status: refusal.status,
       headers: { 'content-type': 'application/json' },
     }) as NextResponse;
   }
@@ -70,7 +121,7 @@ export async function proxy(request: NextRequest): Promise<NextResponse> {
     return NextResponse.next({ request });
   }
 
-  if (isPublicPath(pathname)) {
+  if (isPublicPath(pathname) || isStaticFileRead(request.method, pathname)) {
     return NextResponse.next({ request });
   }
 
@@ -87,10 +138,3 @@ export async function proxy(request: NextRequest): Promise<NextResponse> {
 
   return NextResponse.next({ request });
 }
-
-export const config = {
-  matcher: [
-    // Gate all routes except Next.js internals and static assets.
-    '/((?!_next/static|_next/image|favicon\\.ico|.*\\.(?:png|jpg|jpeg|gif|webp|svg|ico|woff2?|ttf|map)$).*)',
-  ],
-};
