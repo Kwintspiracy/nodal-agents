@@ -7,6 +7,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   bindingRefusal,
+  canonicalScope,
   connectorAccess,
   missingScopesOf,
   parseScopes,
@@ -96,5 +97,43 @@ describe('grant parsing and union', () => {
 
   it('keeps first-seen order without duplicates', () => {
     expect(unionScopes(['a', 'b'], ['b', 'c'], ['a'])).toEqual(['a', 'b', 'c']);
+  });
+});
+
+describe('the form in which a provider writes what it granted @cap:connecter-un-service/moteur', () => {
+  // A provider that writes a permission with or without its resource prefix,
+  // in any case (what Microsoft documents), declares it as data.
+  const MS = { resourcePrefix: 'https://graph.microsoft.com/', caseInsensitive: true };
+  const OPS = [
+    op('read', [
+      ['https://graph.microsoft.com/Mail.ReadWrite', 'https://graph.microsoft.com/Mail.Read'],
+    ]),
+    op('send', [['https://graph.microsoft.com/Mail.Send']]),
+  ];
+
+  it('a short-form, differently-cased, percent-encoded grant meets the prefixed requirement', () => {
+    expect(
+      connectorAccess(OPS, ['https%3A%2F%2Fgraph.microsoft.com%2Fmail.read', 'Mail.Send'], MS),
+    ).toEqual({
+      kind: 'ready',
+      grantedOperations: ['read', 'send'],
+    });
+  });
+
+  it('the missing scope is still named as it is asked for', () => {
+    const access = connectorAccess(OPS, ['mail.read'], MS);
+    expect(access.kind === 'needs_access' && access.missingScopes).toEqual([
+      'https://graph.microsoft.com/Mail.Send',
+    ]);
+  });
+
+  it('without a declared form, scopes compare exactly (RFC 6749 §3.3): another case does not match', () => {
+    const google = [op('list', [['https://www.googleapis.com/auth/gmail.readonly']])];
+    expect(connectorAccess(google, ['https://www.googleapis.com/auth/GMAIL.READONLY']).kind).toBe(
+      'needs_access',
+    );
+    expect(canonicalScope('https://www.googleapis.com/auth/drive')).toBe(
+      'https://www.googleapis.com/auth/drive',
+    );
   });
 });

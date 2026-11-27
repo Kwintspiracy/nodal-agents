@@ -162,6 +162,23 @@ describe('binding a connector to a credential follows its grant @cap:connecter-u
     expect((await createOrAssignOAuthConnectorAction('outlook-mail', readOnly)).ok).toBe(true);
   });
 
+  it('Microsoft: a grant written in another form (percent-encoded, lower case) is the same grant', async () => {
+    const credId = await credential(
+      'microsoft-oauth',
+      'https%3A%2F%2Fgraph.microsoft.com%2Fmail.readwrite mail.send openid',
+    );
+    const created = await createOrAssignOAuthConnectorAction(
+      'outlook-mail',
+      credId,
+      'Outlook form',
+    );
+    if (!created.ok) throw new Error(created.message);
+    const listed = await listConnectorsAction();
+    if (!listed.ok) throw new Error(listed.message);
+    const row = listed.data.instances.find((i) => i.id === created.data.connectorId)!;
+    expect(row.access).toEqual(expect.objectContaining({ kind: 'ready' }));
+  });
+
   it('a single-connector provider (Airtable) binds on its own entry, as before', async () => {
     const credId = await credential(
       'airtable-oauth',
