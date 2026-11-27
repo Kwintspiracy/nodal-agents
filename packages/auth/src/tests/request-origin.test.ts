@@ -1,45 +1,204 @@
-// request-origin.test.ts — NETWORK-001 regression suite.
+// request-origin.test.ts — the one admission decision both servers apply.
 //
-// Every case below is one of the requests actually sent against a running
-// install during the audit, with the verdict it must now produce. The four that
-// returned 202 (job created, agent started) are the ones this guard exists for.
+// The servers' own suites prove that each door calls it on every route
+// (apps/runner/src/tests/routes/request-admission.test.ts,
+// apps/web/src/tests/proxy-admission.test.ts). This one proves the decision.
 
 import { describe, it, expect } from 'vitest';
-import { checkRequestOrigin, isAllowedHost, isAllowedOrigin } from '../lib/request-origin.ts';
+import {
+  admitRequest,
+  bodyTypesFor,
+  hasRequestBody,
+  isAllowedHost,
+  mediaTypeOf,
+  JSON_BODY,
+  type RequestFacts,
+} from '../lib/request-origin.ts';
 
-const APP_URL = 'http://localhost:3001';
+const APP_URL = 'http://localhost:3000';
 
-describe('isAllowedOrigin', () => {
-  it('allows an absent Origin — a hostile page cannot suppress the header', () => {
-    // curl, a script, and the dashboard's own server-side fetch send no Origin.
-    // A browser ALWAYS attaches it to a cross-origin POST, so absence is proof
-    // the caller is not a page.
-    expect(isAllowedOrigin(undefined, APP_URL)).toBe(true);
-    expect(isAllowedOrigin(null, APP_URL)).toBe(true);
-    expect(isAllowedOrigin('', APP_URL)).toBe(true);
+/** A request with no Origin, no proof, no body, on a loopback Host. */
+function facts(over: Partial<RequestFacts>): RequestFacts {
+  return {
+    origin: null,
+    host: '127.0.0.1:3001',
+    appUrl: APP_URL,
+    proof: null,
+    servesPages: false,
+    contentType: null,
+    hasBody: false,
+    bodyTypes: JSON_BODY,
+    ...over,
+  };
+}
+
+const ORIGIN_REFUSED = { status: 403, reason: 'origin_not_allowed' };
+const HOST_REFUSED = { status: 403, reason: 'host_not_allowed' };
+const TYPE_REFUSED = { status: 415, reason: 'unsupported_media_type' };
+
+describe('admitRequest: a page proves who sends it @cap:se-connecter/moteur', () => {
+  const PAGES = [
+    'http://192.168.1.1',
+    'http://10.0.0.7:8080',
+    'http://localhost:5173',
+    'http://127.0.0.1:3000',
+    'http://[::1]:3000',
+    'https://pages.example',
+    'http://localhost:3000',
+    'null',
+  ];
+
+  it('a server that serves no page refuses every Origin without a proof, wherever it lives', () => {
+    for (const origin of PAGES) {
+      expect(admitRequest(facts({ origin })), origin).toEqual(ORIGIN_REFUSED);
+    }
   });
 
-  it('refuses a public attacker origin', () => {
-    expect(isAllowedOrigin('https://attacker.test', APP_URL)).toBe(false);
-    expect(isAllowedOrigin('http://evil.test', APP_URL)).toBe(false);
-    expect(isAllowedOrigin('https://nodal-agents.com.attacker.test', APP_URL)).toBe(false);
+  it('a verified credential is the proof, whatever the Origin', () => {
+    for (const proof of ['worker_secret', 'api_token', 'device_key'] as const) {
+      for (const origin of PAGES) {
+        expect(admitRequest(facts({ origin, proof })), `${proof} ${origin}`).toBeNull();
+      }
+    }
   });
 
-  it('refuses the literal "null" origin (sandboxed iframe, data:, file:)', () => {
-    // Exactly the contexts used to hide where a request came from.
-    expect(isAllowedOrigin('null', APP_URL)).toBe(false);
+  it('a request with no Origin is not a page: the rule does not apply to it', () => {
+    for (const origin of [null, undefined, '']) {
+      expect(admitRequest(facts({ origin }))).toBeNull();
+    }
   });
 
-  it('allows loopback and LAN origins', () => {
-    expect(isAllowedOrigin('http://localhost:3000', APP_URL)).toBe(true);
-    expect(isAllowedOrigin('http://127.0.0.1:3000', APP_URL)).toBe(true);
-    expect(isAllowedOrigin('http://[::1]:3000', APP_URL)).toBe(true);
-    expect(isAllowedOrigin('http://192.168.1.42:3000', APP_URL)).toBe(true);
-    expect(isAllowedOrigin('http://10.0.0.7:3000', APP_URL)).toBe(true);
+  it('a server that serves pages lets its own pages in, and only them', () => {
+    const own = { servesPages: true, host: 'localhost:3000' };
+    expect(admitRequest(facts({ ...own, origin: 'http://localhost:3000' }))).toBeNull();
+    // Another port, another name for the same machine, the default port of
+    // the scheme, an opaque origin: none is this server's own page.
+    for (const origin of [
+      'http://localhost:5173',
+      'http://127.0.0.1:3000',
+      'http://localhost',
+      'https://localhost',
+      'http://192.168.1.1',
+      'null',
+    ]) {
+      expect(admitRequest(facts({ ...own, origin })), origin).toEqual(ORIGIN_REFUSED);
+    }
   });
 
-  it('allows the configured APP_URL host', () => {
-    expect(isAllowedOrigin('https://nodal.example.com', 'https://nodal.example.com')).toBe(true);
+  it('own pages compare with the default port of their scheme, on a LAN address and IPv6 too', () => {
+    expect(
+      admitRequest(facts({ servesPages: true, host: 'localhost', origin: 'http://localhost' })),
+    ).toBeNull();
+    expect(
+      admitRequest(facts({ servesPages: true, host: 'localhost:80', origin: 'http://localhost' })),
+    ).toBeNull();
+    expect(
+      admitRequest(
+        facts({
+          servesPages: true,
+          host: '192.168.1.42:3000',
+          origin: 'http://192.168.1.42:3000',
+        }),
+      ),
+    ).toBeNull();
+    expect(
+      admitRequest(facts({ servesPages: true, host: '[::1]:3000', origin: 'http://[::1]:3000' })),
+    ).toBeNull();
+  });
+
+  it('a page whose Origin and Host agree on a foreign name is refused by the Host rule', () => {
+    expect(
+      admitRequest(facts({ servesPages: true, host: 'evil.test', origin: 'http://evil.test' })),
+    ).toEqual(HOST_REFUSED);
+    expect(admitRequest(facts({ host: 'evil.test', proof: 'worker_secret' }))).toEqual(
+      HOST_REFUSED,
+    );
+  });
+});
+
+describe('admitRequest: a body has the type its route takes @cap:se-connecter/moteur', () => {
+  it('refuses the types a page sends without a preflight, on a JSON route, with a proof too', () => {
+    for (const contentType of [
+      'text/plain;charset=UTF-8',
+      'application/x-www-form-urlencoded',
+      'multipart/form-data; boundary=x',
+    ]) {
+      expect(admitRequest(facts({ hasBody: true, contentType })), contentType).toEqual(
+        TYPE_REFUSED,
+      );
+      expect(admitRequest(facts({ hasBody: true, contentType, proof: 'worker_secret' }))).toEqual(
+        TYPE_REFUSED,
+      );
+    }
+  });
+
+  it('refuses a body with no type', () => {
+    expect(admitRequest(facts({ hasBody: true, contentType: null }))).toEqual(TYPE_REFUSED);
+  });
+
+  it('accepts JSON, with parameters and in any case', () => {
+    expect(
+      admitRequest(facts({ hasBody: true, contentType: 'Application/JSON; charset=utf-8' })),
+    ).toBeNull();
+  });
+
+  it('accepts a declared type on its route, and only there', () => {
+    const declared = [
+      { method: 'POST', path: '/api/upload/:id', types: ['application/octet-stream'] },
+    ];
+    const onRoute = bodyTypesFor('post', '/api/upload/abc', declared);
+    expect(onRoute).toEqual(['application/octet-stream']);
+    expect(
+      admitRequest(
+        facts({ hasBody: true, contentType: 'application/octet-stream', bodyTypes: onRoute }),
+      ),
+    ).toBeNull();
+    expect(
+      admitRequest(facts({ hasBody: true, contentType: 'application/json', bodyTypes: onRoute })),
+    ).toEqual(TYPE_REFUSED);
+    // Another route, another method, a deeper path: JSON.
+    expect(bodyTypesFor('POST', '/api/other/abc', declared)).toEqual(JSON_BODY);
+    expect(bodyTypesFor('PUT', '/api/upload/abc', declared)).toEqual(JSON_BODY);
+    expect(bodyTypesFor('POST', '/api/upload/abc/more', declared)).toEqual(JSON_BODY);
+    expect(bodyTypesFor('POST', '/api/upload/', declared)).toEqual(JSON_BODY);
+  });
+
+  it('no body needs no type, whatever the method', () => {
+    expect(admitRequest(facts({ hasBody: false, contentType: 'text/plain' }))).toBeNull();
+  });
+
+  it('checks Host, then Origin, then the body', () => {
+    expect(
+      admitRequest(
+        facts({
+          host: 'evil.test',
+          origin: 'https://pages.example',
+          hasBody: true,
+          contentType: null,
+        }),
+      ),
+    ).toEqual(HOST_REFUSED);
+    expect(
+      admitRequest(facts({ origin: 'https://pages.example', hasBody: true, contentType: null })),
+    ).toEqual(ORIGIN_REFUSED);
+  });
+});
+
+describe('hasRequestBody, mediaTypeOf', () => {
+  it('reads the framing headers', () => {
+    expect(hasRequestBody(new Headers())).toBe(false);
+    expect(hasRequestBody(new Headers({ 'content-length': '0' }))).toBe(false);
+    expect(hasRequestBody(new Headers({ 'content-length': '12' }))).toBe(true);
+    expect(hasRequestBody(new Headers({ 'transfer-encoding': 'chunked' }))).toBe(true);
+    // Never guessed in the lenient direction.
+    expect(hasRequestBody(new Headers({ 'content-length': 'x' }))).toBe(true);
+  });
+
+  it('reads a media type', () => {
+    expect(mediaTypeOf(null)).toBeNull();
+    expect(mediaTypeOf('')).toBeNull();
+    expect(mediaTypeOf(' ; charset=x')).toBeNull();
+    expect(mediaTypeOf('Text/Plain;charset=UTF-8')).toBe('text/plain');
   });
 });
 
@@ -49,7 +208,7 @@ describe('isAllowedHost', () => {
     expect(isAllowedHost('', APP_URL)).toBe(false);
   });
 
-  it('refuses an attacker hostname — this is what stops DNS rebinding', () => {
+  it('refuses a foreign hostname, which is what stops DNS rebinding', () => {
     expect(isAllowedHost('evil.test', APP_URL)).toBe(false);
     expect(isAllowedHost('evil.test:3001', APP_URL)).toBe(false);
     expect(isAllowedHost('rebind.attacker.test:3001', APP_URL)).toBe(false);
@@ -81,75 +240,5 @@ describe('isAllowedHost', () => {
   it('refuses a public address that is not APP_URL', () => {
     expect(isAllowedHost('8.8.8.8:3001', APP_URL)).toBe(false);
     expect(isAllowedHost('203.0.113.10', APP_URL)).toBe(false);
-  });
-});
-
-describe('checkRequestOrigin — the six requests measured during the audit', () => {
-  // Each of these returned 202 (job created) against nodal-agents@0.8.1 in the
-  // default configuration. They must now be refused, except the legitimate ones.
-
-  it('refuses a hostile Origin (plain CSRF from a visited page)', () => {
-    expect(
-      checkRequestOrigin({
-        origin: 'https://attacker.test',
-        host: 'localhost:3001',
-        appUrl: APP_URL,
-      }),
-    ).toBe('origin_not_allowed');
-  });
-
-  it('refuses a forged Host (rebinding, Origin absent)', () => {
-    expect(checkRequestOrigin({ origin: null, host: 'evil.test', appUrl: APP_URL })).toBe(
-      'host_not_allowed',
-    );
-  });
-
-  it('refuses DNS rebinding where Origin and Host AGREE', () => {
-    // The case Next's Origin-vs-Host comparison lets through: measured HTTP 200
-    // on the dashboard, HTTP 202 on the runner.
-    expect(
-      checkRequestOrigin({ origin: 'http://evil.test', host: 'evil.test', appUrl: APP_URL }),
-    ).toBe('origin_not_allowed');
-  });
-
-  it('refuses a text/plain CSRF (no preflight the server could reject)', () => {
-    // Content-Type never reaches this check — what stops the request is the
-    // Origin the browser is forced to attach.
-    expect(
-      checkRequestOrigin({
-        origin: 'https://attacker.test',
-        host: '127.0.0.1:3001',
-        appUrl: APP_URL,
-      }),
-    ).toBe('origin_not_allowed');
-  });
-
-  it('still allows the dashboard calling the runner server-side (no Origin)', () => {
-    expect(
-      checkRequestOrigin({ origin: undefined, host: '127.0.0.1:3001', appUrl: APP_URL }),
-    ).toBeNull();
-  });
-
-  it('still allows a local script or curl (no Origin, loopback Host)', () => {
-    expect(
-      checkRequestOrigin({ origin: null, host: 'localhost:3001', appUrl: APP_URL }),
-    ).toBeNull();
-  });
-
-  it('still allows a phone on the LAN reaching the install by IP', () => {
-    expect(
-      checkRequestOrigin({
-        origin: 'http://192.168.1.42:3000',
-        host: '192.168.1.42:3001',
-        appUrl: APP_URL,
-      }),
-    ).toBeNull();
-  });
-
-  it('checks Origin before Host, so a hostile page is reported as such', () => {
-    // Both are wrong here; the Origin verdict is the more informative one.
-    expect(
-      checkRequestOrigin({ origin: 'https://attacker.test', host: 'evil.test', appUrl: APP_URL }),
-    ).toBe('origin_not_allowed');
   });
 });

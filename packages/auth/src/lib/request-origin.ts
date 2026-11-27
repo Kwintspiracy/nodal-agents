@@ -1,32 +1,36 @@
-// Decide whether an inbound HTTP request may act on this install, from its
-// `Origin` and `Host` headers alone.
+// Decide whether an inbound HTTP request may be served, from facts about the
+// request alone. ONE decision, used at every door of both servers: the
+// runner's `/api/*` middleware (apps/runner/src/lib/admission.ts) and the
+// dashboard's proxy (apps/web/src/proxy.ts), which runs on every path.
 //
-// NETWORK-001 (audit 2026-08-07). Binding to 127.0.0.1 keeps the runner off the
-// network, but it does NOT keep the user's own browser out: any page the user
-// visits can POST to http://127.0.0.1:3001/api/agent. Measured on a real install
-// in the DEFAULT configuration (bind=loopback → AUTH_MODE=local-trust):
+// Three rules, checked in this order:
 //
-//   POST /api/agent, no Authorization                       → 202, job created
-//   POST /api/agent, Origin: https://attacker.test          → 202, job created
-//   POST /api/agent, Host: evil.test                        → 202, job created
-//   POST /api/agent, Content-Type: text/plain (no preflight)→ 202, job created
+//   Host   — the request names this machine (loopback, a private address, or
+//     the host APP_URL points at). This is what defeats DNS rebinding, where a
+//     hostile name is pointed at 127.0.0.1 and the browser's `Origin` and
+//     `Host` agree, so no Origin-vs-Host comparison can catch it.
 //
-// and the runner log showed `[exec …] enter` — the agent actually started. So a
-// single visited page could dispatch arbitrary tasks to an agent holding file
-// and connector tools.
+//   Origin — a browser attaches `Origin` to every request it sends on behalf of
+//     a page (every non-GET request, and every CORS-mode GET), and a page can
+//     neither forge nor remove it. A request that carries one is served only
+//     when it proves who sends it by a credential a page cannot have by itself
+//     (the install's worker secret, its API token, a paired device's key: an
+//     explicit header, never a cookie the browser attaches on its own), or
+//     when it comes from a page this very server serves (its Origin is the
+//     request's own Host: the dashboard's own pages). Where a page lives never counts: a private
+//     address, another port of this machine, the dashboard's origin calling the
+//     runner are all refused without a credential. The runner serves no page,
+//     so every request with an `Origin` and no credential is refused there.
+//     A request with NO `Origin` is not sent on behalf of a page, and this rule
+//     does not apply to it.
 //
-// Two distinct checks, because they stop two distinct attacks:
+//   Body   — a request that carries a body declares a media type the route
+//     takes (JSON unless the route declares others). The types a page can send
+//     without a preflight (`text/plain`, a form) are thereby refused on every
+//     JSON route, whoever sends them.
 //
-//   Origin — stops ordinary CSRF. A browser always attaches `Origin` to a
-//     cross-origin POST and cannot forge it. A request with NO `Origin` is not a
-//     browser (curl, a script, the dashboard's own server-side fetch) and is
-//     allowed: withholding the header is not something a hostile page can do.
-//
-//   Host — stops DNS rebinding, where the attacker points their own hostname at
-//     127.0.0.1 so the browser sends `Origin: http://evil.test` AND
-//     `Host: evil.test`. The two AGREE, so an Origin-vs-Host comparison (what
-//     Next's server actions do — verified: it returns 200 for that pair) passes.
-//     Pinning `Host` to names that can only mean this machine closes it.
+// The decision is pure: each server gathers the facts (and verifies the
+// credential itself, before calling), then acts on the verdict.
 
 import { isPrivateOrigin } from './private-origin.ts';
 
@@ -65,15 +69,6 @@ function hostnameOfUrl(url: string | undefined): string | null {
   }
 }
 
-export interface RequestOriginCheck {
-  /** Raw `Origin` header, or null/undefined when absent. */
-  origin?: string | null;
-  /** Raw `Host` header, or null/undefined when absent. */
-  host?: string | null;
-  /** The install's own base URL (runner env APP_URL). */
-  appUrl?: string | undefined;
-}
-
 /**
  * True when the request's `Host` names this machine.
  *
@@ -98,36 +93,139 @@ export function isAllowedHost(host: string | null | undefined, appUrl?: string):
 }
 
 /**
- * True when the request's `Origin` is one this install accepts.
- *
- * An ABSENT `Origin` is allowed — see the header note above: a hostile page
- * cannot suppress it, so its absence means the caller is not a browser.
+ * True when `origin` is the origin of a page served under `host`: same
+ * hostname and same port, the port defaulting by the Origin's scheme on both
+ * sides (the Host is read with the Origin's scheme, so `localhost` and
+ * `localhost:80` compare equal for an `http:` page).
  */
-export function isAllowedOrigin(origin: string | null | undefined, appUrl?: string): boolean {
-  if (!origin) return true;
-  // Some browsers send the literal "null" for opaque origins (sandboxed iframe,
-  // data: document, file://). Those are exactly the contexts an attacker uses to
-  // hide where a request came from — refuse.
-  if (origin === 'null') return false;
-  if (isPrivateOrigin(origin)) return true;
-  const configured = hostnameOfUrl(appUrl);
-  const candidate = hostnameOfUrl(origin);
-  return configured !== null && candidate !== null && configured === candidate;
+function isSameOrigin(origin: string, host: string | null | undefined): boolean {
+  if (!host) return false;
+  let page: URL;
+  try {
+    page = new URL(origin);
+  } catch {
+    return false;
+  }
+  if (page.protocol !== 'http:' && page.protocol !== 'https:') return false;
+  try {
+    return new URL(`${page.protocol}//${host.trim()}`).host === page.host;
+  } catch {
+    return false;
+  }
 }
 
-export type OriginRejection = 'origin_not_allowed' | 'host_not_allowed';
+/** The media type of a Content-Type value: what comes before `;`, lower-cased. */
+export function mediaTypeOf(contentType: string | null | undefined): string | null {
+  if (!contentType) return null;
+  const type = (contentType.split(';')[0] ?? '').trim().toLowerCase();
+  return type === '' ? null : type;
+}
 
 /**
- * Full decision for one request. Returns null when the request may proceed, or
- * the reason it was refused.
- *
- * Deliberately NOT applied to `/webhooks/:slug/:secret`: that route exists to be
- * called by third-party services, which legitimately arrive with an arbitrary
- * `Host` (a tunnel hostname, a reverse proxy). Its authentication is the
- * slug+secret pair in the path, checked against the webhook_triggers row.
+ * Whether a request carries a body, from its framing headers (RFC 9112 §6.3):
+ * a `Transfer-Encoding`, or a `Content-Length` other than 0. A request with
+ * neither has no body, whatever its method.
  */
-export function checkRequestOrigin(input: RequestOriginCheck): OriginRejection | null {
-  if (!isAllowedOrigin(input.origin, input.appUrl)) return 'origin_not_allowed';
-  if (!isAllowedHost(input.host, input.appUrl)) return 'host_not_allowed';
+export function hasRequestBody(headers: { get(name: string): string | null }): boolean {
+  if (headers.get('transfer-encoding') !== null) return true;
+  const length = headers.get('content-length');
+  if (length === null) return false;
+  // An unparseable length is not "no body": never guess in the lenient direction.
+  return length.trim() !== '0';
+}
+
+/** A credential carried by the request in an explicit header, verified by the server. */
+export type RequestProof = 'worker_secret' | 'api_token' | 'device_key';
+
+/** The media type a route takes in a body unless it declares others. */
+export const JSON_BODY: readonly string[] = ['application/json'];
+
+export interface RequestFacts {
+  /** Raw `Origin` header, or null/undefined when absent. */
+  origin?: string | null | undefined;
+  /** Raw `Host` header (or the HTTP/2 authority), or null/undefined when absent. */
+  host?: string | null | undefined;
+  /** The install's own base URL (its host is accepted as a Host). */
+  appUrl?: string | undefined;
+  /**
+   * The credential this request carries, ALREADY VERIFIED by the server
+   * (constant-time secret comparison, device key lookup). Null: none.
+   */
+  proof: RequestProof | null;
+  /**
+   * Whether this server serves pages of its own, under the Host it is reached
+   * at. The dashboard does; the runner does not, so no Origin is ever its own.
+   */
+  servesPages: boolean;
+  /** Raw `Content-Type` header, or null/undefined when absent. */
+  contentType?: string | null | undefined;
+  /** Whether the request carries a body (`hasRequestBody`). */
+  hasBody: boolean;
+  /** The media types the route takes in a body (`JSON_BODY` unless it declares others). */
+  bodyTypes: readonly string[];
+}
+
+/**
+ * A refusal: a stable HTTP status and a machine-readable reason.
+ *   403 host_not_allowed        — the Host does not name this machine
+ *   403 origin_not_allowed      — sent on behalf of a page, with no credential
+ *   415 unsupported_media_type  — a body of a type the route does not take
+ */
+export type AdmissionRefusal =
+  | { status: 403; reason: 'host_not_allowed' }
+  | { status: 403; reason: 'origin_not_allowed' }
+  | { status: 415; reason: 'unsupported_media_type' };
+
+/** The decision for one request: null when it may be served, else why it is refused. */
+export function admitRequest(facts: RequestFacts): AdmissionRefusal | null {
+  if (!isAllowedHost(facts.host, facts.appUrl)) {
+    return { status: 403, reason: 'host_not_allowed' };
+  }
+  if (facts.origin) {
+    // The literal "null" (sandboxed iframe, data: document, file://) is an
+    // Origin like any other: sent on behalf of a page, and never this
+    // server's own.
+    const ownPage = facts.servesPages && isSameOrigin(facts.origin, facts.host);
+    if (facts.proof === null && !ownPage) {
+      return { status: 403, reason: 'origin_not_allowed' };
+    }
+  }
+  if (facts.hasBody) {
+    const type = mediaTypeOf(facts.contentType);
+    if (type === null || !facts.bodyTypes.includes(type)) {
+      return { status: 415, reason: 'unsupported_media_type' };
+    }
+  }
   return null;
+}
+
+/** A route that takes a body of another type than JSON, and which types. */
+export interface BodyRoute {
+  method: string;
+  /** Path pattern: `:name` is one non-empty segment. */
+  path: string;
+  types: readonly string[];
+}
+
+function matchesPattern(pattern: string, path: string): boolean {
+  const a = pattern.split('/');
+  const b = path.split('/');
+  return (
+    a.length === b.length &&
+    a.every((seg, i) => (seg.startsWith(':') ? (b[i] ?? '') !== '' : seg === b[i]))
+  );
+}
+
+/**
+ * The media types the route at `method path` takes in a body: what `declared`
+ * names for it, else JSON. A route that takes something else says so in its
+ * server's table; there is no route that takes "anything".
+ */
+export function bodyTypesFor(
+  method: string,
+  path: string,
+  declared: readonly BodyRoute[],
+): readonly string[] {
+  const m = method.toUpperCase();
+  return declared.find((r) => r.method === m && matchesPattern(r.path, path))?.types ?? JSON_BODY;
 }
