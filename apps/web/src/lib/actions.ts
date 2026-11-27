@@ -262,7 +262,7 @@ import {
   ShellGateReasonsSchema,
   type ShellGateReason,
   type ShellPolicy,
-  redactSecretsForAudit,
+  redactSecrets,
   explainApproval,
   explainApprovalRules,
   REPLACE_SHARED_FILE_SETTING,
@@ -319,7 +319,7 @@ import {
 import { originOfRun, inTimeOrder, type RunOrigin } from './activity-runs.ts';
 import { aggregateSpaceCost, costOfCalls, type SpaceCostView } from './space-cost.ts';
 import { assembleJobFeed, collectDescendants } from './job-feed.ts';
-import { redactAuditRow, redactPresented } from './redact-presented.ts';
+import { redactAuditRow } from './redact-presented.ts';
 import { readReviewVerdicts, type ReviewVerdictView } from './review-verdicts.ts';
 // P2bis — le récapitulatif de livraison d'un run est posé par la fonction du
 // fil d'une conversation, jamais par une seconde lecture des mêmes lignes.
@@ -6409,7 +6409,7 @@ export async function listApprovalsAction(
         // may leak a secret — create_connector/create_mcp API keys and stdio
         // env values are masked here, the single loader feeding both the
         // approvals page and the sidebar/NotificationsBell provider.
-        const safeInput = redactSecretsForAudit(r.toolInput) as typeof r.toolInput;
+        const safeInput = redactSecrets(r.toolInput) as typeof r.toolInput;
         const ctx = mcpByTool.get(mcpKey(r.agentId, r.toolName)) ?? null;
         // `jobParentJobId` ne sort PAS de l'action : il n'a servi qu'à remonter
         // la chaîne, et les deux champs de tête disent déjà ce que l'écran en
@@ -10261,8 +10261,8 @@ export async function listRunCallsAction(raw: unknown): Promise<ActionResult<Run
           // un secret caché dans le fil restait lisible ici. Les comptes plus
           // bas lisent la ligne BRUTE : masquer change le texte, jamais le
           // nombre de lignes écrites.
-          presented: parsePresented(redactPresented(r.presented)),
-          input: redactPresented(r.toolInput),
+          presented: parsePresented(redactSecrets(r.presented)),
+          input: redactSecrets(r.toolInput),
           outputText: r.toolOutput === null ? null : redactSecretsInText(r.toolOutput),
           outcome,
           durationMs: r.durationMs,
@@ -14851,12 +14851,11 @@ export async function getCodingProcessDetailAction(
       for (const tc of toolCallRows) {
         // RÉDIGÉ AVANT D'ÊTRE LU (Reviewer C, #164). Ces écritures sont
         // DESSINÉES : la plaque du bloc Files rend `old_string`, `new_string`
-        // et `content` tels quels. Le masquage d'écriture ne les couvre pas —
-        // `redactSecretsForAudit` masque par NOM de champ, et aucun de ces
-        // trois-là ne s'annonce comme un secret — tandis que la frise juste en
+        // et `content` tels quels. Une ligne écrite avant que l'entrée ne soit
+        // masquée à l'écriture porte ces champs en clair, et la frise juste en
         // dessous rédige depuis #158. Une clé écrite dans un fichier se lisait
         // donc EN CLAIR dans Files et masquée dans Activity, sur le même appel.
-        const change = extractChange(tc.toolName, redactPresented(tc.toolInput));
+        const change = extractChange(tc.toolName, redactSecrets(tc.toolInput));
         if (!change) continue;
         const attempted: ChangeRef = { rawPath: change.filePath, workspaces: wsOfCall(tc.jobId) };
         attemptedTargets.push(attempted);
@@ -14973,7 +14972,7 @@ export async function getCodingProcessDetailAction(
             toolName: tc.toolName,
             // Rédigés comme dans le fil et dans Activity : l'écran d'un
             // processus Code montrait la sortie brute (Reviewer C, #158).
-            toolInput: redactPresented(tc.toolInput),
+            toolInput: redactSecrets(tc.toolInput),
             toolOutput: tc.toolOutput === null ? null : redactSecretsInText(tc.toolOutput),
             durationMs: tc.durationMs,
             createdAt: tc.createdAt ? tc.createdAt.toISOString() : null,
