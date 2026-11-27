@@ -160,7 +160,7 @@ describe('un client de modèle ne se construit qu’à partir de la clé de l’
   it('createLlmClient / createFailoverLlmClient ne sont appelés que par resolve-llm.ts', () => {
     const violations = scanForPattern(
       { srcDir: SRC_DIR, skipFiles: MODEL_CLIENT_BUILDERS },
-      { pattern: /create(?:Failover)?LlmClient\s*\(/, rule: 'model-client-outside-resolver' },
+      { pattern: /\bcreate(?:Failover)?LlmClient\s*\(/, rule: 'model-client-outside-resolver' },
     ).filter((v) => !/^\s*(\/\/|\*)/.test(v.text));
     if (violations.length > 0) {
       expect.fail(
