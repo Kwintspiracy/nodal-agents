@@ -9,8 +9,15 @@
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { mkdtemp, realpath, rm } from 'node:fs/promises';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  writeFileSync,
+} from 'node:fs';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { WorkspaceSandboxReader } from '@nodal-agents/sandbox';
@@ -50,7 +57,8 @@ function plant(dir: string, label: string): void {
 }
 
 beforeEach(async () => {
-  root = await realpath(await mkdtemp(join(tmpdir(), 'nodal constat dépôt ')));
+  // The LONG form of the path (a CI temp folder can be a short 8.3 name): the one git prints.
+  root = realpathSync.native(await mkdtemp(join(tmpdir(), 'nodal constat dépôt ')));
   marker = join(root, 'MARKER');
   const witness = join(root, 'witness.cjs');
   writeFileSync(

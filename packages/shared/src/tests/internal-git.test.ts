@@ -9,8 +9,20 @@
 // file appears), once through the launcher (no marker, and the operation still
 // gives its real answer).
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { execFileSync } from 'node:child_process';
+
+/** What the resolution of git's binary answers; `undefined` = the real answer. */
+const forcedResolution = vi.hoisted(() => ({ value: undefined as string | null | undefined }));
+
+vi.mock('../git-binary', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../git-binary')>();
+  return {
+    ...real,
+    resolveGitBinary: async (): Promise<string | null> =>
+      forcedResolution.value === undefined ? real.resolveGitBinary() : forcedResolution.value,
+  };
+});
 import {
   chmodSync,
   existsSync,
@@ -24,6 +36,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  GitBinaryMissingError,
   GitConfigUnreadableError,
   InternalGitRefusedError,
   hostProgramRunner,
@@ -589,6 +602,19 @@ describe('runInternalGit — fails loud, never runs half-configured @cap:execute
       },
     };
   }
+
+  it('no git on the PATH: refused before anything starts, never the bare name', async () => {
+    const runner = countingRunner();
+    forcedResolution.value = null;
+    try {
+      await expect(
+        runInternalGit(runner, ['status'], { writableRoots: [], readableRoots: [] }),
+      ).rejects.toBeInstanceOf(GitBinaryMissingError);
+    } finally {
+      forcedResolution.value = undefined;
+    }
+    expect(runner.calls).toEqual([]);
+  });
 
   it('a subcommand that is not an internal one is refused before anything starts', async () => {
     const runner = countingRunner();
