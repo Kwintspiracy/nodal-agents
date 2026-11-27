@@ -323,6 +323,29 @@ export function restrictPlan(
   return plan.files.filter((f) => keys.has(f.key)).map((f) => f.change);
 }
 
+/**
+ * The files of a folder that are the person's, not the source's: files the
+ * source never shipped, and shipped files changed locally. For a skill
+ * installed before the manifest, which files were shipped is unknown: every
+ * file is listed (`originKnown: false`), except scripts whose recorded origin
+ * hash still matches.
+ *
+ * The same plan as an update, against a source that now ships nothing: a
+ * shipped file left untouched reads as `removed` (the source's, deleted with
+ * the skill); a file added here as `kept-local-addition`; a shipped file
+ * edited here as a conflict. Returned with that plan, for removeSkillFolder.
+ */
+export function personFilesOf(input: Omit<PlanInput, 'upstream'>): {
+  plan: SkillFilesPlan;
+  files: FileChange[];
+} {
+  const plan = planSkillFiles({ ...input, upstream: new Map() });
+  const files = plan.changes.filter(
+    (c) => c.kind === 'kept-local-addition' || c.kind === 'conflict',
+  );
+  return { plan, files };
+}
+
 // ─── Choices ─────────────────────────────────────────────────────────────────
 
 export interface FileOp {
@@ -533,6 +556,9 @@ export interface SwappedFolder {
   localDir: string;
   /** Where the previous live folder now is; null when there was none. */
   previousDir: string | null;
+  /** True when a staged folder now sits at `localDir`; false when the live
+   *  folder was only moved aside (a skill being removed). */
+  installedNew: boolean;
 }
 
 /**
@@ -550,7 +576,8 @@ export async function swapSkillFolder(opts: {
   storeDir: string;
   slug: string;
   localDir: string;
-  stagingDir: string;
+  /** The folder to switch in; null to move the live folder aside only (removal). */
+  stagingDir: string | null;
   /** The live folder as planned; null when no live folder may exist (fresh install). */
   planned: FileTree | null;
 }): Promise<SwappedFolder> {
@@ -576,7 +603,7 @@ export async function swapSkillFolder(opts: {
     } catch (err) {
       throw new SkillInstallError(
         `The folder of the skill "${opts.slug}" is in use (a script of this skill may be ` +
-          `running) and could not be replaced: ${(err as Error).message}. Nothing was changed: ` +
+          `running) and could not be moved: ${(err as Error).message}. Nothing was changed: ` +
           `try again once it has finished.`,
       );
     }
@@ -588,10 +615,13 @@ export async function swapSkillFolder(opts: {
     if (moved.length > 0) {
       await renameWithRetry(previousDir, opts.localDir);
       throw new SkillInstallError(
-        `The skill's files changed while the update was being prepared ` +
-          `(${moved.slice(0, 10).join(', ')}). Nothing was changed: open the update again.`,
+        `The skill's files changed while the change was being prepared ` +
+          `(${moved.slice(0, 10).join(', ')}). Nothing was changed: review it again.`,
       );
     }
+  }
+  if (opts.stagingDir === null) {
+    return { localDir: opts.localDir, previousDir, installedNew: false };
   }
   try {
     await renameWithRetry(opts.stagingDir, opts.localDir);
@@ -599,7 +629,7 @@ export async function swapSkillFolder(opts: {
     if (previousDir !== null) await renameWithRetry(previousDir, opts.localDir);
     throw err;
   }
-  return { localDir: opts.localDir, previousDir };
+  return { localDir: opts.localDir, previousDir, installedNew: true };
 }
 
 /**
@@ -608,14 +638,18 @@ export async function swapSkillFolder(opts: {
  * person then knows exactly where their files are.
  */
 export async function unswapSkillFolder(swapped: SwappedFolder): Promise<void> {
-  const discard = `${swapped.localDir}.discard-${randomUUID()}`;
+  const discard = join(
+    dirname(swapped.localDir),
+    `.${basename(swapped.localDir)}.discard-${randomUUID()}`,
+  );
   try {
-    await renameWithRetry(swapped.localDir, discard);
+    if (swapped.installedNew) await renameWithRetry(swapped.localDir, discard);
     if (swapped.previousDir !== null) await renameWithRetry(swapped.previousDir, swapped.localDir);
   } catch (err) {
     throw new SkillInstallError(
-      `The update was not saved, and the skill's previous folder could not be put back: it is ` +
-        `at ${swapped.previousDir ?? '(none)'}, the unsaved new one at ${discard}. ` +
+      `The change was not saved, and the skill's previous folder could not be put back: it is ` +
+        `at ${swapped.previousDir ?? '(none)'}` +
+        `${swapped.installedNew ? `, the unsaved new one at ${discard}` : ''}. ` +
         `${(err as Error).message}`,
     );
   }

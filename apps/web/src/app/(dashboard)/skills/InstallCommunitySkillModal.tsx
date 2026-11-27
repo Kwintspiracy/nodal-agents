@@ -9,6 +9,7 @@ import Modal, { ModalFooter } from '@/components/ui/Modal';
 import PrimaryButton from '@/components/ui/PrimaryButton';
 import TextInput from '@/components/ui/TextInput';
 import SkillUpdateAction from './SkillUpdateAction.tsx';
+import SkillInstallReview from './SkillInstallReview.tsx';
 
 type Props = {
   open: boolean;
@@ -35,12 +36,17 @@ export default function InstallCommunitySkillModal({ open, onClose }: Props) {
   const [isPending, startTransition] = useTransition();
   const [successSkill, setSuccessSkill] = useState<CommunitySkillInstallResult | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [review, setReview] = useState<Extract<
+    CommunitySkillInstallResult,
+    { status: 'review' }
+  > | null>(null);
 
   function handleClose() {
     // Reset state when the modal is closed so re-opening starts fresh.
     setSource('');
     setSuccessSkill(null);
     setErrorMessage(null);
+    setReview(null);
     onClose();
   }
 
@@ -54,6 +60,11 @@ export default function InstallCommunitySkillModal({ open, onClose }: Props) {
       if (!result.ok) {
         setErrorMessage(result.message);
         toast.error(result.message);
+        return;
+      }
+      if (result.data.status === 'review') {
+        // Files for this skill are already in the store: nothing was written.
+        setReview(result.data);
         return;
       }
       setSuccessSkill(result.data);
@@ -127,6 +138,18 @@ export default function InstallCommunitySkillModal({ open, onClose }: Props) {
           <div className="rounded-lg border border-err/30 bg-err/10 px-3.5 py-3">
             <p className="text-body-13 leading-[1.5]! text-err">{errorMessage}</p>
           </div>
+        )}
+
+        {review && (
+          <SkillInstallReview
+            review={review}
+            onInstalled={(r) => {
+              setReview(null);
+              setSuccessSkill(r);
+              router.refresh();
+            }}
+            onCancel={() => setReview(null)}
+          />
         )}
 
         {/* Already installed: installing again is an update, reviewed first */}

@@ -1,15 +1,7 @@
 'use client';
 
-import { Fragment, useState, useTransition } from 'react';
-import { toast } from 'sonner';
-import {
-  PencilSimple,
-  UserPlus,
-  Trash,
-  CloudX,
-  ArrowClockwise,
-  ShieldCheck,
-} from '@phosphor-icons/react';
+import { Fragment, useState } from 'react';
+import { PencilSimple, UserPlus, Trash, ArrowClockwise, ShieldCheck } from '@phosphor-icons/react';
 import type { SkillRow, AgentRow } from '@/lib/actions.ts';
 import type { SkillProvenanceSegment } from '@/lib/skill-provenance.ts';
 import Table, {
@@ -22,16 +14,15 @@ import Table, {
   CellMuted,
   CellActions,
 } from '@/components/ui/Table';
-import { deleteSkillAction, uninstallCommunitySkillAction } from '@/lib/actions.ts';
 import AvatarStack from '@/components/ui/AvatarStack';
 import CountPill from '@/components/ui/CountPill';
 import StatusPill from '@/components/ui/StatusPill';
-import ConfirmDialog from '@/components/ConfirmDialog.tsx';
 import RowActionButton from '@/components/ui/RowActionButton';
 import Modal from '@/components/ui/Modal.tsx';
 import AssignSkillModal from './AssignSkillModal.tsx';
 import SkillForm from './SkillForm.tsx';
 import SkillUpdateAction, { SkillKeepLocalAction, hasFileConflict } from './SkillUpdateAction.tsx';
+import SkillRemoveAction from './SkillRemoveAction.tsx';
 import SkillSourceProblemPill from './SkillSourceProblemPill.tsx';
 
 type Props = {
@@ -83,29 +74,8 @@ export default function SkillsAssignedTable({ segments, agents }: Props) {
 }
 
 function SkillTableRow({ skill, agents }: { skill: SkillRow; agents: AgentRow[] }) {
-  const [confirmOpen, setConfirmOpen] = useState(false);
-  const [uninstallConfirmOpen, setUninstallConfirmOpen] = useState(false);
   const [assignOpen, setAssignOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
-  const [isPending, startTransition] = useTransition();
-
-  const performDelete = () => {
-    setConfirmOpen(false);
-    startTransition(async () => {
-      const r = await deleteSkillAction(skill.id);
-      if (!r.ok) toast.error(r.message);
-      else toast.success('Skill deleted');
-    });
-  };
-
-  const performUninstall = () => {
-    setUninstallConfirmOpen(false);
-    startTransition(async () => {
-      const r = await uninstallCommunitySkillAction(skill.slug);
-      if (!r.ok) toast.error(r.message);
-      else toast.success(`Skill "${skill.name}" uninstalled`);
-    });
-  };
 
   return (
     <Tr>
@@ -199,43 +169,23 @@ function SkillTableRow({ skill, agents }: { skill: SkillRow; agents: AgentRow[] 
             title="Edit"
             onClick={() => setEditOpen(true)}
           />
-          {!skill.isSystem && skill.isCommunity && (
-            <RowActionButton
-              square
-              icon={<CloudX size={16} />}
-              title="Uninstall"
-              tone="danger"
-              disabled={isPending}
-              onClick={() => setUninstallConfirmOpen(true)}
-            />
-          )}
           {!skill.isSystem && (
-            <RowActionButton
-              square
-              icon={<Trash size={16} />}
-              title="Delete"
-              tone="danger"
-              disabled={isPending}
-              onClick={() => setConfirmOpen(true)}
-            />
+            // One removal per skill: a community skill's folder goes with its
+            // row, and the person chooses about their own files first.
+            <SkillRemoveAction skill={skill}>
+              {({ onClick, pending }) => (
+                <RowActionButton
+                  square
+                  icon={<Trash size={16} />}
+                  title="Delete"
+                  tone="danger"
+                  disabled={pending}
+                  onClick={onClick}
+                />
+              )}
+            </SkillRemoveAction>
           )}
         </CellActions>
-        <ConfirmDialog
-          open={confirmOpen}
-          title={`Delete skill "${skill.name}"?`}
-          message="The skill and all its agent assignments will be removed. Existing job logs are kept."
-          confirmLabel="Delete"
-          onConfirm={performDelete}
-          onCancel={() => setConfirmOpen(false)}
-        />
-        <ConfirmDialog
-          open={uninstallConfirmOpen}
-          title={`Uninstall community skill "${skill.name}"?`}
-          message="The skill and all its agent assignments will be removed. You can reinstall it at any time from the same source."
-          confirmLabel="Uninstall"
-          onConfirm={performUninstall}
-          onCancel={() => setUninstallConfirmOpen(false)}
-        />
         <AssignSkillModal
           open={assignOpen}
           onClose={() => setAssignOpen(false)}

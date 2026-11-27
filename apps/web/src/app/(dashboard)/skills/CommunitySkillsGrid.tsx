@@ -7,6 +7,7 @@ import { DownloadSimple, ArrowClockwise } from '@phosphor-icons/react';
 import { COMMUNITY_SKILL_CATALOG, type CommunitySkillCatalogEntry } from '@nodal-agents/shared';
 import {
   installCommunitySkillAction,
+  type CommunitySkillInstallResult,
   type SkillRow,
   type SkillUpdateDetail,
 } from '@/lib/actions.ts';
@@ -15,6 +16,7 @@ import MarketplaceCardActions from '@/components/ui/MarketplaceCardActions';
 import StatusPill from '@/components/ui/StatusPill';
 import EmptyState from '@/components/ui/EmptyState';
 import SkillUpdateAction, { hasFileConflict } from './SkillUpdateAction.tsx';
+import SkillInstallReview from './SkillInstallReview.tsx';
 import SkillSourceProblemPill from './SkillSourceProblemPill.tsx';
 
 /** Per-installed-skill update state, keyed by slug — just enough to drive the
@@ -115,6 +117,10 @@ function CommunitySkillCard({
   // Optimistic flip right after Install — a fresh install never has a
   // pending update, so it doesn't need the `installed` prop's detail.
   const [justInstalled, setJustInstalled] = useState(false);
+  const [review, setReview] = useState<Extract<
+    CommunitySkillInstallResult,
+    { status: 'review' }
+  > | null>(null);
   const isInstalled = installed !== null || justInstalled;
 
   function handleInstall() {
@@ -122,6 +128,11 @@ function CommunitySkillCard({
       const result = await installCommunitySkillAction(entry.source);
       if (!result.ok) {
         toast.error(result.message);
+        return;
+      }
+      if (result.data.status === 'review') {
+        // Files for this skill are already in the store: reviewed first.
+        setReview(result.data);
         return;
       }
       if (result.data.status === 'already_installed') {
@@ -194,13 +205,26 @@ function CommunitySkillCard({
             </>
           )
         ) : (
-          <MarketplaceCardActions
-            status={badge}
-            ctaLabel={isPending ? 'Installing…' : 'Install'}
-            ctaVariant="coral"
-            icon={<DownloadSimple size={12} weight="bold" />}
-            onCta={isPending ? undefined : handleInstall}
-          />
+          <>
+            <MarketplaceCardActions
+              status={badge}
+              ctaLabel={isPending ? 'Installing…' : 'Install'}
+              ctaVariant="coral"
+              icon={<DownloadSimple size={12} weight="bold" />}
+              onCta={isPending ? undefined : handleInstall}
+            />
+            {review && (
+              <SkillInstallReview
+                review={review}
+                onInstalled={() => {
+                  setReview(null);
+                  setJustInstalled(true);
+                  router.refresh();
+                }}
+                onCancel={() => setReview(null)}
+              />
+            )}
+          </>
         )
       }
     />

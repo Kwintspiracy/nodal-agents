@@ -15,9 +15,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { zipSync, strToU8 } from 'fflate';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
-import { eq, and, agentSkills, agentSkillAssignments } from '@nodal-agents/db';
+import { eq, agentSkills, agentSkillAssignments } from '@nodal-agents/db';
 import {
   installCommunitySkill,
+  uninstallCommunitySkill,
+  previewSkillRemoval,
   applySkillUpdate,
   previewSkillUpdate,
   acknowledgeSkillUpdate,
@@ -434,7 +436,7 @@ describe('an installed skill is the full list of its files @cap:apprendre-une-sk
       return null;
     });
     await expect(applySkillUpdate(s.opts)).rejects.toThrow(
-      /changed while the update was being prepared/,
+      /changed while the change was being prepared/,
     );
     expect(await text(s.dir, 'late.md')).toBe('written late');
     expect(await text(s.dir, 'references/a.md')).toBe('a v1');
@@ -661,28 +663,178 @@ describe('an installed skill is the full list of its files @cap:apprendre-une-sk
     expect(await readdir(store)).toEqual([]);
   });
 
-  it('an install over a folder that belongs to no installed skill refuses and keeps that folder', async () => {
+  // ── Removing a skill, and installing it again ──
+
+  async function install(db: unknown, slug: string, entityId: string, extra: object = {}) {
+    return installCommunitySkill({
+      db: db as never,
+      source: `https://clawhub.ai/pub/${slug}`,
+      skillStoreDir: store,
+      entityId,
+      ...extra,
+    });
+  }
+
+  async function rowsOf(db: Awaited<ReturnType<typeof spinUpTestDb>>['db'], slug: string) {
+    return db.select().from(agentSkills).where(eq(agentSkills.slug, slug));
+  }
+
+  it('remove then install again: row and folder go together, and come back together', async () => {
+    const s = await setup('readd', (slug) => [skillMd(slug, 'v1'), ['references/a.md', 'a']]);
+    expect(await previewSkillRemoval(s.opts)).toEqual({ localFiles: [], originKnown: true });
+    const removed = await uninstallCommunitySkill(s.opts);
+    expect(removed).toEqual({ keptFiles: [], leftoverDir: null });
+    expect(await rowsOf(s.db, s.slug)).toEqual([]);
+    expect(await readdir(store)).toEqual([]);
+
+    const again = await install(s.db, s.slug, s.seed.entityId);
+    expect(again.status).toBe('installed');
+    expect(await text(s.dir, 'references/a.md')).toBe('a');
+    expect((await rowsOf(s.db, s.slug)).length).toBe(1);
+  });
+
+  it('removing a skill with files of the person: refused until they choose; "keep" keeps only theirs', async () => {
+    const s = await setup('keep-mine', (slug) => [
+      skillMd(slug, 'v1'),
+      ['references/a.md', 'a'],
+      ['references/b.md', 'b'],
+    ]);
+    await put(s.dir, 'workflows/mine.json', 'mine');
+    await put(s.dir, 'references/b.md', 'b edited');
+
+    expect(await previewSkillRemoval(s.opts)).toEqual({
+      localFiles: [
+        { path: 'references/b.md', kind: 'conflict', reason: 'edited-locally-removed-upstream' },
+        { path: 'workflows/mine.json', kind: 'kept-local-addition' },
+      ],
+      originKnown: true,
+    });
+    await expect(uninstallCommunitySkill(s.opts)).rejects.toThrow(/Choose whether to keep them/);
+    expect((await rowsOf(s.db, s.slug)).length).toBe(1);
+    expect(await text(s.dir, 'references/a.md')).toBe('a');
+
+    const r = await uninstallCommunitySkill({ ...s.opts, localFiles: 'keep' });
+    expect(r.keptFiles).toEqual(['references/b.md', 'workflows/mine.json']);
+    expect(await rowsOf(s.db, s.slug)).toEqual([]);
+    // The source's untouched files are gone; the person's are there, byte for byte.
+    await expect(text(s.dir, 'references/a.md')).rejects.toThrow(/ENOENT/);
+    await expect(text(s.dir, 'SKILL.md')).rejects.toThrow(/ENOENT/);
+    expect(await text(s.dir, 'workflows/mine.json')).toBe('mine');
+    expect(await text(s.dir, 'references/b.md')).toBe('b edited');
+    expect(await readdir(store)).toEqual([s.slug]);
+
+    // Installing again reviews them as files of unknown origin: nothing written first.
+    const review = await install(s.db, s.slug, s.seed.entityId);
+    if (review.status !== 'review') throw new Error(`expected a review, got ${review.status}`);
+    expect(review.files).toEqual([
+      { path: 'SKILL.md', kind: 'added' },
+      { path: 'references/a.md', kind: 'added' },
+      { path: 'references/b.md', kind: 'conflict', reason: 'unknown-origin' },
+      { path: 'workflows/mine.json', kind: 'kept-local-addition' },
+    ]);
+    expect(await rowsOf(s.db, s.slug)).toEqual([]);
+    await expect(
+      install(s.db, s.slug, s.seed.entityId, { expectedFilesHash: review.upstreamFilesHash }),
+    ).rejects.toThrow(SkillInstallError);
+    expect(await rowsOf(s.db, s.slug)).toEqual([]);
+
+    const done = await install(s.db, s.slug, s.seed.entityId, {
+      expectedFilesHash: review.upstreamFilesHash,
+      conflictChoices: { 'references/b.md': 'keep-local' },
+    });
+    expect(done.status).toBe('installed');
+    expect(await text(s.dir, 'references/b.md')).toBe('b edited');
+    expect(await text(s.dir, 'references/a.md')).toBe('a');
+    expect(await text(s.dir, 'workflows/mine.json')).toBe('mine');
+    const [row] = await rowsOf(s.db, s.slug);
+    expect(row!.installedFiles?.map((e) => e.path)).toEqual([
+      'SKILL.md',
+      'references/a.md',
+      'references/b.md',
+    ]);
+  });
+
+  it('removing a skill with "delete": the person\'s files go with it', async () => {
+    const s = await setup('delete-mine', (slug) => [skillMd(slug, 'v1')]);
+    await put(s.dir, 'workflows/mine.json', 'mine');
+    await uninstallCommunitySkill({ ...s.opts, localFiles: 'delete' });
+    expect(await rowsOf(s.db, s.slug)).toEqual([]);
+    expect(await readdir(store)).toEqual([]);
+  });
+
+  it("a skill installed before the manifest: every file is listed as the person's on removal", async () => {
+    const s = await setup('legacy-rm', (slug) => [skillMd(slug, 'v1'), ['references/a.md', 'a']]);
+    await s.db
+      .update(agentSkills)
+      .set({ installedFiles: null })
+      .where(eq(agentSkills.slug, s.slug));
+    expect(await previewSkillRemoval(s.opts)).toEqual({
+      localFiles: [
+        { path: 'SKILL.md', kind: 'kept-local-addition' },
+        { path: 'references/a.md', kind: 'kept-local-addition' },
+      ],
+      originKnown: false,
+    });
+  });
+
+  it('a folder left with no row before this change: the install reviews it, then keeps its files', async () => {
     const { db } = await spinUpTestDb();
     const seed = await seedMinimal(db);
     const slug = freshSlug('orphan');
+    // What an old "Delete" left: the shipped files, plus one the agent wrote.
+    await put(join(store, slug), 'SKILL.md', `---\nname: ${slug}\ndescription: d\n---\nv1`);
     await put(join(store, slug), 'left.md', 'left behind');
     serve(slug, [skillMd(slug, 'v1')]);
-    await expect(
-      installCommunitySkill({
-        db: db as never,
-        source: `https://clawhub.ai/pub/${slug}`,
-        skillStoreDir: store,
-        entityId: seed.entityId,
-      }),
-    ).rejects.toThrow(/belongs to no installed skill/);
+
+    const review = await install(db, slug, seed.entityId);
+    if (review.status !== 'review') throw new Error(`expected a review, got ${review.status}`);
+    expect(review.files).toEqual([{ path: 'left.md', kind: 'kept-local-addition' }]);
+    expect(await rowsOf(db, slug)).toEqual([]);
+
+    const done = await install(db, slug, seed.entityId, {
+      expectedFilesHash: review.upstreamFilesHash,
+    });
+    expect(done.status).toBe('installed');
     expect(await text(join(store, slug), 'left.md')).toBe('left behind');
-    const rows = await db
-      .select()
-      .from(agentSkills)
-      .where(and(eq(agentSkills.slug, slug), eq(agentSkills.entityId, seed.entityId)));
-    expect(rows).toEqual([]);
+    expect((await rowsOf(db, slug)).length).toBe(1);
     expect(await readdir(store)).toEqual([slug]);
   });
+
+  it('a removal whose folder cannot be moved keeps the row and the folder', async () => {
+    const s = await setup('rm-fail', (slug) => [skillMd(slug, 'v1')]);
+    await put(s.dir, 'workflows/mine.json', 'mine');
+    fsHooks.set('rename', (from) => (String(from) === s.dir ? fsError('EXDEV') : null));
+    await expect(uninstallCommunitySkill({ ...s.opts, localFiles: 'delete' })).rejects.toThrow(
+      SkillInstallError,
+    );
+    fsHooks.clear();
+    expect((await rowsOf(s.db, s.slug)).length).toBe(1);
+    expect(await text(s.dir, 'workflows/mine.json')).toBe('mine');
+    expect(await readdir(store)).toEqual([s.slug]);
+  });
+
+  for (const choice of ['keep', 'delete'] as const) {
+    it(`a removal ("${choice}") whose commit fails after the folder moved puts the folder back`, async () => {
+      const s = await setup(`rm-commit-${choice}`, (slug) => [skillMd(slug, 'v1')]);
+      await put(s.dir, 'workflows/mine.json', 'mine');
+      const realTx = s.db.transaction.bind(s.db);
+      (s.db as unknown as { transaction: unknown }).transaction = (async (
+        fn: (tx: unknown) => Promise<unknown>,
+      ) =>
+        realTx(async (tx) => {
+          await fn(tx);
+          throw new Error('simulated commit failure');
+        })) as unknown;
+      await expect(uninstallCommunitySkill({ ...s.opts, localFiles: choice })).rejects.toThrow(
+        /simulated commit failure/,
+      );
+      (s.db as unknown as { transaction: unknown }).transaction = realTx;
+      expect((await rowsOf(s.db, s.slug)).length).toBe(1);
+      expect(await text(s.dir, 'SKILL.md')).toContain('v1');
+      expect(await text(s.dir, 'workflows/mine.json')).toBe('mine');
+      expect(await readdir(store)).toEqual([s.slug]);
+    });
+  }
 
   it('a fresh install records the manifest of every shipped file, nested skills excluded', async () => {
     const s = await setup('fresh', (slug) => [

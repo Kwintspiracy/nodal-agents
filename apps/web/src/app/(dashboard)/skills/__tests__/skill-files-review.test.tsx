@@ -16,6 +16,8 @@ vi.mock('next/navigation', () => ({
 }));
 vi.mock('@/lib/actions.ts', () => ({
   installCommunitySkillAction: vi.fn(),
+  deleteSkillAction: vi.fn(),
+  previewSkillRemovalAction: vi.fn(),
   previewCommunitySkillUpdateAction: vi.fn(),
   updateCommunitySkillAction: vi.fn(),
   acknowledgeSkillUpdateAction: vi.fn(),
@@ -24,8 +26,11 @@ vi.mock('@/lib/actions.ts', () => ({
 import PrimaryButton from '@/components/ui/PrimaryButton';
 import SkillUpdateAction from '../SkillUpdateAction.tsx';
 import InstallCommunitySkillModal from '../InstallCommunitySkillModal.tsx';
+import SkillRemoveAction from '../SkillRemoveAction.tsx';
 import {
   installCommunitySkillAction,
+  deleteSkillAction,
+  previewSkillRemovalAction,
   previewCommunitySkillUpdateAction,
   updateCommunitySkillAction,
   type CommunitySkillUpdatePreview,
@@ -228,5 +233,130 @@ describe('the update review of a skill, file by file @cap:apprendre-une-skill/ec
     expect(document.querySelector('[data-testid="skill-files-review"]')?.textContent).toContain(
       'workflows/mine.json',
     );
+  });
+
+  async function typeSourceAndInstall() {
+    const input = document.querySelector('#skill-source') as HTMLInputElement;
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+      setter.call(input, 'owner/repo');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => buttonByText('Install').click());
+  }
+
+  it('files already in the store: the install shows them, waits for each choice, and sends them', async () => {
+    vi.mocked(installCommunitySkillAction)
+      .mockResolvedValueOnce({
+        ok: true,
+        data: {
+          status: 'review',
+          slug: 'comfy',
+          name: 'Comfy',
+          description: 'd',
+          source: 'owner/repo',
+          installedScripts: [],
+          files: [
+            { path: 'SKILL.md', kind: 'added' },
+            { path: 'references/b.md', kind: 'conflict', reason: 'unknown-origin' },
+            { path: 'workflows/mine.json', kind: 'kept-local-addition' },
+          ],
+          filesState: 'conflict',
+          upstreamFilesHash: 'c'.repeat(64),
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        data: {
+          status: 'installed',
+          slug: 'comfy',
+          name: 'Comfy',
+          description: 'd',
+          source: 'owner/repo',
+          installedScripts: [],
+          fileCount: 3,
+        },
+      });
+    act(() => root!.render(<InstallCommunitySkillModal open onClose={() => {}} />));
+    await typeSourceAndInstall();
+
+    const review = document.querySelector('[data-testid="skill-files-review"]');
+    expect(review?.textContent).toContain('Kept: files added here (1)');
+    expect(review?.textContent).toContain('Installed before file tracking');
+    // Two "Install" buttons now: the modal's and the review's; the review's is last.
+    const installs = [...document.querySelectorAll('button')].filter(
+      (b) => b.textContent?.trim() === 'Install',
+    );
+    const confirm = installs[installs.length - 1] as HTMLButtonElement;
+    expect(confirm.disabled).toBe(true);
+    await act(async () => segment('references/b.md', 'Keep mine').click());
+    expect(confirm.disabled).toBe(false);
+    await act(async () => confirm.click());
+    expect(vi.mocked(installCommunitySkillAction).mock.calls).toEqual([
+      ['owner/repo'],
+      [
+        'owner/repo',
+        { expectedFilesHash: 'c'.repeat(64), conflictChoices: { 'references/b.md': 'keep-local' } },
+      ],
+    ]);
+    expect(document.body.textContent).toContain('Installed:');
+  });
+});
+
+describe('removing a skill: the person decides about their own files @cap:apprendre-une-skill/ecran', () => {
+  function renderRemove(isCommunity = true) {
+    act(() =>
+      root!.render(
+        <SkillRemoveAction skill={{ id: 'id-1', slug: 'comfy', name: 'Comfy', isCommunity }}>
+          {({ onClick }) => (
+            <PrimaryButton variant="coral" onClick={onClick}>
+              Remove
+            </PrimaryButton>
+          )}
+        </SkillRemoveAction>,
+      ),
+    );
+  }
+
+  it('lists the files that are theirs, keeps them by default, and sends the choice made', async () => {
+    vi.mocked(previewSkillRemovalAction).mockResolvedValue({
+      ok: true,
+      data: {
+        localFiles: [
+          { path: 'references/b.md', kind: 'conflict', reason: 'edited-locally-removed-upstream' },
+          { path: 'workflows/mine.json', kind: 'kept-local-addition' },
+        ],
+        originKnown: true,
+      },
+    });
+    vi.mocked(deleteSkillAction).mockResolvedValue({ ok: true, data: undefined });
+    renderRemove();
+    await act(async () => buttonByText('Remove').click());
+    const own = document.querySelector('[data-testid="skill-removal-own-files"]');
+    expect(own?.textContent).toContain('2 files are yours');
+    expect(own?.textContent).toContain('workflows/mine.json');
+    const keep = buttonByText('Keep my files');
+    expect(keep.className).toContain('bg-ink');
+    await act(async () => buttonByText('Delete').click());
+    expect(vi.mocked(deleteSkillAction).mock.calls).toEqual([['id-1', 'keep']]);
+
+    renderRemove();
+    await act(async () => buttonByText('Remove').click());
+    await act(async () => buttonByText('Delete them too').click());
+    await act(async () => buttonByText('Delete').click());
+    expect(vi.mocked(deleteSkillAction).mock.calls[1]).toEqual(['id-1', 'delete']);
+  });
+
+  it('a folder with nothing of theirs asks no question and sends no choice', async () => {
+    vi.mocked(previewSkillRemovalAction).mockResolvedValue({
+      ok: true,
+      data: { localFiles: [], originKnown: true },
+    });
+    vi.mocked(deleteSkillAction).mockResolvedValue({ ok: true, data: undefined });
+    renderRemove();
+    await act(async () => buttonByText('Remove').click());
+    expect(document.querySelector('[data-testid="skill-removal-own-files"]')).toBeNull();
+    await act(async () => buttonByText('Delete').click());
+    expect(vi.mocked(deleteSkillAction).mock.calls).toEqual([['id-1', undefined]]);
   });
 });

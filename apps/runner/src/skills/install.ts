@@ -12,7 +12,7 @@
 // every file changed on both sides, and installing the same source again is
 // that same update — never a second path that overwrites.
 
-import { rm, readFile } from 'node:fs/promises';
+import { rm, readFile, stat } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { dirname, join, basename, sep, resolve } from 'node:path';
 import {
@@ -44,6 +44,7 @@ import {
   stageSkillFolder,
   stageFreshSkillFolder,
   swapSkillFolder,
+  personFilesOf,
   unswapSkillFolder,
   discardPreviousFolder,
   type FileTree,
@@ -82,6 +83,15 @@ export interface InstallSkillOptions {
   skillStoreDir: string;
   /** Entity that owns the installed skill row. */
   entityId: string;
+  /**
+   * When the store already holds files for this skill (left by an earlier
+   * removal that kept the person's files, or by an older version that left
+   * the folder): the `upstreamFilesHash` of the review the person read, and
+   * their choice for each conflicting file. Without it, such an install
+   * returns `status: 'review'` and writes nothing.
+   */
+  expectedFilesHash?: string;
+  conflictChoices?: Readonly<Record<string, ConflictChoice>>;
 }
 
 export type InstallSkillResult =
@@ -93,6 +103,23 @@ export type InstallSkillResult =
       source: string;
       installedScripts: DetectedScript[];
       fileCount: number;
+    }
+  /**
+   * The store already holds files for this skill and no row owns them. They
+   * are compared with what the source ships, like an update of a skill
+   * installed before the file manifest: nothing was written. Install again
+   * with `expectedFilesHash` and a choice for each conflict.
+   */
+  | {
+      status: 'review';
+      slug: string;
+      name: string;
+      description: string;
+      source: string;
+      installedScripts: DetectedScript[];
+      files: FileChange[];
+      filesState: SkillFilesState;
+      upstreamFilesHash: string;
     }
   /**
    * The same source is already installed for this entity. Nothing was
@@ -355,19 +382,66 @@ export async function installCommunitySkill(
     // The manifest: every file the source ships (nested skills excluded).
     const upstream = await readTree(skillDirAbs, isExcluded);
 
+    // Files already in the store for this slug, owned by no row: the same
+    // plan as an update with no manifest — every file there is the person's
+    // until shown otherwise, kept or chosen, never overwritten unseen.
+    const destDir = join(opts.skillStoreDir, slug);
+    const destExists = await isDirectory(destDir);
+    const local: FileTree = destExists ? await readTree(destDir) : new Map();
+    let ops;
+    if (local.size > 0) {
+      const plan = planSkillFiles({
+        local,
+        upstream,
+        origin: null,
+        caseInsensitive: await isCaseInsensitiveDir(opts.skillStoreDir),
+      });
+      const filesHash = treeHash(upstream);
+      if (opts.expectedFilesHash === undefined) {
+        return {
+          status: 'review',
+          slug,
+          name,
+          description,
+          source: source.raw,
+          installedScripts: scripts,
+          files: plan.changes,
+          filesState: plan.state,
+          upstreamFilesHash: filesHash,
+        };
+      }
+      if (opts.expectedFilesHash !== filesHash) {
+        throw new SkillInstallError(
+          `The skill's files changed at its source since you reviewed this install — nothing ` +
+            `was installed. Review it again.`,
+        );
+      }
+      ops = resolvePlan(plan, opts.conflictChoices ?? {});
+    }
+
     // Built beside its place, checked, then moved in with the row (one step).
-    const staged = await stageFreshSkillFolder({
-      storeDir: opts.skillStoreDir,
-      slug,
-      upstreamDir: skillDirAbs,
-      upstream,
-    });
+    const staged =
+      ops === undefined
+        ? await stageFreshSkillFolder({
+            storeDir: opts.skillStoreDir,
+            slug,
+            upstreamDir: skillDirAbs,
+            upstream,
+          })
+        : await stageSkillFolder({
+            storeDir: opts.skillStoreDir,
+            slug,
+            localDir: destDir,
+            local,
+            upstreamDir: skillDirAbs,
+            ops,
+          });
     await commitWithFolder({
       db: opts.db,
       storeDir: opts.skillStoreDir,
       slug,
       stagingDir: staged.stagingDir,
-      planned: null,
+      planned: destExists ? local : null,
       writeRows: async (tx) => {
         await tx.insert(agentSkills).values({
           entityId: opts.entityId,
@@ -403,6 +477,15 @@ export async function installCommunitySkill(
 
 type SkillTx = Parameters<Parameters<AnyDrizzleDb['transaction']>[0]>[0];
 
+async function isDirectory(p: string): Promise<boolean> {
+  try {
+    return (await stat(p)).isDirectory();
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException | null)?.code === 'ENOENT') return false;
+    throw err;
+  }
+}
+
 /**
  * Write the rows, switch the staged folder in, THEN commit — one step. A
  * failure while switching rolls the rows back; a failure of the commit after
@@ -421,7 +504,12 @@ async function commitWithFolder(opts: {
   db: AnyDrizzleDb;
   storeDir: string;
   slug: string;
+  /**
+   * The folder to switch in; null with `removeLive` to move the live folder
+   * out (a removal); null without it to leave the folder alone.
+   */
   stagingDir: string | null;
+  removeLive?: boolean;
   /** The live folder as planned; null for a fresh install (no folder may exist). */
   planned: FileTree | null;
   writeRows: (tx: SkillTx) => Promise<void>;
@@ -431,7 +519,7 @@ async function commitWithFolder(opts: {
   try {
     await opts.db.transaction(async (tx) => {
       await opts.writeRows(tx);
-      if (opts.stagingDir !== null) {
+      if (opts.stagingDir !== null || opts.removeLive === true) {
         state.swapped = await swapSkillFolder({
           storeDir: opts.storeDir,
           slug: opts.slug,
@@ -457,14 +545,26 @@ export interface UninstallSkillOptions {
   skillStoreDir: string;
   /** Entity that must own the skill being uninstalled. */
   entityId: string;
+  /**
+   * What happens to the person's files in the folder (files the source did
+   * not ship, shipped files changed here — previewSkillRemoval lists them):
+   * 'keep' leaves them in the store, where a later install of the same skill
+   * finds them and reviews them; 'delete' removes them with the skill.
+   * Required when there is at least one such file: the removal refuses,
+   * changing nothing, rather than choose for the person.
+   */
+  localFiles?: 'keep' | 'delete';
 }
 
-/**
- * Remove an installed community skill: delete its agent_skills row (assignments
- * cascade via FK) and its files from the store. Refuses to touch a non-community
- * skill (system/custom skills are not uninstallable this way).
- */
-export async function uninstallCommunitySkill(opts: UninstallSkillOptions): Promise<void> {
+export interface SkillRemovalPreview {
+  /** The person's files in the skill folder, sorted by path. */
+  localFiles: FileChange[];
+  /** False for a skill installed before the file manifest: which files the
+   *  source shipped is unknown, so every file is listed. */
+  originKnown: boolean;
+}
+
+async function loadRemovableSkill(opts: { db: AnyDrizzleDb; slug: string; entityId: string }) {
   if (!SLUG_RE.test(opts.slug)) {
     throw new SkillInstallError(`Invalid skill slug "${opts.slug}".`);
   }
@@ -472,7 +572,12 @@ export async function uninstallCommunitySkill(opts: UninstallSkillOptions): Prom
   // unscoped lookup here would let entity A uninstall (and delete the files
   // of) entity B's same-slug skill.
   const [existing] = await opts.db
-    .select({ id: agentSkills.id, isCommunity: agentSkills.isCommunity })
+    .select({
+      id: agentSkills.id,
+      isCommunity: agentSkills.isCommunity,
+      installedScripts: agentSkills.installedScripts,
+      installedFiles: agentSkills.installedFiles,
+    })
     .from(agentSkills)
     .where(and(eq(agentSkills.slug, opts.slug), eq(agentSkills.entityId, opts.entityId)))
     .limit(1);
@@ -484,8 +589,107 @@ export async function uninstallCommunitySkill(opts: UninstallSkillOptions): Prom
       `Skill "${opts.slug}" is not a community-installed skill and cannot be uninstalled this way.`,
     );
   }
-  await opts.db.delete(agentSkills).where(eq(agentSkills.id, existing.id));
-  await rm(join(opts.skillStoreDir, opts.slug), { recursive: true, force: true });
+  return existing;
+}
+
+async function planRemoval(
+  opts: { skillStoreDir: string; slug: string },
+  existing: Awaited<ReturnType<typeof loadRemovableSkill>>,
+) {
+  const localDir = join(opts.skillStoreDir, opts.slug);
+  const [local, caseInsensitive] = await Promise.all([
+    readTree(localDir),
+    isCaseInsensitiveDir(opts.skillStoreDir),
+  ]);
+  const { plan, files } = personFilesOf({
+    local,
+    origin: existing.installedFiles,
+    legacyScriptOrigins: existing.installedScripts,
+    caseInsensitive,
+  });
+  return { localDir, local, plan, files };
+}
+
+/** What removing the skill would do to the person's files — read-only. */
+export async function previewSkillRemoval(opts: {
+  db: AnyDrizzleDb;
+  slug: string;
+  skillStoreDir: string;
+  entityId: string;
+}): Promise<SkillRemovalPreview> {
+  const existing = await loadRemovableSkill(opts);
+  const { files } = await planRemoval(opts, existing);
+  return { localFiles: files, originKnown: existing.installedFiles !== null };
+}
+
+/**
+ * Remove an installed community skill — the one removal of a community skill,
+ * whoever asks (the dashboard's Uninstall and Delete both come here): delete
+ * its agent_skills row (assignments cascade via FK) and deal with its folder
+ * in the same step as the row, with the discipline of an update:
+ *
+ *   - 'delete' (or no file of the person's): the folder is moved out by
+ *     rename inside the transaction, removed after the commit;
+ *   - 'keep': a folder holding only the person's files is built beside the
+ *     live one and switched in; the source's untouched files go.
+ *
+ * A failure at any step leaves the row and the folder as they were. Refuses
+ * to touch a non-community skill (system/custom skills have no folder).
+ */
+export async function uninstallCommunitySkill(
+  opts: UninstallSkillOptions,
+): Promise<{ keptFiles: string[]; leftoverDir: string | null }> {
+  const existing = await loadRemovableSkill(opts);
+  const { localDir, local, plan, files } = await planRemoval(opts, existing);
+  if (files.length > 0 && opts.localFiles === undefined) {
+    throw new SkillInstallError(
+      `The folder of "${opts.slug}" holds files that are yours: ` +
+        `${files
+          .slice(0, 10)
+          .map((f) => f.path)
+          .join(', ')}${files.length > 10 ? ` and ${files.length - 10} more` : ''}. ` +
+        `Choose whether to keep them or delete them with the skill. Nothing was removed.`,
+    );
+  }
+  const keep = files.length > 0 && opts.localFiles === 'keep';
+  const deleteRow = async (tx: SkillTx): Promise<void> => {
+    await tx.delete(agentSkills).where(eq(agentSkills.id, existing.id));
+  };
+
+  if (keep) {
+    const keepAll = Object.fromEntries(
+      files.filter((f) => f.kind === 'conflict').map((f) => [f.path, 'keep-local' as const]),
+    );
+    const ops = resolvePlan(plan, keepAll);
+    const staged = await stageSkillFolder({
+      storeDir: opts.skillStoreDir,
+      slug: opts.slug,
+      localDir,
+      local,
+      upstreamDir: localDir, // never read: a removal only deletes
+      ops,
+    });
+    const { leftoverDir } = await commitWithFolder({
+      db: opts.db,
+      storeDir: opts.skillStoreDir,
+      slug: opts.slug,
+      stagingDir: staged.stagingDir,
+      planned: local,
+      writeRows: deleteRow,
+    });
+    return { keptFiles: files.map((f) => f.path), leftoverDir };
+  }
+
+  const { leftoverDir } = await commitWithFolder({
+    db: opts.db,
+    storeDir: opts.skillStoreDir,
+    slug: opts.slug,
+    stagingDir: null,
+    removeLive: true,
+    planned: local,
+    writeRows: deleteRow,
+  });
+  return { keptFiles: [], leftoverDir };
 }
 
 // ─── previewSkillUpdate (SKILL-003) ─────────────────────────────────────────
