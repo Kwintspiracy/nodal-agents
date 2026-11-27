@@ -9,7 +9,8 @@ import {
   type AgentConnectorRow,
   type AgentMcpServerRow,
 } from '@/lib/actions.ts';
-import { mcpToolPrefix, type OperationDescriptor } from '@nodal-agents/shared';
+import { mcpToolPrefix, offeredOperations, type OperationDescriptor } from '@nodal-agents/shared';
+import { connectionLabel } from '@/lib/connection-status.ts';
 import EdRow, { IcBtn } from '@/components/ui/EdRow';
 import EdAddButton from '@/components/ui/EdAddButton';
 import Disc from '@/components/ui/Disc';
@@ -478,15 +479,21 @@ export default function ConnectorsTabContent({ agentId, connectors, mcpServers }
       const state = connStates.get(c.connectorId) ?? c;
       const isExpanded = expanded.has(c.connectorId);
       const ops = c.availableOperations;
-      // Operations the credential's grant does not cover are not given to a
-      // job, whatever is ticked here (same rule as the runner).
-      const withheld = new Set(c.access?.kind === 'needs_access' ? c.access.missingOperations : []);
+      // Operations the connection cannot serve (rights not granted, or the
+      // connection disconnected) are not given to a job, whatever is ticked
+      // here (same rule as the runner).
+      const offered = new Set(offeredOperations(c.access));
+      const withheld = new Set(ops.map((o) => o.slug).filter((slug) => !offered.has(slug)));
+      const disconnected = c.access.kind === 'needs_reauth' || c.access.kind === 'broken';
       const baseOpsLabel =
         state.enabledOperations === null
           ? `all ${ops.length} ops`
           : `${state.enabledOperations.length} of ${ops.length} ops`;
-      const opsLabel =
-        withheld.size > 0 ? `${baseOpsLabel} · ${withheld.size} need access` : baseOpsLabel;
+      const opsLabel = disconnected
+        ? `${baseOpsLabel} · ${connectionLabel(c.connection)}`
+        : withheld.size > 0
+          ? `${baseOpsLabel} · ${withheld.size} need access`
+          : baseOpsLabel;
       return (
         <EdRow
           key={`conn:${c.connectorId}`}

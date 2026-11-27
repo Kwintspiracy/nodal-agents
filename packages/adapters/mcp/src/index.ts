@@ -70,6 +70,12 @@ export interface CreateLazyMcpToolsOptions {
    * tool call that triggered the connection.
    */
   onConnected?: (live: McpServerDiscovery) => void | Promise<void>;
+  /**
+   * Called when a lazy connect fails, with the error, before the tool call
+   * that triggered it rejects. Used to record the server's connection state.
+   * Errors thrown by this hook are swallowed like `onConnected`'s.
+   */
+  onConnectFailed?: (err: unknown) => void | Promise<void>;
 }
 
 /**
@@ -107,9 +113,17 @@ export function createLazyMcpTools(
           }
           return conn;
         })
-        .catch((err: unknown) => {
+        .catch(async (err: unknown) => {
           // Don't memoize a failed connect — the next tool call gets to retry.
           connectPromise = null;
+          if (lazyOpts.onConnectFailed) {
+            await Promise.resolve(lazyOpts.onConnectFailed(err)).catch((hookErr: unknown) => {
+              console.error(
+                `[adapter-mcp] onConnectFailed hook failed for '${opts.slug}':`,
+                hookErr instanceof Error ? hookErr.message : hookErr,
+              );
+            });
+          }
           throw err;
         });
     }
@@ -152,4 +166,5 @@ export { mcpToolToToolDefinition, mcpToolToLazyToolDefinition, slugToPrefix } fr
 export { jsonSchemaToZod } from './json-schema-to-zod.ts';
 export { mcpResultForModel, recordMcpResult } from './result.ts';
 export { isUsableMcpToolCache } from './tool-cache.ts';
+export { mcpConnectionFailure } from './connection-failure.ts';
 export type { McpToolOutput, McpRecordedBlock } from './result.ts';

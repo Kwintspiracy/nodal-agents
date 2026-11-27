@@ -15,14 +15,14 @@ import { refreshCredentialAction } from '@/lib/credentials.ts';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
 import PrimaryButton from '@/components/ui/PrimaryButton.tsx';
 import RowActionButton from '@/components/ui/RowActionButton';
-import StatusPill from '@/components/ui/StatusPill.tsx';
+import ConnectionStatusPill from '@/components/ConnectionStatusPill.tsx';
 import TextInput from '@/components/ui/TextInput';
 import Select from '@/components/ui/Select';
 import FieldLabel from '@/components/ui/FieldLabel';
 import { ModalFooter } from '@/components/ui/Modal.tsx';
 import CredentialWizard, { type CredentialWizardType } from '../credentials/CredentialWizard.tsx';
 import { formatExpiry, isExpired } from '@/lib/format-time';
-import AddAccessButton from './AddAccessButton.tsx';
+import ReauthoriseButton from './ReauthoriseButton.tsx';
 
 /** One labelled row in the connector's metadata block — replaces the old
  *  unlabelled "gmail · oauth2" stack (UX-B7: raw values with no context). */
@@ -83,7 +83,6 @@ export default function ConnectorForm({
 
   const isApiKey = instance.authType === 'api_key';
   const isOAuth = instance.authType === 'oauth2';
-  const isConnected = instance.active;
   const supportsRefresh = isOAuth && !OAUTH_NO_REFRESH_SLUGS.has(catalogEntry.credentialType ?? '');
   const credentialType = catalogEntry.credentialType as CredentialWizardType | undefined;
 
@@ -94,9 +93,17 @@ export default function ConnectorForm({
   const connectedScopes = instance.credentialScopes;
   const isTokenExpired = isExpired(connectedExpiresAt ?? null);
 
-  const status: 'connected' | 'inactive' = isConnected ? 'connected' : 'inactive';
-  // Same grant, same rule as a job's tool list (`instance.access`).
+  // Same rows, same rule as a job's tool list (`instance.access`,
+  // `instance.connection`).
   const missingAccess = instance.access?.kind === 'needs_access' ? instance.access : null;
+  // Reconnect repairs THIS connector: a credential that can be read is
+  // authorised again in place (every connector and agent on it works again);
+  // one that is gone or unreadable is replaced by a new credential bound to
+  // this same row. Never a second connector.
+  const credentialReadable =
+    connectedCredentialId !== null &&
+    instance.connection.cause !== 'credential_removed' &&
+    instance.connection.cause !== 'undecryptable';
 
   function performDelete() {
     setConfirmOpen(false);
@@ -224,15 +231,7 @@ export default function ConnectorForm({
             </div>
           )}
         </div>
-        {missingAccess ? (
-          <StatusPill variant="warn" label="Needs access" className="shrink-0" />
-        ) : (
-          <StatusPill
-            variant={status === 'connected' ? 'done' : 'warn'}
-            label={status === 'connected' ? 'Connected' : 'Needs auth'}
-            className="shrink-0"
-          />
-        )}
+        <ConnectionStatusPill connection={instance.connection} withReason className="shrink-0" />
       </div>
 
       {/* Labelled metadata — replaces the old unlabelled "gmail / oauth2 /
@@ -258,7 +257,8 @@ export default function ConnectorForm({
         {isOAuth ? (
           <>
             {missingAccess && connectedCredentialId && instance.credentialType && (
-              <AddAccessButton
+              <ReauthoriseButton
+                label="Add access"
                 credentialType={instance.credentialType}
                 connector={instance.slug}
                 credentialId={connectedCredentialId}
@@ -275,14 +275,24 @@ export default function ConnectorForm({
                 {isRefreshing ? 'Refreshing…' : 'Refresh now'}
               </PrimaryButton>
             )}
-            <PrimaryButton
-              variant="neutral"
-              size="sm"
-              onClick={() => setWizardOpen(true)}
-              disabled={isPending || isRefreshing}
-            >
-              Reconnect
-            </PrimaryButton>
+            {credentialReadable && connectedCredentialId && instance.credentialType ? (
+              <ReauthoriseButton
+                label="Reconnect"
+                credentialType={instance.credentialType}
+                connector={instance.slug}
+                credentialId={connectedCredentialId}
+                returnTo={`/connectors?connected=${instance.slug}`}
+              />
+            ) : (
+              <PrimaryButton
+                variant="neutral"
+                size="sm"
+                onClick={() => setWizardOpen(true)}
+                disabled={isPending || isRefreshing}
+              >
+                Reconnect
+              </PrimaryButton>
+            )}
             {compatibleCredentials.length > 0 && (
               <PrimaryButton
                 variant="neutral"
@@ -473,6 +483,7 @@ export default function ConnectorForm({
         <CredentialWizard
           initialType={credentialType}
           returnToConnectorSlug={catalogEntry.slug}
+          rebindConnectorId={instance.id}
           scopeDisclosure={catalogEntry.scopeDisclosure}
           onClose={() => setWizardOpen(false)}
         />

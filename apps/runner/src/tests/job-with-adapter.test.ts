@@ -26,6 +26,7 @@ import {
   credentials,
   agentConnectorAssignments,
   toolCalls,
+  connectionStates,
 } from '@nodal-agents/db';
 import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
 import { createEmbeddingClient } from '@nodal-agents/llm';
@@ -353,6 +354,10 @@ describe('job-with-adapter: Drive connector fully enabled (enabledOperations=nul
 
 describe('job-with-adapter: orchestrator role sees an assigned connector (HIGH fix regression)', () => {
   it('an orchestrator with the Drive connector assigned sees drive_list_files in its whitelist', async () => {
+    // The connection's state carries over from job to job (connection_states):
+    // the previous test's Drive call failed under this harness, and what it
+    // learnt is not this test's subject.
+    await db.delete(connectionStates);
     const ts = Date.now();
     const [orch] = await db
       .insert(agents)

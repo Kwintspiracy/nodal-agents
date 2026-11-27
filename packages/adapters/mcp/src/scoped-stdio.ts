@@ -100,6 +100,8 @@ export class ScopedStdioTransport implements Transport {
    */
   closeReason?: Error;
   private closed = false;
+  /** Whether the server wrote anything: one that ends before is not an MCP server that started. */
+  private answered = false;
   /** Le périmètre que CE transport a ouvert, faute d'un job : il le ferme. */
   private readonly ownScope: JobProcessScope | null;
   private readonly scope: JobProcessScope;
@@ -148,6 +150,7 @@ export class ScopedStdioTransport implements Transport {
     // morceaux suivants (le serveur écrit pendant le délai de grâce) sont
     // ignorés : l'erreur est dite UNE fois.
     proc.stdout?.on('data', (chunk: Buffer) => {
+      this.answered = true;
       if (this.closeReason) return;
       try {
         this.readBuffer.append(chunk);
@@ -169,6 +172,25 @@ export class ScopedStdioTransport implements Transport {
     proc.stdin?.on('error', (e: Error) => this.onerror?.(e));
     void proc.done.then((end) => {
       if (end.kind === 'error') this.onerror?.(new Error(end.message));
+      // A server that ends before writing a single byte never started as an
+      // MCP server: the command is missing (under Windows `cmd.exe` reports
+      // it this way rather than with ENOENT), or it fails on its own. The
+      // reason is kept, so the caller reads it instead of a bare
+      // `Connection closed`, and it says why: `code: MCP_SERVER_EXITED`.
+      if (!this.answered && !this.closeReason && !this.closed) {
+        const how =
+          end.kind === 'exit'
+            ? `exit code ${end.exitCode}`
+            : end.kind === 'error'
+              ? end.message
+              : 'a signal';
+        this.closeReason = Object.assign(
+          new Error(
+            `the MCP server command "${this.params.command}" ended (${how}) before answering`,
+          ),
+          { code: 'MCP_SERVER_EXITED' },
+        );
+      }
       this.proc = null;
       this.onclose?.();
     });

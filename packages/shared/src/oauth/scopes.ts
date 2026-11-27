@@ -11,10 +11,12 @@
 //
 // Pure functions: the web (connector card, binding actions, operations grid,
 // credential wizard) and the runner (a job's tool list) read the same answer.
-// The next layer (a connection's live state: refresh failures, reachability)
-// adds kinds to `ConnectorAccess`; it does not replace this computation.
+// A connection's live state (connection-state.ts: a refused grant, an
+// unreachable provider, a secret that cannot be decrypted) enters the same
+// answer as three more kinds of `ConnectorAccess`: there is one decision.
 
 import type { OperationDescriptor, ScopeRequirement } from '../types/operation';
+import { NOT_CHECKED, isOffered, type ConnectionState } from '../connection-state';
 
 /**
  * The scopes of a grant as the provider wrote them: OAuth 2.0 (RFC 6749 §3.3)
@@ -105,12 +107,18 @@ export function requiredScopes(operations: readonly OperationDescriptor[]): stri
 }
 
 /**
- * What a connector can do with a grant.
+ * What a connector can do with a grant, on a connection in a given state.
  *
  * `ready`: every operation's rights are granted.
  * `needs_access`: some are not. `grantedOperations` are still offered;
  * `missingOperations` are not, and `missingScopes` is what a new
  * authorisation for this connector must add.
+ * `unreachable`: the provider could not be reached at the last attempt. The
+ * granted operations are still offered (the next attempt may succeed after
+ * `connection.retryAfter`); the grant's own verdict is kept.
+ * `needs_reauth` / `broken`: no operation can succeed (the grant was
+ * refused, the credential is gone, its secret cannot be read): nothing is
+ * offered, and `connection` says why.
  */
 export type ConnectorAccess =
   | { kind: 'ready'; grantedOperations: string[] }
@@ -119,13 +127,25 @@ export type ConnectorAccess =
       grantedOperations: string[];
       missingOperations: string[];
       missingScopes: string[];
-    };
+    }
+  | {
+      kind: 'unreachable';
+      grantedOperations: string[];
+      missingOperations: string[];
+      missingScopes: string[];
+      connection: ConnectionState;
+    }
+  | { kind: 'needs_reauth' | 'broken'; connection: ConnectionState };
 
 export function connectorAccess(
   operations: readonly OperationDescriptor[],
   granted: readonly string[],
   form?: GrantedScopeForm,
+  connection: ConnectionState = NOT_CHECKED,
 ): ConnectorAccess {
+  if (!isOffered(connection)) {
+    return { kind: connection.state as 'needs_reauth' | 'broken', connection };
+  }
   const grantedOperations: string[] = [];
   const missingOperations: string[] = [];
   const missing: string[][] = [];
@@ -138,13 +158,45 @@ export function connectorAccess(
       missing.push(lacking);
     }
   }
+  const missingScopes = unionScopes(...missing);
+  if (connection.state === 'unreachable') {
+    return { kind: 'unreachable', grantedOperations, missingOperations, missingScopes, connection };
+  }
   if (missingOperations.length === 0) return { kind: 'ready', grantedOperations };
-  return {
-    kind: 'needs_access',
-    grantedOperations,
-    missingOperations,
-    missingScopes: unionScopes(...missing),
-  };
+  return { kind: 'needs_access', grantedOperations, missingOperations, missingScopes };
+}
+
+/** The operations a job is given under an access: none when nothing can succeed. */
+export function offeredOperations(access: ConnectorAccess): string[] {
+  return 'grantedOperations' in access ? access.grantedOperations : [];
+}
+
+/**
+ * The connection state an access amounts to, in the closed set every source
+ * shares: a missing right is `needs_reauth` (only a new authorisation adds
+ * it), with the provider's scope names as the detail.
+ */
+export function connectionOfAccess(
+  access: ConnectorAccess,
+  observed: ConnectionState = NOT_CHECKED,
+): ConnectionState {
+  switch (access.kind) {
+    case 'ready':
+      return observed.state === 'working' ? observed : NOT_CHECKED;
+    case 'needs_access':
+      // A structural fact read from the grant, not an observation.
+      return {
+        state: 'needs_reauth',
+        cause: 'rights_missing',
+        detail: access.missingScopes.join(' '),
+        observedAt: null,
+        retryAfter: null,
+      };
+    case 'unreachable':
+    case 'needs_reauth':
+    case 'broken':
+      return access.connection;
+  }
 }
 
 /**

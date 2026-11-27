@@ -18,7 +18,7 @@ import ScopeDisclosure from '@/components/ScopeDisclosure.tsx';
 import type { CompatibleCredential } from './ConnectorForm.tsx';
 import { bindingRefusal } from '@nodal-agents/shared';
 import Banner from '@/components/ui/Banner.tsx';
-import AddAccessButton from './AddAccessButton.tsx';
+import ReauthoriseButton from './ReauthoriseButton.tsx';
 
 interface Props {
   catalogItem: ConnectorCatalogItem;
@@ -195,7 +195,8 @@ export default function ConnectorAddForm({
             or create new
           </PrimaryButton>
           {refusal && selected ? (
-            <AddAccessButton
+            <ReauthoriseButton
+              label="Add access"
               size="md"
               credentialType={selected.type}
               connector={catalogItem.slug}

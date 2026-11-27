@@ -100,6 +100,13 @@ interface Props {
    */
   returnToConnectorSlug?: string;
   /**
+   * The connector INSTANCE the new credential repairs (Reconnect on a
+   * connector whose credential was deleted or cannot be read): the return
+   * binds the credential to that row instead of creating a connector, so its
+   * agents keep it. Needs `returnToConnectorSlug`.
+   */
+  rebindConnectorId?: string;
+  /**
    * How far the connector's token reaches, in the product's own words — the
    * `scopeDisclosure` of the catalog entry the user clicked, passed straight
    * through (the wizard never decides which provider is wide; the connector
@@ -115,6 +122,7 @@ interface Props {
 export default function CredentialWizard({
   initialType,
   returnToConnectorSlug,
+  rebindConnectorId,
   scopeDisclosure,
   onClose,
 }: Props) {
@@ -154,9 +162,12 @@ export default function CredentialWizard({
   const requestedScopes = connector ? (getOAuthProvider(connector)?.scopes ?? []) : [];
 
   // returnTo value propagated into the OAuth state cookie.
-  const returnTo = returnToConnectorSlug
-    ? `/connectors?connectorSlug=${returnToConnectorSlug}`
-    : '/credentials';
+  const returnTo =
+    returnToConnectorSlug && rebindConnectorId
+      ? `/connectors?rebind=${rebindConnectorId}&connected=${returnToConnectorSlug}`
+      : returnToConnectorSlug
+        ? `/connectors?connectorSlug=${returnToConnectorSlug}`
+        : '/credentials';
 
   const formAction = selectedType ? `/api/oauth/${selectedType}/start` : '#';
   const title =

@@ -204,6 +204,12 @@ import { selectVerificationRuns } from './verification-runs-query.ts';
 import { lastReviewVerdict } from './review-state.ts';
 import { readJobRoots } from './job-lineage.ts';
 import { chatFailureText } from './chat-failure.ts';
+import {
+  clearConnectionState,
+  readConnectionState,
+  readConnectionStates,
+  recordConnectionState,
+} from '@nodal-agents/db';
 import type {
   JobTriggerContext,
   AnyDrizzleDb,
@@ -252,8 +258,16 @@ import type {
   CliModelUsage,
   CredentialType,
   ConnectorAccess,
+  ConnectionState,
   OperationDescriptor,
   ConstatedBy,
+} from '@nodal-agents/shared';
+import {
+  NOT_CHECKED,
+  channelConnectionId,
+  connectionKey,
+  connectionOfAccess,
+  connectorConnection,
 } from '@nodal-agents/shared';
 import {
   type RootGrants,
@@ -3286,6 +3300,8 @@ export async function configureAgentChannelAction(
     revalidatePath('/agents');
     revalidatePath(`/agents/${agentId}/channels`);
 
+    // The platform just accepted the token: the link's state is `working`.
+    await recordChannelAuthorised(agent.id, 'telegram');
     return ok({
       agentId: agent.id,
       agentSlug: agent.slug,
@@ -3363,6 +3379,8 @@ async function configureDiscordChannel(
   revalidatePath('/agents');
   revalidatePath(`/agents/${agentId}/channels`);
 
+  // The platform just accepted the token: the link's state is `working`.
+  await recordChannelAuthorised(agent.id, 'discord');
   return ok({
     agentId: agent.id,
     agentSlug: agent.slug,
@@ -3441,6 +3459,8 @@ async function configureSlackChannel(
   revalidatePath('/agents');
   revalidatePath(`/agents/${agentId}/channels`);
 
+  // The platform just accepted the token: the link's state is `working`.
+  await recordChannelAuthorised(agent.id, 'slack');
   return ok({
     agentId: agent.id,
     agentSlug: agent.slug,
@@ -3764,7 +3784,40 @@ export type TelegramConfigRow = {
   status: TelegramConfigStatus;
   botUsername: string | null;
   lastSeenChatIdTelegram: string | null;
+  /** What the channel's link last learnt (the runner's poller, the connect). */
+  link: ConnectionState;
 };
+
+/**
+ * A connect validated the token with the platform: the link is `working`
+ * (authorised), whatever the runner last recorded. The runner's next poll or
+ * socket writes what it learns after that.
+ */
+async function recordChannelAuthorised(
+  agentId: string,
+  channel: MessagingChannelKind,
+): Promise<void> {
+  await recordConnectionState(
+    getDb(),
+    { kind: 'channel', id: channelConnectionId(agentId, channel) },
+    {
+      state: 'working',
+      cause: 'authorised',
+      detail: null,
+      observedAt: new Date(),
+      retryAfter: null,
+    },
+  );
+}
+
+/** The state of an agent's link to a channel, as the runner records it. */
+async function channelLinkState(
+  db: AnyDrizzleDb,
+  agentId: string,
+  channel: MessagingChannelKind,
+): Promise<ConnectionState> {
+  return readConnectionState(db, { kind: 'channel', id: channelConnectionId(agentId, channel) });
+}
 
 export async function getAgentTelegramConfigAction(
   agentId: string,
@@ -3797,6 +3850,7 @@ export async function getAgentTelegramConfigAction(
       status: row.botToken ? 'connected' : 'disconnected',
       botUsername: row.botUsername,
       lastSeenChatIdTelegram: row.lastSeenChatIdTelegram,
+      link: await channelLinkState(db, row.id, 'telegram'),
     });
   } catch (err) {
     console.error('[getAgentTelegramConfigAction]', err);
@@ -4034,6 +4088,8 @@ export type DiscordConfigRow = {
   status: DiscordConfigStatus;
   /** "username#id" (or bare id if the bot has no username), display-only. */
   identityLabel: string | null;
+  /** What the channel's link last learnt. */
+  link: ConnectionState;
 };
 
 /** Discord's connection detail for its Channels card — mirrors
@@ -4067,6 +4123,7 @@ export async function getAgentDiscordConfigAction(
       agentName: agent.name,
       status: binding?.enabled ? 'connected' : 'disconnected',
       identityLabel,
+      link: await channelLinkState(getDb(), agent.id, 'discord'),
     });
   } catch (err) {
     console.error('[getAgentDiscordConfigAction]', err);
@@ -4089,6 +4146,8 @@ export type SlackConfigRow = {
   status: SlackConfigStatus;
   /** "username#id" (or bare id if the bot has no username), display-only. */
   identityLabel: string | null;
+  /** What the channel's link last learnt (the runner's socket). */
+  link: ConnectionState;
 };
 
 /** Slack's connection detail for its Channels card — mirrors
@@ -4122,6 +4181,7 @@ export async function getAgentSlackConfigAction(
       agentName: agent.name,
       status: binding?.enabled ? 'connected' : 'disconnected',
       identityLabel,
+      link: await channelLinkState(getDb(), agent.id, 'slack'),
     });
   } catch (err) {
     console.error('[getAgentSlackConfigAction]', err);
@@ -4622,11 +4682,17 @@ export type ConnectorRow = {
   credentialExpiresAt: Date | null;
   credentialScopes: string | null;
   /**
-   * What the connector may do under its credential's grant (the rule a job's
-   * tool list applies, `connectorAccessFor`). Null when no grant is in play:
-   * an API-key connector, or an OAuth connector with no credential.
+   * What the connector may do, under its credential's grant and on its
+   * connection's state (the rule a job's tool list applies,
+   * `connectorAccessFor`). Null only for a connector this version has no
+   * adapter for.
    */
   access: ConnectorAccess | null;
+  /**
+   * The connection's state, from the same rows and the same rule a job reads
+   * (`connectorConnection`): what the status pill and its reason say.
+   */
+  connection: ConnectionState;
   createdAt: Date | null;
   updatedAt: Date | null;
 };
@@ -4649,6 +4715,16 @@ export type ConnectorsListResponse = {
   instances: ConnectorRow[];
   catalog: ConnectorCatalogItem[];
 };
+
+/** Whether this installation can read an API key (it holds the key it was encrypted with). */
+function apiKeyReadable(stored: string): boolean {
+  try {
+    decrypt(stored);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 export async function listConnectorsAction(): Promise<ActionResult<ConnectorsListResponse>> {
   try {
@@ -4680,6 +4756,9 @@ export async function listConnectorsAction(): Promise<ActionResult<ConnectorsLis
       scopes: string | null;
     };
     const credDisplayById = new Map<string, CredDisplayFields>();
+    // A payload this installation cannot decrypt is a state (`broken`), shown
+    // as such, never a connector listed as normal with an empty account.
+    const unreadableCredentials = new Set<string>();
     for (const cred of credRows) {
       try {
         const raw = cred.payload;
@@ -4693,16 +4772,47 @@ export async function listConnectorsAction(): Promise<ActionResult<ConnectorsLis
               : null,
           scopes: typeof parsed['scopes'] === 'string' ? parsed['scopes'] : null,
         });
-      } catch {
+      } catch (err) {
+        console.error(
+          `[listConnectorsAction] credential ${cred.id} cannot be decrypted: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+        unreadableCredentials.add(cred.id);
         credDisplayById.set(cred.id, { accountName: null, expiresAt: null, scopes: null });
       }
     }
+
+    // What was learnt about each connector and each credential it uses.
+    const stored = await readConnectionStates(db, [
+      ...rows.map((r) => ({ kind: 'connector' as const, id: r.id })),
+      ...credentialIds.map((id) => ({ kind: 'credential' as const, id })),
+    ]);
 
     // Map every connector row to a flat ConnectorRow — multi-instance: several
     // rows can share the same slug.
     const instances: ConnectorRow[] = rows.map((row) => {
       const cred = row.credentialId ? credById.get(row.credentialId) : undefined;
       const display = row.credentialId ? (credDisplayById.get(row.credentialId) ?? null) : null;
+      const entry = ADAPTER_REGISTRY[row.slug];
+      const usesKey = entry ? entry.credentialType === 'api_key' : row.authType !== 'oauth2';
+      let secret: 'absent' | 'unreadable' | 'readable';
+      if (usesKey) {
+        secret = !row.apiKey ? 'absent' : apiKeyReadable(row.apiKey) ? 'readable' : 'unreadable';
+      } else {
+        secret = !cred ? 'absent' : unreadableCredentials.has(cred.id) ? 'unreadable' : 'readable';
+      }
+      const connection = connectorConnection({
+        secretKind: usesKey ? 'api_key' : 'credential',
+        secret,
+        stored: [
+          stored.get(connectionKey({ kind: 'connector', id: row.id }))!,
+          ...(cred ? [stored.get(connectionKey({ kind: 'credential', id: cred.id }))!] : []),
+        ],
+      });
+      const access = entry
+        ? connectorAccessFor(row.slug, usesKey ? null : (display?.scopes ?? null), connection)
+        : null;
       return {
         id: row.id,
         slug: row.slug,
@@ -4716,10 +4826,8 @@ export async function listConnectorsAction(): Promise<ActionResult<ConnectorsLis
         credentialAccountName: display?.accountName ?? null,
         credentialExpiresAt: display?.expiresAt ?? null,
         credentialScopes: display?.scopes ?? null,
-        access:
-          row.authType === 'oauth2' && display?.scopes != null && ADAPTER_REGISTRY[row.slug]
-            ? connectorAccessFor(row.slug, display.scopes)
-            : null,
+        access,
+        connection: access ? connectionOfAccess(access, connection) : connection,
         createdAt: row.createdAt,
         updatedAt: row.updatedAt,
       };
@@ -4828,9 +4936,16 @@ export type McpServerInstance = {
   slug: string;
   name: string;
   active: boolean;
+  /** The row's own transport (a custom server has no catalog entry to read it from). */
+  transport: 'http' | 'stdio';
   hasApiKey: boolean;
   apiKeyLast4: string | null;
   toolCount: number;
+  /**
+   * What the last connection learnt (the job's connect, the dashboard's
+   * verification), as the job reads it before connecting.
+   */
+  connection: ConnectionState;
   createdAt: Date | null;
 };
 
@@ -4880,6 +4995,26 @@ export type McpServersListResponse = {
 };
 
 /**
+ * A connection the dashboard just made to an MCP server succeeded (its create,
+ * its key rotation, its configuration edit all verify by connecting): the
+ * server's state is `working`. This is what lets a server the runner found
+ * refusing its key, or unable to start, be connected again by the next job.
+ */
+async function recordMcpVerified(mcpServerId: string): Promise<void> {
+  await recordConnectionState(
+    getDb(),
+    { kind: 'mcp_server', id: mcpServerId },
+    {
+      state: 'working',
+      cause: 'authorised',
+      detail: null,
+      observedAt: new Date(),
+      retryAfter: null,
+    },
+  );
+}
+
+/**
  * Return every mcp_servers row for the entity (multi-instance: several
  * per slug allowed) plus the static MCP_CATALOG for the marketplace.
  * Never returns the encrypted key.
@@ -4893,14 +5028,20 @@ export async function listMcpServersAction(): Promise<ActionResult<McpServersLis
       .from(mcpServers)
       .where(eq(mcpServers.entityId, session.entityId));
 
+    const mcpStates = await readConnectionStates(
+      db,
+      rows.map((r) => ({ kind: 'mcp_server' as const, id: r.id })),
+    );
     const instances: McpServerInstance[] = rows.map((row) => ({
       id: row.id,
       slug: row.slug,
       name: row.name,
       active: row.active ?? true,
+      transport: row.transport === 'stdio' ? 'stdio' : 'http',
       hasApiKey: !!row.apiKey,
       apiKeyLast4: row.apiKeyLast4 ?? null,
       toolCount: Array.isArray(row.availableTools) ? row.availableTools.length : 0,
+      connection: mcpStates.get(connectionKey({ kind: 'mcp_server', id: row.id })) ?? NOT_CHECKED,
       createdAt: row.createdAt,
     }));
 
@@ -5134,6 +5275,7 @@ export async function createMcpServerFromCatalogAction(
         })
         .returning({ id: mcpServers.id });
       if (!row) return fail('db_error', 'Insert returned no row');
+      await recordMcpVerified(row.id);
       revalidatePath('/mcp');
       return ok({ id: row.id });
     }
@@ -5190,6 +5332,7 @@ export async function createMcpServerFromCatalogAction(
       availableTools: stdioToolDescriptors,
       instructions: stdioInstructions,
     });
+    await recordMcpVerified(row.id);
     revalidatePath('/mcp');
     return ok({ id: row.id });
   } catch (err) {
@@ -5307,6 +5450,7 @@ export async function updateMcpServerApiKeyAction(
       })
       .where(eq(mcpServers.id, mcpServerId));
 
+    await recordMcpVerified(mcpServerId);
     revalidatePath('/mcp');
     return ok(undefined);
   } catch (err) {
@@ -5516,6 +5660,7 @@ export async function updateMcpServerConfigAction(
           updatedAt: new Date(),
         })
         .where(eq(mcpServers.id, mcpServerId));
+      await recordMcpVerified(mcpServerId);
       revalidatePath('/mcp');
       return ok(undefined);
     }
@@ -5600,6 +5745,7 @@ export async function updateMcpServerConfigAction(
         updatedAt: new Date(),
       })
       .where(eq(mcpServers.id, mcpServerId));
+    await recordMcpVerified(mcpServerId);
     revalidatePath('/mcp');
     return ok(undefined);
   } catch (err) {
@@ -6029,6 +6175,9 @@ export async function updateConnectorApiKeyAction(
       .update(connectors)
       .set({ apiKey: enc, updatedAt: new Date() })
       .where(eq(connectors.id, connectorId));
+    // The refused key is gone: what was learnt about it no longer holds, and
+    // the new key is `not_checked` until its first call.
+    await clearConnectionState(db, { kind: 'connector', id: connectorId });
     revalidatePath('/connectors');
     return ok(undefined);
   } catch (err) {
@@ -12942,11 +13091,13 @@ export type AgentConnectorRow = {
   enabledOperations: string[] | null;
   availableOperations: OperationDescriptor[];
   /**
-   * What the connector may do under its credential's grant: operations listed
-   * in `missingOperations` are not given to a job, whatever `enabledOperations`
-   * says. Null for API-key connectors and OAuth connectors with no credential.
+   * What the connector may do under its credential's grant and on its
+   * connection's state: only `offeredOperations(access)` are given to a job,
+   * whatever `enabledOperations` says.
    */
-  access: ConnectorAccess | null;
+  access: ConnectorAccess;
+  /** The connection's state (the job's rule, `connectorConnection`). */
+  connection: ConnectionState;
 };
 
 /**
@@ -12978,6 +13129,7 @@ export async function listAgentConnectorsAction(
         slug: connectors.slug,
         name: connectors.name,
         credentialId: connectors.credentialId,
+        apiKey: connectors.apiKey,
         active: connectors.active,
       })
       .from(connectors)
@@ -12993,6 +13145,7 @@ export async function listAgentConnectorsAction(
     ];
     const credNameById = new Map<string, string>();
     const credGrantById = new Map<string, string>();
+    const unreadableCredentials = new Set<string>();
     if (credentialIds.length > 0) {
       const credRows = await db
         .select({ id: credentials.id, name: credentials.name })
@@ -13004,6 +13157,7 @@ export async function listAgentConnectorsAction(
           // Unreadable payload: logged, and the grid shows no grant for it
           // rather than guessing one.
           console.error(`[listAgentConnectorsAction] credential ${id} unreadable`, err);
+          unreadableCredentials.add(id);
           return null;
         });
         if (decrypted) credGrantById.set(id, decrypted.payload.scopes);
@@ -13026,6 +13180,11 @@ export async function listAgentConnectorsAction(
       });
     }
 
+    const stored = await readConnectionStates(db, [
+      ...connectorRows.map((r) => ({ kind: 'connector' as const, id: r.id })),
+      ...credentialIds.map((id) => ({ kind: 'credential' as const, id })),
+    ]);
+
     // Filter to connectors that have an adapter entry — surfacing connectors
     // without an adapter would create dead assignments.
     const result: AgentConnectorRow[] = [];
@@ -13034,6 +13193,33 @@ export async function listAgentConnectorsAction(
       if (!adapterEntry) continue; // no adapter for this connector slug — skip
 
       const assignment = assignmentByConnectorId.get(row.id);
+      const usesKey = adapterEntry.credentialType === 'api_key';
+      const credentialId = row.credentialId;
+      const connection = connectorConnection({
+        secretKind: usesKey ? 'api_key' : 'credential',
+        secret: usesKey
+          ? !row.apiKey
+            ? 'absent'
+            : apiKeyReadable(row.apiKey)
+              ? 'readable'
+              : 'unreadable'
+          : !credentialId || !credNameById.has(credentialId)
+            ? 'absent'
+            : unreadableCredentials.has(credentialId)
+              ? 'unreadable'
+              : 'readable',
+        stored: [
+          stored.get(connectionKey({ kind: 'connector', id: row.id }))!,
+          ...(credentialId && credNameById.has(credentialId)
+            ? [stored.get(connectionKey({ kind: 'credential', id: credentialId }))!]
+            : []),
+        ],
+      });
+      const access = connectorAccessFor(
+        row.slug,
+        usesKey || !credentialId ? null : (credGrantById.get(credentialId) ?? null),
+        connection,
+      );
 
       result.push({
         connectorId: row.id,
@@ -13043,12 +13229,8 @@ export async function listAgentConnectorsAction(
         assigned: assignment !== undefined,
         enabledOperations: assignment?.enabledOperations ?? null,
         availableOperations: adapterEntry.operations,
-        access:
-          adapterEntry.credentialType !== 'api_key' &&
-          row.credentialId &&
-          credGrantById.has(row.credentialId)
-            ? connectorAccessFor(row.slug, credGrantById.get(row.credentialId))
-            : null,
+        access,
+        connection: connectionOfAccess(access, connection),
       });
     }
 

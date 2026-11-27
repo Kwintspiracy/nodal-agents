@@ -18,7 +18,12 @@
 import 'server-only';
 import { revalidatePath } from 'next/cache';
 import { getDb } from './server.ts';
-import { decryptCredentialForDisplay, eq, refreshAndPersistCredential } from '@nodal-agents/db';
+import {
+  decryptCredentialForDisplay,
+  eq,
+  recordConnectionState,
+  refreshAndPersistCredential,
+} from '@nodal-agents/db';
 import { credentials } from '@nodal-agents/db';
 import { encrypt, isEncrypted } from '@nodal-agents/secrets';
 import type {
@@ -29,6 +34,26 @@ import type {
 } from '@nodal-agents/shared';
 
 export type OauthPayload = GoogleOauthPayload | NotionOauthPayload | AirtableOauthPayload;
+
+/**
+ * The provider has just granted this credential: its state is `working`
+ * (authorised), whatever it was. This is the trigger of the next attempt
+ * after a refused grant: nothing retries a grant the provider ended, the
+ * person authorising again does.
+ */
+async function recordAuthorised(credentialId: string): Promise<void> {
+  await recordConnectionState(
+    getDb(),
+    { kind: 'credential', id: credentialId },
+    {
+      state: 'working',
+      cause: 'authorised',
+      detail: null,
+      observedAt: new Date(),
+      retryAfter: null,
+    },
+  );
+}
 
 /**
  * Thin wrapper over refreshAndPersistCredential (from @nodal-agents/db) that uses
@@ -80,6 +105,7 @@ export async function persistCredentialFromOauthFlow(opts: {
   if (!row) {
     throw new Error('persistCredentialFromOauthFlow: insert returned no row');
   }
+  await recordAuthorised(row.id);
 
   revalidatePath('/credentials');
   return { id: row.id };
@@ -102,10 +128,11 @@ export class CredentialAccountMismatchError extends Error {
 
 /**
  * Replace the grant of an existing credential after an authorisation that
- * added access to it: new tokens, and the scopes the provider granted this
- * time (which cover what it held, since the start asked for the union).
- * Name and connectors stay. A refresh token the provider did not reissue is
- * kept.
+ * added access to it or reconnected it: new tokens, and the scopes the
+ * provider granted this time (which cover what it held, since the start asked
+ * for the union). Name and connectors stay, and the credential is `working`
+ * again: every connector bound to it, and every agent holding one, works at
+ * its next job. A refresh token the provider did not reissue is kept.
  *
  * NOT a Server Action — see module header. Only the OAuth callback route calls
  * this, for a credential id it read from its own signed state cookie.
@@ -141,6 +168,7 @@ export async function updateCredentialGrantFromOauthFlow(opts: {
     .update(credentials)
     .set({ payload: encrypt(JSON.stringify(merged)), updatedAt: new Date() })
     .where(eq(credentials.id, credentialId));
+  await recordAuthorised(credentialId);
   revalidatePath('/credentials');
   revalidatePath('/connectors');
 }

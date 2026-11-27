@@ -27,6 +27,7 @@ export * from './types/operation';
 export * from './types/cli-usage';
 export * from './oauth/providers';
 export * from './oauth/scopes';
+export * from './connection-state';
 export * from './root-agent';
 export * from './system-prompt-cache';
 export * from './connector-catalog';

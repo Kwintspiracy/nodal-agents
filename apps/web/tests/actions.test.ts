@@ -809,6 +809,8 @@ describe('Discord channel actions (D3)', () => {
       selectQueue: [
         [{ id: AGENT_ID, slug: 'agent-d4', name: 'Agent D4' }],
         [{ enabled: true, botIdentity: { id: '111222333444555666', username: 'nodalbot' } }],
+        // connection_states: nothing learnt about the link yet.
+        [],
       ],
     }) as typeof currentDb;
     const { getAgentDiscordConfigAction } = await import('../src/lib/actions.ts');
@@ -817,6 +819,7 @@ describe('Discord channel actions (D3)', () => {
     if (!r.ok) return;
     expect(r.data.status).toBe('connected');
     expect(r.data.identityLabel).toBe('nodalbot#111222333444555666');
+    expect(r.data.link).toMatchObject({ state: 'working', cause: 'not_checked' });
   });
 
   it('getChannelAllowedConversationsAction lists a channel-neutral allowlist for discord', async () => {
@@ -1001,6 +1004,8 @@ describe('Slack channel actions (K3)', () => {
       selectQueue: [
         [{ id: AGENT_ID, slug: 'agent-s4', name: 'Agent S4' }],
         [{ enabled: true, botIdentity: { id: 'U9998887776', username: 'nodalbot' } }],
+        // connection_states: nothing learnt about the link yet.
+        [],
       ],
     }) as typeof currentDb;
     const { getAgentSlackConfigAction } = await import('../src/lib/actions.ts');
@@ -1819,15 +1824,21 @@ describe('getAgentTelegramConfigAction', () => {
   });
 
   it('returns disconnected when agent has no token', async () => {
-    currentDb = makeDb([
-      {
-        id: 'aaaaaaaa-0000-0000-0000-000000000010',
-        slug: 'my-agent',
-        name: 'My Agent',
-        botToken: null,
-        botUsername: null,
-      },
-    ]) as typeof currentDb;
+    currentDb = makeDbMixed({
+      selectQueue: [
+        [
+          {
+            id: 'aaaaaaaa-0000-0000-0000-000000000010',
+            slug: 'my-agent',
+            name: 'My Agent',
+            botToken: null,
+            botUsername: null,
+          },
+        ],
+        // connection_states: nothing learnt about the link yet.
+        [],
+      ],
+    }) as typeof currentDb;
     const { getAgentTelegramConfigAction } = await import('../src/lib/actions.ts');
     const r = await getAgentTelegramConfigAction('aaaaaaaa-0000-0000-0000-000000000010');
     expect(r.ok).toBe(true);
@@ -1838,21 +1849,28 @@ describe('getAgentTelegramConfigAction', () => {
   });
 
   it('returns connected when agent has a token', async () => {
-    currentDb = makeDb([
-      {
-        id: 'aaaaaaaa-0000-0000-0000-000000000011',
-        slug: 'my-agent',
-        name: 'My Agent',
-        botToken: 'tok',
-        botUsername: 'my_bot',
-      },
-    ]) as typeof currentDb;
+    currentDb = makeDbMixed({
+      selectQueue: [
+        [
+          {
+            id: 'aaaaaaaa-0000-0000-0000-000000000011',
+            slug: 'my-agent',
+            name: 'My Agent',
+            botToken: 'tok',
+            botUsername: 'my_bot',
+          },
+        ],
+        // connection_states: nothing learnt about the link yet.
+        [],
+      ],
+    }) as typeof currentDb;
     const { getAgentTelegramConfigAction } = await import('../src/lib/actions.ts');
     const r = await getAgentTelegramConfigAction('aaaaaaaa-0000-0000-0000-000000000011');
     expect(r.ok).toBe(true);
     if (r.ok) {
       expect(r.data.status).toBe('connected');
       expect(r.data.botUsername).toBe('my_bot');
+      expect(r.data.link).toMatchObject({ state: 'working', cause: 'not_checked' });
     }
   });
 });
@@ -2453,23 +2471,29 @@ describe('listConnectorsAction', () => {
 
   it('attaches a connector row to its catalog slug', async () => {
     const id = 'aaaaaaaa-0000-0000-0000-000000000070';
-    currentDb = makeDb([
-      {
-        id,
-        slug: 'notion',
-        name: 'Notion',
-        authType: 'api_key',
-        active: true,
-        apiKey: 'secret_xxx',
-        oauthAccessToken: null,
-        oauthRefreshToken: null,
-        oauthClientId: null,
-        oauthAccountName: null,
-        oauthScopes: null,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      },
-    ]) as typeof currentDb;
+    currentDb = makeDbMixed({
+      selectQueue: [
+        [
+          {
+            id,
+            slug: 'notion',
+            name: 'Notion',
+            authType: 'api_key',
+            active: true,
+            apiKey: 'secret_xxx',
+            oauthAccessToken: null,
+            oauthRefreshToken: null,
+            oauthClientId: null,
+            oauthAccountName: null,
+            oauthScopes: null,
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          },
+        ],
+        // connection_states: nothing learnt yet.
+        [],
+      ],
+    }) as typeof currentDb;
     const { listConnectorsAction } = await import('../src/lib/actions.ts');
     const r = await listConnectorsAction();
     expect(r.ok).toBe(true);
@@ -6410,9 +6434,11 @@ describe('listAgentConnectorsAction — db path', () => {
     // it" branch, not to pin a specific catalog entry. (Brique 34quinquies
     // shipped concrete adapters for every real catalog slug.)
     const fakeSlug = 'unregistered-test-slug';
-    currentDb = makeDb([
-      { id: agentId, slug: fakeSlug, name: 'Fake', credentialId: null, active: true },
-    ]) as typeof currentDb;
+    const fakeRow = { id: agentId, slug: fakeSlug, name: 'Fake', credentialId: null, active: true };
+    // agent, connectors, assignments, connection_states.
+    currentDb = makeDbMixed({
+      selectQueue: [[fakeRow], [fakeRow], [], []],
+    }) as typeof currentDb;
     const { listAgentConnectorsAction } = await import('../src/lib/actions.ts');
     const r = await listAgentConnectorsAction(agentId);
     expect(r.ok).toBe(true);
@@ -6427,22 +6453,29 @@ describe('listAgentConnectorsAction — db path', () => {
     const agentId = 'aaaaaaaa-0000-0000-0000-000000000006';
     const connectorId = 'cccccccc-0000-0000-0000-000000000001';
     // Return a connector with a slug that IS in ADAPTER_REGISTRY
-    currentDb = makeDb([
-      {
-        id: connectorId,
-        slug: 'google-drive',
-        name: 'My Drive',
-        credentialId: null,
-        active: true,
-        agentId,
-      },
-    ]) as typeof currentDb;
+    const driveRow = {
+      id: connectorId,
+      slug: 'google-drive',
+      name: 'My Drive',
+      credentialId: null,
+      active: true,
+      agentId,
+    };
+    // agent, connectors, assignments, connection_states.
+    currentDb = makeDbMixed({
+      selectQueue: [[driveRow], [driveRow], [], []],
+    }) as typeof currentDb;
     const { listAgentConnectorsAction } = await import('../src/lib/actions.ts');
     const r = await listAgentConnectorsAction(agentId);
     expect(r.ok).toBe(true);
     if (r.ok) {
       const driveEntry = r.data.find((c) => c.slug === 'google-drive');
       expect(driveEntry).toBeDefined();
+      // An OAuth connector with no credential cannot work: the tab says so.
+      expect(driveEntry!.connection).toMatchObject({
+        state: 'needs_reauth',
+        cause: 'credential_removed',
+      });
       expect(Array.isArray(driveEntry?.availableOperations)).toBe(true);
       expect(driveEntry!.availableOperations.length).toBeGreaterThan(0);
       // Every availableOperation must have required fields

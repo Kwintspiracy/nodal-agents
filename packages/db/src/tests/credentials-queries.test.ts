@@ -17,6 +17,7 @@ import {
   _resetMasterKeyCacheForTests,
   encrypt,
 } from '@nodal-agents/secrets';
+import { ConnectionUnavailableError } from '@nodal-agents/shared';
 import { spinUpTestDb, seedMinimal } from './helpers.ts';
 import type { TestDb } from './helpers.ts';
 import { credentials } from '../schema/index.ts';
@@ -174,24 +175,20 @@ describe('getDecryptedCredentialById', () => {
     fetchMock.mockRestore();
   });
 
-  it('stale-on-fail: returns stale payload when refresh fails (non-fatal)', async () => {
-    const soonExpiry = new Date(Date.now() + 30 * 1000).toISOString();
+  it('a refused refresh is never handed on as a working token', async () => {
+    const soonExpiry = new Date(Date.now() - 1000).toISOString();
     const row = await insertCredential(db, userId, {
       expiresAt: soonExpiry,
       accessToken: 'stale-access-token',
     });
 
-    // Make fetch fail
     const fetchMock = vi
       .spyOn(globalThis, 'fetch')
       .mockResolvedValueOnce(new Response('unauthorized', { status: 401 }));
 
-    const result = await getDecryptedCredentialById(db, row.id);
-
-    // Must still return a result (non-fatal fallback)
-    expect(result).not.toBeNull();
-    // The stale access token is returned (refresh failed, fall through)
-    expect(result!.payload.accessToken).toBe('stale-access-token');
+    const err = await getDecryptedCredentialById(db, row.id).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ConnectionUnavailableError);
+    expect((err as ConnectionUnavailableError).connection.state).toBe('needs_reauth');
 
     fetchMock.mockRestore();
   });
@@ -280,9 +277,12 @@ describe('refreshAndPersistCredential', () => {
         new DOMException('The operation was aborted due to timeout', 'TimeoutError'),
       );
 
-    await expect(refreshAndPersistCredential(db, row.id)).rejects.toThrow(
-      /timed out after 30000ms/,
-    );
+    const err = await refreshAndPersistCredential(db, row.id).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ConnectionUnavailableError);
+    expect((err as ConnectionUnavailableError).connection).toMatchObject({
+      state: 'unreachable',
+      cause: 'timeout',
+    });
 
     fetchMock.mockRestore();
   });

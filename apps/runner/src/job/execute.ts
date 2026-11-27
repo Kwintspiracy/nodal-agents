@@ -35,8 +35,9 @@ import {
   mcpServers as mcpServersTable,
   agentMcpServers as agentMcpServersTable,
   entities as entitiesTable,
-  getDecryptedCredentialById,
   getChannelBinding,
+  readConnectionStates,
+  recordConnectionState,
   readScheduleState,
   readAgentBudgetState,
   gatesACall,
@@ -67,13 +68,23 @@ import {
   openingMessages,
   personAnswersOfCalls,
   recordedPersonAnswers,
+  connectionKey,
+  connectionNoteForModel,
+  isOffered,
+  type ConnectionState,
 } from '@nodal-agents/shared';
-import { ADAPTER_REGISTRY, connectorAccessFor } from '@nodal-agents/runner-adapters';
+import { ADAPTER_REGISTRY } from '@nodal-agents/runner-adapters';
+import {
+  lendJobConnectors,
+  withheldNote,
+  type WithheldConnection,
+} from './connector-connections.ts';
 import {
   createMcpTools,
   createLazyMcpTools,
   slugToPrefix,
   connectMcp,
+  mcpConnectionFailure,
   type McpServerDiscovery,
   type McpToolset,
 } from '@nodal-agents/adapter-mcp';
@@ -141,7 +152,6 @@ import type {
   ApprovalGateRequest,
   ToolExecutionResult,
   ModelAttachmentInput,
-  ConnectorLending,
   LentTools,
 } from '@nodal-agents/tools';
 import type { ChannelKind } from '@nodal-agents/delivery';
@@ -2331,6 +2341,11 @@ async function runJobTracked(
 
   // ── 6. Build tool set ─────────────────────────────────────────────────────────
   let toolDefs: AnyToolDef[];
+  // The sources attached to the agent that this job cannot use (a refused
+  // grant, a deleted credential, a server that does not start), each with its
+  // state: the job's context names them, so the agent tells the person
+  // instead of failing a call or improvising.
+  const withheldConnections: WithheldConnection[] = [];
 
   // Capability tools: computed from agent's configured integrations.
   // These are instantiated per-job and merged directly into toolDefs/toolMap.
@@ -2469,7 +2484,6 @@ async function runJobTracked(
     // null enabledOperations → all tools; array → whitelist on tool.name.
     // An OAuth connector never offers an operation its credential's granted
     // scopes do not cover (`connectorAccessFor`, the dashboard's rule too).
-    // Adapters without a registry entry are skipped silently.
     //
     // Several connectors of one service are accounts of it (a personal and a
     // work mailbox): `lendConnectorTools` gives each of their tool names once,
@@ -2490,86 +2504,15 @@ async function runJobTracked(
       .where(eq(agentConnectorAssignments.agentId, agentRow.id))
       .orderBy(asc(connectorsTable.name), asc(connectorsTable.id));
 
-    const connectorLendings: ConnectorLending[] = [];
-    for (const ca of connectorAssignments) {
-      const entry = ADAPTER_REGISTRY[ca.slug];
-      if (!entry) continue; // no adapter for this catalog slug — skip silently
-
-      let accessToken: string | null = null;
-      let credentialIdForResolver: string | null = null;
-      // What identifies the account at the provider (the address the OAuth
-      // callback read), said to the model with the account's name.
-      let address: string | null = null;
-      // The operations the credential's grant does not cover are withheld:
-      // the provider would refuse every call (missing scope), so the agent is
-      // never offered them. Same rule as the dashboard's card and grid.
-      let withheld: ReadonlySet<string> = new Set();
-      if (entry.credentialType === 'api_key') {
-        // PAT / api_key path: decrypt connectors.api_key directly.
-        if (!ca.apiKey) continue;
-        try {
-          accessToken = decrypt(ca.apiKey);
-        } catch (err) {
-          // Log loudly, never skip silently (F3, audit followup / invariant #4).
-          // A single tampered row is one bad connector; a CORRUPT/ROTATED master
-          // key makes EVERY connector fail here, the agent ends up tool-less, and
-          // the LLM's next tool call surfaces as a misleading "whitelist
-          // violation" with no hint the real cause was decryption. This log is
-          // the breadcrumb that distinguishes the two.
-          console.error(
-            `[execute] connector '${ca.slug}' (${ca.connectorId}) api_key failed to decrypt ` +
-              `(tampered row, or wrong/rotated master key): ${
-                err instanceof Error ? err.message : String(err)
-              }`,
-          );
-          continue;
-        }
-      } else {
-        // OAuth path: token lives in credentials.payload.accessToken.
-        if (!ca.credentialId) continue;
-        const decrypted = await getDecryptedCredentialById(db, ca.credentialId);
-        if (!decrypted) continue;
-        accessToken = decrypted.payload.accessToken;
-        credentialIdForResolver = ca.credentialId;
-        address = decrypted.payload.accountName || null;
-        const access = connectorAccessFor(ca.slug, decrypted.payload.scopes);
-        if (access.kind === 'needs_access') withheld = new Set(access.missingOperations);
-      }
-
-      if (!accessToken) continue;
-
-      // M-12: some OAuth providers issue short-lived access tokens (Google
-      // ~1h, Airtable ~60min) while a job can run far longer (IDLE_RESET is
-      // 4h). For adapters registered with toolFactoryWithResolver (the 5
-      // Google adapters + airtable-oauth), pass a resolver that re-reads —
-      // and, via getDecryptedCredentialById's existing advisory-lock
-      // refresh — refreshes the credential before every network call,
-      // instead of the one-shot accessToken resolved above. Other adapters
-      // (notion-oauth — long-lived, no refresh; api_key entries — static
-      // PAT/API key) are unaffected — toolFactoryWithResolver is undefined
-      // for them.
-      const allTools =
-        entry.toolFactoryWithResolver && credentialIdForResolver
-          ? entry.toolFactoryWithResolver(async () => {
-              const fresh = await getDecryptedCredentialById(db, credentialIdForResolver);
-              if (!fresh) {
-                throw new Error(
-                  `Credential ${credentialIdForResolver} was removed mid-job — reconnect the connector.`,
-                );
-              }
-              return fresh.payload.accessToken;
-            })
-          : entry.toolFactory(accessToken);
-      const enabled = ca.enabledOperations;
-      const filtered = allTools.filter(
-        (t) => !withheld.has(t.name) && (enabled === null || enabled.includes(t.name)),
-      );
-
-      connectorLendings.push({
-        connector: { id: ca.connectorId, slug: ca.slug, name: ca.name, address },
-        tools: filtered,
-      });
-    }
+    // Nothing here reaches a provider: the connectors' rows and their stored
+    // states decide what is lent (`lendJobConnectors`); a connector that
+    // cannot work is named in the job's context with its state, never dropped
+    // in silence, and a credential is read when a tool calls its provider.
+    const { lendings: connectorLendings, withheld: withheldConnectors } = await lendJobConnectors(
+      db,
+      connectorAssignments,
+    );
+    withheldConnections.push(...withheldConnectors);
     // ────────────────────────────────────────────────────────────────────────
 
     // ── MCP server tools ─────────────────────────────────────────────────────
@@ -2649,13 +2592,79 @@ async function runJobTracked(
     // What each server lends THIS job, for the one-name-one-target rule below.
     const lentByServers: LentTools[] = [];
 
+    // A server's connection state (connection_states), written where it is
+    // learnt: the connect below (eager or at the first tool call), and the
+    // dashboard's verification when the person sets it up again. A server
+    // the last attempt found refusing its key or unable to start is not
+    // connected again until then: it is named in the job's context instead.
+    const mcpStates = await readConnectionStates(
+      db,
+      mcpAssignments.map((ms) => ({ kind: 'mcp_server' as const, id: ms.id })),
+    );
+    const mcpRef = (id: string) => ({ kind: 'mcp_server' as const, id });
+    const recordMcpState = async (id: string, state: ConnectionState): Promise<void> => {
+      try {
+        await recordConnectionState(db, mcpRef(id), state);
+      } catch (err) {
+        console.error(
+          `[execute] recording state '${state.state}' of MCP server '${id}' failed: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+    };
+    const mcpConnected: ConnectionState = {
+      state: 'working',
+      cause: 'succeeded',
+      detail: null,
+      observedAt: null,
+      retryAfter: null,
+    };
+    const withholdMcp = (ms: { name: string }, connection: ConnectionState): void => {
+      withheldConnections.push({ kind: 'mcp_server', label: ms.name, account: null, connection });
+    };
+    const mcpFact = (cause: 'config_incomplete' | 'undecryptable'): ConnectionState => ({
+      state: 'broken',
+      cause,
+      detail: null,
+      observedAt: null,
+      retryAfter: null,
+    });
+
     for (const ms of mcpAssignments) {
+      const storedState = mcpStates.get(connectionKey(mcpRef(ms.id)))!;
+      if (!isOffered(storedState)) {
+        withholdMcp(ms, storedState);
+        continue;
+      }
+      // A lazy connect's outcome is the server's state, and a failure ends
+      // the tool's error with the sentence the next job's context will carry.
+      const lazyHooks = {
+        onConnected: async (live: McpServerDiscovery) => {
+          await recordMcpDiscovery(ms.id, live);
+          await recordMcpState(ms.id, { ...mcpConnected, observedAt: new Date() });
+        },
+        onConnectFailed: async (err: unknown) => {
+          const state = mcpConnectionFailure(err);
+          await recordMcpState(ms.id, state);
+          if (err instanceof Error) {
+            err.message = `${err.message} — ${connectionNoteForModel(
+              { label: ms.name, kind: 'mcp_server' },
+              state,
+            )}`;
+          }
+        },
+      };
       try {
         const availableTools = ms.availableTools;
         let toolset: McpToolset;
         if (ms.transport === 'stdio') {
           // stdio: command + args + env vars (each value encrypted).
-          if (!ms.command) continue; // bad row, skip silently
+          if (!ms.command) {
+            console.error(`[execute] MCP server '${ms.slug}' (${ms.id}) has no command; not lent`);
+            withholdMcp(ms, mcpFact('config_incomplete'));
+            continue;
+          }
           let decryptedEnv: Record<string, string>;
           try {
             // La lecture de `env_vars` que le banc fait aussi (#794).
@@ -2669,6 +2678,7 @@ async function runJobTracked(
                   err instanceof Error ? err.message : String(err)
                 }`,
             );
+            withholdMcp(ms, mcpFact('undecryptable'));
             continue;
           }
           const connectOpts = {
@@ -2683,12 +2693,11 @@ async function runJobTracked(
             processScope: jobProcessScope(jobId as string),
           };
           if (isUsableMcpToolCache(availableTools)) {
-            toolset = createLazyMcpTools(connectOpts, availableTools, {
-              onConnected: (live) => recordMcpDiscovery(ms.id, live),
-            });
+            toolset = createLazyMcpTools(connectOpts, availableTools, lazyHooks);
           } else {
             const connected = await createMcpTools(connectOpts);
             toolset = connected;
+            await recordMcpState(ms.id, { ...mcpConnected, observedAt: new Date() });
             // Auto-upgrade v1→v2: real descriptors are always non-empty
             // when createMcpTools succeeds (guarded here so a test double
             // that omits `descriptors` doesn't write a bogus cache).
@@ -2701,7 +2710,13 @@ async function runJobTracked(
           }
         } else {
           // http: URL + apiKey + auth metadata, all of which must be set.
-          if (!ms.url || !ms.apiKey || !ms.authScheme || !ms.authParamName) continue;
+          if (!ms.url || !ms.apiKey || !ms.authScheme || !ms.authParamName) {
+            console.error(
+              `[execute] MCP server '${ms.slug}' (${ms.id}) lacks its URL or key; not lent`,
+            );
+            withholdMcp(ms, mcpFact('config_incomplete'));
+            continue;
+          }
           let decryptedKey: string;
           try {
             decryptedKey = decrypt(ms.apiKey);
@@ -2714,6 +2729,7 @@ async function runJobTracked(
                   err instanceof Error ? err.message : String(err)
                 }`,
             );
+            withholdMcp(ms, mcpFact('undecryptable'));
             continue;
           }
           const connectOpts = {
@@ -2725,12 +2741,11 @@ async function runJobTracked(
             authParamName: ms.authParamName,
           };
           if (isUsableMcpToolCache(availableTools)) {
-            toolset = createLazyMcpTools(connectOpts, availableTools, {
-              onConnected: (live) => recordMcpDiscovery(ms.id, live),
-            });
+            toolset = createLazyMcpTools(connectOpts, availableTools, lazyHooks);
           } else {
             const connected = await createMcpTools(connectOpts);
             toolset = connected;
+            await recordMcpState(ms.id, { ...mcpConnected, observedAt: new Date() });
             // Auto-upgrade v1→v2: real descriptors are always non-empty
             // when createMcpTools succeeds (guarded here so a test double
             // that omits `descriptors` doesn't write a bogus cache).
@@ -2762,6 +2777,10 @@ async function runJobTracked(
           `[execute] MCP tool materialization failed for server '${ms.slug}' (${ms.id}): ` +
             `${err instanceof Error ? (err.stack ?? err.message) : String(err)}`,
         );
+        // The failure is the server's state, and the job's context names it.
+        const state = mcpConnectionFailure(err);
+        await recordMcpState(ms.id, state);
+        withholdMcp(ms, state);
         continue;
       }
     }
@@ -2942,6 +2961,9 @@ async function runJobTracked(
       ...(triggerWantsConfirmation && replyTo.to === 'channel' ? { notifyOnSuccess: true } : {}),
       availableToolNames: promptTools,
       toolIndex,
+      ...(withheldConnections.length > 0
+        ? { unavailableSources: withheldConnections.map(withheldNote) }
+        : {}),
     });
     await db
       .update(agentJobs)

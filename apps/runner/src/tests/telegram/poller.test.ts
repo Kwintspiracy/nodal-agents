@@ -4,7 +4,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi, type MockInstance } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { eq, listenToTransitions } from '@nodal-agents/db';
+import { eq, listenToTransitions, readConnectionState } from '@nodal-agents/db';
+import { channelConnectionId } from '@nodal-agents/shared';
 import {
   agents,
   agentJobs,
@@ -248,6 +249,75 @@ describe('runTelegramPoller', () => {
     // No jobs created
     const jobs = await db.select().from(agentJobs).where(eq(agentJobs.channel, 'telegram'));
     expect(jobs.length).toBe(0);
+  });
+
+  it('a token the platform refuses is the link state needs_reauth; a poll that succeeds again puts it back to working @cap:parler-par-canal-externe/moteur', async () => {
+    const ref = { kind: 'channel' as const, id: channelConnectionId(seed.agentId, 'telegram') };
+    fetchSpy.mockResolvedValueOnce(fakeResponse(401, { ok: false, description: 'Unauthorized' }));
+    await runTelegramPoller({
+      agentId: seed.agentId,
+      agentEntityId: seed.entityId,
+      botToken: FAKE_TOKEN,
+      botUsername: 'test_bot',
+      startOffset: 0,
+      signal: new AbortController().signal,
+      deps: makeDeps(db),
+      env: testEnv,
+      longPollSeconds: 1,
+    });
+    expect(await readConnectionState(db, ref)).toMatchObject({
+      state: 'needs_reauth',
+      cause: 'grant_refused',
+      detail: 'telegram_invalid_token: Unauthorized',
+    });
+
+    // The person replaced the token; the poller's first good answer is the state.
+    const controller = new AbortController();
+    fetchSpy.mockImplementationOnce(() => {
+      controller.abort();
+      return Promise.resolve(fakeResponse(200, { ok: true, result: [] }));
+    });
+    await runTelegramPoller({
+      agentId: seed.agentId,
+      agentEntityId: seed.entityId,
+      botToken: FAKE_TOKEN,
+      botUsername: 'test_bot',
+      startOffset: 0,
+      signal: controller.signal,
+      deps: makeDeps(db),
+      env: testEnv,
+      longPollSeconds: 1,
+    });
+    expect(await readConnectionState(db, ref)).toMatchObject({
+      state: 'working',
+      cause: 'succeeded',
+    });
+  });
+
+  it('a platform that cannot be reached is the link state unreachable, recorded once per failure streak', async () => {
+    const ref = { kind: 'channel' as const, id: channelConnectionId(seed.agentId, 'telegram') };
+    const controller = new AbortController();
+    let states: string[] = [];
+    fetchSpy
+      .mockResolvedValueOnce(fakeResponse(500, { ok: false, description: 'down' }))
+      .mockImplementationOnce(async () => {
+        states.push((await readConnectionState(db, ref)).state);
+        controller.abort();
+        return fakeResponse(200, { ok: true, result: [] });
+      });
+    await runTelegramPoller({
+      agentId: seed.agentId,
+      agentEntityId: seed.entityId,
+      botToken: FAKE_TOKEN,
+      botUsername: 'test_bot',
+      startOffset: 0,
+      signal: controller.signal,
+      deps: makeDeps(db),
+      env: testEnv,
+      longPollSeconds: 1,
+    });
+    expect(states).toEqual(['unreachable']);
+    states = [];
   });
 
   it('backs off on transient failure then resumes; offset NOT advanced on failure', async () => {
