@@ -47,7 +47,7 @@ export function mcpConnectionFailure(err: unknown, now: Date = new Date()): Conn
   if (
     code === 'ENOENT' ||
     codeOf((err as { cause?: unknown } | null)?.cause) === 'ENOENT' ||
-    /ENOENT/.test(messageOf(err)) ||
+    /\bENOENT\b/.test(messageOf(err)) ||
     (err instanceof McpError &&
       (err.data as { reason?: unknown } | undefined)?.reason === 'MCP_SERVER_EXITED')
   ) {

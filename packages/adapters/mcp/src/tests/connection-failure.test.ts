@@ -46,6 +46,16 @@ describe('an MCP connection failure is its server state @cap:connecter-un-servic
     expect(state.detail).toContain('nodal-no-such-mcp-server-command');
   }, 30_000);
 
+  it('each form a missing command takes, whatever the system: broken', () => {
+    // Linux and macOS: spawn fails with ENOENT, its code kept or only in the text.
+    expect(mcpConnectionFailure(new Error('spawn nodal-x ENOENT')).state).toBe('broken');
+    expect(
+      mcpConnectionFailure(Object.assign(new Error('spawn nodal-x'), { code: 'ENOENT' })).state,
+    ).toBe('broken');
+    // A word that merely contains the letters is not the code.
+    expect(mcpConnectionFailure(new Error('XENOENTX happened')).state).toBe('unreachable');
+  });
+
   it('a server that refuses the key (401): needs_reauth', async () => {
     const url = await httpServer(401);
     const err = await failureOf({
