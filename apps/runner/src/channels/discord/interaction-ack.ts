@@ -5,6 +5,7 @@
 import { MessageFlags } from 'discord.js';
 import type { ButtonInteraction } from 'discord.js';
 import type { DiscordInteractionAck } from './types.ts';
+import { outboundText } from '@nodal-agents/shared';
 
 /** What the ack uses of a discord.js ButtonInteraction. */
 export type AckableInteraction = Pick<
@@ -17,15 +18,14 @@ export function makeDiscordInteractionAck(interaction: AckableInteraction): Disc
     async ephemeralReply(text: string): Promise<void> {
       // Déjà acquittée (deferUpdate, #637) : une interaction n'a qu'UNE
       // réponse initiale, la suite passe par un message de suivi.
-      const payload = { content: text, flags: MessageFlags.Ephemeral } as const;
       await (
         interaction.deferred || interaction.replied
-          ? interaction.followUp(payload)
-          : interaction.reply(payload)
+          ? interaction.followUp({ content: outboundText(text), flags: MessageFlags.Ephemeral })
+          : interaction.reply({ content: outboundText(text), flags: MessageFlags.Ephemeral })
       ).catch(() => {});
     },
     async resolveCard(text: string): Promise<void> {
-      await interaction.update({ content: text, components: [] }).catch(() => {});
+      await interaction.update({ content: outboundText(text), components: [] }).catch(() => {});
     },
     async acknowledge(): Promise<void> {
       await interaction.deferUpdate().catch(() => {});

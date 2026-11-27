@@ -21,6 +21,8 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { buildNodalMcpServer } from './server';
 import { GET_TASK_MAX_WAIT_SECONDS } from './tools';
 import { waitForRun } from './get-task';
+import { REDACTED_TEXT } from '@nodal-agents/shared';
+import { fakeBearer, fakeCredentialUrl, fakeSecret } from '@nodal-agents/test-kit';
 
 let db: TestDb;
 let seed: Awaited<ReturnType<typeof seedMinimal>>;
@@ -283,6 +285,65 @@ describe('get_task rend à l’appelant la réponse de son job @cap:parler-par-c
       status: 'running',
       waitingForPerson: [],
     });
+    await client.close();
+  });
+});
+
+describe('get_task rend ce que lit un client extérieur MASQUÉ @cap:parler-par-canal-externe/moteur', () => {
+  it('le résultat, l’erreur et l’entrée de chaque demande en attente ; la base garde le texte', async () => {
+    const ws = await workspace('masque');
+    const client = await connect(ws.agentId);
+    const jobId = await runTask(client, 'connecte la base');
+    const key = fakeSecret('github', 'Ab3Cd5Ef7Gh9Ij1Kl3Mn5Op7Qr9St1Uv3Wx5Yz');
+    const dsn = fakeCredentialUrl('postgres', 'app', 'Pw9Pw8Pw7Pw6', 'db.example.test/app');
+    const bearer = fakeBearer('Zz9Yy8Xx7Ww6Vv5Uu4Tt3Ss2Rr1');
+    await db
+      .update(agentJobs)
+      .set({ status: 'awaiting_approval', result: `Branché avec ${key}.`, error: `refus ${key}` })
+      .where(eq(agentJobs.id, jobId));
+    const fils = await child(jobId, ws, 'awaiting_approval');
+    await db.insert(approvalRequests).values([
+      {
+        entityId: ws.entityId,
+        jobId,
+        agentId: ws.agentId,
+        toolName: 'create_mcp',
+        toolInput: { name: 'pg', env: { DATABASE_URL: dsn }, note: 'ok' },
+        kind: 'approval',
+      },
+      {
+        entityId: ws.entityId,
+        jobId: fils,
+        agentId: ws.agentId,
+        toolName: 'run_command',
+        toolInput: { command: `curl -H 'Authorization: ${bearer}' https://example.test` },
+        kind: 'approval',
+      },
+    ]);
+
+    const raw = textOf(await client.callTool({ name: 'get_task', arguments: { jobId } }));
+    for (const secret of [key, dsn, bearer.slice(7)]) expect(raw).not.toContain(secret);
+    const r = JSON.parse(raw) as Reply;
+    expect(r.result).toBe(`Branché avec ${REDACTED_TEXT}.`);
+    expect(r.error).toBe(`refus ${REDACTED_TEXT}`);
+    const abouts = r.waitingForPerson.map((w) => w.about);
+    expect(abouts).toContainEqual({ name: 'pg', env: { DATABASE_URL: REDACTED_TEXT }, note: 'ok' });
+    expect(abouts).toContainEqual({
+      command: `curl -H 'Authorization: Bearer ${REDACTED_TEXT}' https://example.test`,
+    });
+
+    const [row] = await db.select().from(agentJobs).where(eq(agentJobs.id, jobId));
+    expect(row!.result).toContain(key);
+    await client.close();
+  });
+
+  it('une erreur rendue au client est masquée elle aussi', async () => {
+    const ws = await workspace('masque-erreur');
+    const client = await connect(ws.agentId);
+    const key = fakeSecret('github', 'Er1Er2Er3Er4Er5Er6Er7Er8Er9Er0Er1Er2');
+    const res = await client.callTool({ name: 'get_task', arguments: { jobId: key } });
+    expect(res.isError).toBe(true);
+    expect(textOf(res)).not.toContain(key);
     await client.close();
   });
 });

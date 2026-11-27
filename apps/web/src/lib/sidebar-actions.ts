@@ -40,6 +40,7 @@ import {
   approvalRequests,
   webhookTriggers,
   approvalsNewestFirst,
+  outboundColumn,
 } from '@nodal-agents/db';
 import { requireAuth } from '@nodal-agents/auth';
 import { explainApproval, readElicitationToolInput } from '@nodal-agents/shared';
@@ -229,7 +230,7 @@ export async function listSidebarRecentApprovalsAction(
         id: approvalRequests.id,
         agentName: agents.name,
         toolName: approvalRequests.toolName,
-        toolInput: approvalRequests.toolInput,
+        toolInput: outboundColumn(approvalRequests.toolInput),
         kind: approvalRequests.kind,
         status: approvalRequests.status,
         resolvedAt: approvalRequests.resolvedAt,

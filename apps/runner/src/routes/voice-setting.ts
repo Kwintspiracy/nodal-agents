@@ -58,8 +58,10 @@ import type { Context } from 'hono';
 import { z } from 'zod';
 import { readVoiceSetting, writeVoiceSetting } from '@nodal-agents/db';
 import {
+  outboundValue,
   VoiceSampleRequestSchema,
   VoiceSettingWriteSchema,
+  type Outbound,
   type SpeakingVoice,
   type VoiceSetting,
   type VoiceState,
@@ -146,7 +148,7 @@ async function speakProbe(
     entityId,
     (event, data) => {
       if (event !== 'audio') return;
-      const d = data as { base64: string; mimeType: string; sampleRate?: number };
+      const d = data as unknown as { base64: string; mimeType: string; sampleRate?: number };
       chunks.push({
         bytes: Uint8Array.from(Buffer.from(d.base64, 'base64')),
         mimeType: d.mimeType,
@@ -271,7 +273,7 @@ export async function voiceSampleRoute(c: Context, deps: Pick<RunnerDeps, 'db'>)
   let cancelVoice: (() => void) | null = null;
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
-      const send = (event: string, data: unknown): void => {
+      const send = (event: string, data: Outbound<unknown>): void => {
         if (gone) return;
         try {
           controller.enqueue(encoder.encode(sseEvent(event, data)));
@@ -294,10 +296,10 @@ export async function voiceSampleRoute(c: Context, deps: Pick<RunnerDeps, 'db'>)
             voice.end();
           }
           const speechError = voice ? await voice.done : opened.unavailable;
-          send('done', { speechError, ...opened.named });
+          send('done', outboundValue({ speechError, ...opened.named }));
         } catch (err) {
           console.error('[voiceSampleRoute] sample failed:', err);
-          send('error', { error: 'sample_failed' });
+          send('error', outboundValue({ error: 'sample_failed' }));
         } finally {
           timing.mark('done');
           console.warn(timing.line());

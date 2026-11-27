@@ -17,6 +17,8 @@ import {
   scanForProjectKeyCopies,
   scanForMcpToolPrefixCopies,
   scanForNodalHomeCopies,
+  OUTBOUND_BRAND_CAST,
+  scanForOutboundBypass,
 } from '@nodal-agents/test-kit';
 
 const srcDir = join(fileURLToPath(import.meta.url), '..', '..');
@@ -77,6 +79,15 @@ describe('architecture invariants', () => {
     assertNoViolations(
       'copie de projectKey',
       scanForProjectKeyCopies({ srcDir, skipFiles: ['project-key.ts'] }),
+    );
+  });
+});
+
+describe('the outbound seam is the only one that says a value went through it', () => {
+  it('no cast to `Outbound` outside outbound.ts', () => {
+    assertNoViolations(
+      'valeur dite sortie sans être passée par la couture',
+      scanForOutboundBypass({ srcDir, skipFiles: ['src/outbound.ts'] }, [OUTBOUND_BRAND_CAST]),
     );
   });
 });

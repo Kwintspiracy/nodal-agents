@@ -38,6 +38,8 @@ import {
   type TrialOptions,
 } from '../trial';
 import type { ForeignActivity } from '../stack';
+import { REDACTED_TEXT } from '@nodal-agents/shared';
+import { fakeSecret } from '@nodal-agents/test-kit';
 import type { ResearchSubject } from '../subjects';
 import type { AnyScenario } from '../types';
 import { scenarioToolsFingerprint } from '../scenario-tools';
@@ -524,6 +526,24 @@ describe('the answer a trial keeps is the one the caller read through get_task (
     const live = beforeCancel(after);
     const view: GetTaskReply = { jobId: live.rootId, status: 'running', result: null };
     expect(callerViewReasons(view, live)).toEqual([]);
+  });
+
+  it('a result holding a credential shape: get_task answers its outbound copy, and that copy agrees', () => {
+    // The MCP server answers through the outbound seam: the caller reads the
+    // masked copy of the head's result, never the stored bytes.
+    const green = load('question-green');
+    const key = fakeSecret('github', 'Ab3Cd5Ef7Gh9Ij1Kl3Mn5Op7Qr9St1Uv3Wx5Yz');
+    const facts: TreeFacts = {
+      ...green,
+      jobs: green.jobs.map((j) =>
+        j.id === green.rootId ? { ...j, result: `Done with ${key}` } : j,
+      ),
+    };
+    const view = { ...callerViewOf(facts), result: `Done with ${REDACTED_TEXT}` };
+    expect(callerViewReasons(view, facts)).toEqual([]);
+    expect(callerViewReasons({ ...view, result: `Done with ${key}x` }, facts)).toEqual([
+      'get_task returned another result than the root job holds',
+    ]);
   });
 
   it('a database read that fails while checking get_task is named as the bench failure, not get_task', async () => {
