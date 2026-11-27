@@ -506,7 +506,9 @@ export const RUNNER_NON_TERMINAL_SENDERS = [
   'approvals/elicitation-channel.ts',
   'notify/code-transitions.ts',
   'cron/run-schedules.ts',
-  'cron/reset-orphans.ts',
+  // `cron/reset-orphans.ts` n'y est plus (#1180) : la notice d'un job que le
+  // faucheur échoue passe par l'outbox, préparée par `failJob` comme toute fin
+  // d'échec ; son envoi direct sur Telegram est retiré.
   'telegram/poller.ts',
 ] as const;
 

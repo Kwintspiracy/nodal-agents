@@ -3993,11 +3993,10 @@ async function runJobTracked(
    * Fait partir un texte du HARNAIS sur un canal où seul un outil atteint
    * l'utilisateur — l'intention est écrite, `drainDeliveries` l'envoie.
    *
-   * Deux situations l'appellent, et c'est la même : le job a quelque chose que
-   * l'utilisateur DOIT lire, et rien ne l'a envoyé. Un échec de délégation
-   * qu'un parent n'a pas dit (PR #108), et la raison d'un job qui s'arrête
-   * quand ses rappels de livraison sont épuisés (issue #115). Dans les deux
-   * cas, la base portait le fait et le destinataire n'avait rien reçu.
+   * Le job FINIT et a quelque chose que l'utilisateur DOIT lire, que rien n'a
+   * envoyé : un échec de délégation qu'un parent n'a pas dit (PR #108). Un job
+   * qui ÉCHOUE ne passe pas par ici : sa notice est préparée par `failJob`,
+   * pour toute sortie (#1180).
    *
    * Texte de PLATEFORME, marqué comme tel, jamais la voix de l'agent
    * (invariant #2) — même nature que `[livraison effectuée : …]`. Une panne
@@ -4022,55 +4021,28 @@ async function runJobTracked(
   };
 
   /**
-   * L'ÉCHEC terminal et ce que le harnais a à en dire, commis ensemble
-   * (issue #116, résidu 3).
-   *
-   * Avant, ces deux gestes étaient séparés : `failJob` écrivait la ligne
-   * terminale, puis la notice se préparait après. Une panne entre les deux
-   * laissait un job fini avec rien à livrer, et rien ne pouvait le rattraper
-   * — le drain ne réclame que des lignes `prepared`, et il n'y en avait pas.
-   * C'est exactement la couture que `finalizeJobSuccess` tient du côté succès
-   * depuis #108 ; elle tient les deux côtés maintenant.
-   *
-   * Le canal est celui où va la réponse (`replyDestination`) : le canal du
-   * job, ou celui sur lequel le chat désigné a été résolu. Rien à
-   * dire, pas de canal à outil, pas de destinataire ⇒ l'échec s'écrit seul.
+   * L'ÉCHEC terminal avec l'explication que le harnais en donne : le résultat
+   * que la personne lit, sur la page du job et là où elle a fait sa demande.
+   * C'est `failJob` qui prépare la notice, dans la transaction qui pose
+   * `failed`, pour CHAQUE échec (#1180) : ce chemin ne décide plus si la
+   * personne est prévenue, il dit seulement ce que l'échec explique.
    */
-  const failJobWithHarnessNotice = async (
+  const failJobExplained = async (
     errorCode: string,
-    payload: string,
-    suffixeCle: string,
-    userMessage?: string,
+    userMessage: string,
     replaceResult = false,
     /** Les lignes de `userMessage` écrites par le runner (#562). */
     runnerNotes?: readonly string[],
   ): Promise<void> => {
-    const notice = harnessNoticeDelivery(payload);
-    await finalizeJobFailure(
-      db,
-      {
-        jobId: jobId as string,
-        errorCode,
-        stats: runStats(),
-        messages: await transcriptionFermee(messages),
-        ...(userMessage !== undefined ? { userMessage, replaceResult } : {}),
-        ...(runnerNotes ? { runnerNotes } : {}),
-        ...(notice
-          ? { delivery: { ...notice, idempotencyKey: `${jobId}:harness:${suffixeCle}` } }
-          : {}),
-      },
-      {
-        prepareDelivery: async (tx, d) =>
-          void (await prepareDelivery(tx, {
-            ...d,
-            channel: d.channel as Parameters<typeof prepareDelivery>[1]['channel'],
-          })),
-      },
-    );
-    if (!notice) return;
-    await drainDeliveries(db, { jobId: jobId as string }).catch((e: unknown) =>
-      console.error(`[execute] DELIVERY_DRAIN_FAILED job=${jobId}`, e),
-    );
+    await finalizeJobFailure(db, {
+      jobId: jobId as string,
+      errorCode,
+      stats: runStats(),
+      messages: await transcriptionFermee(messages),
+      userMessage,
+      replaceResult,
+      ...(runnerNotes && runnerNotes.length > 0 ? { runnerNotes } : {}),
+    });
   };
 
   /**
@@ -4118,14 +4090,7 @@ async function runJobTracked(
     const texte = (dejaEcrit?.result ?? '').trim() || reponseDuRun();
     const livrable = [texte, line].filter((t) => t !== '').join('\n\n');
     trace(DELIVERABLE_NOT_VERIFIED, { paths: items.map((i) => i.path) });
-    await failJobWithHarnessNotice(
-      DELIVERABLE_NOT_VERIFIED,
-      line,
-      DELIVERABLE_NOT_VERIFIED,
-      livrable,
-      true,
-      [line],
-    );
+    await failJobExplained(DELIVERABLE_NOT_VERIFIED, livrable, true, [line]);
     return {
       status: 'failed',
       error: DELIVERABLE_NOT_VERIFIED,
@@ -5685,13 +5650,11 @@ async function runJobTracked(
             // (constat 6). Ce que le harnais sait ici : ça s'est arrêté, rien
             // n'a été livré, et quel spécialiste n'a rien rendu. L'intention de
             // livrer est commise AVEC la ligne terminale (#116, résidu 3).
-            await failJobWithHarnessNotice(
-              'telegram_not_delivered',
-              [`[stopped: nothing was delivered on this channel]`, failedDelegationNotice()]
-                .filter(Boolean)
-                .join('\n\n'),
-              'not-delivered',
-            );
+            const arret = [
+              `[stopped: nothing was delivered on this channel]`,
+              failedDelegationNotice(),
+            ].filter(Boolean);
+            await failJobExplained('telegram_not_delivered', arret.join('\n\n'), false, arret);
             return { status: 'failed', error: 'telegram_not_delivered' };
           }
           // Une déclaration renvoyée et jamais refaite (#509) : répondre en
@@ -5716,7 +5679,6 @@ async function runJobTracked(
           const perteAvantFin = await droitPerdu();
           if (perteAvantFin) return await lacherLeJob(perteAvantFin, 'finalize');
           const noticeALivrer = harnessNoticeDelivery(failedDelegationNotice());
-          const cibleNotice = harnessNoticeTarget();
           // La réponse du job (#1083) : ce texte final, précédé, si le job est
           // passé par des tours de réparation, de la réponse donnée avant la
           // preuve et de ce que chaque réparation a dit. Sans réparation, c'est
@@ -5737,9 +5699,6 @@ async function runJobTracked(
               stats: runStats(),
               messages,
               ...(noticeALivrer ? { delivery: noticeALivrer } : {}),
-              // Un livrable déclaré non vérifié (#509) : sa ligne part vers le
-              // canal à outil, là où l'agent a pu dire « livré ».
-              ...(cibleNotice ? { noticeTarget: cibleNotice } : {}),
             },
             {
               prepareDelivery: async (tx, d) =>
@@ -6776,26 +6735,20 @@ async function runJobTracked(
           // lives in result (failJob fills it when no delivery tool already did).
           const errorMessage = shortBlockReason(reason);
           const resultMessage = reason || BLOCK_NO_REASON;
-          // La raison existe, et sur un canal à outil personne ne l'a envoyée si
-          // les rappels de livraison sont épuisés : le harnais la fait partir
-          // (issue #115). `toolDelivered` dit que l'agent l'a déjà dite — on ne
-          // double pas son message, et la notice devient alors vide, ce que la
-          // porte terminale lit comme « rien à livrer ».
+          // La raison de l'agent est le résultat de l'échec, suivie de la ligne
+          // des délégations arrêtées quand il y en a : c'est ce que la personne
+          // lit, sur la page du job et là où elle a demandé — la notice de
+          // l'échec, que `failJob` prépare pour toute sortie (#1180, #115).
           //
           // `errorMessage` vient du champ TYPÉ que le harnais a écrit lui-même
           // à partir de la raison de l'agent (`shortBlockReason`) : c'est un
-          // statut, pas une phrase relayée. La raison complète reste dans le
-          // résultat, que l'utilisateur voit sur l'écran du job. L'intention de
-          // livrer est commise AVEC la ligne terminale (#116, résidu 3).
-          await failJobWithHarnessNotice(
+          // statut, pas une phrase relayée.
+          const delegationsArretees = failedDelegationNotice();
+          await failJobExplained(
             errorMessage,
-            toolDelivered
-              ? ''
-              : [`[stopped: ${errorMessage}]`, failedDelegationNotice()]
-                  .filter(Boolean)
-                  .join('\n\n'),
-            'blocked',
-            resultMessage,
+            withFailedDelegationNotice(resultMessage),
+            false,
+            delegationsArretees === '' ? [] : [delegationsArretees],
           );
           trace('exit_blocked_via_return_result', { hasReason: reason !== '' });
           // Carry the reason so a delegating parent can relay WHY we stopped.
@@ -6899,13 +6852,11 @@ async function runJobTracked(
           trace('telegram_not_delivered', { turn, via: 'return_result_branch' });
           // Même chose sur ce chemin : les mots du harnais, pas ceux de l'agent,
           // et la livraison commise avec la ligne terminale (#116, résidu 3).
-          await failJobWithHarnessNotice(
-            'telegram_not_delivered',
-            [`[stopped: nothing was delivered on this channel]`, failedDelegationNotice()]
-              .filter(Boolean)
-              .join('\n\n'),
-            'not-delivered',
-          );
+          const arret = [
+            `[stopped: nothing was delivered on this channel]`,
+            failedDelegationNotice(),
+          ].filter(Boolean);
+          await failJobExplained('telegram_not_delivered', arret.join('\n\n'), false, arret);
           return { status: 'failed', error: 'telegram_not_delivered' };
         }
 
@@ -7147,7 +7098,6 @@ async function runJobTracked(
         const perteAvantFin = await droitPerdu();
         if (perteAvantFin) return await lacherLeJob(perteAvantFin, 'finalize');
         const noticeALivrer = harnessNoticeDelivery(failedDelegationNotice());
-        const cibleNotice = harnessNoticeTarget();
         const finalized = await finalizeJobSuccess(
           db,
           {
@@ -7166,9 +7116,6 @@ async function runJobTracked(
             stats: runStats(),
             messages,
             ...(noticeALivrer ? { delivery: noticeALivrer } : {}),
-            // Même canal que la notice du harnais : là où l'agent a pu dire
-            // « livré » (#509).
-            ...(cibleNotice ? { noticeTarget: cibleNotice } : {}),
           },
           {
             prepareDelivery: async (tx, d) =>

@@ -114,3 +114,19 @@ export function flattenTranscript(messages: unknown, result?: string | null): st
   if (typeof result === 'string' && result.trim()) out.push(result.trim());
   return toDbSafeString(out.join(' \n ').replace(/\s+/g, ' ').trim().slice(0, MAX_SEARCH_TEXT));
 }
+
+/**
+ * The text of a message, whatever its shape: a string, or the joined text parts.
+ * Here, with the other transcript readers, so that a reader of past answers
+ * (`thread-history.ts`) does not depend on the job's state machine.
+ */
+export function messageText(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  const parts: string[] = [];
+  for (const p of content) {
+    const part = p as { type?: unknown; text?: unknown } | null;
+    if (part && part.type === 'text' && typeof part.text === 'string') parts.push(part.text);
+  }
+  return parts.join('');
+}

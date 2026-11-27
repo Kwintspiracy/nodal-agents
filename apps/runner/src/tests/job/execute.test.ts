@@ -5320,16 +5320,21 @@ describe('incident 2026-09-28 replayed: the real 307-call turn runs none of its 
       .from(toolCalls)
       .where(eq(toolCalls.jobId, job!.id));
     expect(rows).toEqual([]);
-    // Nothing reached the owner: the Telegram transport sent nothing, no delivery row.
+    // None of the 307 calls reached the chat. What the person receives is the
+    // one notice of this failure (#1180): the failed row's result, prepared by
+    // the failure writer, and nothing else.
+    const [failedRow] = await incDb
+      .select({ result: agentJobs.result })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job!.id));
+    const notices = await incDb
+      .select({ payload: jobDeliveries.payload, outcome: jobDeliveries.outcome })
+      .from(jobDeliveries)
+      .where(eq(jobDeliveries.jobId, job!.id));
+    expect(notices.map((n) => n.payload)).toEqual([failedRow!.result]);
     expect(sendTelegramMessageMock.mock.calls.map((c) => (c[0] as { text: string }).text)).toEqual(
-      [],
+      notices[0]!.outcome === 'confirmed' ? [failedRow!.result] : [],
     );
-    expect(
-      await incDb
-        .select({ id: jobDeliveries.id })
-        .from(jobDeliveries)
-        .where(eq(jobDeliveries.jobId, job!.id)),
-    ).toEqual([]);
     // No delegation: no child job, and the Researcher has no job at all.
     expect(
       await incDb

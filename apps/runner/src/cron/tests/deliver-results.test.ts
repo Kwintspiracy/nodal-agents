@@ -668,7 +668,7 @@ describe('deliverCompletedRoots', () => {
     });
   });
 
-  it('T12 root blocked ⇒ failed via failJob, résultat compilé, zéro ligne job_deliveries, marqueur levé', async () => {
+  it('T12 root blocked ⇒ failed via failJob, résultat compilé, UNE notice (ce résultat) sur le chat de la demande, marqueur levé', async () => {
     sendTelegramMessageMock.mockClear();
     await allowChat('t12-blocked');
     const rootJob = await createRootJob();
@@ -686,8 +686,15 @@ describe('deliverCompletedRoots', () => {
     expect(root.completedAt).not.toBeNull();
     expect(root.finalizingAt).toBeNull();
     expect(root.result).toContain('ça a cassé');
-    expect(await deliveriesOf(rootJob.id)).toEqual([]);
-    expect(sendTelegramMessageMock).not.toHaveBeenCalled();
+    // #1180 : un root en échec prévient la personne, comme tout échec d'une
+    // tête — la notice est son résultat compilé, préparée par `failJob` dans
+    // la transaction de l'échec, puis envoyée sur le chat de la demande.
+    expect(await deliveriesOf(rootJob.id)).toEqual([
+      expect.objectContaining({ outcome: 'confirmed', payload: root.result, attempts: 1 }),
+    ]);
+    expect(sendTelegramMessageMock.mock.calls.map(([o]) => [o.chatId, o.text])).toEqual([
+      ['t12-blocked', root.result],
+    ]);
   });
 
   it('T12 root cancelled ⇒ cancelled + completedAt, marqueur levé', async () => {

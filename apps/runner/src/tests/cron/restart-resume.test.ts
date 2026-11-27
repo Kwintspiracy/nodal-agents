@@ -334,9 +334,7 @@ describe('un job survit à un redémarrage du runner (#443) @cap:organiser-equip
     const r = await row(job!.id);
     expect(r.status).toBe('failed');
     expect(r.error).toBe(RESTART_RESUME_LIMIT_CODE);
-    expect(r.result ?? '').toContain(
-      `already resumed ${String(MAX_RESTART_RESUMES)} times after a restart`,
-    );
+    expect(r.result ?? '').toContain(`already resumed ${String(MAX_RESTART_RESUMES)} times`);
   });
 
   it('un job mort avant son premier tour sauvegardé n’a pas de point de reprise : il échoue', async () => {
