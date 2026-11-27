@@ -124,7 +124,7 @@ const StartSchema = z
 
 /**
  * Le tour `turnId` s'il appartient à l'appelant. Un appelant de confiance (le
- * web avec WORKER_SECRET, local-trust) a déjà résolu son entité ; un porteur
+ * web avec WORKER_SECRET) a déjà résolu son entité ; un porteur
  * de session n'atteint que les tours de SON entité. Un tour d'une autre
  * entité répond comme un tour inexistant : son existence ne se devine pas.
  */

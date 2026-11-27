@@ -197,6 +197,26 @@ program
     }
   });
 
+// ── nodal-agents open ─────────────────────────────────────────────────────────
+//
+// In the mode with no password, a browser enters the dashboard through a link
+// made from the install's secret (lib/dashboard-link.ts). `up` opens one; this
+// makes another, for a browser that has not been let in yet.
+
+program
+  .command('open')
+  .description('Open the dashboard in a browser (prints the one-time link too)')
+  .option('--print', 'Only print the link, do not open a browser')
+  .action(async (opts: { print?: boolean }) => {
+    const { runOpen } = await import('./commands/open.ts');
+    try {
+      process.exitCode = await runOpen({ print: opts.print });
+    } catch (err) {
+      console.error(chalk.red('Error:'), err instanceof Error ? err.message : String(err));
+      process.exit(1);
+    }
+  });
+
 // ── nodal-agentslogs ──────────────────────────────────────────────────────────────
 
 program

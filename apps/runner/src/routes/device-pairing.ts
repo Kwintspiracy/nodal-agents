@@ -8,7 +8,7 @@
 //   POST /api/devices/pair/poll   { deviceCode }
 //        → 202 pending · 200 paired (the token, ONCE) · 403 refused · 410 expired · 429 slow_down
 //
-// THE OWNER'S SIDE (DEVICE_OWNER_ROUTES), behind `requireRunnerAuth`: the
+// THE OWNER'S SIDE (DEVICE_OWNER_ROUTES), behind the admission (lib/admission.ts): the
 // dashboard calls them with the worker secret and the workspace of the
 // session; a session bearer reaches only its own workspace; a device key is
 // refused by the device gate. The REQUESTS are the install's, not a

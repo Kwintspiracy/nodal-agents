@@ -13,6 +13,7 @@ import type { AuthProvider, AuthSession } from '@nodal-agents/auth';
 import { createApp } from '../../server.ts';
 import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';
+import { seedResponder } from '../approvals/workspace-responder.ts';
 
 /**
  * Qui répond (#799) : le web, appelant de confiance, nomme le compte de sa
@@ -58,10 +59,14 @@ const testEnv: RunnerEnv = {
   NODALAI_APPROVAL_GRACE_MS: 0,
 };
 
+/** What the dashboard's server side sends with every runner call: the install's secret. */
+const DASHBOARD_PROOF = { Authorization: `Bearer ${testEnv.WORKER_SECRET}` };
+
 beforeAll(async () => {
   const result = await spinUpTestDb();
   db = result.db;
   seed = await seedMinimal(db);
+  await seedResponder(db, seed.entityId, RESPONDER_ID);
 
   // Set seed job to awaiting_approval
   await db
@@ -104,7 +109,7 @@ describe('POST /api/approve', () => {
     const res = await app.fetch(
       new Request('http://localhost/api/approve', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...DASHBOARD_PROOF },
         body: JSON.stringify({
           responderUserId: RESPONDER_ID,
           approvalRequestId: '00000000-0000-0000-0000-000000000001',
@@ -118,7 +123,7 @@ describe('POST /api/approve', () => {
     const res = await app.fetch(
       new Request('http://localhost/api/approve', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...DASHBOARD_PROOF },
         body: JSON.stringify({
           responderUserId: RESPONDER_ID,
           approvalRequestId: '00000000-0000-0000-0000-000000000099',
@@ -149,7 +154,7 @@ describe('POST /api/approve', () => {
     const res = await app.fetch(
       new Request('http://localhost/api/approve', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...DASHBOARD_PROOF },
         body: JSON.stringify({
           responderUserId: RESPONDER_ID,
           approvalRequestId: approvalId,
@@ -201,7 +206,7 @@ describe('POST /api/approve', () => {
     const res = await app.fetch(
       new Request('http://localhost/api/approve', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...DASHBOARD_PROOF },
         body: JSON.stringify({
           responderUserId: RESPONDER_ID,
           approvalRequestId: approvalId,
@@ -240,7 +245,7 @@ describe('POST /api/approve', () => {
     const res = await app.fetch(
       new Request('http://localhost/api/approve', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...DASHBOARD_PROOF },
         body: JSON.stringify({
           responderUserId: RESPONDER_ID,
           approvalRequestId: approval!.id,
@@ -294,7 +299,7 @@ describe('POST /api/approve — la question d’un serveur MCP (0145) @cap:appro
     return app.fetch(
       new Request('http://localhost/api/approve', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...DASHBOARD_PROOF },
         body: JSON.stringify({ responderUserId: RESPONDER_ID, ...body }),
       }),
     );
@@ -356,6 +361,7 @@ describe('POST /api/approve — entity authorization (bearer-token mode)', () =>
     const result = await spinUpTestDb();
     dbZ = result.db;
     seedZ = await seedMinimal(dbZ);
+    await seedResponder(dbZ, seedZ.entityId, RESPONDER_ID);
 
     // Entity W: a separate tenant with its own job, holding an approval a
     // caller scoped to entity Z must never be able to resolve.
@@ -499,7 +505,9 @@ describe('POST /api/approve — entity authorization (bearer-token mode)', () =>
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: 'Bearer test-secret' },
         body: JSON.stringify({
-          responderUserId: RESPONDER_ID,
+          // The owner of workspace W: whoever carries the answer, the person
+          // who gives it belongs to the workspace of the request.
+          responderUserId: seedZ.userId,
           approvalRequestId: approval!.id,
           decision: 'approve',
         }),

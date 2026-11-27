@@ -65,8 +65,9 @@ Your answers are saved to `~/.nodalai/config.json`. Re-run the wizard any time w
 
 Once the wizard finishes (or on every subsequent run, since the config now exists),
 the CLI spawns an embedded Postgres on a free port, applies migrations, seeds the
-system skills, and starts the runner (`:3001`) and the dashboard (`:3000`). Open
-[localhost:3000](http://localhost:3000).
+system skills, and starts the runner (`:3001`) and the dashboard (`:3000`), then
+opens the dashboard in your browser through a one-time link. For another browser,
+run `nodal-agents open`.
 
 Your data lives at `~/.nodalai/` — wipe it any time with `rm -rf ~/.nodalai`. Stop
 the stack with `nodal-agents down`.

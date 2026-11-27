@@ -35,8 +35,8 @@
 // l'ordre, ou un `resync`. Jamais rien en silence. `ready` et `resync` portent
 // un `id:` : le client a un point de reprise avant même le premier événement.
 //
-// La garde : `requireRunnerAuth` (server.ts), comme `/api/chat*`. Un appelant
-// de confiance (local-trust, WORKER_SECRET) a résolu l'espace lui-même ; un
+// La garde : l’admission (lib/admission.ts), comme `/api/chat*`. Un appelant
+// de confiance (WORKER_SECRET) a résolu l'espace lui-même ; un
 // porteur de session ne lit que le SIEN.
 //
 // Le flux d'un APPAREIL (#945, `GET /api/devices/:deviceId/events`,

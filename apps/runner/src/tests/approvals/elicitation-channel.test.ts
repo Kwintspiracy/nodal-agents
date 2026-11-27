@@ -119,6 +119,7 @@ import {
   saveElicitationDraft,
 } from '../../approvals/elicitation-channel.ts';
 import { resolveApprovalDecision } from '../../approvals/resolve.ts';
+import { seedResponder } from './workspace-responder.ts';
 
 const OWNER_CHAT = '111';
 const GUEST_CHAT = '222';
@@ -202,6 +203,7 @@ beforeAll(async () => {
   const result = await spinUpTestDb();
   db = result.db;
   seed = await seedMinimal(db);
+  await seedResponder(db, seed.entityId);
   deps = { db: db as unknown as RunnerDeps['db'] } as RunnerDeps;
   await db.update(agents).set({ telegramBotToken: '123:fake' }).where(eq(agents.id, seed.agentId));
   // Le propriétaire a SA conversation : c'est là qu'une approbation irait.

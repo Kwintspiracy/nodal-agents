@@ -3,7 +3,6 @@
 
 import '@nodal-agents/shared/node-guard';
 import { Hono } from 'hono';
-import type { Context } from 'hono';
 import { serve } from '@hono/node-server';
 import { writeAutonomyRowsAtBoot } from '@nodal-agents/orchestration';
 import { pathToFileURL } from 'url';
@@ -87,8 +86,7 @@ import { seedDefaultSkills } from './bootstrap/seed-default-skills.ts';
 import { closeAllJobProcessScopes, getSandboxStatus } from '@nodal-agents/sandbox';
 import { closeAllRenderers } from '@nodal-agents/page-render';
 import { startJobProcessSweep } from './job/process-scopes.ts';
-import { AuthError, checkRequestOrigin } from '@nodal-agents/auth';
-import { isValidWorkerSecret } from './lib/worker-secret.ts';
+import { createAdmission } from './lib/admission.ts';
 import './lib/runner-auth-context.ts';
 import type { RunnerDeps } from './deps.ts';
 
@@ -141,51 +139,23 @@ export function createApp(
   // par ce même bus.
   bindDeviceSink(createDeviceSink(deps.db));
 
-  // ── requireTrustedOrigin ─────────────────────────────────────────────────────
+  // ── admission ───────────────────────────────────────────────────────────────
   //
-  // NETWORK-001 (audit 2026-08-07). Binding to 127.0.0.1 keeps the runner off the
-  // network but NOT out of the user's own browser: any page they visit can POST
-  // to http://127.0.0.1:3001/api/agent. Measured on a real install in the DEFAULT
-  // configuration (bind=loopback → local-trust): a request with no Authorization,
-  // a hostile Origin, a forged Host, or a `text/plain` body (a CORS "simple"
-  // request, so no preflight the server could refuse) all returned 202 and the
-  // log showed `[exec …] enter` — the agent actually ran.
+  // First of all, on every `/api/*` route, in every auth mode: the Host names
+  // this machine, a request sent on behalf of a page (it carries an `Origin`)
+  // proves who sends it with a credential in the request, EVERY request proves
+  // who sends it (the worker secret, the API token in bearer-token mode, a
+  // paired device's key; only the device pairing gestures are proved by the
+  // pairing itself), and a body has the media type its route takes. It also
+  // says who the caller is (`callerTrusted`, `callerEntityId`): it is the only
+  // auth gate of the runner, so no route can be added outside it. The runner
+  // has no browser client of its own: the dashboard calls it from its server
+  // side. See lib/admission.ts, and the decision itself in
+  // packages/auth/src/lib/request-origin.ts.
   //
-  // So `local-trust` must keep meaning "no user authentication", not "accept
-  // instructions from any web page". This gate runs BEFORE requireRunnerAuth and
-  // is independent of AUTH_MODE. See packages/auth/src/lib/request-origin.ts for
-  // why Origin and Host are both needed (Origin stops CSRF; Host stops DNS
-  // rebinding, where the two agree and an Origin-vs-Host comparison passes).
-  //
-  // Applied to /api/* only. `/webhooks/:slug/:secret` is deliberately excluded:
-  // it exists to be called by third-party services that legitimately arrive with
-  // an arbitrary Host (a tunnel hostname, a reverse proxy), and its auth is the
-  // slug+secret pair checked against the webhook_triggers row.
-  const requireTrustedOrigin = async (
-    c: Context,
-    next: () => Promise<void>,
-  ): Promise<Response | void> => {
-    // The authority can arrive two ways: the `Host` header on HTTP/1.1, or the
-    // `:authority` pseudo-header on HTTP/2 — where `Host` is absent entirely.
-    // Hono always reflects whichever one it got into `c.req.url`, so that is the
-    // reliable source; the header is preferred when present because it is the
-    // literal bytes the client sent.
-    const host = c.req.header('host') ?? new URL(c.req.url).host;
-    const rejection = checkRequestOrigin({
-      origin: c.req.header('origin'),
-      host,
-      appUrl: runnerEnv.APP_URL,
-    });
-    if (rejection) {
-      // Invariant 2: no user-facing prose from the runner — a machine-readable
-      // code only. 403 rather than 401: this is not about who is calling, it is
-      // about where the call came from, and no credential fixes it.
-      return c.json({ error: rejection }, 403);
-    }
-    await next();
-  };
-
-  app.use('/api/*', requireTrustedOrigin);
+  // `/webhooks/:slug/:secret` is outside `/api/*`: it is called by third-party
+  // services with any Host, and proved by the secret in its path.
+  app.use('/api/*', createAdmission(deps, runnerEnv));
 
   // ── deviceGate (#946) ─────────────────────────────────────────────────────────
   //
@@ -195,135 +165,6 @@ export function createApp(
   // nothing BUT a device key (`authorizeDevice`, devices/device-guard.ts): no
   // worker secret, no session, no local trust.
   app.use('/api/*', createDeviceGate(deps));
-
-  // ── requireRunnerAuth ────────────────────────────────────────────────────────
-  //
-  // Unified auth gate for /api/agent, /api/chat, /api/approve, /api/cron.
-  //
-  // local-trust: pass through unconditionally (intentional single-user no-auth
-  //   mode for trusted local/dev use). NOTE: this mode does NOT change the
-  //   network bind — main() always binds to runnerEnv.BIND (0.0.0.0 in LAN
-  //   mode) in every mode. What closes the LAN exposure is the WORKER_SECRET
-  //   requirement enforced below for local-auth / bearer-token, not any
-  //   loopback binding.
-  //
-  // local-auth / bearer-token: require "Authorization: Bearer <WORKER_SECRET>".
-  //   The web already sends this on every runner call it makes (worker, approve,
-  //   chat, skills). The runner cannot validate better-auth session cookies
-  //   cross-process (separate port, separate session store), so WORKER_SECRET
-  //   is the runner's auth boundary; external /api/agent and /api/cron callers
-  //   must present it too.
-  //
-  // bearer-token mode additionally accepts a valid authProvider session so that
-  //   external API clients using BEARER_TOKEN keep working.
-  //
-  // Authorization vs authentication: the branches above only prove WHO is
-  // calling. They also stamp `callerTrusted` / `callerEntityId` on the
-  // context (packages/auth's AuthSession → Hono ContextVariableMap, see
-  // lib/runner-auth-context.ts) so the routes below can enforce WHICH
-  // entity's data the caller is allowed to touch — a trusted caller
-  // (local-trust / WORKER_SECRET) has already had its entity scoped by the
-  // web from the user's session, so its request body is trusted as-is; an
-  // untrusted session bearer-token caller must be checked against its own
-  // session.entityId (findings #4/#5).
-  //
-  // /api/health and /api/worker stay public/self-authed respectively.
-  const requireRunnerAuth = async (
-    c: Context,
-    next: () => Promise<void>,
-  ): Promise<Response | void> => {
-    // A device (#946): the device gate has verified its key, on a route that
-    // accepts one, and scoped the caller to it — never trusted, even in
-    // local-trust.
-    if (c.get('callerDevice')) {
-      await next();
-      return;
-    }
-    // local-trust: no auth required (intentional single-user no-auth for trusted local/dev use)
-    if (runnerEnv.AUTH_MODE === 'local-trust') {
-      c.set('callerTrusted', true);
-      await next();
-      return;
-    }
-
-    // All other modes: check WORKER_SECRET bearer first
-    const auth = c.req.header('authorization') ?? '';
-    const bearer = auth.startsWith('Bearer ') ? auth.slice(7) : null;
-    if (bearer && runnerEnv.WORKER_SECRET && isValidWorkerSecret(bearer, runnerEnv.WORKER_SECRET)) {
-      c.set('callerTrusted', true);
-      await next();
-      return;
-    }
-
-    // bearer-token mode: also accept a valid authProvider session (external API clients)
-    if (runnerEnv.AUTH_MODE === 'bearer-token') {
-      try {
-        const session = await deps.authProvider.getSession(c.req.raw);
-        // Fail-closed defense in depth: an untrusted caller with no entity on
-        // its session is authorized for NOTHING. Every route below trusts
-        // that an untrusted caller's callerEntityId is always a real,
-        // non-empty id (chat.ts/agent.ts/approve.ts key their scoping off
-        // that assumption) — never let a session with a falsy entityId
-        // (a future provider bug, e.g. an `?? ''` fallback) through as
-        // "authenticated" and silently reopen the cross-entity IDOR.
-        if (session && session.entityId) {
-          c.set('callerTrusted', false);
-          c.set('callerEntityId', session.entityId);
-          c.set('callerUserId', session.userId);
-          await next();
-          return;
-        }
-      } catch (err) {
-        if (!(err instanceof AuthError)) {
-          throw err;
-        }
-      }
-    }
-
-    return c.json({ error: 'AUTH_REQUIRED' }, 401);
-  };
-
-  app.use('/api/agent', requireRunnerAuth);
-  app.use('/api/chat', requireRunnerAuth);
-  // Le flux (#152) : même garde, chemin distinct — `app.use` de Hono compare
-  // le chemin en entier, donc `/api/chat` ne couvre pas `/api/chat/stream`.
-  app.use('/api/chat/stream', requireRunnerAuth);
-  app.use('/api/chat/stop', requireRunnerAuth);
-  app.use('/api/chat/live', requireRunnerAuth);
-  // Le tour vocal (#941) : la même garde que /api/chat, sur la création du tour
-  // et sur chacun de ses chemins. La clé d'un appareil (#946) y entre par la
-  // porte des appareils, qui pose `callerDevice` / `callerEntityId` ; la route
-  // ne lit que ces faits, et ne demande jamais une session du tableau de bord.
-  app.use('/api/voice/turns', requireRunnerAuth);
-  app.use('/api/voice/turns/*', requireRunnerAuth);
-  // La voix de l'espace et son essai (#969) : la même garde, pour la même
-  // raison — un module les appelle comme le tableau de bord.
-  app.use('/api/voice/setting', requireRunnerAuth);
-  app.use('/api/voice/sample', requireRunnerAuth);
-  // La voix de la réponse d'un job lancé par la voix (#967) : la même garde.
-  app.use('/api/voice/replies/*', requireRunnerAuth);
-  // #944 — le flux poussé des événements de job. Même garde que /api/chat*.
-  // Un appareil n'y entre pas (#946) : il lit SON flux, /api/devices/:id/events.
-  app.use('/api/events', requireRunnerAuth);
-  // #946 — les routes PROPRES d'un appareil (`/api/devices/:deviceId/…`) ne
-  // passent PAS par cette garde : la porte des appareils n'y accepte que la
-  // clé de l'appareil (jamais WORKER_SECRET), puis `authorizeDevice`
-  // (devices/device-guard.ts) vérifie que la route nomme CET appareil.
-  // L'appairage (`/api/devices/pair*`) se fait sans clé, et le côté du
-  // propriétaire garde cette garde-ci : un appareil n'y entre jamais.
-  app.use('/api/device-pairings', requireRunnerAuth);
-  app.use('/api/device-pairings/*', requireRunnerAuth);
-  app.use('/api/workspace-devices', requireRunnerAuth);
-  app.use('/api/workspace-devices/*', requireRunnerAuth);
-  app.use('/api/approve', requireRunnerAuth);
-  app.use('/api/cron', requireRunnerAuth);
-  // P11 — le diff d'un fichier écrit par un tour. Même garde que /api/approve :
-  // le web appelle avec WORKER_SECRET, un porteur de session ne voit que son
-  // entité (la route le vérifie sur le travail).
-  app.use('/api/jobs/:jobId/file-diff', requireRunnerAuth);
-  app.use('/api/whatsapp/pairing', requireRunnerAuth);
-  app.use('/api/code-task/doctor', requireRunnerAuth);
-  app.use('/api/sandbox', requireRunnerAuth);
 
   // ── Routes ────────────────────────────────────────────────────────────────────
 
@@ -393,10 +234,10 @@ export function createApp(
   // bandeau du tableau de bord, le lisent.
   app.get('/api/sandbox', (c) => sandboxRoute(c, deps));
 
-  // Inbound webhooks (Brique 5) — intentionally OUTSIDE requireRunnerAuth
-  // (that gate is a literal-path app.use on the four /api/* routes above, so
-  // it never matches here regardless). Auth is per-trigger: slug+secret in the
-  // path, checked inside webhookRoute against the webhook_triggers row.
+  // Inbound webhooks (Brique 5) — intentionally OUTSIDE `/api/*`, so outside
+  // the admission: third-party services call it. Auth is per-trigger:
+  // slug+secret in the path, checked inside webhookRoute against the
+  // webhook_triggers row.
   app.post('/webhooks/:slug/:secret', (c) => webhookRoute(c, deps, runnerEnv));
 
   // ── 404 fallback ──────────────────────────────────────────────────────────────
@@ -448,6 +289,16 @@ async function main(): Promise<void> {
   // (un `/stop`). `createApp` le rebranche, à l'identique.
   listenToTransitions(transitionListener());
   const runnerEnv = parseEnv();
+  // Every caller proves it holds the install's secret (lib/admission.ts): a
+  // runner without one could serve nobody, and would refuse every request with
+  // a reason that does not say why. Refused here, at boot, by name (invariant
+  // #4). The CLI always sets it from config.json.
+  if (runnerEnv.WORKER_SECRET === '') {
+    throw new Error(
+      'WORKER_SECRET is empty: the runner admits no caller without the install secret. ' +
+        'Start it with `nodal-agents up`, which sets it from config.json.',
+    );
+  }
   // Before anything reads or writes the home (secrets.key, workspaces, the
   // sandbox): declare this instance to the others, then create it. A runner
   // started without `up` is declared all the same (#787, review pass 2).

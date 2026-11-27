@@ -136,8 +136,13 @@ async function callRow(over: {
   });
 }
 
+// The dashboard's server side, with the install's secret.
 const get = (jobId: string, query: string) =>
-  app.fetch(new Request(`http://localhost/api/jobs/${jobId}/file-diff?${query}`));
+  app.fetch(
+    new Request(`http://localhost/api/jobs/${jobId}/file-diff?${query}`, {
+      headers: { Authorization: `Bearer ${testEnv.WORKER_SECRET}` },
+    }),
+  );
 
 describe('GET /api/jobs/:jobId/file-diff', () => {
   it('file_write : rend le diff réel entre l’instantané du tour et l’arbre de travail', async () => {
