@@ -9,6 +9,7 @@
 import {
   eq,
   and,
+  asc,
   isNull,
   isNotNull,
   withinRunScope,
@@ -63,8 +64,6 @@ import {
   raisedErrorBlockLength,
   PROVIDER_REJECTED,
   PROVIDER_REJECTED_PREFIX,
-  findMcpToolNameCollision,
-  mcpToolNameCollisionMessage,
   openingMessages,
   personAnswersOfCalls,
   recordedPersonAnswers,
@@ -128,6 +127,12 @@ import {
   withToolLoader,
   toolOutputForModel,
   shellChecklistDeclined,
+  oneTargetPerName,
+  lendConnectorTools,
+  mcpServerSource,
+  BUILTIN_TOOLS_SOURCE,
+  DELEGATION_TOOLS_SOURCE,
+  DELIVERY_TOOLS_SOURCE,
 } from '@nodal-agents/tools';
 import type {
   ToolDefinition,
@@ -136,6 +141,8 @@ import type {
   ApprovalGateRequest,
   ToolExecutionResult,
   ModelAttachmentInput,
+  ConnectorLending,
+  LentTools,
 } from '@nodal-agents/tools';
 import type { ChannelKind } from '@nodal-agents/delivery';
 import {
@@ -2331,9 +2338,9 @@ async function runJobTracked(
   // process-scoped and shared across all concurrent jobs. Mutating it here
   // would leak the tool's availability to other agents that share the same
   // RunnerDeps instance, breaking invariant #9 (whitelist explicit per agent).
-  // capabilityTools bypasses computeToolWhitelist's registry-based drift check
-  // because the definition itself is passed, not just its name.
-  const capabilityTools: AnyToolDef[] = [];
+  // Each source's tools join the built-ins in `oneTargetPerName` (§ below),
+  // which refuses a name two sources lend: a call is routed by its name alone.
+  const deliveryTools: AnyToolDef[] = [];
   // telegram_send_message (and its siblings) are offered whenever this job
   // has a Telegram bot token to deliver with — a resolvable RECIPIENT is a
   // separate concern, handled per-call by resolveRecipientChatId's fallback
@@ -2368,20 +2375,20 @@ async function runJobTracked(
   const slackBinding = await getChannelBinding(db, agentRow.id, 'slack');
   const hasSlackBinding = slackBinding?.enabled === true;
   if (deliveryBotToken || hasDiscordBinding || hasSlackBinding) {
-    capabilityTools.push(createTelegramSendMessageTool() as unknown as AnyToolDef);
-    capabilityTools.push(createSendImageTool() as unknown as AnyToolDef);
-    capabilityTools.push(createSendFileTool() as unknown as AnyToolDef);
-    capabilityTools.push(createSendVideoTool() as unknown as AnyToolDef);
-    capabilityTools.push(createSendAudioTool() as unknown as AnyToolDef);
-    capabilityTools.push(createSendVoiceTool() as unknown as AnyToolDef);
+    deliveryTools.push(createTelegramSendMessageTool() as unknown as AnyToolDef);
+    deliveryTools.push(createSendImageTool() as unknown as AnyToolDef);
+    deliveryTools.push(createSendFileTool() as unknown as AnyToolDef);
+    deliveryTools.push(createSendVideoTool() as unknown as AnyToolDef);
+    deliveryTools.push(createSendAudioTool() as unknown as AnyToolDef);
+    deliveryTools.push(createSendVoiceTool() as unknown as AnyToolDef);
     // list_conversations — same gate as the 6 send tools above: lets the agent
     // discover a connected platform's structure (and which conversations it's
     // already approved for) instead of denying a binding it actually has.
-    capabilityTools.push(createListConversationsTool() as unknown as AnyToolDef);
+    deliveryTools.push(createListConversationsTool() as unknown as AnyToolDef);
   }
 
   // This job's active transport channels, reusing the EXACT same gate the
-  // capabilityTools push above just used (a Telegram token, an enabled
+  // deliveryTools push above just used (a Telegram token, an enabled
   // discord/slack binding) rather than re-deriving it — fed into every
   // ToolContext below so resolveTransportChannel (delivery-guard.ts) can
   // default a non-transport job origin (cron, webhook, dashboard, api, …) to
@@ -2463,24 +2470,36 @@ async function runJobTracked(
     // An OAuth connector never offers an operation its credential's granted
     // scopes do not cover (`connectorAccessFor`, the dashboard's rule too).
     // Adapters without a registry entry are skipped silently.
+    //
+    // Several connectors of one service are accounts of it (a personal and a
+    // work mailbox): `lendConnectorTools` gives each of their tool names once,
+    // with an `account` argument, and each call runs on its account's own
+    // tool. The rows are read in an explicit order, and nothing below depends
+    // on it: a name is never decided by which row comes last.
     const connectorAssignments = await db
       .select({
         connectorId: connectorsTable.id,
         slug: connectorsTable.slug,
+        name: connectorsTable.name,
         credentialId: connectorsTable.credentialId,
         apiKey: connectorsTable.apiKey,
         enabledOperations: agentConnectorAssignments.enabledOperations,
       })
       .from(agentConnectorAssignments)
       .innerJoin(connectorsTable, eq(connectorsTable.id, agentConnectorAssignments.connectorId))
-      .where(eq(agentConnectorAssignments.agentId, agentRow.id));
+      .where(eq(agentConnectorAssignments.agentId, agentRow.id))
+      .orderBy(asc(connectorsTable.name), asc(connectorsTable.id));
 
+    const connectorLendings: ConnectorLending[] = [];
     for (const ca of connectorAssignments) {
       const entry = ADAPTER_REGISTRY[ca.slug];
       if (!entry) continue; // no adapter for this catalog slug — skip silently
 
       let accessToken: string | null = null;
       let credentialIdForResolver: string | null = null;
+      // What identifies the account at the provider (the address the OAuth
+      // callback read), said to the model with the account's name.
+      let address: string | null = null;
       // The operations the credential's grant does not cover are withheld:
       // the provider would refuse every call (missing scope), so the agent is
       // never offered them. Same rule as the dashboard's card and grid.
@@ -2512,6 +2531,7 @@ async function runJobTracked(
         if (!decrypted) continue;
         accessToken = decrypted.payload.accessToken;
         credentialIdForResolver = ca.credentialId;
+        address = decrypted.payload.accountName || null;
         const access = connectorAccessFor(ca.slug, decrypted.payload.scopes);
         if (access.kind === 'needs_access') withheld = new Set(access.missingOperations);
       }
@@ -2545,7 +2565,10 @@ async function runJobTracked(
         (t) => !withheld.has(t.name) && (enabled === null || enabled.includes(t.name)),
       );
 
-      capabilityTools.push(...filtered);
+      connectorLendings.push({
+        connector: { id: ca.connectorId, slug: ca.slug, name: ca.name, address },
+        tools: filtered,
+      });
     }
     // ────────────────────────────────────────────────────────────────────────
 
@@ -2592,7 +2615,8 @@ async function runJobTracked(
       })
       .from(agentMcpServersTable)
       .innerJoin(mcpServersTable, eq(mcpServersTable.id, agentMcpServersTable.mcpServerId))
-      .where(eq(agentMcpServersTable.agentId, agentRow.id));
+      .where(eq(agentMcpServersTable.agentId, agentRow.id))
+      .orderBy(asc(mcpServersTable.slug), asc(mcpServersTable.id));
 
     // Best-effort write-back of what a connection learned — the tool
     // descriptors AND the server's instructions, together: both describe the
@@ -2622,8 +2646,8 @@ async function runJobTracked(
       }
     };
 
-    // What each server lends THIS job, for the one-name-one-server check below.
-    const lentByServer: Array<{ slug: string; name: string; exposed: string[] }> = [];
+    // What each server lends THIS job, for the one-name-one-target rule below.
+    const lentByServers: LentTools[] = [];
 
     for (const ms of mcpAssignments) {
       try {
@@ -2727,8 +2751,7 @@ async function runJobTracked(
           enabled === null
             ? toolset.tools
             : toolset.tools.filter((t) => enabled.includes(t.name.slice(prefixLen)));
-        capabilityTools.push(...filtered);
-        lentByServer.push({ slug: ms.slug, name: ms.name, exposed: filtered.map((t) => t.name) });
+        lentByServers.push({ source: mcpServerSource(ms), tools: filtered });
       } catch (err) {
         // MCP server unreachable / auth failed / spawn failed — must not
         // fail an unrelated job, so we still `continue`. But swallowing
@@ -2743,19 +2766,6 @@ async function runJobTracked(
       }
     }
 
-    // One tool name, one server (#661). Every attach path refuses a server
-    // whose namespace overlaps one the agent holds; an attachment written
-    // before that rule still runs while no name is lent twice — each name
-    // reaches, and is attributed to, the one server that lends it. When two
-    // servers lend the SAME name, no reader can tell them apart: the job is
-    // refused here, loud, naming both and the tool — never routed to
-    // whichever server happens to come last.
-    const nameCollision = findMcpToolNameCollision(lentByServer);
-    if (nameCollision) {
-      throw new Error(
-        mcpToolNameCollisionMessage(nameCollision.toolName, ...nameCollision.servers),
-      );
-    }
     // ────────────────────────────────────────────────────────────────────────
 
     // ONE list for every agent (#636): always-on, the builtins of the tool
@@ -2785,7 +2795,6 @@ async function runJobTracked(
         ),
       },
       registry,
-      capabilityTools,
     );
 
     // The orchestrator role ADDS delegation; it never removes anything.
@@ -2807,7 +2816,21 @@ async function runJobTracked(
       isOrchestrator,
       delegationDepth: job.delegationDepth ?? 0,
     })) as unknown as AnyToolDef[];
-    toolDefs = [...delegationTools, ...builtinToolDefs];
+    // One tool name, one target, whatever the source (#661 for MCP servers,
+    // now for every source). Every MCP attach path refuses a server whose
+    // namespace overlaps one the agent holds, every connector attach path two
+    // accounts of one service under one name; an attachment written before
+    // those rules still runs while no name is lent twice. When two sources
+    // lend the SAME name, no reader can tell them apart: the job is refused
+    // here, loud, naming both and the tool, never routed to whichever source
+    // happens to come last.
+    toolDefs = oneTargetPerName<AnyToolDef>([
+      { source: DELEGATION_TOOLS_SOURCE, tools: delegationTools },
+      { source: BUILTIN_TOOLS_SOURCE, tools: builtinToolDefs },
+      { source: DELIVERY_TOOLS_SOURCE, tools: deliveryTools },
+      ...lendConnectorTools(connectorLendings),
+      ...lentByServers,
+    ]);
   } catch (err) {
     const errorCode = err instanceof Error ? err.message : 'whitelist_computation_failed';
     await failJob(db, jobId as string, errorCode, runStats(), messages);

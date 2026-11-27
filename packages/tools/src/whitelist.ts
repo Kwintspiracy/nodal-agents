@@ -93,17 +93,19 @@ export interface WhitelistInput {
  * (e.g. adapter not registered, typo in skill assignment) at startup
  * rather than silently exposing zero tools or falling back to defaults.
  *
+ * The BUILT-IN half of a job's tools. What the job's other sources lend
+ * (delegation, delivery, connectors, MCP servers) joins it in
+ * `oneTargetPerName` (./tool-sources.ts), which refuses a name two sources
+ * lend: this function used to merge them itself and dropped, in silence, a
+ * lent tool that carried a built-in's name, while two lent tools with one
+ * name both stayed.
+ *
  * @param input           Agent identity + configured tool names.
  * @param registry        The tool registry to look up definitions from.
- * @param capabilityTools Extra ToolDefinitions already registered for this
- *                        agent based on its capabilities (e.g. telegram_send_message
- *                        when telegramBotToken is set). Merged after configuredTools
- *                        and alwaysOn; duplicates are deduplicated by name.
  */
 export function computeToolWhitelist(
   input: WhitelistInput,
   registry: ToolRegistry,
-  capabilityTools: ToolDefinition<z.ZodTypeAny, unknown>[] = [],
 ): ToolDefinition<z.ZodTypeAny, unknown>[] {
   const { agentId, configuredTools, alwaysOn = [] } = input;
 
@@ -117,15 +119,9 @@ export function computeToolWhitelist(
   }
 
   // Map names → definitions (order: configuredTools first, then alwaysOn additions)
-  const baseDefs = allNames.map((name) => {
+  return allNames.map((name) => {
     const def = registry.get(name);
     // We already verified all names exist above — this cast is safe
     return def as ToolDefinition<z.ZodTypeAny, unknown>;
   });
-
-  // Merge capability tools, deduplicating by name (capability tool wins if same name)
-  const baseNames = new Set(allNames);
-  const extraDefs = capabilityTools.filter((t) => !baseNames.has(t.name));
-
-  return [...baseDefs, ...extraDefs];
 }

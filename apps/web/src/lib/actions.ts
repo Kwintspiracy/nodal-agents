@@ -158,6 +158,7 @@ import {
   setReadOnlyPresetRepo,
   createApiKeyConnectorRepo,
   setAgentConnectorAssignmentRepo,
+  connectorRenameRefusal,
   addAgentWorkspaceRepo,
   orchestratorModelToolsError,
   setAgentModelRepo,
@@ -5962,6 +5963,10 @@ export async function renameConnectorAction(
       .from(connectors)
       .where(and(eq(connectors.id, connectorId), eq(connectors.entityId, session.entityId)));
     if (!existing) return fail('not_found', 'Connector not found');
+    // Two accounts of one service on one agent carry names a model can tell
+    // apart: the name is the value of the tools' `account` argument.
+    const refusal = await connectorRenameRefusal(db, connectorId, nameParsed.data);
+    if (refusal) return fail('indistinct_accounts', refusal);
     await db
       .update(connectors)
       .set({ name: nameParsed.data, updatedAt: new Date() })
@@ -13272,6 +13277,7 @@ export async function setAgentConnectorAssignmentAction(
       enabledOperations: enabledOperations ?? null,
     });
     if ('error' in res) {
+      if (res.error === 'indistinct_accounts') return fail(res.error, res.message);
       return fail(
         'not_found',
         res.error === 'agent_not_found' ? 'Agent not found' : 'Connector not found',

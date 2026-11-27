@@ -14,7 +14,14 @@
 import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { eq, connectors, entities, users } from '@nodal-agents/db';
+import {
+  eq,
+  agents,
+  agentConnectorAssignments,
+  connectors,
+  entities,
+  users,
+} from '@nodal-agents/db';
 
 let testDb: TestDb;
 let seed: Awaited<ReturnType<typeof seedMinimal>>;
@@ -153,5 +160,37 @@ describe('renameConnectorAction', () => {
 
     expect(result.ok, result.ok ? '' : result.message).toBe(true);
     expect(await nomDe(cible.id)).toBe(nom);
+  });
+
+  it('refuse un nom qui rendrait deux comptes d’un même service indiscernables sur un agent, et laisse le nom', async () => {
+    const { renameConnectorAction } = await import('../actions.ts');
+    // Dans un job, les outils de plusieurs comptes d'un service prennent un
+    // argument `account` dont les valeurs sont ces noms.
+    const travail = await connecteur(seed.entityId, 'Gmail travail', 'gmail');
+    const perso = await connecteur(seed.entityId, 'Gmail perso', 'gmail');
+    const [agent] = await testDb
+      .insert(agents)
+      .values({
+        entityId: seed.entityId,
+        slug: `comptes-${Date.now()}`,
+        name: 'Comptes',
+        personality: 'p',
+      })
+      .returning();
+    await testDb.insert(agentConnectorAssignments).values([
+      { entityId: seed.entityId, agentId: agent!.id, connectorId: travail.id },
+      { entityId: seed.entityId, agentId: agent!.id, connectorId: perso.id },
+    ]);
+
+    const refus = await renameConnectorAction(perso.id, 'gmail TRAVAIL');
+
+    expect(refus.ok).toBe(false);
+    if (!refus.ok) {
+      expect(refus.code).toBe('indistinct_accounts');
+      expect(refus.message).toContain('"Gmail travail" (gmail)');
+    }
+    expect(await nomDe(perso.id)).toBe('Gmail perso');
+    const libre = await renameConnectorAction(perso.id, 'Gmail famille');
+    expect(libre.ok, libre.ok ? '' : libre.message).toBe(true);
   });
 });
