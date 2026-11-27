@@ -236,6 +236,22 @@ describe('text layer: an edit changes only the edited bytes @cap:travailler-sur-
     );
   });
 
+  it('a quote with CRLF still matches, and in an LF file a CRLF quote matches too', async () => {
+    const job = await newJob();
+    await writeFile(join(ROOT, 'win.txt'), 'a\r\nb\r\nc\r\n');
+    await writeFile(join(ROOT, 'unix.txt'), 'a\nb\nc\n');
+    for (const file of ['win.txt', 'unix.txt']) {
+      const out = await call<{ ok: boolean }>(
+        fileEditTool as never,
+        { path: file, old_string: 'b\r\nc', new_string: 'B\nC' },
+        job,
+      );
+      expect(out.ok).toBe(true);
+    }
+    expect(await readFile(join(ROOT, 'win.txt'), 'utf8')).toBe('a\r\nB\r\nC\r\n');
+    expect(await readFile(join(ROOT, 'unix.txt'), 'utf8')).toBe('a\nB\nC\n');
+  });
+
   it('a character the encoding of the file cannot hold is refused, named, and nothing is written', async () => {
     const job = await newJob();
     const original = bytesOf(FRENCH, 'windows-1252', false);
