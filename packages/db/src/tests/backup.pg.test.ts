@@ -786,7 +786,7 @@ describe('backup: nothing that looks complete unless it is @cap:installer-et-dem
 });
 
 describe('restore: refused before anything is replaced @cap:installer-et-demarrer/moteur', () => {
-  it('an archive from an OLDER schema is restored, then migrated by the normal path, with the copy before it', async () => {
+  it('an archive from an OLDER schema is restored, then migrated by the normal path, with the copy before it; the replaced database is still kept with keep = 1', async () => {
     const source = newHome();
     const url = await install(source);
     const made = await createBackup(url, backupOptions(source));
@@ -796,10 +796,15 @@ describe('restore: refused before anything is replaced @cap:installer-et-demarre
     const targetUrl = await install(target, { migrationsFolder: newer });
     const back = await restoreBackup(
       targetUrl,
-      restoreOptions(target, made.path, { migrationsFolder: newer }),
+      restoreOptions(target, made.path, { migrationsFolder: newer, keep: 1 }),
     );
     expect(back.migrated.applied).toEqual(['9999_backup_test_extra']);
     expect(back.migrated.snapshot?.meta?.kind).toBe('before-migration');
+    // The migration that follows prunes to one copy, and never the one this restore set aside.
+    expect(back.migrated.pruned).not.toContain(back.replaced.name);
+    expect((await listSnapshots(targetUrl, target.dir)).map((s) => s.name).sort()).toEqual(
+      [back.migrated.snapshot!.name, back.replaced.name].sort(),
+    );
     expect(await probe(targetUrl)).toBe(`installed ${source.root}`);
     const [row] = await withSql(
       targetUrl,

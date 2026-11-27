@@ -53,6 +53,8 @@ export interface MigrateDatabaseOptions extends RunMigrationsOptions {
   readonly programVersion: string;
   /** How many complete copies to keep. */
   readonly keep: number;
+  /** Copies the prune never drops: the caller set them aside and said so (a restore's replaced database). */
+  readonly protect?: readonly string[];
   /** Free bytes where the cluster writes. */
   readonly freeBytes: () => number | Promise<number>;
   readonly stateFiles: SnapshotStateFiles;
@@ -160,6 +162,7 @@ export async function migrateDatabase(
     pruned = await pruneSnapshots(connectionString, {
       keep: opts.keep,
       stateFilesDir: opts.stateFiles.dir,
+      ...(opts.protect !== undefined ? { protect: opts.protect } : {}),
     });
   }
 

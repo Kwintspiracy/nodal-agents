@@ -650,11 +650,13 @@ export async function listSnapshots(
 /**
  * Keep the `keep` newest complete copies; drop the others and every incomplete
  * one, with their state folders. Called only once a NEW copy is complete, so
- * the count never drops below what existed before. Returns the names dropped.
+ * the count never drops below what existed before. A copy named in `protect`
+ * is never dropped: the command running now has just set it aside and said
+ * so (the database a restore replaced). Returns the names dropped.
  */
 export async function pruneSnapshots(
   connectionString: string,
-  opts: { keep: number; stateFilesDir: string },
+  opts: { keep: number; stateFilesDir: string; protect?: readonly string[] },
 ): Promise<string[]> {
   if (!Number.isInteger(opts.keep) || opts.keep < 1) {
     throw new SnapshotError(
@@ -666,7 +668,10 @@ export async function pruneSnapshots(
   return withConnection(maintenanceUrl, async (sql) => {
     const all = await listWith(sql, database, opts.stateFilesDir);
     const complete = all.filter((s) => s.meta !== null);
-    const drop = [...complete.slice(opts.keep), ...all.filter((s) => s.meta === null)];
+    const kept = new Set(opts.protect ?? []);
+    const drop = [...complete.slice(opts.keep), ...all.filter((s) => s.meta === null)].filter(
+      (s) => !kept.has(s.name),
+    );
     for (const s of drop) {
       await sql.unsafe(`DROP DATABASE IF EXISTS ${ident(s.name)}`).simple();
       removeStateFiles({ dir: opts.stateFilesDir }, s.name);
@@ -674,11 +679,11 @@ export async function pruneSnapshots(
     // A state folder whose copy is no longer in the cluster (the snapshot a
     // rollback swapped in became the database itself): its files were kept
     // until now so the person could look at them; they go with this prune.
-    const kept = new Set(all.map((s) => s.name));
+    const present = new Set(all.map((s) => s.name));
     const pattern = snapshotPattern(database);
     if (existsSync(opts.stateFilesDir)) {
       for (const folder of readdirSync(opts.stateFilesDir)) {
-        if (pattern.test(folder) && !kept.has(folder)) {
+        if (pattern.test(folder) && !present.has(folder)) {
           removeStateFiles({ dir: opts.stateFilesDir }, folder);
         }
       }

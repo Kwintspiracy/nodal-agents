@@ -1163,12 +1163,14 @@ export async function restoreBackup(
     replacedKind: 'replaced-by-restore',
   });
 
-  // 5. The normal path to this program's schema, then the proof.
+  // 5. The normal path to this program's schema, then the proof. Its prune
+  // never drops the copy this restore just set aside and named.
   const migrated = await migrateDatabase(connectionString, {
     patchVectorAsText: !opts.vector,
     repair: false,
     programVersion: opts.programVersion,
     keep: opts.keep,
+    protect: [swap.replaced.name],
     freeBytes: opts.freeBytes,
     stateFiles: opts.stateFiles,
     now,
