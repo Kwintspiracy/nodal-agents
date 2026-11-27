@@ -16,7 +16,15 @@ import { MockLanguageModelV3 } from 'ai/test';
 import { generateText } from 'ai';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { eq, agentJobs, agents, conversations, jobDeliveries, toolCalls } from '@nodal-agents/db';
+import {
+  eq,
+  agentJobs,
+  agents,
+  channelBindings,
+  conversations,
+  jobDeliveries,
+  toolCalls,
+} from '@nodal-agents/db';
 import { completeJob } from '../../job/state.ts';
 import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
 import { createEmbeddingClient } from '@nodal-agents/llm';
@@ -1071,6 +1079,17 @@ describe('a parent cannot promise over a failed delegation @cap:organiser-equipe
   // range dans le relevé du runner. Par le vrai producteur, jusqu'au prompt
   // réellement envoyé au tour suivant.
   it('la ligne d’échec du harnais n’est jamais relue comme les mots de l’agent au tour suivant (#562)', async () => {
+    // L'agent est connecté à WhatsApp, le canal du chat : la fin du job y part (#1215).
+    await db
+      .insert(channelBindings)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'whatsapp',
+        credentials: JSON.stringify({ sessionDir: '/sessions/contract-test' }),
+        enabled: true,
+      })
+      .onConflictDoNothing();
     const [conv] = await db
       .insert(conversations)
       .values({

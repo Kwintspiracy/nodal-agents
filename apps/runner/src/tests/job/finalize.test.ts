@@ -30,13 +30,13 @@ import { mustDie, readCounter, watchProcess } from '@nodal-agents/test-kit';
 import { closeAllJobProcessScopes, getSandboxStatus } from '@nodal-agents/sandbox';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import {
-  and,
   asc,
   eq,
   sql,
   agentJobs,
   agentWorkspaces,
   codeProjects,
+  channelBindings,
   jobDeliveries,
   jobDeliverableVerificationState,
   verificationRuns,
@@ -50,7 +50,6 @@ import {
 } from '@nodal-agents/shared';
 import type { VerifyCommand } from '@nodal-agents/shared';
 import {
-  DELIVERY_PREPARE_UNAVAILABLE,
   FINALIZE_CLAIMED_ELSEWHERE,
   FINALIZING_STALE_MS,
   VERIFICATION_DUE_OBSERVED,
@@ -177,6 +176,28 @@ async function setProject(
     verificationEpoch: 7,
     verifyApprovedManifestHash: hash,
   });
+}
+
+/**
+ * Le job devient une demande faite sur un chat WhatsApp de l'agent, connecté à
+ * WhatsApp : sa fin revient sur ce chat (#1215, #1180).
+ */
+async function onWhatsappChat(jobId: string): Promise<string> {
+  await db
+    .insert(channelBindings)
+    .values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      channel: 'whatsapp',
+      credentials: JSON.stringify({ sessionDir: '/sessions/finalize-test' }),
+      enabled: true,
+    })
+    .onConflictDoNothing();
+  await db
+    .update(agentJobs)
+    .set({ channel: 'whatsapp', chatId: '42', chatChannel: 'whatsapp' })
+    .where(eq(agentJobs.id, jobId));
+  return jobId;
 }
 
 async function insertJob(status: string, result = ''): Promise<string> {
@@ -1113,81 +1134,82 @@ describe('finalizeJobSuccess — résultat compilé et livraison', () => {
     expect(job.result).toContain('second enfant');
   });
 
-  it('une livraison demandée sans préparateur (T08 absent) ⇒ refus fort, rien n’est écrit', async () => {
-    const jobId = await insertJob('processing');
+  // #1215 : l'écriture terminale prépare elle-même la réponse d'un job de tête
+  // venu d'un chat ; aucun appelant ne la demande ni ne la fournit.
+  it('la réponse d’un job venu d’un chat est préparée DANS la transaction terminale : son échec annule le statut', async () => {
+    const jobId = await onWhatsappChat(await insertJob('processing'));
+    // La clé de la réponse de ce job est déjà prise : l'INSERT échoue.
+    await db.insert(jobDeliveries).values({
+      jobId,
+      channel: 'whatsapp',
+      chatId: '42',
+      payload: 'déjà là',
+      outcome: 'confirmed',
+      idempotencyKey: `${jobId}:answer`,
+    });
     await expect(
       finalizeJobSuccess(
         asDb(),
-        {
-          jobId,
-          result: 'ok',
-          resultKind: 'prose',
-          repairTurn: 'unsupported',
-          delivery: { channel: 'telegram', chatId: '42', payload: 'ok' },
-        },
+        { jobId, result: 'ok', resultKind: 'prose', repairTurn: 'unsupported' },
         deps(),
       ),
-    ).rejects.toThrow(DELIVERY_PREPARE_UNAVAILABLE);
-    expect((await jobRow(jobId)).status).toBe('processing');
-  });
-
-  it('le préparateur fourni écrit DANS la transaction terminale : son échec annule le statut', async () => {
-    const jobId = await insertJob('processing');
-    await expect(
-      finalizeJobSuccess(
-        asDb(),
-        {
-          jobId,
-          result: 'ok',
-          resultKind: 'prose',
-          repairTurn: 'unsupported',
-          delivery: { channel: 'telegram', chatId: '42', payload: 'ok' },
-        },
-        deps({
-          prepareDelivery: async () => {
-            throw new Error('canal indisponible');
-          },
-        }),
-      ),
-    ).rejects.toThrow('canal indisponible');
+    ).rejects.toThrow();
     const job = await jobRow(jobId);
     expect(job.status).toBe('processing');
     expect(job.completedAt).toBeNull();
   });
 
-  it('le préparateur fourni est commis AVEC le statut terminal', async () => {
-    const jobId = await insertJob('processing');
+  it('la réponse est commise AVEC le statut terminal, sur le chat de la demande', async () => {
+    const jobId = await onWhatsappChat(await insertJob('processing'));
     const outcome = await finalizeJobSuccess(
       asDb(),
-      {
-        jobId,
-        result: 'ok',
-        resultKind: 'prose',
-        repairTurn: 'unsupported',
-        delivery: { channel: 'telegram', chatId: '42', payload: 'à livrer' },
-      },
-      deps({
-        prepareDelivery: async (tx, input) => {
-          await tx.insert(jobDeliveries).values({
-            jobId: input.jobId,
-            channel: input.channel,
-            chatId: input.chatId,
-            payload: input.payload,
-            outcome: 'prepared',
-            idempotencyKey: `${input.jobId}:${input.channel}:${input.chatId}:0`,
-          });
-        },
-      }),
+      { jobId, result: 'à livrer', resultKind: 'prose', repairTurn: 'unsupported' },
+      deps(),
     );
 
     expect(outcome.kind).toBe('completed');
     const rows = await db
-      .select({ outcome: jobDeliveries.outcome, payload: jobDeliveries.payload })
+      .select({
+        channel: jobDeliveries.channel,
+        chatId: jobDeliveries.chatId,
+        payload: jobDeliveries.payload,
+        outcome: jobDeliveries.outcome,
+        idempotencyKey: jobDeliveries.idempotencyKey,
+      })
       .from(jobDeliveries)
-      .where(and(eq(jobDeliveries.jobId, jobId), eq(jobDeliveries.channel, 'telegram')));
-    expect(rows).toHaveLength(1);
-    expect(rows[0]?.outcome).toBe('prepared');
+      .where(eq(jobDeliveries.jobId, jobId));
+    expect(rows).toEqual([
+      {
+        channel: 'whatsapp',
+        chatId: '42',
+        payload: 'à livrer',
+        outcome: 'prepared',
+        idempotencyKey: `${jobId}:answer`,
+      },
+    ]);
     expect((await jobRow(jobId)).status).toBe('completed');
+  });
+
+  it('les lignes du runner sont écrites après la réponse, rangées comme les siennes, et livrées avec elle', async () => {
+    const jobId = await onWhatsappChat(await insertJob('processing'));
+    await finalizeJobSuccess(
+      asDb(),
+      {
+        jobId,
+        result: 'La réponse.',
+        resultKind: 'prose',
+        repairTurn: 'unsupported',
+        runnerLines: ['[delegation stopped: researcher — no deliverable]'],
+      },
+      deps(),
+    );
+    const job = await jobRow(jobId);
+    expect(job.result).toBe('La réponse.\n\n[delegation stopped: researcher — no deliverable]');
+    const [row] = await db
+      .select({ payload: jobDeliveries.payload })
+      .from(jobDeliveries)
+      .where(eq(jobDeliveries.jobId, jobId));
+    expect(row?.payload).toBe(job.result);
   });
 });
 
@@ -1201,14 +1223,8 @@ describe('finalizeJobSuccess — résultat compilé et livraison', () => {
 // ne la demande ni ne la fournit.
 describe('finalizeJobFailure — la notice est commise avec l’échec @cap:organiser-equipe/moteur', () => {
   /** Un job demandé sur un chat WhatsApp : sa réponse revient sur ce chat. */
-  async function chatJob(status: string): Promise<string> {
-    const jobId = await insertJob(status);
-    await db
-      .update(agentJobs)
-      .set({ channel: 'whatsapp', chatId: '42', chatChannel: 'whatsapp' })
-      .where(eq(agentJobs.id, jobId));
-    return jobId;
-  }
+  const chatJob = async (status: string): Promise<string> =>
+    onWhatsappChat(await insertJob(status));
 
   const notices = (jobId: string) =>
     db
@@ -1233,7 +1249,7 @@ describe('finalizeJobFailure — la notice est commise avec l’échec @cap:orga
       idempotencyKey: `${jobId}:failure`,
     });
     await expect(
-      finalizeJobFailure(asDb(), { jobId, errorCode: 'telegram_not_delivered' }),
+      finalizeJobFailure(asDb(), { jobId, errorCode: 'quota_exhausted' }),
     ).rejects.toThrow();
     // LE point du résidu 3 : pas de job terminal sans son intention de livrer.
     const job = await jobRow(jobId);
@@ -1270,7 +1286,7 @@ describe('finalizeJobFailure — la notice est commise avec l’échec @cap:orga
     const jobId = await chatJob('completed');
     const landed = await finalizeJobFailure(asDb(), {
       jobId,
-      errorCode: 'telegram_not_delivered',
+      errorCode: 'quota_exhausted',
     });
 
     expect(landed).toBe(false);

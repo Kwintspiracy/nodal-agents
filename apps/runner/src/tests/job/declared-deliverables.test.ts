@@ -21,6 +21,7 @@ import type { TestDb } from '@nodal-agents/db/test-utils';
 import {
   eq,
   agentJobs,
+  channelBindings,
   agents,
   agentSkills,
   agentSkillAssignments,
@@ -727,6 +728,17 @@ describe('SANS livrable déclaré, rien ne change @cap:verifier-un-livrable/mote
 
 describe('la porte de finalisation, pour toute porte qui l’appelle @cap:verifier-un-livrable/moteur', () => {
   it('un texte déjà publié reste, SUIVI de la ligne ; la notice de l’échec, ce résultat, part là où la demande a été faite', async () => {
+    // L'agent est connecté à WhatsApp : le chat de la demande est sur SON canal.
+    await db
+      .insert(channelBindings)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'whatsapp',
+        credentials: JSON.stringify({ sessionDir: '/sessions/declared-test' }),
+        enabled: true,
+      })
+      .onConflictDoNothing();
     const [job] = await db
       .insert(agentJobs)
       .values({

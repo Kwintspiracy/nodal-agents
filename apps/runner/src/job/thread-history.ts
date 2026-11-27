@@ -327,8 +327,12 @@ export async function loadThreadHistory(opts: LoadThreadHistoryOptions): Promise
       continue;
     }
 
+    // La forme rejouée est celle de ce qui a été envoyé (#1215) : une réponse
+    // que l'agent a portée par l'outil d'envoi revient comme cet appel ; une
+    // réponse que le harnais a envoyée (le résultat du job, sur tout canal)
+    // revient comme le texte que l'agent a écrit, ce qu'il a fait.
     const sendTool = CHANNEL_SEND_TOOL[row.channel];
-    if (sendTool) {
+    if (sendTool && reply !== null && reply.callIds.size > 0) {
       const callId = `history-tool-${nextSynthId++}`;
       blocks.push([
         ...asked,

@@ -25,6 +25,7 @@ import {
   agents,
   agentTasks,
   cancelJobs,
+  channelBindings,
   eq,
   jobDeliveries,
   listenToTransitions,
@@ -213,11 +214,21 @@ let unlisten: () => void = () => {};
 beforeAll(async () => {
   db = (await spinUpTestDb()).db;
   seed = await seedMinimal(db);
-  // The agent has a channel credential: a job asked on a chat can be answered there.
+  // The agent is connected to the four messaging channels: a job asked on a
+  // chat can be answered there, on that chat's own channel (#1215).
   await db
     .update(agents)
     .set({ telegramBotToken: 'fake-token' })
     .where(eq(agents.id, seed.agentId));
+  for (const channel of ['whatsapp', 'discord', 'slack'] as const) {
+    await db.insert(channelBindings).values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      channel,
+      credentials: JSON.stringify({ botToken: `${channel}-token` }),
+      enabled: true,
+    });
+  }
   unlisten = listenToTransitions(transitionListener(bus));
 });
 
@@ -361,7 +372,6 @@ describe('one writer of failed, one notice per failure @cap:parler-par-canal-ext
       'unresolved_tool_failure',
       'quota_exhausted',
       'no_progress_detected',
-      'telegram_not_delivered',
       'orphan_job_reset',
       'stale_pending_abandoned',
       'empty_deliverable',
@@ -729,17 +739,25 @@ describe('the exits of the loop leave exactly one notice @cap:parler-par-canal-e
     expect(row.error).toBe('no_tool_calls_no_text');
   });
 
-  it('nothing delivered on the chat: one notice, the stop line (it had one before, still one)', async () => {
+  // #1215 : une réponse en texte sur un chat n'est plus un échec
+  // (`telegram_not_delivered` n'existe plus) : la porte qui pose `completed`
+  // l'envoie. Pas de notice d'échec, la réponse.
+  it('a plain-text answer on the chat is not a failure: no failure notice, the answer is delivered', async () => {
     const job = await headJob('telegram', { status: 'pending' });
     const result = await executeJob(
       job.id as JobId,
-      deps(scriptedModel([{ text: 'plain text, never sent' }])),
+      deps(scriptedModel([{ text: 'plain text, sent by the harness' }])),
       testEnv,
     );
-    expect(result.status).toBe('failed');
-    const row = await expectOneNotice(job.id, 'telegram', job.chatId!);
-    expect(row.error).toBe('telegram_not_delivered');
-    expect(row.result).toBe('[stopped: nothing was delivered on this channel]');
+    expect(result.status).toBe('completed');
+    expect(await deliveriesOf(job.id)).toEqual([
+      {
+        channel: 'telegram',
+        chatId: job.chatId,
+        payload: 'plain text, sent by the harness',
+        idempotencyKey: `${job.id}:answer`,
+      },
+    ]);
   });
 
   it('a blocked agent that already wrote on the chat: one notice, its reason', async () => {

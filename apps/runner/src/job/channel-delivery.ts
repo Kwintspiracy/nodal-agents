@@ -1,41 +1,30 @@
-// channel-delivery.ts — where a job's reply goes (#649), the channels where it
-// reaches the user only by a tool, and the facts the prompt states about them
-// (#613).
+// channel-delivery.ts — where a job's reply goes (#649), and the facts the
+// prompt states about the channel its send tool writes on (#613).
+//
+// A reply that goes to a chat is SENT BY THE HARNESS, on every channel
+// (#1215, job/answer-delivery.ts): the gate that writes `completed` prepares
+// it through the outbox. No channel is one where only a tool reaches the
+// person any more; the send tools are for what is deliberately extra (a file,
+// another chat, a progress note).
 
-import { defaultSendChannel, jobChatOn, textDeliveryOf } from '@nodal-agents/delivery';
+import {
+  defaultSendChannel,
+  isMessagingChannel,
+  jobChatOn,
+  textDeliveryOf,
+} from '@nodal-agents/delivery';
 import type { ChannelKind, JobChat } from '@nodal-agents/delivery';
 import { conversationHandleFor } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import type { JobContext } from '@nodal-agents/orchestration';
 
-// Channels whose ONLY path to the user is a delivery tool call (telegram_send_message,
-// which dispatches through the job's own ChannelAdapter — see CHANNEL_SEND_TOOL
-// below). For these, a job that completes without ever delivering is a
-// silent black hole — the delivery guard re-prompts the agent before letting such a
-// job finish. Other channels (api, dashboard, cron, internal, …) expose agent_jobs.result
-// directly, so a text-only completion is fine there.
-// Live incident: job 4eefb5bf (2026-07-12) completed on discord with tools_used=[] —
-// the guard already existed but only listed 'telegram', so a discord job's plain-text
-// reply silently never reached the channel. discord/slack register the SAME send tools
-// as telegram (gate at the capabilityTools.push call in execute.ts keys off
-// deliveryBotToken || hasDiscordBinding || hasSlackBinding), so they belong in this set
-// too. whatsapp does NOT: hasWhatsappBinding is not part of that gate yet (no outbound
-// send tool is registered for a whatsapp job today), so adding it here would nudge the
-// agent to call a tool it doesn't have — join it once whatsapp's outbound tooling ships.
-export const TOOL_ONLY_DELIVERY_CHANNELS: ReadonlySet<string> = new Set([
-  'telegram',
-  'discord',
-  'slack',
-]);
-
 /**
- * Map of channel → the tool the agent uses to emit a user-visible reply.
- * For conversational channels, the user-facing text typically lives inside
- * a `*_send_message` tool call rather than in `return_result` — the agent
- * delivers the answer through the channel API directly, and only acks via
- * `return_result({status: 'success'})` with no text. Without this lookup we
- * lose the user-visible reply and the next turn's session-memory context
- * comes back empty.
+ * Map of channel → the tool that sends a text on it.
+ * An answer the agent sent itself lives inside a `*_send_message` tool call
+ * rather than in `return_result`: the thread history reads it there, and
+ * replays it in that form (thread-history.ts). Without this lookup we lose
+ * the user-visible reply and the next turn's session-memory context comes
+ * back empty.
  *
  * S3 (multichannel plan): exported so a later phase can extend this map
  * per-channel once other channels get their OWN send tool name. Here, and read
@@ -81,29 +70,26 @@ export function triggerWantsConfirmation(job: DeliveryJob): boolean {
 
 /**
  * Où va la RÉPONSE d'un job (#649) — une notion, calculée une fois par job,
- * lue par le prompt (`channelDeliveryFacts`) et par la garde de livraison
- * (execute.ts).
+ * lue par le prompt (`channelDeliveryFacts`, la ligne `delivery:` et
+ * `notify_on_success`). La réponse elle-même est préparée par la porte qui
+ * pose `completed`, d'après la ligne du job (`resolveDeliveryTarget`,
+ * job/answer-delivery.ts) : ce fait-ci dit au modèle la même chose.
  *
  * - `parent` : un délégué répond à son parent ; le `chat_id` qu'il hérite ne
  *   fait pas de lui un interlocuteur (#559).
- * - `channel` : la réponse part dans un chat, par l'outil d'envoi, seul
- *   chemin vers ce chat. Deux façons d'y arriver :
- *   1. la demande VIENT d'un chat (telegram, discord, slack) : son auteur n'a
- *      que ce chat, il ne lit jamais le résultat du job. Si aucun outil n'est
- *      armé, la garde le dit fort (`telegram_not_delivered`) : réussir en
- *      silence serait perdre la réponse (#4) ;
+ * - `channel` : la réponse part dans un chat, envoyée par le harnais. Deux
+ *   façons d'y arriver :
+ *   1. la demande VIENT d'un chat (telegram, whatsapp, discord, slack) : son
+ *      auteur n'a que ce chat, il ne lit jamais le résultat du job ;
  *   2. son déclencheur a DÉSIGNÉ un chat (`chat_id` posé par une routine qui
  *      veut sa confirmation, un webhook, « Send via Telegram » du dashboard),
- *      son canal est enregistré (`designatedChatChannel`), et l'outil d'envoi
- *      de CE canal est ARMÉ pour ce job (le job le tient, l'agent a la
- *      credential de ce canal).
+ *      et son canal est enregistré (`designatedChatChannel`), et l'agent est
+ *      connecté à ce canal.
  * - `result` : sinon. La réponse est le résultat du job, rendu là d'où vient
  *   la demande — l'appelant MCP ou API le lit, le web l'affiche, les Runs le
- *   gardent. Un chat désigné qu'aucun outil armé n'atteint sur son canal (jeton
- *   retiré, liaison désactivée, outil hors liste), ou dont la plateforme n'est
- *   pas enregistrée, tombe ici : l'origine lit le
- *   résultat, et exiger un envoi impossible ferait échouer un travail fait
- *   sans que personne ne reçoive rien de plus (revue de #657, passe 1).
+ *   gardent. Un chat désigné que l'agent n'atteint pas sur son canal (jeton
+ *   retiré, liaison désactivée), ou dont la plateforme n'est pas enregistrée,
+ *   tombe ici ; la porte, elle, le dit sur la ligne du job.
  *
  * Le canal de REPLI (`resolveTransportChannel` d'une origine sans transport)
  * ne décide jamais de la destination : il sert aux messages que le
@@ -139,15 +125,13 @@ export function designatedChatChannel(job: {
   chatId: string | null;
   chatChannel: string | null;
 }): ChannelKind | undefined {
-  if (job.chatId == null || TOOL_ONLY_DELIVERY_CHANNELS.has(job.channel ?? '')) return undefined;
+  if (job.chatId == null || isMessagingChannel(job.channel)) return undefined;
   return (job.chatChannel as ChannelKind | null) ?? undefined;
 }
 
 interface ReplyInputs {
   job: ReplyJob;
   activeChannels: readonly ChannelKind[];
-  /** Les outils que le job tient (sa liste finale) : un outil d'envoi hors liste n'est pas armé. */
-  heldTools: ReadonlySet<string>;
 }
 
 /**
@@ -202,19 +186,14 @@ export function replyDestination(opts: ReplyInputs): ReplyDestination {
   const { job } = opts;
   if (job.parentJobId) return { to: 'parent' };
   // La demande vient de ce chat : son auteur n'a que lui.
-  if (TOOL_ONLY_DELIVERY_CHANNELS.has(job.channel ?? '')) {
-    return { to: 'channel', channel: job.channel as ChannelKind };
+  if (job.chatId != null && isMessagingChannel(job.channel)) {
+    return { to: 'channel', channel: job.channel };
   }
-  // Un chat désigné par le déclencheur, atteint sur SON canal : l'outil qui
-  // envoie sur ce canal est tenu ET l'agent a la credential de CE canal. Un
-  // même nom d'outil sert telegram, discord et slack : le tenir ne dit rien du
-  // canal qu'il peut atteindre, la credential le dit.
+  // Un chat désigné par le déclencheur, atteint sur SON canal : l'agent a la
+  // credential de CE canal.
   const channel = designatedChatChannel(job);
   if (job.chatId == null || channel === undefined) return { to: 'result' };
-  const sendTool = CHANNEL_SEND_TOOL[channel];
-  const armed =
-    sendTool !== undefined && opts.heldTools.has(sendTool) && opts.activeChannels.includes(channel);
-  return armed ? { to: 'channel', channel } : { to: 'result' };
+  return opts.activeChannels.includes(channel) ? { to: 'channel', channel } : { to: 'result' };
 }
 
 /**
@@ -256,6 +235,7 @@ export function channelDeliveryFacts(
     sendTool,
     renders: textDeliveryOf(channel).renders,
     reply: reply.to,
+    ...(reply.to === 'channel' ? { replyChannel: reply.channel } : {}),
     target: jobChatOn(chat, channel) !== null ? 'chat' : 'owner',
   };
 }

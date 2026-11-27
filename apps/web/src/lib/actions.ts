@@ -10892,13 +10892,10 @@ export async function getVersionInfoAction(): Promise<ActionResult<VersionInfo>>
 // ─── Automation Actions ───────────────────────────────────────────────────────
 
 // Channels the "Notify via" selector offers (B1, notify-channel-choice plan).
-// A subset of CHANNEL_ORDER: whatsapp has no outbound send tool registered for
-// a job yet (TOOL_ONLY_DELIVERY_CHANNELS, apps/runner/src/job/channel-delivery.ts) —
-// picking it as a schedule's notify channel would set triggerWantsConfirmation
-// (chatId resolves fine via resolveOwnerConversation) but then force the agent
-// to deliver via a tool it was never given, deadlocking the run. Kept in the DB
-// column's check constraint for forward-compat once whatsapp grows send tools,
-// just not offered here.
+// A subset of CHANNEL_ORDER: whatsapp is not offered. It was left out because a
+// chat job could only be answered by a send tool, and whatsapp has none; since
+// #1215 the runner sends the reply on every channel, so nothing in the runner
+// prevents it any more. Offering it is a screen change of its own (B35-02).
 const NOTIFY_CHANNEL_OPTIONS: readonly MessagingChannelKind[] = ['telegram', 'discord', 'slack'];
 
 export type ScheduleRow = {

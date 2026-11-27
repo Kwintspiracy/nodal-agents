@@ -1477,11 +1477,10 @@ describe('executeJob', () => {
         .from(agentJobs)
         .where(eq(agentJobs.id, tgJob!.id));
       expect(tgRow?.systemPrompt).toContain(
-        '- delivery: `telegram_send_message` reaches the user on telegram, the only way your ' +
-          'replies reach them. Text arrives exactly as typed: no markup renders, so markdown ' +
-          '(headings, tables, **bold**, escapes) shows literally. A long text is split into ' +
-          'several messages automatically, ' +
-          'so send each reply once, whole.',
+        '- delivery: your reply is sent to the user on telegram. `telegram_send_message` sends ' +
+          'a separate message to them on telegram. Text arrives exactly as typed: no markup ' +
+          'renders, so markdown (headings, tables, **bold**, escapes) shows literally. A long ' +
+          'text is split into several messages automatically, so send each message once, whole.',
       );
       for (const gone of ['## Channel etiquette', 'MarkdownV2']) {
         expect({ gone, found: tgRow?.systemPrompt?.includes(gone) }).toEqual({
@@ -1536,7 +1535,9 @@ describe('executeJob', () => {
         .select({ systemPrompt: agentJobs.systemPrompt, tools: agentJobs.systemPromptTools })
         .from(agentJobs)
         .where(eq(agentJobs.id, job!.id));
-      expect(first?.systemPrompt).toContain('- delivery: `telegram_send_message` reaches the user');
+      expect(first?.systemPrompt).toContain(
+        '- delivery: your reply is sent to the user on telegram',
+      );
       expect(first?.tools).toContain('telegram_send_message');
 
       // Resume with the SAME tools: the stored prompt is reused verbatim. A
@@ -1757,12 +1758,30 @@ describe('executeJob', () => {
     await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
   });
 
-  // ─── Delivery guard: Telegram job must deliver before completing ──────────
+  // ─── The answer of a chat job is sent by the harness (#1215) ──────────────
+  //
+  // There was a delivery guard here: on Telegram, Discord and Slack the model
+  // had to call a send tool, and the runner nudged it twice, then failed the
+  // job `telegram_not_delivered`. The gate that writes `completed` now
+  // prepares the answer through the outbox, on every channel
+  // (job/answer-delivery.ts, answer-delivery.test.ts for the whole rule).
 
-  it('delivery guard: plain-text reply on a Telegram job is re-prompted, then delivered via the tool', async () => {
-    // Regression for live incident job 5d84d72e (2026-05-29): the agent answered
-    // in plain assistant text (no tool call) so nothing reached Telegram. The
-    // guard must re-prompt and force a real telegram_send_message.
+  /** The deliveries the gate prepared for a job: where, what, under which key (#1215). */
+  const preparedDeliveries = (jobId: string) =>
+    db
+      .select({
+        channel: jobDeliveries.channel,
+        chatId: jobDeliveries.chatId,
+        payload: jobDeliveries.payload,
+        idempotencyKey: jobDeliveries.idempotencyKey,
+      })
+      .from(jobDeliveries)
+      .where(eq(jobDeliveries.jobId, jobId));
+
+  it('a plain-text reply on a Telegram job is sent by the harness: one delivery, no nudge, no tool send', async () => {
+    // Live incident job 5d84d72e (2026-05-29): the agent answered in plain
+    // text and nothing reached Telegram. The text IS the answer now: the gate
+    // prepares it for the chat, in the transaction that writes `completed`.
     await db
       .update(agents)
       .set({ telegramBotToken: 'fake-token' })
@@ -1784,50 +1803,36 @@ describe('executeJob', () => {
       .returning();
     if (!job) throw new Error('Failed to create delivery test job');
 
-    // Turn 1: plain text, NO tool calls (the slip). Turn 2 (after nudge):
-    // telegram_send_message + return_result (the correction).
-    const llmClient = makeMockLlmClient([
-      { text: 'Voici ma réponse en texte brut, non livrée.' },
-      {
-        text: 'Done.',
-        toolCalls: [
-          {
-            toolCallId: 'tc-tg',
-            toolName: 'telegram_send_message',
-            args: { text: 'la vraie réponse' },
-          },
-          { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
-        ],
-      },
-    ]);
+    const llmClient = makeMockLlmClient([{ text: 'Voici ma réponse en texte brut.' }]);
 
-    sendTelegramMessageMock.mockClear();
     const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
 
-    // Real effect: the reply WAS delivered (once), with the right args.
     expect(result.status).toBe('completed');
-    expect(sendTelegramMessageMock).toHaveBeenCalledOnce();
-    expect(sendTelegramMessageMock).toHaveBeenCalledWith({
-      chatId: '12345',
-      text: 'la vraie réponse',
-      botToken: 'fake-token',
-    });
-
-    // The nudge forced a second turn (turn 1 = slip, turn 2 = delivery).
+    expect(await preparedDeliveries(job.id)).toEqual([
+      {
+        channel: 'telegram',
+        chatId: '12345',
+        payload: 'Voici ma réponse en texte brut.',
+        idempotencyKey: `${job.id}:answer`,
+      },
+    ]);
+    // One turn: nothing asked the model to send it again.
     const rows = await db
-      .select({ status: agentJobs.status, turn: agentJobs.turn })
+      .select({ status: agentJobs.status, turn: agentJobs.turn, result: agentJobs.result })
       .from(agentJobs)
       .where(eq(agentJobs.id, job.id));
-    expect(rows[0]?.status).toBe('completed');
-    expect(rows[0]?.turn).toBe(2);
+    expect(rows[0]).toEqual({
+      status: 'completed',
+      turn: 1,
+      result: 'Voici ma réponse en texte brut.',
+    });
 
     await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
   });
 
-  it('cron confirmation: a cron job WITH a chatId (notify_on_success) forces the agent to deliver a confirmation', async () => {
-    // notify_on_success opt-in: the cron tick sets chat_id, which makes the
-    // runner hold a 'cron' job to the same delivery bar as Telegram — the agent
-    // must send the user a confirmation before completing.
+  it('cron confirmation: a cron job WITH a chatId (notify_on_success) sends the agent’s reply to that chat as its confirmation', async () => {
+    // notify_on_success opt-in: the cron tick sets chat_id. The reply of the
+    // job is its confirmation, sent by the gate to that chat (#1215).
     await db
       .update(agents)
       .set({ telegramBotToken: 'fake-token' })
@@ -1850,39 +1855,37 @@ describe('executeJob', () => {
       .returning();
     if (!job) throw new Error('Failed to create cron-notify test job');
 
-    // Turn 1: the agent tries to finish WITHOUT confirming → must be nudged.
-    // Turn 2: it sends the confirmation, then finishes.
-    const llmClient = makeMockLlmClient([
-      {
-        text: 'Done.',
-        toolCalls: [
-          { toolCallId: 'tc-rr1', toolName: 'return_result', args: { status: 'success' } },
-        ],
-      },
-      {
-        text: 'Done.',
-        toolCalls: [
-          {
-            toolCallId: 'tc-tg',
-            toolName: 'telegram_send_message',
-            args: { text: '✅ Nettoyage quotidien terminé.' },
-          },
-          { toolCallId: 'tc-rr2', toolName: 'return_result', args: { status: 'success' } },
-        ],
-      },
-    ]);
+    const capturedPrompts: unknown[] = [];
+    const llmClient = makeMockLlmClient(
+      [
+        {
+          text: '✅ Nettoyage quotidien terminé.',
+          toolCalls: [
+            { toolCallId: 'tc-rr1', toolName: 'return_result', args: { status: 'success' } },
+          ],
+        },
+      ],
+      capturedPrompts,
+    );
 
-    sendTelegramMessageMock.mockClear();
     const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
 
     expect(result.status).toBe('completed');
-    // The confirmation actually reached the user (real args, not a call count).
-    expect(sendTelegramMessageMock).toHaveBeenCalledOnce();
-    expect(sendTelegramMessageMock).toHaveBeenCalledWith({
-      chatId: '12345',
-      text: '✅ Nettoyage quotidien terminé.',
-      botToken: 'fake-token',
-    });
+    expect(await preparedDeliveries(job.id)).toEqual([
+      {
+        channel: 'telegram',
+        chatId: '12345',
+        payload: '✅ Nettoyage quotidien terminé.',
+        idempotencyKey: `${job.id}:answer`,
+      },
+    ]);
+    // The prompt says the reply is the confirmation, not that a tool must send it.
+    const prompt = JSON.stringify(capturedPrompts[0]);
+    expect(prompt).toContain(
+      'notify_on_success: true — when this job finishes, your reply is sent to the user as ' +
+        'their confirmation',
+    );
+    expect(prompt).not.toContain('via your delivery tool before calling return_result');
 
     await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
   });
@@ -1934,7 +1937,7 @@ describe('executeJob', () => {
   // answer. The answer went to the owner's Telegram, and the MCP caller read
   // the narration line the job ended on. Where the answer goes is computed once
   // from the job's origin, and the prompt the model receives states it.
-  it('the answer goes back where the request came from: an MCP job is answered by its result, a chat or a routine that named one by the send tool (#649) @cap:parler-par-canal-externe/moteur', async () => {
+  it('the answer goes back where the request came from: an MCP job is answered by its result, a chat or a routine that named one in that chat (#649, #1215) @cap:parler-par-canal-externe/moteur', async () => {
     await db
       .update(agents)
       .set({ telegramBotToken: 'fake-token' })
@@ -1981,9 +1984,14 @@ describe('executeJob', () => {
           .where(eq(agentJobs.id, job!.id));
         const deliveryLine =
           (row?.systemPrompt ?? '').split('\n').find((l) => l.startsWith('- delivery:')) ?? '';
+        const deliveries = await db
+          .select({ chatId: jobDeliveries.chatId, payload: jobDeliveries.payload })
+          .from(jobDeliveries)
+          .where(eq(jobDeliveries.jobId, job!.id));
         return {
           row,
           deliveryLine,
+          deliveries,
           firstRequest: JSON.stringify(prompts[0]),
           firstTools: toolDescriptions[0] ?? {},
         };
@@ -2025,7 +2033,7 @@ describe('executeJob', () => {
       });
       expect(sendTelegramMessageMock).not.toHaveBeenCalled();
 
-      // A Telegram request: unchanged, the send tool is the only path.
+      // A Telegram request: the reply is sent to that chat; the agent sent it itself here.
       const tg = await run({ channel: 'telegram', chatId: '199791464', chatChannel: 'telegram' }, [
         {
           toolCalls: [
@@ -2036,11 +2044,12 @@ describe('executeJob', () => {
       ]);
       expect(
         tg.deliveryLine.startsWith(
-          '- delivery: `telegram_send_message` reaches the user on telegram, the only way your replies reach them. ',
+          '- delivery: your reply is sent to the user on telegram. `telegram_send_message` sends ' +
+            'a separate message to them on telegram. ',
         ),
       ).toBe(true);
 
-      // A routine that asked for its confirmation on Telegram: unchanged.
+      // A routine that asked for its confirmation on Telegram: the same.
       const cron = await run(
         {
           channel: 'cron',
@@ -2064,7 +2073,8 @@ describe('executeJob', () => {
       );
       expect(
         cron.deliveryLine.startsWith(
-          '- delivery: `telegram_send_message` reaches the user on telegram, the only way your replies reach them. ',
+          '- delivery: your reply is sent to the user on telegram. `telegram_send_message` sends ' +
+            'a separate message to them on telegram. ',
         ),
       ).toBe(true);
       expect(sendTelegramMessageMock).toHaveBeenCalledWith(
@@ -2072,28 +2082,19 @@ describe('executeJob', () => {
       );
 
       // A dashboard task sent with "send via Telegram": the requester named the
-      // chat, so the reply goes there, and the delivery guard holds it to it
-      // (the same rule as a routine's confirmation).
+      // chat, so the reply goes there, sent by the gate (#1215), the same rule
+      // as a routine's confirmation.
       const dash = await run(
         { channel: 'dashboard', chatId: '199791464', chatChannel: 'telegram' },
-        [
-          { text: '277.6' },
-          {
-            toolCalls: [
-              { toolCallId: 'tc-tg', toolName: 'telegram_send_message', args: { text: '277.6' } },
-              { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
-            ],
-          },
-        ],
+        [{ text: '277.6' }],
       );
       expect(
         dash.deliveryLine.startsWith(
-          '- delivery: `telegram_send_message` reaches the user on telegram, the only way your replies reach them. ',
+          '- delivery: your reply is sent to the user on telegram. `telegram_send_message` sends ' +
+            'a separate message to them on telegram. ',
         ),
       ).toBe(true);
-      expect(sendTelegramMessageMock).toHaveBeenCalledWith(
-        expect.objectContaining({ chatId: '199791464', text: '277.6' }),
-      );
+      expect(dash.deliveries).toEqual([{ chatId: '199791464', payload: '277.6' }]);
 
       // Review of #657, pass 3: a routine's chat comes from THE function every
       // routine writer calls (tick, "Run now", run_schedule). On auto with the
@@ -2114,15 +2115,7 @@ describe('executeJob', () => {
           chatId: null,
         });
         expect(ownerChat).toEqual({ chatId: 'owner-649', chatChannel: 'telegram' });
-        const confirmed = await run({ channel: 'cron', ...ownerChat }, [
-          { text: 'Done.' },
-          {
-            toolCalls: [
-              { toolCallId: 'tc-tg', toolName: 'telegram_send_message', args: { text: 'Done.' } },
-              { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
-            ],
-          },
-        ]);
+        const confirmed = await run({ channel: 'cron', ...ownerChat }, [{ text: 'Done.' }]);
         expect({
           status: confirmed.row?.status,
           sent: sendTelegramMessageMock.mock.calls.map((c) => (c[0] as { chatId: string }).chatId),
@@ -2138,14 +2131,19 @@ describe('executeJob', () => {
           status: explicit.row?.status,
           result: explicit.row?.result,
           sends: sendTelegramMessageMock.mock.calls.length,
-        }).toEqual({ status: 'completed', result: 'Done.', sends: 0 });
+        }).toEqual({
+          status: 'completed',
+          result: 'Done.\n\n[this answer could not be sent to the chat: channel_unknown]',
+          sends: 0,
+        });
       } finally {
         await db.delete(telegramAllowedChats).where(eq(telegramAllowedChats.agentId, seed.agentId));
       }
 
-      // The same task once the bot token is withdrawn: no send tool is armed,
-      // so nothing can reach the named chat. The reply is the result, and the
-      // job is not failed for a send it could not make (review of #657, pass 1).
+      // The same task once the bot token is withdrawn: nothing can reach the
+      // named chat. The reply is the result, the job is not failed for a send
+      // it could not make (review of #657, pass 1), and the row says the answer
+      // could not be sent (#1215, invariant #4).
       await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
       const unarmed = await run(
         { channel: 'dashboard', chatId: '199791464', chatChannel: 'telegram' },
@@ -2155,7 +2153,13 @@ describe('executeJob', () => {
         status: unarmed.row?.status,
         result: unarmed.row?.result,
         sends: sendTelegramMessageMock.mock.calls.length,
-      }).toEqual({ status: 'completed', result: '277.6', sends: 0 });
+        deliveries: unarmed.deliveries,
+      }).toEqual({
+        status: 'completed',
+        result: '277.6\n\n[this answer could not be sent to the chat: channel_inactive]',
+        sends: 0,
+        deliveries: [],
+      });
 
       // Review of #657, pass 2 (blocker): the same Telegram chat, token still
       // withdrawn, but a Discord binding is active. The fallback channel is now
@@ -2192,11 +2196,11 @@ describe('executeJob', () => {
             status: other.row?.status,
             result: other.row?.result,
             sends: sendTelegramMessageMock.mock.calls.length,
-            line: other.deliveryLine.includes('reaches the user on'),
+            line: other.deliveryLine.includes('your reply is sent to the user on'),
           }).toEqual({
             channel: values.channel,
             status: 'completed',
-            result: '277.6',
+            result: '277.6\n\n[this answer could not be sent to the chat: channel_inactive]',
             sends: 0,
             line: false,
           });
@@ -2898,7 +2902,7 @@ describe('executeJob', () => {
     expect(promptStr).not.toContain('y'.repeat(2000));
   });
 
-  it('delivery guard: persistent plain-text on a Telegram job fails loud (telegram_not_delivered), nothing sent', async () => {
+  it('a Telegram job whose answer step sends the answer itself: the harness adds nothing', async () => {
     await db
       .update(agents)
       .set({ telegramBotToken: 'fake-token' })
@@ -2918,32 +2922,32 @@ describe('executeJob', () => {
         chainCount: 0,
       })
       .returning();
-    if (!job) throw new Error('Failed to create delivery-fail test job');
+    if (!job) throw new Error('Failed to create self-send test job');
 
-    // The model never uses the tool — every turn is plain text.
-    const llmClient = makeMockLlmClient([{ text: 'texte brut, encore et toujours' }]);
+    const llmClient = makeMockLlmClient([
+      {
+        toolCalls: [
+          { toolCallId: 'tc-tg', toolName: 'telegram_send_message', args: { text: 'pile poil' } },
+          { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
+        ],
+      },
+    ]);
 
     sendTelegramMessageMock.mockClear();
     const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
 
-    expect(result.status).toBe('failed');
-    if (result.status === 'failed') {
-      expect(result.error).toBe('telegram_not_delivered');
-    }
-    // Nothing was ever delivered to the user.
-    expect(sendTelegramMessageMock).not.toHaveBeenCalled();
-
-    const rows = await db
-      .select({ status: agentJobs.status, error: agentJobs.error })
-      .from(agentJobs)
-      .where(eq(agentJobs.id, job.id));
-    expect(rows[0]?.status).toBe('failed');
-    expect(rows[0]?.error).toBe('telegram_not_delivered');
+    expect(result.status).toBe('completed');
+    expect(sendTelegramMessageMock).toHaveBeenCalledWith({
+      chatId: '12345',
+      text: 'pile poil',
+      botToken: 'fake-token',
+    });
+    expect(await preparedDeliveries(job.id)).toEqual([]);
 
     await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
   });
 
-  it('delivery guard: return_result without any send on a Telegram job is re-prompted, then delivered', async () => {
+  it('return_result with its reason and no send on a Telegram job: the reason is the answer, sent by the harness', async () => {
     await db
       .update(agents)
       .set({ telegramBotToken: 'fake-token' })
@@ -2965,43 +2969,39 @@ describe('executeJob', () => {
       .returning();
     if (!job) throw new Error('Failed to create return_result-only test job');
 
-    // Turn 1: return_result ALONE (no prior send). Turn 2: deliver + return_result.
     const llmClient = makeMockLlmClient([
       {
-        text: 'Done.',
         toolCalls: [
-          { toolCallId: 'tc-rr1', toolName: 'return_result', args: { status: 'success' } },
-        ],
-      },
-      {
-        text: 'Done.',
-        toolCalls: [
-          { toolCallId: 'tc-tg', toolName: 'telegram_send_message', args: { text: 'enfin livré' } },
-          { toolCallId: 'tc-rr2', toolName: 'return_result', args: { status: 'success' } },
+          {
+            toolCallId: 'tc-rr1',
+            toolName: 'return_result',
+            args: { status: 'success', reason: 'Le rapport est prêt.' },
+          },
         ],
       },
     ]);
 
-    sendTelegramMessageMock.mockClear();
     const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
 
     expect(result.status).toBe('completed');
-    expect(sendTelegramMessageMock).toHaveBeenCalledOnce();
-    expect(sendTelegramMessageMock).toHaveBeenCalledWith({
-      chatId: '12345',
-      text: 'enfin livré',
-      botToken: 'fake-token',
-    });
+    expect(await preparedDeliveries(job.id)).toEqual([
+      {
+        channel: 'telegram',
+        chatId: '12345',
+        payload: 'Le rapport est prêt.',
+        idempotencyKey: `${job.id}:answer`,
+      },
+    ]);
     const rows = await db
       .select({ turn: agentJobs.turn })
       .from(agentJobs)
       .where(eq(agentJobs.id, job.id));
-    expect(rows[0]?.turn).toBe(2);
+    expect(rows[0]?.turn).toBe(1);
 
     await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
   });
 
-  it('delivery guard: recommended one-turn pattern [telegram_send_message, return_result] completes with no nudge', async () => {
+  it('one-turn pattern [telegram_send_message, return_result] completes in one turn, the send is the only message', async () => {
     await db
       .update(agents)
       .set({ telegramBotToken: 'fake-token' })
@@ -3037,8 +3037,11 @@ describe('executeJob', () => {
     const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
 
     expect(result.status).toBe('completed');
-    expect(sendTelegramMessageMock).toHaveBeenCalledOnce();
-    // No nudge: the whole job is a single turn.
+    expect(sendTelegramMessageMock.mock.calls.map((c) => c[0])).toEqual([
+      { chatId: '12345', text: 'pile poil', botToken: 'fake-token' },
+    ]);
+    // The answer step sent to the chat that asked: nothing is left to send.
+    expect(await preparedDeliveries(job.id)).toEqual([]);
     const rows = await db
       .select({ turn: agentJobs.turn })
       .from(agentJobs)
@@ -3048,7 +3051,7 @@ describe('executeJob', () => {
     await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
   });
 
-  it('delivery guard: a mayHaveDelivered send timeout counts as delivered — no re-send nudge, single send attempt', async () => {
+  it('a mayHaveDelivered send timeout is not counted as delivered: no nudge, the harness sends the text again under a key that says why', async () => {
     await db
       .update(agents)
       .set({ telegramBotToken: 'fake-token' })
@@ -3091,10 +3094,8 @@ describe('executeJob', () => {
 
     const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
 
-    // Completed WITHOUT a delivery nudge or forced retry: exactly ONE send
-    // attempt ever reached the API — the anti-duplication contract.
+    // Completed in one turn: the model is not asked to send again.
     expect(result.status).toBe('completed');
-    expect(sendTelegramMessageMock).toHaveBeenCalledOnce();
     const rows = await db
       .select({ turn: agentJobs.turn, messages: agentJobs.messages })
       .from(agentJobs)
@@ -3102,19 +3103,26 @@ describe('executeJob', () => {
     expect(rows[0]?.turn).toBe(1);
     // The ambiguity guidance reached the LLM transcript (real content, not a count).
     expect(JSON.stringify(rows[0]?.messages ?? [])).toContain('Do NOT call this tool again');
+    // The person must get the answer: the gate sends that text once more,
+    // and the row's key says it may be a second copy (#1215).
+    expect(await preparedDeliveries(job.id)).toEqual([
+      {
+        channel: 'telegram',
+        chatId: '12345',
+        payload: 'réponse',
+        idempotencyKey: `${job.id}:answer:resend_unconfirmed`,
+      },
+    ]);
 
     await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
   });
 
-  // ─── Delivery guard, extended to Discord/Slack (F-multichannel incident) ──
+  // ─── Discord and Slack: the same gate (F-multichannel incident) ──────────
   // Live incident: job 4eefb5bf-2252-41be-962f-620c9d85e900 (2026-07-12) completed
-  // on Discord with tools_used=[] — the delivery guard existed but only listed
-  // 'telegram' in TOOL_ONLY_DELIVERY_CHANNELS, so a Discord job's return_result
-  // without ever sending was never nudged and the reply silently never reached
-  // the channel. These replay the incident on discord/slack and assert the
-  // nudge names the job's REAL channel, not a hardcoded "Telegram".
+  // on Discord with tools_used=[]: the reply never reached the channel. These
+  // replay it on discord/slack: the answer goes to the job's REAL channel.
 
-  it('delivery guard: discord job replays incident 4eefb5bf — return_result without send is nudged naming Discord, then delivers and completes', async () => {
+  it('discord job replays incident 4eefb5bf: the text answer goes to the Discord chat, sent by the harness', async () => {
     await db.insert(channelBindings).values({
       entityId: seed.entityId,
       agentId: seed.agentId,
@@ -3123,83 +3131,53 @@ describe('executeJob', () => {
       enabled: true,
     });
 
-    const [job] = await db
-      .insert(agentJobs)
-      .values({
-        entityId: seed.entityId,
-        agentId: seed.agentId,
-        channel: 'discord',
-        chatId: 'discord-chan-42',
-        chatChannel: 'discord',
-        task: 'Reply on Discord',
-        status: 'pending',
-        messages: [],
-        chainCount: 0,
-      })
-      .returning();
-    if (!job) throw new Error('Failed to create discord incident-replay test job');
+    try {
+      const [job] = await db
+        .insert(agentJobs)
+        .values({
+          entityId: seed.entityId,
+          agentId: seed.agentId,
+          channel: 'discord',
+          chatId: 'discord-chan-42',
+          chatChannel: 'discord',
+          task: 'Reply on Discord',
+          status: 'pending',
+          messages: [],
+          chainCount: 0,
+        })
+        .returning();
+      if (!job) throw new Error('Failed to create discord incident-replay test job');
 
-    // Turn 1 replays the incident exactly: return_result ALONE, no delivery tool
-    // call. Turn 2: the agent (now nudged) delivers, then return_result.
-    const capturedPrompts: unknown[] = [];
-    const llmClient = makeMockLlmClient(
-      [
+      const llmClient = makeMockLlmClient([
         {
-          text: 'Done.',
+          text: 'La réponse, sur Discord.',
           toolCalls: [
             { toolCallId: 'tc-rr1', toolName: 'return_result', args: { status: 'success' } },
           ],
         },
+      ]);
+
+      const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+
+      expect(result.status).toBe('completed');
+      expect(await preparedDeliveries(job.id)).toEqual([
         {
-          text: 'Done.',
-          toolCalls: [
-            {
-              toolCallId: 'tc-tg',
-              toolName: 'telegram_send_message',
-              args: { text: 'enfin livré sur Discord' },
-            },
-            { toolCallId: 'tc-rr2', toolName: 'return_result', args: { status: 'success' } },
-          ],
+          channel: 'discord',
+          chatId: 'discord-chan-42',
+          payload: 'La réponse, sur Discord.',
+          idempotencyKey: `${job.id}:answer`,
         },
-      ],
-      capturedPrompts,
-    );
-
-    sendTelegramMessageMock.mockClear();
-    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
-
-    expect(result.status).toBe('completed');
-
-    // Turn 2's prompt carries the corrective nudge — it must name the job's
-    // REAL channel (Discord), never the hardcoded "Telegram" the bug shipped with.
-    const nudgedPrompt = JSON.stringify(capturedPrompts[1]);
-    expect(nudgedPrompt).toContain('Tu es sur Discord');
-    expect(nudgedPrompt).not.toContain('Tu es sur Telegram');
-
-    // The reply actually reached the channel (via the fake adapter, forwarding
-    // into sendTelegramMessageMock regardless of channel — see the module mock).
-    expect(sendTelegramMessageMock).toHaveBeenCalledOnce();
-    expect(sendTelegramMessageMock).toHaveBeenCalledWith({
-      chatId: 'discord-chan-42',
-      text: 'enfin livré sur Discord',
-      botToken: 'discord-tok',
-    });
-
-    const rows = await db
-      .select({ status: agentJobs.status, turn: agentJobs.turn })
-      .from(agentJobs)
-      .where(eq(agentJobs.id, job.id));
-    expect(rows[0]?.status).toBe('completed');
-    expect(rows[0]?.turn).toBe(2);
-
-    await db
-      .delete(channelBindings)
-      .where(
-        and(eq(channelBindings.agentId, seed.agentId), eq(channelBindings.channel, 'discord')),
-      );
+      ]);
+    } finally {
+      await db
+        .delete(channelBindings)
+        .where(
+          and(eq(channelBindings.agentId, seed.agentId), eq(channelBindings.channel, 'discord')),
+        );
+    }
   });
 
-  it('delivery guard: slack job is also tool-only-delivery — persistent plain-text fails loud, nudge names Slack', async () => {
+  it('slack job: a plain-text answer goes to the Slack chat, sent by the harness, with no nudge', async () => {
     await db.insert(channelBindings).values({
       entityId: seed.entityId,
       agentId: seed.agentId,
@@ -3208,57 +3186,48 @@ describe('executeJob', () => {
       enabled: true,
     });
 
-    const [job] = await db
-      .insert(agentJobs)
-      .values({
-        entityId: seed.entityId,
-        agentId: seed.agentId,
-        channel: 'slack',
-        chatId: 'slack-chan-7',
-        chatChannel: 'slack',
-        task: 'Reply on Slack',
-        status: 'pending',
-        messages: [],
-        chainCount: 0,
-      })
-      .returning();
-    if (!job) throw new Error('Failed to create slack delivery-fail test job');
+    try {
+      const [job] = await db
+        .insert(agentJobs)
+        .values({
+          entityId: seed.entityId,
+          agentId: seed.agentId,
+          channel: 'slack',
+          chatId: 'slack-chan-7',
+          chatChannel: 'slack',
+          task: 'Reply on Slack',
+          status: 'pending',
+          messages: [],
+          chainCount: 0,
+        })
+        .returning();
+      if (!job) throw new Error('Failed to create slack test job');
 
-    // The model never uses the tool — every turn is plain text, mirroring the
-    // Telegram non-delivery regression above but on Slack.
-    const capturedPrompts: unknown[] = [];
-    const llmClient = makeMockLlmClient(
-      [{ text: 'texte brut, encore et toujours' }],
-      capturedPrompts,
-    );
+      const capturedPrompts: unknown[] = [];
+      const llmClient = makeMockLlmClient([{ text: 'texte brut, livré' }], capturedPrompts);
 
-    sendTelegramMessageMock.mockClear();
-    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+      const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
 
-    expect(result.status).toBe('failed');
-    if (result.status === 'failed') {
-      expect(result.error).toBe('telegram_not_delivered');
+      expect(result.status).toBe('completed');
+      expect(capturedPrompts).toHaveLength(1);
+      expect(await preparedDeliveries(job.id)).toEqual([
+        {
+          channel: 'slack',
+          chatId: 'slack-chan-7',
+          payload: 'texte brut, livré',
+          idempotencyKey: `${job.id}:answer`,
+        },
+      ]);
+    } finally {
+      await db
+        .delete(channelBindings)
+        .where(
+          and(eq(channelBindings.agentId, seed.agentId), eq(channelBindings.channel, 'slack')),
+        );
     }
-    expect(sendTelegramMessageMock).not.toHaveBeenCalled();
-
-    // The nudge sent on the retry turns names Slack, not Telegram.
-    const nudgedPrompt = JSON.stringify(capturedPrompts[1]);
-    expect(nudgedPrompt).toContain('Tu es sur Slack');
-    expect(nudgedPrompt).not.toContain('Tu es sur Telegram');
-
-    const rows = await db
-      .select({ status: agentJobs.status, error: agentJobs.error })
-      .from(agentJobs)
-      .where(eq(agentJobs.id, job.id));
-    expect(rows[0]?.status).toBe('failed');
-    expect(rows[0]?.error).toBe('telegram_not_delivered');
-
-    await db
-      .delete(channelBindings)
-      .where(and(eq(channelBindings.agentId, seed.agentId), eq(channelBindings.channel, 'slack')));
   });
 
-  it('delivery guard: a dashboard job (non-tool-only channel) that finishes via return_result alone is NOT nudged', async () => {
+  it('a dashboard job that finishes via return_result is answered by its result: no delivery, no nudge', async () => {
     const [job] = await db
       .insert(agentJobs)
       .values({
@@ -3287,9 +3256,8 @@ describe('executeJob', () => {
 
     expect(result.status).toBe('completed');
     expect(sendTelegramMessageMock).not.toHaveBeenCalled();
+    expect(await preparedDeliveries(job.id)).toEqual([]);
 
-    // Single turn — no re-prompt was ever issued (the delivery guard doesn't
-    // apply to a channel that isn't tool-only).
     const rows = await db
       .select({ status: agentJobs.status, turn: agentJobs.turn })
       .from(agentJobs)
@@ -6143,20 +6111,19 @@ describe('executeJob — approval gate (Bugs A, B, C)', () => {
     await approvalDb.delete(approvalRules).where(eq(approvalRules.entityId, approvalSeed.entityId));
   });
 
-  it('Telegram heads-up: a gated tool on a Telegram job warns the user (via telegram_send_message) before suspending', async () => {
+  it('Telegram heads-up: a gated tool on a Telegram job puts the approval card in the chat, then suspends, with no extra model turn', async () => {
     // Regression for live incident job eeb2b587 (2026-05-31): a gated meta-tool
     // suspended the job in awaiting_approval with ZERO Telegram signal — the user
-    // had no way to know an approval was waiting. The runner must give the agent
-    // a bounded turn to tell the user, in its own voice via its own delivery tool,
-    // THEN suspend.
+    // had no way to know an approval was waiting. The approval card is what
+    // tells them, on every channel (approvals/notify.ts). The extra model turn
+    // that asked the agent to say it as well is gone (#1215).
     await approvalDb.insert(approvalRules).values({
       entityId: approvalSeed.entityId,
       agentId: null,
       toolName: 'save_memory',
       action: 'require_approval',
     });
-    // telegramBotToken makes telegram_send_message available + marks the channel
-    // tool-only, so the heads-up guard engages.
+    // telegramBotToken: the agent is connected to the chat's channel.
     await approvalDb
       .update(agents)
       .set({ telegramBotToken: 'fake-token' })
@@ -6188,35 +6155,49 @@ describe('executeJob — approval gate (Bugs A, B, C)', () => {
       .returning();
     if (!tgJob) throw new Error('Failed to create telegram approval test job');
 
-    // Turn 1: gated save_memory → gate fires.
-    // Turn 2 (after the approval nudge): the agent tells the user on Telegram.
+    // Turn 1: gated save_memory → gate fires, the card goes, the job suspends.
+    // A second turn would be the model telling the user too: it never comes.
     const HEADS_UP = "J'ai lancé la mémorisation, j'attends ton approbation pour continuer.";
-    const llmClient = makeMockLlmClient([
-      {
-        toolCalls: [
-          {
-            toolCallId: 'tc-gated-tg',
-            toolName: 'save_memory',
-            args: {
-              fact: 'truc important',
-              category: 'context',
-              purpose: 'Garder ce fait pour la suite du travail.',
+    const headsUpPrompts: unknown[] = [];
+    const llmClient = makeMockLlmClient(
+      [
+        {
+          toolCalls: [
+            {
+              toolCallId: 'tc-gated-tg',
+              toolName: 'save_memory',
+              args: {
+                fact: 'truc important',
+                category: 'context',
+                purpose: 'Garder ce fait pour la suite du travail.',
+              },
             },
-          },
-        ],
-      },
-      {
-        toolCalls: [
-          { toolCallId: 'tc-headsup', toolName: 'telegram_send_message', args: { text: HEADS_UP } },
-        ],
-      },
-    ]);
+          ],
+        },
+        {
+          toolCalls: [
+            {
+              toolCallId: 'tc-headsup',
+              toolName: 'telegram_send_message',
+              args: { text: HEADS_UP },
+            },
+          ],
+        },
+      ],
+      headsUpPrompts,
+    );
 
     sendTelegramMessageMock.mockClear();
     const result = await executeJob(tgJob.id as JobId, makeApprovalDeps(llmClient), testEnv);
 
-    // Job still suspends — the gate is unchanged, only the comms is added.
     expect(result.status).toBe('awaiting_approval');
+    // One model call: the gated one. Nothing asked the model to say it again.
+    expect(headsUpPrompts).toHaveLength(1);
+    expect(
+      sendTelegramMessageMock.mock.calls.some(
+        (call: unknown[]) => (call[0] as { text?: string } | undefined)?.text === HEADS_UP,
+      ),
+    ).toBe(false);
 
     // The DETERMINISTIC approval card reached Telegram — sent by the runner itself
     // the instant the gate fired, NOT dependent on the LLM nudge (which was the
@@ -6257,10 +6238,11 @@ describe('executeJob — approval gate (Bugs A, B, C)', () => {
       .where(eq(telegramAllowedChats.entityId, approvalSeed.entityId));
   });
 
-  // #886 : le tour en prose n'est plus relu. Celui qui répond à l'approbation
-  // en attente par du TEXTE (la branche texte, `approvalPending`) suspend
-  // toujours le job : il ne finit ni `completed`, ni `failed`.
-  it('approval pending, the heads-up answered in PROSE: the job still suspends, nothing completes', async () => {
+  // #886 : le tour en prose n'est plus relu. Depuis #1215, aucun tour n'est
+  // demandé au modèle pendant qu'une approbation attend : le job se suspend
+  // sur l'appel gaté, il ne finit ni `completed`, ni `failed`, et la prose
+  // qu'il aurait écrite n'est jamais demandée.
+  it('approval pending: the job suspends on the gated call, nothing completes, no prose turn is asked for', async () => {
     await approvalDb.insert(approvalRules).values({
       entityId: approvalSeed.entityId,
       agentId: null,
@@ -6332,8 +6314,8 @@ describe('executeJob — approval gate (Bugs A, B, C)', () => {
     expect(
       approvalRows.filter((r) => r.toolName === 'save_memory' && r.status === 'pending'),
     ).toHaveLength(1);
-    // Two turns: the gated call, then the prose heads-up. Nothing after.
-    expect(prompts).toHaveLength(2);
+    // One turn: the gated call. Nothing after.
+    expect(prompts).toHaveLength(1);
 
     await approvalDb.delete(approvalRules).where(eq(approvalRules.entityId, approvalSeed.entityId));
     await approvalDb

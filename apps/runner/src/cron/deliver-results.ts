@@ -13,11 +13,13 @@
 // Le nouvel ordre, par root :
 //   1. RÉCLAMATION par le marqueur `finalizing_at` (UPDATE … RETURNING) — un
 //      seul tick travaille sur un root, sans écrire son statut ;
-//   2. HORS transaction : la cible de livraison (resolveDeliveryTarget) et la
-//      synthèse courte pour le canal (un appel LLM — jamais dans une
-//      transaction, jamais au drain) : le PAYLOAD EST FIGÉ ici, une fois ;
+//   2. HORS transaction : qui lit la fin sur un chat (`answerReader`, le même
+//      que la porte) et, s'il y en a un, la synthèse courte pour ce chat (un
+//      appel LLM — jamais dans une transaction, jamais au drain) : le PAYLOAD
+//      EST FIGÉ ici, une fois ;
 //   3. la décision terminale : `completed` ⇒ la primitive `finalizeJobSuccess`
-//      (qui commet la ligne `job_deliveries` en `prepared` AVEC le statut) ;
+//      (dont l'écriture terminale commet la réponse en `prepared` AVEC le
+//      statut, #1215) ;
 //      `failed` ⇒ `failJob` ; `cancelled` ⇒ `cancelRootJob`. Chacune lève le
 //      marqueur ;
 //   4. `maybeResumeParent`, puis `drainDeliveries` pour ce root — l'envoi,
@@ -38,7 +40,6 @@ import { agentJobs, agentTasks } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { checkRootJobComplete } from '@nodal-agents/orchestration';
 import type { JobId } from '@nodal-agents/orchestration';
-import type { ChannelKind } from '@nodal-agents/delivery';
 import { resolveAgentLlmClient } from '../job/resolve-llm.ts';
 import { releaseJobProcessesIfEnded } from '../job/process-scopes.ts';
 import { makeLlmCallSink } from '../llm/call-sink.ts';
@@ -46,19 +47,14 @@ import { maybeResumeParent } from '../job/execute.ts';
 import type { ExecuteJobResult } from '../job/execute.ts';
 import { TERMINAL_STATUSES, cancelRootJob, failJob } from '../job/state.ts';
 import { finalizeJobSuccess, FINALIZING_STALE_MS } from '../job/finalize.ts';
-import { drainDeliveries, prepareDelivery } from '../delivery/outbox.ts';
-import {
-  isDeliveryFault,
-  isDeliveryRefusal,
-  resolveDeliveryTarget,
-} from '../delivery/resolve-delivery-target.ts';
+import { drainDeliveries } from '../delivery/outbox.ts';
+import { answerReader } from '../job/answer-delivery.ts';
 
 /** Le MÊME seuil que la primitive (elle reprend un marqueur périmé de la même façon). */
 export { FINALIZING_STALE_MS };
 
 /** Codes journalisés (inv. #2 : des codes et des données, jamais une phrase). */
 export const DELIVERY_SYNTHESIS_FAILED = 'DELIVERY_SYNTHESIS_FAILED';
-export const DELIVERY_TARGET_REFUSED = 'DELIVERY_TARGET_REFUSED';
 export const FINALIZING_MARKER_RELEASED = 'FINALIZING_MARKER_RELEASED';
 export const DELIVERY_DRAIN_FAILED = 'DELIVERY_DRAIN_FAILED';
 
@@ -174,6 +170,7 @@ export async function deliverCompletedRoots(db: AnyDrizzleDb): Promise<number> {
         entityId: agentJobs.entityId,
         task: agentJobs.task,
         triggerContext: agentJobs.triggerContext,
+        parentJobId: agentJobs.parentJobId,
       })
       .from(agentJobs)
       .where(eq(agentJobs.id, rootJobId))
@@ -244,37 +241,21 @@ export async function deliverCompletedRoots(db: AnyDrizzleDb): Promise<number> {
       continue;
     }
 
-    // ── 2. Hors transaction : la cible et le payload FIGÉ ─────────────────
-    // A root job carries a chatId ONLY when there was delivery intent (a
-    // Telegram-originated request, or a cron with notify_on_success).
+    // ── 2. Hors transaction : qui lit la fin, et le payload FIGÉ ──────────
     // Invariant (Quentin): a request that started in a channel ALWAYS returns
     // to it with a SHORT summary — owned by the root, never a dedicated task.
-    // The summary is synthesized ONCE, here, and frozen in the outbox row: a
-    // retried send never re-runs the LLM. The allowlist and the credentials
-    // are re-checked at the drain, never here.
-    let delivery: { channel: ChannelKind; chatId: string; payload: string } | undefined;
-    if (rootStatus === 'completed' && rootJob.chatId && compiledResult.trim()) {
-      const target = await resolveDeliveryTarget(db, {
-        chatId: rootJob.chatId,
-        agentId: rootJob.agentId,
-        channel: rootJob.channel,
-        chatChannel: rootJob.chatChannel,
-        triggerContext: rootJob.triggerContext,
-      });
-      if (isDeliveryRefusal(target)) {
-        if (isDeliveryFault(target)) {
-          console.error(
-            `[deliverCompletedRoots] ${DELIVERY_TARGET_REFUSED} job=${rootJobId} reason=${target.refused}`,
-          );
-        }
-      } else if (rootJob.agentId) {
-        const payload = await synthesizePayload(
-          db,
-          rootJob.agentId,
-          rootJob.task ?? '',
-          compiledResult,
-        );
-        delivery = { channel: target.channel, chatId: target.chatId, payload };
+    // Whether someone reads this end on a chat is asked of the SAME reader as
+    // the gate's (`answerReader`): the model call is paid only for a summary
+    // someone reads. The summary is synthesized ONCE, here, and the gate
+    // freezes it in the outbox row with the status: a retried send never
+    // re-runs the LLM. The allowlist and the credentials are re-checked at the
+    // drain, never here. A chat the root cannot reach is said by the gate, on
+    // the row.
+    let chatText: string | undefined;
+    if (rootStatus === 'completed' && compiledResult.trim() && rootJob.agentId) {
+      const reader = await answerReader(db, rootJob);
+      if (reader.kind === 'chat') {
+        chatText = await synthesizePayload(db, rootJob.agentId, rootJob.task ?? '', compiledResult);
       }
     }
 
@@ -285,34 +266,21 @@ export async function deliverCompletedRoots(db: AnyDrizzleDb): Promise<number> {
     // le texte compilé comme un succès.
     let echecDeclare: { error: string; result: string } | null = null;
     if (rootStatus === 'completed') {
-      const outcome = await finalizeJobSuccess(
-        db,
-        {
-          jobId: rootJobId,
-          result: compiledResult,
-          // `relay` : ce root n'a pas écrit ce texte, il compile les résultats
-          // de ses tâches — chacune un job à part (#154, #210).
-          resultKind: 'relay',
-          // Ce cron ne reprend aucun tour : il COMPILE les résultats de tâches
-          // déjà terminées, sur un root qui n'a plus de boucle à reprendre.
-          // Rouvrir ce job-là n'aurait personne pour jouer le tour.
-          repairTurn: 'unsupported',
-          toolsUsed: [],
-          delivery,
-          // Le marqueur posé à l'étape 1 est le NÔTRE : la primitive l'accepte.
-          claim: { finalizingAt: now },
-        },
-        {
-          prepareDelivery: async (tx, input) => {
-            await prepareDelivery(tx, {
-              jobId: input.jobId,
-              channel: input.channel as ChannelKind,
-              chatId: input.chatId,
-              payload: input.payload,
-            });
-          },
-        },
-      );
+      const outcome = await finalizeJobSuccess(db, {
+        jobId: rootJobId,
+        result: compiledResult,
+        // `relay` : ce root n'a pas écrit ce texte, il compile les résultats
+        // de ses tâches — chacune un job à part (#154, #210).
+        resultKind: 'relay',
+        // Ce cron ne reprend aucun tour : il COMPILE les résultats de tâches
+        // déjà terminées, sur un root qui n'a plus de boucle à reprendre.
+        // Rouvrir ce job-là n'aurait personne pour jouer le tour.
+        repairTurn: 'unsupported',
+        toolsUsed: [],
+        ...(chatText !== undefined ? { chatText } : {}),
+        // Le marqueur posé à l'étape 1 est le NÔTRE : la primitive l'accepte.
+        claim: { finalizingAt: now },
+      });
       if (outcome.kind === 'awaiting_tasks') {
         // A task was added between the completeness check and the gate: the
         // root waits for it. Our marker is lifted so the next tick sees it.

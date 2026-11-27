@@ -26,6 +26,7 @@ import {
   eq,
   agentJobs,
   agents,
+  channelBindings,
   conversations,
   entities,
   users,
@@ -188,11 +189,18 @@ describe('migration 0137 fills runner_notes on rows written before it @cap:repre
           name: 'Root',
           slug: 'root-multi0137',
           personality: 'p',
-          // A channel credential: a job asked on a chat can be answered there,
-          // and its failure notice prepared (#1180).
           telegramBotToken: 'fake-token',
         })
         .returning();
+      // The agent is connected to WhatsApp, the channel of the chat its jobs
+      // come from: their end can be sent there (#1180, #1215).
+      await db.insert(channelBindings).values({
+        entityId: entity!.id,
+        agentId: agent!.id,
+        channel: 'whatsapp',
+        credentials: JSON.stringify({ sessionDir: '/sessions/pg-test' }),
+        enabled: true,
+      });
       const [conv] = await db
         .insert(conversations)
         .values({

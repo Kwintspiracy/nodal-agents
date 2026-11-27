@@ -68,12 +68,7 @@ import { loadConversationContext } from '../job/conversation-id.ts';
 // Recopiée nulle part : une seconde copie aurait divergé au premier ajout.
 import { EDIT_TOOLS, resolveScannedPath, scannedEditPath } from '../job/code-projects.ts';
 import { finalizeJobSuccess } from '../job/finalize.ts';
-import { drainDeliveries, prepareDelivery } from '../delivery/outbox.ts';
-import {
-  isDeliveryFault,
-  isDeliveryRefusal,
-  resolveDeliveryTarget,
-} from '../delivery/resolve-delivery-target.ts';
+import { drainDeliveries } from '../delivery/outbox.ts';
 import { probeWorkspaceGit } from '../lib/workspace-git.ts';
 import {
   snapshot,
@@ -1079,34 +1074,15 @@ export async function runCliRuntimeJob(args: {
 
   // ── La porte terminale (V&C, T11) ─────────────────────────────────────────
   //
-  // La cible de livraison est résolue AVANT la décision terminale et figée
-  // avec elle : la ligne `job_deliveries` en `prepared` est commise DANS la
-  // transaction qui pose le statut, puis le drain immédiat l'envoie — hors de
-  // toute transaction, après que les verrous sont rendus. Un crash entre le
-  // commit et l'envoi ne perd plus le message : le tick le reprend.
+  // La réponse est préparée par la porte elle-même, DANS la transaction qui
+  // pose `completed`, comme pour tout job venu d'un chat (#1215,
+  // job/answer-delivery.ts) ; le drain immédiat l'envoie ensuite, hors de toute
+  // transaction, après que les verrous sont rendus. Un crash entre le commit
+  // et l'envoi ne perd pas le message : le tick le reprend.
   //
-  // Le texte du CLI part VERBATIM (invariant #2 : le LLM parle, Nodal relaie).
-  // L'allowlist et les credentials se revérifient AU DRAIN, jamais ici.
-  let delivery: { channel: string; chatId: string; payload: string } | undefined;
-  if (job.chatId && turn.finalText.trim()) {
-    const target = await resolveDeliveryTarget(db, {
-      chatId: job.chatId,
-      agentId: agentRow.id,
-      channel: job.channel,
-      chatChannel: job.chatChannel,
-      triggerContext: job.triggerContext,
-    });
-    if (isDeliveryRefusal(target)) {
-      if (isDeliveryFault(target)) {
-        console.error(
-          `[cli-runtime] DELIVERY_TARGET_REFUSED job=${jobId} reason=${target.refused}`,
-        );
-      }
-    } else {
-      delivery = { channel: target.channel, chatId: target.chatId, payload: turn.finalText };
-    }
-  }
-
+  // Le texte du CLI part VERBATIM (invariant #2 : le LLM parle, Nodal relaie) :
+  // c'est le résultat du job. L'allowlist et les credentials se revérifient AU
+  // DRAIN, jamais ici.
   const outcome = await finalizeJobSuccess(
     db,
     // `prose` : le texte final du CLI est celui de l'agent, relayé verbatim
@@ -1121,17 +1097,6 @@ export async function runCliRuntimeJob(args: {
       // Une preuve rouge y reste donc OBSERVÉE, comme en PR①.
       repairTurn: 'unsupported',
       toolsUsed: [binding.toolLabel],
-      delivery,
-    },
-    {
-      prepareDelivery: async (tx, input) => {
-        await prepareDelivery(tx, {
-          jobId: input.jobId,
-          channel: input.channel as Parameters<typeof prepareDelivery>[1]['channel'],
-          chatId: input.chatId,
-          payload: input.payload,
-        });
-      },
     },
   );
 

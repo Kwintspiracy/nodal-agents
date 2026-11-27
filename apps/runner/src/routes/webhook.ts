@@ -266,18 +266,11 @@ export async function webhookRoute(
     if (trigger.notifyChannel) {
       notifyChannel = trigger.notifyChannel as MessagingChannelKind;
     } else {
-      // Auto: whatsapp excluded from the candidate set — no outbound send
-      // tool is registered for it yet (TOOL_ONLY_DELIVERY_CHANNELS,
-      // channel-delivery.ts), and this job's chatId being non-null forces
-      // requiresToolDelivery — auto-landing on whatsapp here (e.g. an agent
-      // whose only active channel happens to be whatsapp) would deadlock the
-      // run on a tool it doesn't have. An EXPLICIT trigger.notifyChannel is
-      // never 'whatsapp' either — the web UI's NOTIFY_CHANNEL_OPTIONS doesn't
-      // offer it — so this exclusion only ever narrows the auto fallback,
-      // never overrides a real choice.
-      const activeChannels = (await listActiveChannelsForAgent(deps.db, agentId)).filter(
-        (c) => c !== 'whatsapp',
-      );
+      // Auto: the agent's first active channel, WhatsApp included. The
+      // confirmation is the job's reply, sent to the chat by the gate that
+      // writes `completed` on every channel (#1215, job/answer-delivery.ts):
+      // no channel needs a send tool to be answered any more.
+      const activeChannels = await listActiveChannelsForAgent(deps.db, agentId);
       notifyChannel = resolveTransportChannel('webhook', activeChannels);
     }
     notifyChatId = await resolveOwnerConversation(deps.db, agentId, notifyChannel);

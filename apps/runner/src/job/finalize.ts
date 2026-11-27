@@ -141,8 +141,6 @@ export const VERIFICATION_DUE_OBSERVED = 'VERIFICATION_DUE_OBSERVED';
 export const VERIFY_STATE_GENERATION_MISSING = 'VERIFY_STATE_GENERATION_MISSING';
 /** L'écriture terminale n'a pas atterri alors que la garde venait de passer. */
 export const VERIFY_TERMINAL_WRITE_LOST = 'VERIFY_TERMINAL_WRITE_LOST';
-/** Une livraison est demandée sans le préparateur qui sait l'écrire (T08). */
-export const DELIVERY_PREPARE_UNAVAILABLE = 'DELIVERY_PREPARE_UNAVAILABLE';
 /** Le job à finaliser n'existe pas. */
 export const FINALIZE_JOB_NOT_FOUND = 'FINALIZE_JOB_NOT_FOUND';
 /** Un autre finaliseur tient le marqueur `finalizing_at` de ce job : une seule preuve par job. */
@@ -321,32 +319,6 @@ export interface FinalizeStats {
 }
 
 /**
- * POINT D'EXTENSION T08 — la livraison sortante.
- *
- * Le plan (« La livraison est une action sortante ») veut la ligne
- * `job_deliveries` en `prepared` écrite DANS la transaction qui pose le statut
- * terminal : l'intention de livrer est commise avec la décision, et
- * `drainDeliveries` la réclame ensuite, hors transaction. Ce module ne
- * l'implémente pas — T08 écrit `prepareDelivery` et le passe ici.
- *
- * Ce n'est pas un stub silencieux : demander une livraison sans fournir le
- * préparateur LÈVE `DELIVERY_PREPARE_UNAVAILABLE` avant toute écriture
- * (invariant #4). Tant que T08 n'est pas là, les appelants finalisent sans
- * `delivery` — exactement ce qu'ils font aujourd'hui.
- */
-export type PrepareDelivery = (
-  tx: AnyDrizzleDb,
-  input: {
-    readonly jobId: string;
-    readonly channel: string;
-    readonly chatId: string;
-    readonly payload: string;
-    /** Laisse le préparateur dédupliquer deux notices distinctes du même job. */
-    readonly idempotencyKey?: string;
-  },
-) => Promise<void>;
-
-/**
  * Les statuts d'une tâche du tableau qui n'est pas finie — les mêmes que lisent
  * les deux faucheurs (`reclaim-jobs.ts`, `reset-orphans.ts`) pour épargner un
  * job qui attend son tableau.
@@ -361,8 +333,6 @@ export interface FinalizeDeps {
   readonly log?: (code: string, data: Record<string, unknown>) => void;
   /** Identifiant de séquence de preuve — injectable pour des tests déterministes. */
   readonly newSequenceId?: () => string;
-  /** Fourni par T08. Requis dès qu'une livraison est demandée. */
-  readonly prepareDelivery?: PrepareDelivery;
   /** La veille du Stop pendant la preuve (process-scopes.ts) — injectable pour les tests. */
   readonly watchJobEnd?: typeof watchJobEnd;
 }
@@ -419,23 +389,24 @@ export interface FinalizeInput {
   readonly stats?: FinalizeStats;
   readonly messages?: unknown[];
   /**
-   * Livraison à préparer dans la même transaction (T08), quand le job FINIT.
-   * Quand un livrable déclaré n'est pas vérifié (#509), le job échoue : c'est
-   * alors la notice de l'échec que `failJob` prépare (son résultat, qui porte
-   * la ligne), là où la demande a été faite — pas cette livraison.
+   * Les lignes du RUNNER que le résultat porte en plus de la réponse (une
+   * délégation arrêtée, #108) : écrites par l'écriture terminale après ses
+   * remplissages, rangées dans `runner_notes` (#562), et livrées avec la
+   * réponse.
    */
-  readonly delivery?: TerminalDelivery;
-}
-
-/**
- * Ce qu'il y a à livrer, posé DANS la transaction terminale — succès comme
- * échec (issue #116, résidu 3).
- */
-export interface TerminalDelivery {
-  readonly channel: string;
-  readonly chatId: string;
-  readonly payload: string;
-  readonly idempotencyKey?: string;
+  readonly runnerLines?: readonly string[];
+  /**
+   * Ce que le chat lit à la place du résultat, quand l'appelant l'a écrit : la
+   * synthèse courte qu'un root de tableau écrit pour le chat, son résultat
+   * étant la compilation de ses tâches. Absent : le résultat.
+   *
+   * Il n'y a plus de livraison à DEMANDER : l'écriture terminale (`completeJob`)
+   * prépare la réponse de tout job de tête venu d'un chat, dans la transaction
+   * qui pose `completed` (#1215, job/answer-delivery.ts). Quand un livrable
+   * déclaré n'est pas vérifié (#509), le job échoue : c'est alors la notice de
+   * l'échec que `failJob` prépare.
+   */
+  readonly chatText?: string;
 }
 
 /** Ce que la porte terminale d'ÉCHEC demande. */
@@ -806,12 +777,6 @@ export async function finalizeJobSuccess(
   const log = deps.log ?? defaultLog;
   const resolveVerifier = deps.getVerifier ?? getVerifier;
   const newSequenceId = deps.newSequenceId ?? randomUUID;
-
-  // Refus AVANT toute écriture : une livraison demandée sans préparateur est
-  // une erreur de câblage, pas une livraison silencieusement perdue.
-  if (input.delivery && !deps.prepareDelivery) {
-    throw new Error(`${DELIVERY_PREPARE_UNAVAILABLE}: ${input.delivery.channel}`);
-  }
 
   const alreadyTerminal: FinalizeOutcome = {
     kind: 'already_terminal',
@@ -1307,7 +1272,7 @@ export async function finalizeJobSuccess(
         // du fil la range dans le relevé du runner, jamais dans les mots de
         // l'agent (#562). La notice de l'échec (ce résultat, là où la demande a
         // été faite) est préparée par `failJob`, dans cette transaction ; la
-        // livraison que l'appelant demandait pour un succès n'a plus lieu.
+        // réponse d'un succès n'est pas préparée : le job n'a pas réussi.
         const failed = await failJob(
           tx,
           jobId,
@@ -1347,6 +1312,13 @@ export async function finalizeJobSuccess(
         input.messages,
         // La provenance, posée dans la MÊME écriture que le texte (#154, #210).
         input.resultKind,
+        // La réponse part avec le statut, préparée par l'écriture terminale
+        // elle-même (#1215) : ces deux faits ne sont que ce qu'elle ne peut
+        // pas lire sur la ligne.
+        {
+          ...(input.runnerLines ? { runnerLines: input.runnerLines } : {}),
+          ...(input.chatText !== undefined ? { chatText: input.chatText } : {}),
+        },
       );
       if (!landed) {
         // Impossible tant que le `FOR UPDATE` ci-dessus tient : on le dit fort
@@ -1359,13 +1331,9 @@ export async function finalizeJobSuccess(
 
       // LE RUN A LIVRÉ : un livrable attend un regard (#255). Dans la MÊME
       // transaction que le statut terminal, comme la ligne `job_deliveries`
-      // juste en dessous — un crash entre les deux laisserait sinon un run
-      // livré dont aucune pastille ne dit qu'il attend.
+      // de sa réponse (préparée par `completeJob`) : un crash entre les deux
+      // laisserait sinon un run livré dont aucune pastille ne dit qu'il attend.
       await poseDeliverableCheck(tx, jobId, log);
-
-      if (input.delivery && deps.prepareDelivery) {
-        await deps.prepareDelivery(tx, { jobId, ...input.delivery });
-      }
 
       return { decisions };
     },

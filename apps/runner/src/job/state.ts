@@ -6,7 +6,6 @@ import { agentJobs, toolCalls, heldBy, ownJobRow, RUN_ACTS_WHILE } from '@nodal-
 import { announceTransitions, inTransaction, isOpenTransaction } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import type { JobFailureHint, JobResultKind } from '@nodal-agents/shared';
-import { isInboxMessage } from '@nodal-agents/shared';
 import {
   appendDeliveredVerdicts,
   readChildDeliverables,
@@ -14,13 +13,20 @@ import {
 } from '@nodal-agents/orchestration';
 import type { JobDeliverable } from '@nodal-agents/orchestration';
 import {
+  currentTurnMessages,
+  findTaskBoundary,
   flattenTranscript,
   deepDbSafe,
-  messageText,
   runnerNotesValue,
   toDbSafeString,
 } from './transcript-text.ts';
 import { writtenAnswerOfRun } from './final-answer.ts';
+import {
+  ANSWER_NOT_PREPARED,
+  answerNotPreparedLine,
+  prepareAnswerDelivery,
+  type PrepareAnswerOptions,
+} from './answer-delivery.ts';
 import { drainDeliveries } from '../delivery/outbox.ts';
 import {
   FAILURE_NOTICE_NOT_PREPARED,
@@ -319,50 +325,10 @@ async function fillResultFromChildrenIfEmpty(db: AnyDrizzleDb, jobId: string): P
     );
 }
 
-/**
- * La tranche de la transcription qui appartient à CE tour : du message
- * utilisateur qui porte la tâche du job jusqu'à la fin.
- *
- * Une transcription commence par l'historique rejoué du fil (thread-history.ts) :
- * pour chaque tour passé, un message utilisateur, puis un message assistant
- * SYNTHÉTIQUE qui porte la réponse d'alors — un texte assistant que rien ne
- * distingue d'un texte écrit par l'agent à ce tour. Les lignes de grand livre
- * (`[Delegated to X (…) — actions: …]`) ne sont plus dans ce message depuis
- * #562 : elles suivent, dans un relevé `[système]` de rôle utilisateur. La
- * frontière reste nécessaire pour la réponse rejouée elle-même.
- *
- * Issue #419 : un tour Telegram qui a répondu par `telegram_send_message` puis
- * `return_result {status}` n'écrit aucun texte ; le « dernier texte assistant »
- * balayé sur TOUTE la transcription était alors la dernière ligne de grand
- * livre rejouée — la délégation du 15/09 devenait le résultat de chaque tour
- * suivant, et l'historique du tour d'après la rejouait comme si l'agent
- * l'avait envoyée sur Telegram.
- *
- * La frontière est la DERNIÈRE occurrence du message utilisateur égal à la
- * tâche : l'historique la précède toujours, les relances système (`[système]`,
- * les rappels de livrable) la suivent. Quand la tâche n'apparaît nulle part
- * (une transcription qui n'a pas la forme d'un job), la tranche est la
- * transcription entière : c'est l'ancien comportement, et il n'est pas caché —
- * un job dont on ne retrouve pas la tâche est un cas que ce fichier ne sait
- * pas mieux lire.
- */
-export function findTaskBoundary(messages: readonly unknown[], task: string): number {
-  if (task.trim() === '') return -1;
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const m = messages[i] as { role?: unknown; content?: unknown } | null;
-    // Un message remis pendant le run (#531) qui répète la tâche mot pour mot
-    // n'est pas le début du tour : il en fait partie. Sa marque est
-    // structurelle, jamais lue dans le texte.
-    if (isInboxMessage(m)) continue;
-    if (m && m.role === 'user' && messageText(m.content) === task) return i;
-  }
-  return -1;
-}
-
-export function currentTurnMessages<T>(messages: readonly T[], task: string): readonly T[] {
-  const i = findTaskBoundary(messages, task);
-  return i === -1 ? messages : messages.slice(i);
-}
+// La frontière du tour vit dans transcript-text.ts (déplacée telle quelle,
+// #1215) : la préparation de la réponse (answer-delivery.ts) la lit, et
+// elle est lue par ce fichier.
+export { currentTurnMessages, findTaskBoundary } from './transcript-text.ts';
 
 /**
  * Extract the agent's last substantive assistant text from a transcript.
@@ -513,6 +479,12 @@ export async function completeJob(
    * résultat recompilé du cron sans que personne ne s'en aperçoive.
    */
   resultKind?: JobResultKind,
+  /**
+   * What the gate needs to tell the person, beyond the row (#1215): the lines
+   * the runner adds to the result (#562), and the text a board writes for the
+   * chat instead of its compiled result.
+   */
+  answer: PrepareAnswerOptions = {},
 ): Promise<boolean> {
   // Byte-level DB safety: model/tool output can carry raw NULs or lone
   // surrogates that Postgres rejects at write time, failing the whole UPDATE
@@ -584,11 +556,54 @@ export async function completeJob(
     if (messages !== undefined) await fillResultFromFinalTextIfEmpty(db, jobId, messages);
     await fillResultFromChildrenIfEmpty(db, jobId);
   }
+  if (!landed) return false;
+
+  // Les lignes du runner (une délégation arrêtée, #108), APRÈS les
+  // remplissages : posées avant, elles rendaient le résultat non vide et
+  // remplaçaient la réponse au lieu de s'y ajouter. Dites comme les siennes
+  // (#562) : les écrans les lisent dans `result`, la relecture du fil dans
+  // `runner_notes`.
+  const runnerLines = (answer.runnerLines ?? []).filter((l) => l.trim() !== '');
+  if (runnerLines.length > 0) await appendRunnerLines(db, jobId, runnerLines);
+
+  // La réponse, une fois `result` arrêté, dans la transaction qui pose
+  // `completed` (#1215) : la personne qui a demandé dans un chat la reçoit
+  // dans ce chat, quel que soit le canal ou le runtime.
+  const delivery = await prepareAnswerDelivery(db, jobId, { ...answer, runnerLines });
+  if (delivery.kind === 'unreachable') {
+    // Invariant #4 : la ligne le dit, le journal aussi ; rien n'est avalé.
+    console.error(`[completeJob] ${ANSWER_NOT_PREPARED} job=${jobId} reason=${delivery.reason}`);
+    await appendRunnerLines(db, jobId, [answerNotPreparedLine(delivery.reason)]);
+  }
+
   // #944 — PORTE (a) : le succès qui atterrit est annoncé. Son unique appelante
   // (`finalizeJobSuccess`) l'écrit dans une transaction `inTransaction` :
   // l'annonce part après le COMMIT, avec le résultat rempli ci-dessus.
-  if (landed) await announceTransitions(db, { endedJobIds: [jobId] });
-  return landed;
+  await announceTransitions(db, { endedJobIds: [jobId] });
+  return true;
+}
+
+/** Ajoute des lignes du runner au résultat d'un job que CE run vient de finir. */
+async function appendRunnerLines(
+  db: AnyDrizzleDb,
+  jobId: string,
+  lines: readonly string[],
+): Promise<void> {
+  const [row] = await db
+    .select({ result: agentJobs.result, runnerNotes: agentJobs.runnerNotes })
+    .from(agentJobs)
+    .where(eq(agentJobs.id, jobId))
+    .limit(1);
+  const before = (row?.result ?? '').trim();
+  await db
+    .update(agentJobs)
+    .set({
+      result: [before, ...lines].filter((t) => t !== '').join('\n\n'),
+      runnerNotes: runnerNotesValue([...(row?.runnerNotes ?? []), ...lines]),
+      updatedAt: new Date(),
+    })
+    // Juste après la ligne terminale que CE run vient de poser (#566).
+    .where(ownJobRow(jobId, ['completed']));
 }
 
 /** Ce que l'appelant de `failJob` peut dire de plus sur l'explication qu'il donne. */
