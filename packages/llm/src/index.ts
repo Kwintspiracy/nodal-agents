@@ -60,7 +60,9 @@ export {
 export type { EmbeddingProviderConfig, EmbeddingClient, EmbeddingScope } from './embeddings';
 
 // Provider registry (capability matrix + presets)
-export { CAPABILITY_MATRIX, PROVIDER_PRESETS } from './providers/registry';
+export { CAPABILITY_MATRIX } from './providers/registry';
+export { resolveProviderEndpoint } from './endpoint';
+export type { ProviderEndpoint } from './endpoint';
 
 // Image generation (media — Phase 1)
 export {

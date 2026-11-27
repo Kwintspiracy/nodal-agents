@@ -3,7 +3,7 @@
 
 import { createClient } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
-import { createLlmClient, createEmbeddingClient } from '@nodal-agents/llm';
+import { createEmbeddingClient } from '@nodal-agents/llm';
 import type { NodalLlmClient, EmbeddingClient, EmbeddingProviderConfig } from '@nodal-agents/llm';
 import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
 import type { ToolRegistry } from '@nodal-agents/tools';
@@ -25,11 +25,11 @@ export { runnerInstanceId } from './runner-identity.ts';
 export interface RunnerDeps {
   db: AnyDrizzleDb;
   /**
-   * Kept for backward compatibility with tests.
-   * execute.ts no longer reads this field at runtime (Brique 25): every job
-   * resolves its LLM client from the agent's entity_llm_keys row. Tests that
-   * populate llmKeyId supply their own client via that row; tests that don't
-   * need LLM calls can pass `{} as RunnerDeps['llmClient']`.
+   * Kept for backward compatibility with tests. Production reads none: every
+   * job, chat turn and platform call resolves its LLM client from the agent's
+   * entity_llm_keys row (Brique 25), and `createRunnerDeps` puts a client here
+   * that refuses every use. Tests that don't need LLM calls can pass
+   * `{} as RunnerDeps['llmClient']`.
    */
   llmClient: NodalLlmClient;
   embeddingClient: EmbeddingClient;
@@ -53,6 +53,52 @@ export function createRunnerEmbeddingClient(
   return embeddingsAddressedByHandle(createEmbeddingClient(config), db);
 }
 
+/**
+ * The embedding settings of the runner. The credential is the embedding
+ * provider's own (`EMBEDDING_API_KEY`), never the chat provider's
+ * `LLM_API_KEY`: a key is only sent to the provider it was issued for. An
+ * openai embedding without one is refused when the client is built.
+ */
+export function embeddingConfigFromEnv(
+  runnerEnv: Pick<
+    RunnerEnv,
+    'EMBEDDING_PROVIDER' | 'EMBEDDING_BASE_URL' | 'EMBEDDING_API_KEY' | 'EMBEDDING_MODEL'
+  >,
+): EmbeddingProviderConfig {
+  if (runnerEnv.EMBEDDING_PROVIDER === 'keyword') return { provider: 'keyword' };
+  return {
+    provider: runnerEnv.EMBEDDING_PROVIDER,
+    baseURL: runnerEnv.EMBEDDING_BASE_URL,
+    apiKey: runnerEnv.EMBEDDING_API_KEY,
+    model: runnerEnv.EMBEDDING_MODEL,
+  };
+}
+
+/**
+ * The runner has no model client of its own: a call always goes through the
+ * key of the agent it is made for. Any use of this one is a wiring error and
+ * fails loud (invariant #4) instead of reaching a provider with a key nobody
+ * chose for that call.
+ */
+function refusingProcessLlmClient(): NodalLlmClient {
+  const refuse = (): never => {
+    throw new Error(
+      'RunnerDeps.llmClient is not a model client: resolve the agent client (resolveAgentLlmClient)',
+    );
+  };
+  return {
+    get config(): never {
+      return refuse();
+    },
+    get capabilities(): never {
+      return refuse();
+    },
+    generateText: refuse,
+    streamText: refuse,
+    generateObject: refuse,
+  };
+}
+
 // ─── Factory ──────────────────────────────────────────────────────────────────
 
 /**
@@ -66,31 +112,13 @@ export async function createRunnerDeps(runnerEnv: RunnerEnv): Promise<RunnerDeps
   const { db, close: closeDb } = createClient(runnerEnv.DATABASE_URL);
 
   // ── LLM ─────────────────────────────────────────────────────────────────────
-  // LLM_PROVIDER / LLM_MODEL are optional since Brique 25 (runner reads from DB).
-  // Build a real client only when the env vars are present (first-boot / legacy
-  // config.json installs). When absent, use a no-op placeholder — execute.ts
-  // never reads deps.llmClient at runtime; it resolves per-job from entity_llm_keys.
-  const llmClient: NodalLlmClient =
-    runnerEnv.LLM_PROVIDER && runnerEnv.LLM_MODEL
-      ? createLlmClient({
-          provider: runnerEnv.LLM_PROVIDER,
-          model: runnerEnv.LLM_MODEL,
-          apiKey: runnerEnv.LLM_API_KEY,
-          baseURL: runnerEnv.LLM_BASE_URL,
-        })
-      : createLlmClient({ provider: 'anthropic', model: 'claude-sonnet-4-6-20260217' });
+  // No process-wide model client: every job, chat turn and platform call
+  // resolves its client from the agent's entity_llm_keys row
+  // (resolveAgentLlmClient), so the key and its address are the stored ones.
+  const llmClient = refusingProcessLlmClient();
 
   // ── Embeddings ───────────────────────────────────────────────────────────────
-  // keyword fallback: use EmbeddingProviderConfig with provider='keyword'
-  const embeddingConfig: EmbeddingProviderConfig =
-    runnerEnv.EMBEDDING_PROVIDER === 'keyword'
-      ? { provider: 'keyword' as const }
-      : {
-          provider: runnerEnv.EMBEDDING_PROVIDER as 'ollama' | 'openai',
-          baseURL: runnerEnv.EMBEDDING_BASE_URL,
-          apiKey: runnerEnv.LLM_API_KEY,
-          model: runnerEnv.EMBEDDING_MODEL,
-        };
+  const embeddingConfig = embeddingConfigFromEnv(runnerEnv);
 
   const embeddingClient = createRunnerEmbeddingClient(embeddingConfig, db as AnyDrizzleDb);
 

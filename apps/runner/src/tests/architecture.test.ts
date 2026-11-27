@@ -147,6 +147,29 @@ describe('architecture — le runtime CLI ne part écrire que du seam d’intent
   });
 });
 
+// ─── Une clé de modèle ne part que vers l'adresse enregistrée pour elle ─────
+
+describe('un client de modèle ne se construit qu’à partir de la clé de l’agent @cap:choisir-modele/moteur', () => {
+  // Tous les appels de modèle du runner (boucle de job, chat, titres, relances,
+  // curateurs, réflexion) passent par resolveAgentLlmClient, qui construit le
+  // client depuis la ligne entity_llm_keys : adresse enregistrée (ou officielle)
+  // et clé enregistrée. Un autre site qui construirait son propre client
+  // échapperait à cette règle.
+  const MODEL_CLIENT_BUILDERS = ['job/resolve-llm.ts'];
+
+  it('createLlmClient / createFailoverLlmClient ne sont appelés que par resolve-llm.ts', () => {
+    const violations = scanForPattern(
+      { srcDir: SRC_DIR, skipFiles: MODEL_CLIENT_BUILDERS },
+      { pattern: /\bcreate(?:Failover)?LlmClient\s*\(/, rule: 'model-client-outside-resolver' },
+    ).filter((v) => !/^\s*(\/\/|\*)/.test(v.text));
+    if (violations.length > 0) {
+      expect.fail(
+        formatViolations('Client de modèle construit hors de resolve-llm.ts', violations),
+      );
+    }
+  });
+});
+
 // ─── #944 : une porte par transition ──────────────────────────────────────────
 //
 // Deux transitions se poussent aux clients (`GET /api/events`) : (a) un job

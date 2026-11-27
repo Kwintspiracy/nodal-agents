@@ -35,6 +35,8 @@ const envSchema = z.object({
   EMBEDDING_PROVIDER: z.enum(['ollama', 'openai', 'keyword']).default('keyword'),
   EMBEDDING_MODEL: z.string().optional(),
   EMBEDDING_BASE_URL: z.string().optional(),
+  // The embedding provider's own key (required for openai).
+  EMBEDDING_API_KEY: z.string().optional(),
 
   // Auth
   AUTH_MODE: z.enum(['local-trust', 'local-auth', 'bearer-token']).default('local-trust'),

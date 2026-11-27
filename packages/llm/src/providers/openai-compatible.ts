@@ -3,20 +3,15 @@
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import type { LanguageModel } from 'ai';
 import type { ProviderConfig } from '../types';
-import { ProviderConfigError } from '../errors';
+import { resolveProviderEndpoint } from '../endpoint';
 import { createTolerantFetch } from './tolerant-fetch';
 
 export function buildOpenAICompatibleModel(config: ProviderConfig): LanguageModel {
-  if (!config.baseURL) {
-    throw new ProviderConfigError(
-      'openai-compatible provider requires a baseURL (e.g. http://localhost:1234/v1)',
-    );
-  }
-
+  const { baseURL, apiKey } = resolveProviderEndpoint(config);
   const provider = createOpenAICompatible({
     name: 'openai-compatible',
-    baseURL: config.baseURL,
-    ...(config.apiKey ? { apiKey: config.apiKey } : {}),
+    baseURL,
+    ...(apiKey ? { apiKey } : {}),
     // Normalise non-spec tool_call args before AI SDK's strict schema parses.
     fetch: createTolerantFetch(),
     // Usage in the stream is sent only when asked (stream_options.include_usage).
