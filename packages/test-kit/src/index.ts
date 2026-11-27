@@ -39,6 +39,7 @@ export * from './gate';
 export * from './trust-boundary';
 export * from './architecture';
 export * from './outbound-exits';
+export * from './tool-result-seam';
 // What is SOURCE in the repository, for every scanner: git's own view.
 export * from './source-files';
 export * from './real-postgres';

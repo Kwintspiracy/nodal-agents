@@ -10,6 +10,7 @@
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { writeFileAtomically } from './atomic-write';
+import { refusePlaceholderWrite, refuseQuotedPlaceholder } from './mask-guard';
 import { z } from 'zod';
 import type { ToolDefinition } from '../../types';
 import { detailOf, failureText, writtenFile } from '../../presenters';
@@ -137,6 +138,24 @@ export const fileEditTool: ToolDefinition<typeof FileEditInputSchema, FileEditOu
       // Les octets LUS, rapportés au seam (tool_call_reads) ; puis décodés comme avant.
       ctx.reportReadContent?.(path, createHash('sha256').update(lu).digest('hex'));
       const original = lu.toString('utf8');
+      // A masked read is never written back (mask-guard.ts): a quote of a line
+      // the agent saw masked, or a replacement that adds the mark, is refused
+      // with the hidden lines named, before anything else is said about it.
+      const placeholder =
+        (await refuseQuotedPlaceholder(ctx, {
+          path,
+          shownPath: input.path,
+          quoted: input.old_string,
+          current: original,
+        })) ??
+        (await refusePlaceholderWrite(ctx, {
+          path,
+          shownPath: input.path,
+          before: input.old_string,
+          after: input.new_string,
+          current: original,
+        }));
+      if (placeholder !== null) return { ok: false, reason: placeholder };
       if (!original.includes(input.old_string)) {
         return {
           ok: false,

@@ -7,7 +7,11 @@
 //   - `redactSecrets(value)`       a structured value: a field whose NAME says
 //                                  secret is hidden whole, and EVERY string,
 //                                  at any depth, is masked by shape;
-//   - `createStreamRedactor()`     a text that arrives in chunks.
+//   - `createStreamRedactor()`     a text that arrives in chunks;
+//   - `redactSecretValuesInText`   a whole string, by the shapes that know a
+//                                  value by its own form only (the lighter
+//                                  pass a source file gets in a tool result);
+//   - `secretRangesInText`         where a whole-text form hides something.
 //
 // The stream form is derived, not written beside: it runs the same scanner as
 // the whole-text form, and holds back exactly the tail of what it has seen
@@ -184,6 +188,14 @@ function endingPart(ci: boolean): Part {
 
 interface Shape {
   readonly name: string;
+  /**
+   * The shape recognises a secret by the NAME written before it (a variable,
+   * a parameter, a key), not by the value's own form. Such a shape is a guess
+   * that source code makes wrong at every line (`password = read_env(...)`),
+   * so a source file read by an agent is masked without them
+   * (`redactSecretValuesInText`).
+   */
+  readonly byName?: true;
   /** Kept as it is, before the hidden part. */
   readonly lead?: readonly Part[];
   /** Hidden. */
@@ -390,6 +402,7 @@ const SHAPES: readonly Shape[] = [
     // name stays visible.
     // Not: `MAX_TOKENS=4096`, `TOKEN=$TOKEN` (a reference, not a value).
     name: 'secret environment variable',
+    byName: true,
     lead: [EDGE, run('[A-Z0-9_]', 0, 64), endingPart(false), lit('='), run('["\']', 0, 1)],
     body: [one(ASSIGNED_FIRST), run(ASSIGNED_REST, 0, 1023)],
   },
@@ -398,6 +411,7 @@ const SHAPES: readonly Shape[] = [
     // (an `api_key` or an `access_token` after `?` or `&`).
     // Not: `?max_tokens=100&page=2`.
     name: 'secret query parameter',
+    byName: true,
     lead: [one('[?&]'), run(NAME_HEAD, 0, 64), endingPart(true), lit('=')],
     body: [run('[^\\s&#"\'<>\\[\\]]', 4, 1024)],
   },
@@ -407,6 +421,7 @@ const SHAPES: readonly Shape[] = [
     // as JSON or a dict prints it.
     // Not: `"token_type": "bearer"`, `"tokens": 12`.
     name: 'secret quoted field',
+    byName: true,
     lead: [
       one('["\']'),
       run(NAME_HEAD, 0, 64),
@@ -425,24 +440,44 @@ const SHAPES: readonly Shape[] = [
 /** The names of the shapes, for the tests that check each one. */
 export const SECRET_SHAPE_NAMES: readonly string[] = SHAPES.map((s) => s.name);
 
-// One expression for all shapes: three groups each (kept, hidden, kept).
-const FULL = new RegExp(
-  SHAPES.map(
-    (s) => `(${seq(s.lead ?? []).full})(${seq(s.body).full})(${seq(s.tail ?? []).full})`,
-  ).join('|'),
-  'g',
-);
+/** A set of shapes compiled into one expression: three groups each (kept, hidden, kept). */
+interface Compiled {
+  readonly shapes: readonly Shape[];
+  readonly full: RegExp;
+}
+
+function compile(shapes: readonly Shape[]): Compiled {
+  return {
+    shapes,
+    full: new RegExp(
+      shapes
+        .map((s) => `(${seq(s.lead ?? []).full})(${seq(s.body).full})(${seq(s.tail ?? []).full})`)
+        .join('|'),
+      'g',
+    ),
+  };
+}
+
+const ALL = compile(SHAPES);
+const VALUES = compile(SHAPES.filter((s) => s.byName !== true));
+const FULL = ALL.full;
 const PREFIX = new RegExp(
   `(?:${SHAPES.map((s) => seq([...(s.lead ?? []), ...s.body, ...(s.tail ?? [])]).prefix).join('|')})$`,
   'g',
 );
 
-function masked(m: RegExpExecArray): string {
-  for (let i = 0; i < SHAPES.length; i++) {
-    if (m[3 * i + 2] !== undefined) return `${m[3 * i + 1]}${REDACTED_TEXT}${m[3 * i + 3]}`;
+/** The groups of the shape that matched: what is kept before, hidden, kept after. */
+function groupsOf(set: Compiled, m: RegExpExecArray): readonly [string, string, string] {
+  for (let i = 0; i < set.shapes.length; i++) {
+    if (m[3 * i + 2] !== undefined) return [m[3 * i + 1]!, m[3 * i + 2]!, m[3 * i + 3]!];
   }
   // The expression is the union of the shapes: a match is one of them.
   throw new Error('secret mask: a match that is none of the shapes');
+}
+
+function masked(m: RegExpExecArray): string {
+  const [lead, , tail] = groupsOf(ALL, m);
+  return `${lead}${REDACTED_TEXT}${tail}`;
 }
 
 /** The first position from `from` where more input could still make or grow a value. */
@@ -481,6 +516,56 @@ function scan(buffer: string, from: number, final: boolean): { out: string; stop
 export function redactSecretsInText(text: string): string {
   const { out } = scan(text, 0, true);
   return out === text ? text : out;
+}
+
+/**
+ * Where the hidden parts of a text are: the `[start, end)` of each value the
+ * whole-text masker hides (`byName: false`: only the shapes that recognise a
+ * value by its own form). Found by the same expression and in the same order
+ * as the masker, so the ranges are exactly what it replaces.
+ */
+export function secretRangesInText(
+  text: string,
+  opts: { byName: boolean },
+): Array<readonly [number, number]> {
+  const set = opts.byName ? ALL : VALUES;
+  const ranges: Array<readonly [number, number]> = [];
+  set.full.lastIndex = 0;
+  for (let m = set.full.exec(text); m !== null; m = set.full.exec(text)) {
+    const [lead, body] = groupsOf(set, m);
+    const start = m.index + lead.length;
+    ranges.push([start, start + body.length]);
+    // A shape whose parts can all be empty never matches: every body has a
+    // first character. Guard anyway, never loop on an empty match.
+    if (m[0].length === 0) set.full.lastIndex += 1;
+  }
+  return ranges;
+}
+
+/**
+ * Mask the values a text holds BY THEIR OWN FORM (a key's prefix and
+ * alphabet, a token's segments, a private key block, a password in a URL),
+ * without the shapes that guess a secret from the name written before it.
+ * The lighter pass, for source code: code names secrets at every line
+ * without holding them.
+ */
+export function redactSecretValuesInText(text: string): string {
+  return replaceRanges(text, secretRangesInText(text, { byName: false }));
+}
+
+/** `text` with each range replaced by the placeholder. Ranges sorted, disjoint. */
+export function replaceRanges(
+  text: string,
+  ranges: ReadonlyArray<readonly [number, number]>,
+): string {
+  if (ranges.length === 0) return text;
+  let out = '';
+  let at = 0;
+  for (const [start, end] of ranges) {
+    out += text.slice(at, start) + REDACTED_TEXT;
+    at = end;
+  }
+  return out + text.slice(at);
 }
 
 /**

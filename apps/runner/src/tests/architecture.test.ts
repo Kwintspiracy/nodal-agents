@@ -29,6 +29,7 @@ import {
   formatViolations,
   OUTBOUND_BRAND_CAST,
   scanForOutboundBypass,
+  scanForToolResultBypass,
   stripComments,
   type OutboundExit,
 } from '@nodal-agents/test-kit';
@@ -357,5 +358,23 @@ describe('architecture — ce qui sort du runner passe par la couture de sortie 
         { rule: 'second-app', pattern: /\bnew\s+Hono\s*[(<]/ },
       ]),
     ).toEqual([]);
+  });
+});
+
+describe('architecture — un résultat d’outil ne sort que par la frontière (executeTool) @cap:connecter-un-service/moteur', () => {
+  it('src/ ne lance aucun outil hors d’executeTool et n’écrit aucune ligne tool_calls hors de la frontière', () => {
+    const v = scanForToolResultBypass({
+      srcDir: SRC_DIR,
+      exemptRuns: [
+        {
+          // L'outil de recherche d'un connecteur, lancé DANS l'outil
+          // `web_search` (`ctx.searchBackend`) : ce qu'il rend est le résultat
+          // de `web_search`, masqué par la frontière comme celui de tout outil.
+          line: 'searchTool.execute(',
+          reason: 'inside web_search, whose result goes through the seam',
+        },
+      ],
+    });
+    if (v.length > 0) expect.fail(formatViolations('Résultat d’outil hors de la frontière', v));
   });
 });

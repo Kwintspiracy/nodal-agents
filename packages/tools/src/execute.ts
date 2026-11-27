@@ -8,10 +8,16 @@ import {
   eq,
   inArray,
   workspaceSandboxReader,
+  loadToolResultMaskPolicy,
 } from '@nodal-agents/db';
 import { MessageStructureError, QuotaExhaustedError } from '@nodal-agents/llm';
 import {
   redactSecrets,
+  maskToolResult,
+  maskToolResultText,
+  maskedLinesOf,
+  toolResultKindOf,
+  type ToolResultMaskPolicy,
   surfaceForTool,
   REPLACE_SHARED_FILE_SETTING,
   explainApprovalRules,
@@ -754,8 +760,16 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
   // Les fichiers (images, PDF) que CET APPEL donne au modèle (`model-images.ts`) :
   // admis par la règle unique, rendus avec le résultat, jamais posés sur la ligne.
   const attachmentsForModel: ToolAttachment[] = [];
+  // The agent's masking policy, read once for what the write tools ask
+  // (`maskedLinesOf`); the result itself is masked with a policy read AFTER
+  // the tool ran (below), so a value the call itself refreshed is in it.
+  let policyForWrites: Promise<ToolResultMaskPolicy> | null = null;
   const execCtx: ToolContext = {
     ...ctx,
+    maskedLinesOf: async (text, path) => {
+      policyForWrites ??= loadToolResultMaskPolicy(ctx.db, ctx);
+      return maskedLinesOf(text, await policyForWrites, toolResultKindOf({ path }));
+    },
     ...(mutationTargets === null ? {} : { declaredMutationTargets: mutationTargets }),
     ...(sharedFileUnattended ? { sharedOverwriteUnattended: true } : {}),
     reportWrittenContent: (absPath, sha256) => contenusEcrits.set(absPath, sha256),
@@ -895,16 +909,32 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
         }
       }
     }
+    // ── 3.1 THE BOUNDARY: what the tool returned, masked once ───────────────
+    //
+    // The ONE place where a tool's result becomes both what the model reads
+    // (returned below, turned into the model's message by the runner, re-sent
+    // every turn, stored in the transcript and its search text, replayed on
+    // resume) and the row that records the call. Both receive `seen`, so every
+    // store holds what the model saw. Every tool goes through here: built-in,
+    // connector, MCP, skill script, shell, file read. No tool masks its own
+    // output. A policy that cannot be read fails the call (the catch below):
+    // a result is never handed on unmasked.
     const durationMs = Date.now() - startMs;
+    const { value: seen, masked: resultMasked } = maskToolResult(
+      output,
+      await loadToolResultMaskPolicy(ctx.db, ctx),
+      toolResultKindOf(validatedInput),
+    );
     const ligneAudit = await _writeToolCall(
       ctx,
       auditTool,
       validatedInput,
-      JSON.stringify(output),
+      JSON.stringify(seen),
       durationMs,
-      { value: output },
+      { value: seen },
       marque,
       true,
+      resultMasked,
     );
     // Ce que CET APPEL a lu (tool_call_reads) : sur sa ligne d'audit, qu'un
     // outil de lecture n'a qu'à présent. Ne lève jamais.
@@ -925,7 +955,7 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
     // 27). Son résultat n'influe PAS sur le retour : c'est un registre, pas une
     // garde — une panne ici se dit dans les logs, par un code, jamais en
     // refusant une écriture qui, elle, a eu lieu.
-    if (mutationTargets && !isPresentedFailure(auditTool, validatedInput, output)) {
+    if (mutationTargets && !isPresentedFailure(auditTool, validatedInput, seen)) {
       // La MÊME lecture du succès sert aux deux : ce qui a été nommé par cet
       // outil ET réellement écrit devient `produced`, la seule trace sur
       // laquelle `declare_verification` accepte de laisser déclarer une preuve.
@@ -1077,8 +1107,8 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
       );
     }
     return attachmentsForModel.length > 0
-      ? { outcome: 'success', output, attachments: attachmentsForModel }
-      : { outcome: 'success', output };
+      ? { outcome: 'success', output: seen, attachments: attachmentsForModel }
+      : { outcome: 'success', output: seen };
   } catch (err) {
     // Re-throw fatal runner errors — never swallow these
     if (err instanceof MessageStructureError || err instanceof QuotaExhaustedError) {
@@ -1138,7 +1168,29 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
       throw err;
     }
 
-    const errorMsg = err instanceof Error ? err.message : String(err);
+    // The boundary for a failure the TOOL raised: its message (an MCP server's
+    // error, an API's error body) and the result it came with are a tool's
+    // text, masked like a success. The platform's own errors are not a tool's
+    // result. A policy that cannot be read replaces the tool's text with that
+    // failure: the text is never handed on unmasked.
+    let errorMsg = err instanceof Error ? err.message : String(err);
+    let failedOutput: unknown = err instanceof ToolFailedWithOutput ? err.output : undefined;
+    let failureMasked = false;
+    if (raisedByExecute) {
+      try {
+        const policy = await loadToolResultMaskPolicy(ctx.db, ctx);
+        const kind = toolResultKindOf(validatedInput);
+        const maskedMsg = maskToolResultText(errorMsg, policy, kind);
+        const maskedOut = maskToolResult(failedOutput, policy, kind);
+        failureMasked = maskedMsg !== errorMsg || maskedOut.masked;
+        errorMsg = maskedMsg;
+        failedOutput = maskedOut.value;
+      } catch (policyErr) {
+        raisedByExecute = false;
+        errorMsg = policyErr instanceof Error ? policyErr.message : String(policyErr);
+        failedOutput = undefined;
+      }
+    }
     // Send-timeout ambiguity (DeliveryError.mayHaveDelivered): the message may
     // have reached the user even though the API answered late. Keep outcome
     // 'error' (nothing is confirmed) but flag it and spell out the one rule
@@ -1171,7 +1223,7 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
     // error alone.
     const rowOutput =
       raisedByExecute && err instanceof ToolFailedWithOutput
-        ? { ...result, output: err.output }
+        ? { ...result, output: failedOutput }
         : result;
     const ligneAudit = await _writeToolCall(
       ctx,
@@ -1182,6 +1234,7 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
       undefined,
       marque,
       true,
+      failureMasked,
     );
     // Un outil qui a lu puis échoué a LU : ses lectures réussies sont rangées.
     await recordToolCallReads({
@@ -1705,6 +1758,8 @@ async function _writeToolCall(
    * which never ran; the reaper does not count those as effects.
    */
   ran = false,
+  /** The boundary hid something in this result (`tool_calls.result_masked`, 0175). */
+  resultMasked = false,
 ): Promise<string | null> {
   const toolName = tool.name;
   // P1 (plan « De la maquette au produit »): the row carries the card the tool
@@ -1739,6 +1794,7 @@ async function _writeToolCall(
           presentationError,
           toolInput: redactSecrets(input) as Record<string, unknown>,
           toolOutput: output,
+          resultMasked,
           durationMs,
         })
         .where(eq(toolCalls.id, markId));
@@ -1771,6 +1827,7 @@ async function _writeToolCall(
         // execute() above; only this copy is masked.
         toolInput: redactSecrets(input) as Record<string, unknown>,
         toolOutput: output,
+        resultMasked,
         durationMs,
         // étape D: turn + tool_use id make this row joinable to the transcript
         // and to llm_calls — the full-copy output was previously unlinkable.

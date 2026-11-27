@@ -8,7 +8,12 @@
 //
 // D'où cette fonction : PURE, donc le masquage se prouve au lieu de se relire.
 
-import { redactSecrets, redactSecretsInText } from '@nodal-agents/shared';
+import {
+  maskToolResultText,
+  redactSecrets,
+  toolResultKindOf,
+  type ToolResultMaskPolicy,
+} from '@nodal-agents/shared';
 
 /**
  * Plafond par ligne d'audit. La sortie d'un outil peut peser des mégaoctets
@@ -34,9 +39,13 @@ export interface CliAuditRow {
  *     secret est masqué en entier, et CHAQUE chaîne est masquée par forme —
  *     pour une CLI, l'entrée est du texte libre (`command`, `content`,
  *     `new_string`), pas seulement des champs nommés ;
- *   - `redactSecretsInText` pour la sortie : ces lignes enregistrent la sortie
- *     de chaque commande interne de la CLI, donc le contenu de chaque fichier
- *     lu, jeton compris.
+ *   - pour la sortie, la frontière des résultats d'outil
+ *     (`maskToolResultText`, la même que `executeTool`) : les valeurs exactes
+ *     que Nodal garde pour l'espace, puis les formes selon le réglage de
+ *     l'agent. Ces lignes enregistrent la sortie de chaque commande interne de
+ *     la CLI, donc le contenu de chaque fichier lu, jeton compris. Ce que la
+ *     CLI a lu est parti chez son fournisseur sans passer par Nodal : Nodal ne
+ *     masque que ce qu'il range et montre.
  *
  * La sortie est masquée AVANT d'être coupée au plafond : une valeur à cheval
  * sur la coupe ne serait plus reconnue, et son début resterait lisible.
@@ -51,11 +60,17 @@ export function buildCliAuditRow(args: {
   toolCallId: string;
   startedAt: number;
   now: number;
+  /** The agent's policy for its tool results (`loadToolResultMaskPolicy`). */
+  policy: ToolResultMaskPolicy;
 }): CliAuditRow {
   return {
     toolName: `cli:${args.toolName}`,
     toolInput: redactSecrets(args.toolInput) as Record<string, unknown>,
-    toolOutput: redactSecretsInText(args.toolOutput ?? '').slice(0, MAX_AUDIT_OUTPUT_CHARS),
+    toolOutput: maskToolResultText(
+      args.toolOutput ?? '',
+      args.policy,
+      toolResultKindOf(args.toolInput),
+    ).slice(0, MAX_AUDIT_OUTPUT_CHARS),
     toolCallId: args.toolCallId,
     durationMs: args.now - args.startedAt,
   };

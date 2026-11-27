@@ -13,7 +13,12 @@
 
 import { toolCalls } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
-import { redactSecrets, redactSecretsInText } from '@nodal-agents/shared';
+import {
+  maskToolResultText,
+  redactSecrets,
+  toolResultKindOf,
+  type ToolResultMaskPolicy,
+} from '@nodal-agents/shared';
 import type { ToolCard } from '@nodal-agents/shared';
 
 /**
@@ -127,6 +132,12 @@ export function makeLiveToolRecorder(args: {
   entityId: string | null;
   jobId: string;
   provider: 'claude' | 'codex';
+  /**
+   * The policy of the agent that called `code_task`, for what the CLI's tools
+   * return (`loadToolResultMaskPolicy`): the same boundary as every tool
+   * result, the CLI runtimes' included.
+   */
+  policy: ToolResultMaskPolicy;
 }): { onLine: (line: string) => void; settled: () => Promise<void> } {
   const pending = new Map<string, { name: string; input: unknown; startedAt: number }>();
   // Les insertions restent « lancées et oubliées » — une panne d'audit ne doit
@@ -172,9 +183,15 @@ export function makeLiveToolRecorder(args: {
         toolInput: redactSecrets(started.input) as Record<string, unknown>,
         // La SORTIE aussi, et elle porte le vrai risque : enregistrer chaque
         // appel interne fait entrer dans l audit le contenu de chaque fichier
-        // lu, jeton compris. Masquee AVANT la coupe : une valeur a cheval sur
-        // le plafond ne serait plus reconnue, et son debut resterait lisible.
-        toolOutput: redactSecretsInText(parsed.event.output ?? '').slice(0, MAX_OUTPUT_CHARS),
+        // lu, jeton compris. Par la frontiere des resultats d outil, la meme
+        // que tout outil (les valeurs exactes de l espace, puis les formes
+        // selon le reglage de l agent), AVANT la coupe : une valeur a cheval
+        // sur le plafond ne serait plus reconnue, et son debut resterait lisible.
+        toolOutput: maskToolResultText(
+          parsed.event.output ?? '',
+          args.policy,
+          toolResultKindOf(started.input),
+        ).slice(0, MAX_OUTPUT_CHARS),
         durationMs: Date.now() - started.startedAt,
         toolCallId: parsed.event.id,
       })

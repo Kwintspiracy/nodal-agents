@@ -16,6 +16,7 @@ import {
   scanForUserFacingStrings,
   scanForProjectKeyCopies,
   scanForMutatingSpawnOutsideIntent,
+  scanForToolResultBypass,
   formatViolations,
 } from '@nodal-agents/test-kit';
 
@@ -77,5 +78,16 @@ describe('architecture — le moteur shell est PUR', () => {
     for (const forbidden of ["from '../types'", '@nodal-agents/db', 'file-ops/workspace']) {
       expect(src.includes(forbidden), `shell-engine.ts importe ${forbidden}`).toBe(false);
     }
+  });
+});
+
+describe('architecture — un résultat d’outil ne sort que par la frontière (executeTool) @cap:connecter-un-service/moteur', () => {
+  it('src/ ne lance aucun outil hors d’executeTool et n’écrit aucune ligne tool_calls hors de la frontière', () => {
+    // La frontière elle-même (`execute.ts`) lance l'outil et écrit sa ligne.
+    const v = scanForToolResultBypass({
+      srcDir: SRC_DIR,
+      skipFiles: ['src/execute.ts', '.test.ts'],
+    });
+    if (v.length > 0) expect.fail(formatViolations('Résultat d’outil hors de la frontière', v));
   });
 });

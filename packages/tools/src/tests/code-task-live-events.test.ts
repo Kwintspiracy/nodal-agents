@@ -7,8 +7,10 @@
 // du flux (run-job.ts). Cette asymétrie est ce que ce fichier verrouille.
 
 import { describe, it, expect } from 'vitest';
+import { randomBytes } from 'node:crypto';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { FAKE_PREFIX, fakeAssignment, fakeSecret } from '@nodal-agents/test-kit';
+import { REDACTED_TEXT, registeredSecrets } from '@nodal-agents/shared';
 import {
   parseLiveToolEvent,
   makeEssentialCapture,
@@ -288,9 +290,20 @@ describe('les lignes vivantes partent masquées, avant d’être coupées', () =
     return { db, rows };
   }
 
-  function record(input: unknown, output: string): Promise<Record<string, unknown>> {
+  function record(
+    input: unknown,
+    output: string,
+    // The shapes on, no registered value: what most of these cases check.
+    policy = { registry: registeredSecrets([]), shapes: true },
+  ): Promise<Record<string, unknown>> {
     const { db, rows } = fakeDb();
-    const rec = makeLiveToolRecorder({ db, entityId: null, jobId: 'job-1', provider: 'claude' });
+    const rec = makeLiveToolRecorder({
+      db,
+      entityId: null,
+      jobId: 'job-1',
+      provider: 'claude',
+      policy,
+    });
     rec.onLine(
       JSON.stringify({
         type: 'assistant',
@@ -321,5 +334,15 @@ describe('les lignes vivantes partent masquées, avant d’être coupées', () =
     );
     expect(JSON.stringify(row['toolInput'])).not.toContain(cle);
     expect((row['toolInput'] as { file_path: string }).file_path).toBe('.env');
+  });
+
+  it('la sortie passe par la frontière des résultats d’outil : la valeur de l’espace, même formes coupées @cap:connecter-un-service/moteur', async () => {
+    // A value with no credential shape, known only to the workspace's registry.
+    const known = randomBytes(16).toString('hex');
+    const row = await record({ file_path: 'settings.env' }, `KEY=${known}\nPORT=1`, {
+      registry: registeredSecrets([known]),
+      shapes: false,
+    });
+    expect(String(row['toolOutput'])).toBe(`KEY=${REDACTED_TEXT}\nPORT=1`);
   });
 });

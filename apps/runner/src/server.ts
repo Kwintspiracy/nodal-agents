@@ -9,6 +9,8 @@ import { writeAutonomyRowsAtBoot } from '@nodal-agents/orchestration';
 import { pathToFileURL } from 'url';
 import { parseEnv } from './env.ts';
 import { openNodalHome } from '@nodal-agents/shared/nodal-instances';
+import { registerInstallSecretValues } from '@nodal-agents/shared';
+import { runnerInstallSecretValues } from './install-secrets.ts';
 import { createRunnerDeps } from './deps.ts';
 import { healthRoute } from './routes/health.ts';
 import { agentRoute, triggerWorker } from './routes/agent.ts';
@@ -457,6 +459,9 @@ async function main(): Promise<void> {
   // sandbox): declare this instance to the others, then create it. A runner
   // started without `up` is declared all the same (#787, review pass 2).
   openNodalHome();
+  // The install's own secrets join every workspace's registry of exact values
+  // (the tool-result boundary): registered before any job can run.
+  registerInstallSecretValues(runnerInstallSecretValues(runnerEnv));
   const deps = await createRunnerDeps(runnerEnv);
 
   // One-shot: encrypt any plaintext entity_llm_keys.api_key rows in place

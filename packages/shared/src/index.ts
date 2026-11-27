@@ -36,6 +36,8 @@ export * from './mcp-catalog';
 export * from './timezone';
 export * from './redact-secrets';
 export * from './outbound';
+export * from './secret-registry';
+export * from './tool-result-mask';
 export * from './approval-impact';
 export * from './approval-explain';
 export * from './approval-rules-chain';

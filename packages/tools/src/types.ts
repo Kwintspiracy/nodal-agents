@@ -339,6 +339,14 @@ export interface ToolContext {
    */
   reportReadContent?: (absPath: string, sha256: string) => void;
   /**
+   * The lines (1-based) of `text`, the content of the file at `path`, in
+   * which the tool-result mask hides something from this agent. Set by
+   * `executeTool` from the agent's policy, for the write tools: a write that
+   * would put the mask's placeholder in a file is refused, and the refusal
+   * names these lines. Never a way for a tool to mask its own output.
+   */
+  maskedLinesOf?: (text: string, path: string) => Promise<number[]>;
+  /**
    * What the model this job's tool results go to takes: images, PDFs, and why
    * not. Set by the runner from the job's model; read by `executeTool`
    * through `attachForModel`, never by a tool. Absent: nothing says, and no

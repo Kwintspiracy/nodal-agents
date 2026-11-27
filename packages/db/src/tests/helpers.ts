@@ -164,6 +164,8 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       -- mirrors migration 0111 : OFF par défaut, et OFF pour tous les agents
       -- existants — les trois outils d'équipe n'entrent pas dans la liste.
       may_change_team boolean NOT NULL DEFAULT false,
+      -- mirrors migration 0175 : les formes du masque sur les résultats d'outil, ON par défaut.
+      mask_secret_shapes boolean NOT NULL DEFAULT true,
       position integer NOT NULL DEFAULT 0,
       created_at timestamptz DEFAULT now(),
       updated_at timestamptz DEFAULT now(),
@@ -444,6 +446,8 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       risk_level text CHECK (risk_level IS NULL OR risk_level IN ('read','write','destructive')),
       -- mirrors migration 0166 (#1075): the MCP server's read-only hint at the call
       read_only_hint boolean,
+      -- mirrors migration 0175 : le masque a caché quelque chose dans ce résultat
+      result_masked boolean NOT NULL DEFAULT false,
       -- mirrors migration 0133 (#443)
       execution_started boolean,
       -- 0110 : l'ordre d'ECRITURE. Ni l'uuid, ni le tour, ni created_at ne

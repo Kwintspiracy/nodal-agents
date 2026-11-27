@@ -11,6 +11,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { FAKE_PREFIX, fakeAssignment, fakeBearer, fakeSecret } from '@nodal-agents/test-kit';
+import { registeredSecrets } from '@nodal-agents/shared';
 import { buildCliAuditRow, MAX_AUDIT_OUTPUT_CHARS } from '../../cli-runtime/audit.ts';
 
 const BASE = {
@@ -20,6 +21,8 @@ const BASE = {
   toolCallId: 'item_0',
   startedAt: 1_000,
   now: 1_250,
+  // An agent with the shapes on and no registered value: what these cases check.
+  policy: { registry: registeredSecrets([]), shapes: true },
 };
 
 describe('buildCliAuditRow', () => {

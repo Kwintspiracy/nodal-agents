@@ -744,6 +744,12 @@ export type AgentRow = {
    */
   mayChangeTeam?: boolean;
   /**
+   * agents.mask_secret_shapes (migration 0175). `true` (the default) = a value
+   * shaped like a key is hidden from this agent in what its tools return.
+   * Optional for the same reason as commandAllowlist.
+   */
+  maskSecretShapes?: boolean;
+  /**
    * agents.shell_policy (migration 0125, #464): the states the owner set on
    * the shell checklist. Raw, as stored; `resolveShellPolicy` reads it.
    * Optional for the same reason as commandAllowlist.
@@ -7950,6 +7956,56 @@ export async function setAgentMayChangeTeamAction(raw: unknown): Promise<ActionR
   } catch (err) {
     console.error('[setAgentMayChangeTeamAction]', err);
     return fail('db_error', 'Failed to save the team setting');
+  }
+}
+
+// ─── « Cacher les valeurs secrètes à cet agent », par agent (0175) ───────────
+//
+// agents.mask_secret_shapes : la seconde couche du masque des résultats
+// d'outil (les formes du masqueur unique), que le moteur relit à chaque appel
+// (`loadToolResultMaskPolicy`). Les valeurs exactes que Nodal garde pour
+// l'espace restent masquées quoi qu'il dise. Réservé au propriétaire, même
+// garde que setAgentMayChangeTeamAction : il élargit ce qu'un agent peut lire.
+
+const SetAgentMaskSecretShapesSchema = z.object({
+  agentId: z.string().guid(),
+  maskSecretShapes: z.boolean(),
+});
+
+export async function setAgentMaskSecretShapesAction(raw: unknown): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    const parsed = SetAgentMaskSecretShapesSchema.safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    const { agentId, maskSecretShapes } = parsed.data;
+
+    if (env.AUTH_MODE !== 'local-trust') {
+      const db = getDb();
+      const [entityRow] = await db
+        .select({ userId: entities.userId })
+        .from(entities)
+        .where(eq(entities.id, session.entityId));
+      if (!entityRow) return fail('not_found', 'Workspace not found');
+      if (entityRow.userId !== session.userId) {
+        return fail('forbidden', 'Only the workspace owner can change what an agent may read.');
+      }
+    }
+
+    const db = getDb();
+    const updated = await db
+      .update(agents)
+      .set({ maskSecretShapes, updatedAt: new Date() })
+      .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)))
+      .returning({ id: agents.id });
+    if (updated.length === 0) return fail('not_found', 'Agent not found');
+
+    revalidatePath(`/agents/${agentId}/edit`);
+    return ok(undefined);
+  } catch (err) {
+    console.error('[setAgentMaskSecretShapesAction]', err);
+    return fail('db_error', 'Failed to save the secret setting');
   }
 }
 
