@@ -239,6 +239,37 @@ describe('every route handler of the dashboard is under the rule @cap:se-connect
     expect(wrong).toEqual([]);
   });
 
+  for (const mode of ['local-trust', 'local-auth'] as const) {
+    it(`${mode}: every path refuses a foreign name whose Origin equals its Host, 403 host_not_allowed`, async () => {
+      // A foreign name pointed at this machine: Origin and Host agree, so the
+      // "own page" rule would let it through. The Host rule refuses it first,
+      // on every path: route handlers, pages, paths that look like files.
+      process.env['AUTH_MODE'] = mode;
+      const paths = [
+        ...handlers.flatMap((h) => h.methods.map((m) => ({ method: m, path: h.path }))),
+        { method: 'POST', path: '/agents' },
+        { method: 'POST', path: '/runs/x.png' },
+        { method: 'GET', path: '/agents' },
+        { method: 'GET', path: '/logo-128.png' },
+        { method: 'GET', path: '/_next/static/chunks/main.js' },
+      ];
+      const wrong: string[] = [];
+      for (const { method, path } of paths) {
+        const verdict = await decide(
+          request(method, path, {
+            host: 'rebind.example:3000',
+            origin: 'http://rebind.example:3000',
+            ...(method === 'GET'
+              ? {}
+              : { action: !path.startsWith('/api/'), type: ownType(path, method), body: '{}' }),
+          }),
+        );
+        if (verdict !== '403 host_not_allowed') wrong.push(`${method} ${path}: ${verdict}`);
+      }
+      expect(wrong).toEqual([]);
+    });
+  }
+
   it('a request with no body needs no type (a turn ended, a turn cancelled)', async () => {
     expect(await decide(request('POST', '/api/voice/turns/t-1/end', { origin: OWN }))).toBe('next');
     expect(await decide(request('DELETE', '/api/voice/turns/t-1', { origin: OWN }))).toBe('next');

@@ -410,6 +410,29 @@ describe('every route of the runner is under the rule @cap:se-connecter/moteur',
     expect(answers.filter((a) => !a.endsWith('-> 403 origin_not_allowed'))).toEqual([]);
   });
 
+  for (const mode of ['local-trust', 'local-auth'] as const) {
+    it(`${mode}: every /api route refuses a foreign name whose Origin equals its Host, 403 host_not_allowed`, async () => {
+      // A foreign name pointed at this machine: the browser's Origin and Host
+      // agree. The Host rule refuses it before any Origin rule, and a
+      // credential does not change that.
+      const fresh = createApp(makeDeps(), { ...baseEnv, AUTH_MODE: mode });
+      const answers: string[] = [];
+      for (const r of routes.filter((x) => x.path.startsWith('/api/'))) {
+        for (const extra of [{}, SECRET]) {
+          const res = await send(fresh, r.method, concrete(r.path), {
+            headers: {
+              Host: 'rebind.example:3001',
+              Origin: 'http://rebind.example:3001',
+              ...extra,
+            },
+          });
+          answers.push(`${r.method} ${r.path} -> ${res.status} ${String(res.json['error'])}`);
+        }
+      }
+      expect(answers.filter((a) => !a.endsWith('-> 403 host_not_allowed'))).toEqual([]);
+    });
+  }
+
   it('every /api route that takes a body refuses one of a type it does not take, 415', async () => {
     const fresh = createApp(makeDeps(), baseEnv);
     const answers: string[] = [];
@@ -430,6 +453,9 @@ describe('every route of the runner is under the rule @cap:se-connecter/moteur',
     for (const r of RUNNER_BODY_ROUTES) expect(served).toContain(`${r.method} ${r.path}`);
   });
 
+  // Pinned on purpose: the runner answers no CORS preflight today, on any
+  // route, device routes included. A change that starts answering some must
+  // change this test, and say so.
   it('a preflight from a page is refused too: the runner answers none', async () => {
     const fresh = createApp(makeDeps(), baseEnv);
     const res = await send(fresh, 'OPTIONS', '/api/devices/pair', {
