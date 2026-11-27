@@ -1,14 +1,12 @@
 // Built-in: mark_memory_outdated
 // The agent saw a memory in its Persistent memory block AND knows it's stale or
 // contradicted by newer information (user said "I moved to Lyon" but memory still
-// says "user lives in Paris"). Archives the memory AND sets valid_to=now() so
-// auto-injection drops it immediately. Original row is preserved (archived rows
-// remain in the dashboard for audit).
+// says "user lives in Paris"). Retires the memory (archived, valid_to=now()) so
+// auto-injection drops it immediately, through mutateMemory: the state before
+// is kept with the agent and the reason, and the owner can put it back.
 
 import { z } from 'zod';
-import { and, eq } from '@nodal-agents/db';
-import { agentMemory } from '@nodal-agents/db';
-import { findMemoriesByFactSubstring, MemoryError } from '@nodal-agents/memory';
+import { findMemoriesByFactSubstring, mutateMemory, MemoryError } from '@nodal-agents/memory';
 import type { ToolDefinition } from '../types';
 
 export const MarkMemoryOutdatedInputSchema = z.object({
@@ -69,21 +67,28 @@ export const markMemoryOutdatedTool: ToolDefinition<
         };
       }
       const target = matches[0]!;
-      // F-9 (audit #2): a user-authored (source='manual') or importance-locked
-      // memory is the user's own call, not the agent's to overturn — same
-      // authority chain the curator respects (agent → curator → user, user
-      // always wins). Refuse instead of silently archiving it.
-      if (target.source === 'manual' || target.importance_locked) {
+      // The owner's marks (a fact the owner wrote, a pinned fact), the version
+      // this tool read, and the previous state kept: all in mutateMemory, the
+      // one function every path changes a fact through (#1144). An agent never
+      // changes an owner-marked fact, even when the owner asks in the
+      // conversation: it tells the owner, who changes it from the Memory page.
+      const res = await mutateMemory(ctx.db, {
+        entityId: ctx.entityId,
+        memoryId: target.id,
+        readVersion: target.version,
+        actor: { kind: 'agent', agentId: ctx.agentId },
+        change: { kind: 'retire' },
+        ...(input.reason !== undefined ? { reason: input.reason } : {}),
+      });
+      if (!res.ok) {
         return {
           archived: false,
           reason:
-            'This memory was set by the user (manual or importance-locked) — the agent cannot mark it outdated. Ask the user if it needs updating.',
+            res.reason === 'owner_protected'
+              ? 'This memory was set by the user (written or pinned by them, importance-locked): only the user changes it, from the Memory page. Tell the user what should change; do not retry.'
+              : res.detail,
         };
       }
-      await ctx.db
-        .update(agentMemory)
-        .set({ archived: true, validTo: new Date(), updatedAt: new Date() })
-        .where(and(eq(agentMemory.id, target.id), eq(agentMemory.entityId, ctx.entityId)));
       return { archived: true, id: target.id };
     } catch (err) {
       if (err instanceof MemoryError && err.code === 'INVALID_INPUT') {

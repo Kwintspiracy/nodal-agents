@@ -25,6 +25,7 @@ function makeMem(id: string, fact: string, importance: number, lastAccessed?: st
     fact_hash: null,
     archived: false,
     importance_locked: false,
+    version: 1,
     last_accessed_at: lastAccessed ?? '2026-01-01T00:00:00.000Z',
     access_count: 0,
     created_at: '2026-01-01T00:00:00.000Z',
