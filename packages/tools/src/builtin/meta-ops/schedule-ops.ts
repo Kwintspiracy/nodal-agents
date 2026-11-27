@@ -8,7 +8,13 @@ import { z } from 'zod';
 import { eq, and, agentSchedules, entities } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { CronExpressionParser } from 'cron-parser';
-import { resolveTimezone } from '@nodal-agents/shared';
+import {
+  resolveTimezone,
+  applyScheduleChange,
+  buildScheduleCron,
+  describeTiming,
+} from '@nodal-agents/shared';
+import type { DayPattern, ScheduleChange, ScheduleState } from '@nodal-agents/shared';
 import type { ToolDefinition, ToolContext } from '../../types';
 import { resolveAgentId } from './link-helpers';
 import { lintRoutineTask } from './routine-lint';
@@ -35,75 +41,6 @@ async function workspaceTimezone(db: AnyDrizzleDb, entityId: string): Promise<st
     .from(entities)
     .where(eq(entities.id, entityId));
   return resolveTimezone(row?.timezone ?? null);
-}
-
-/** Recurrence day patterns the agent can request without writing a cron field. */
-type DayPattern = 'daily' | 'weekdays' | 'weekends' | number[]; // number[] = 0(Sun)..6(Sat)
-
-/**
- * Build a 5-field cron expression from wall-clock times + an optional day pattern.
- * This is the deterministic path: the agent provides "HH:MM" clock times (in the
- * schedule's timezone) and the TOOL writes the cron, so the agent never hand-writes
- * cron hours or converts timezones (the source of the recurring 9am→cron bugs).
- * Returns { error } for malformed times.
- */
-function buildCronFromTimes(
-  atTimes: string[],
-  days: DayPattern = 'daily',
-): { cron: string } | { error: string } {
-  const minutes = new Set<number>();
-  const hours = new Set<number>();
-  for (const t of atTimes) {
-    const m = /^(\d{1,2}):(\d{2})$/.exec(t.trim());
-    if (!m) return { error: `Invalid time "${t}". Use 24h "HH:MM" (e.g. "09:00", "21:30").` };
-    const h = Number(m[1]);
-    const min = Number(m[2]);
-    if (h > 23 || min > 59) return { error: `Invalid time "${t}". Hour 0-23, minute 0-59.` };
-    hours.add(h);
-    minutes.add(min);
-  }
-  if (hours.size === 0) return { error: 'Provide at least one time in atTimes.' };
-  // Cron can't express independent (minute,hour) pairs in one field. When every
-  // time shares the same minute (the common case: "9:00, 13:00, 21:00"), one cron
-  // covers them all. Otherwise we'd need multiple schedules — reject loudly.
-  if (minutes.size > 1) {
-    return {
-      error:
-        'All times must share the same minute to fit one schedule (e.g. 09:00, 13:00, 21:00). ' +
-        'For different minutes, create separate schedules.',
-    };
-  }
-  const minuteField = [...minutes][0];
-  const hourField = [...hours].sort((a, b) => a - b).join(',');
-  return { cron: `${minuteField} ${hourField} * * ${dowFieldFor(days)}` };
-}
-
-/** Day-of-week cron field for a DayPattern. */
-function dowFieldFor(days: DayPattern): string {
-  if (days === 'weekdays') return '1-5';
-  if (days === 'weekends') return '0,6';
-  if (Array.isArray(days) && days.length > 0)
-    return [...new Set(days)].sort((a, b) => a - b).join(',');
-  return '*';
-}
-
-/** Build an interval cron ("every N minutes" / "every N hours") from everyMinutes. */
-function buildIntervalCron(
-  everyMinutes: number,
-  days: DayPattern = 'daily',
-): { cron: string } | { error: string } {
-  if (!Number.isInteger(everyMinutes) || everyMinutes < 1 || everyMinutes > 1440) {
-    return { error: 'everyMinutes must be an integer between 1 and 1440 (24h).' };
-  }
-  const dow = dowFieldFor(days);
-  if (everyMinutes < 60) return { cron: `*/${everyMinutes} * * * ${dow}` };
-  if (everyMinutes % 60 === 0) return { cron: `0 */${everyMinutes / 60} * * ${dow}` };
-  // Not a clean hour multiple and >= 60 — cron can't express it simply.
-  return {
-    error:
-      'For intervals of an hour or more, use a whole number of hours (60, 120, 180…) ' +
-      'or set specific times with atTimes.',
-  };
 }
 
 /**
@@ -136,32 +73,44 @@ async function routineLintSuffix(
   }
 }
 
-/** Resolve a schedule by name within an entity. */
+/** Resolve a schedule by name within an entity (its id, and every field a change can touch). */
 async function resolveSchedule(
   db: AnyDrizzleDb,
   entityId: string,
   name: string,
-): Promise<{ id: string; cronExpr: string; timezone: string | null } | null> {
+): Promise<{ id: string; state: ScheduleState } | null> {
   const [row] = await db
     .select({
       id: agentSchedules.id,
+      name: agentSchedules.name,
+      agentId: agentSchedules.agentId,
+      task: agentSchedules.task,
       cronExpr: agentSchedules.cronExpr,
       timezone: agentSchedules.timezone,
+      notifyOnSuccess: agentSchedules.notifyOnSuccess,
+      notifyChannel: agentSchedules.notifyChannel,
+      dailyBudgetUsd: agentSchedules.dailyBudgetUsd,
     })
     .from(agentSchedules)
     .where(and(eq(agentSchedules.entityId, entityId), eq(agentSchedules.name, name)))
     .limit(1);
-  return row ?? null;
+  if (!row) return null;
+  const { id, ...state } = row;
+  return { id, state };
 }
 
 // ─── create_schedule ────────────────────────────────────────────────────────
 
 const DaysSchema = z
-  .union([z.enum(['daily', 'weekdays', 'weekends']), z.array(z.number().int().min(0).max(6))])
+  .union([
+    z.enum(['daily', 'weekdays', 'weekends']),
+    z.array(z.number().int().min(0).max(6)).min(1),
+  ])
   .optional()
   .describe(
-    'Which days to run: "daily" (default), "weekdays" (Mon-Fri), "weekends", or an array of ' +
-      'day numbers 0=Sun..6=Sat. Only used with atTimes.',
+    'Which days to run: "daily", "weekdays" (Mon-Fri), "weekends", or an array of day numbers ' +
+      '0=Sun..6=Sat. When creating, the default is "daily". When updating, leave it out to keep the ' +
+      "schedule's current days.",
   );
 
 const CreateScheduleInput = z.object({
@@ -256,9 +205,10 @@ export const createScheduleTool: ToolDefinition<typeof CreateScheduleInput, Sche
         error: 'Provide atTimes (e.g. ["09:00","21:00"]) or everyMinutes (e.g. 30).',
       };
     }
-    const built = hasTimes
-      ? buildCronFromTimes(input.atTimes!, input.days ?? 'daily')
-      : buildIntervalCron(input.everyMinutes!, input.days ?? 'daily');
+    const built = buildScheduleCron({
+      ...(hasTimes ? { atTimes: input.atTimes } : { everyMinutes: input.everyMinutes }),
+      ...(input.days !== undefined ? { days: input.days } : {}),
+    });
     if ('error' in built) return { ok: false, error: built.error };
     const cronExpr = built.cron;
 
@@ -295,8 +245,15 @@ const UpdateScheduleInput = z.object({
   atTimes: z
     .array(z.string())
     .optional()
-    .describe('New wall-clock times as "HH:MM" — e.g. ["09:00","21:00"]. Rebuilds the schedule.'),
-  everyMinutes: z.number().int().optional().describe('Switch to an interval: run every N minutes.'),
+    .describe(
+      'New wall-clock times as "HH:MM" — e.g. ["09:00","21:00"]. Replaces the times only: the ' +
+        'days, the day of the month and the rest stay as they are.',
+    ),
+  everyMinutes: z
+    .number()
+    .int()
+    .optional()
+    .describe('Switch to an interval: run every N minutes. Replaces the times only.'),
   days: DaysSchema,
   task: z.string().min(1).optional().describe('New task/instructions.'),
   newName: z.string().min(1).optional().describe('Rename the schedule.'),
@@ -314,24 +271,26 @@ export const updateScheduleTool: ToolDefinition<typeof UpdateScheduleInput, Sche
   label: 'Change a schedule',
   summary: 'Change when an existing schedule runs, or its task, name, days, or notification.',
   description:
-    'Edit an existing schedule. Change WHEN with atTimes (["09:00","21:00"]) or everyMinutes — the ' +
-    "tool rebuilds it in the user's timezone; you never write cron or convert. Also edits task / " +
-    'name / notify / days. Fails if no schedule with that name exists.',
+    'Edit an existing schedule. It changes ONLY what you name and keeps everything else: moving ' +
+    'the times (atTimes / everyMinutes) keeps the days, the time zone, the agent and the task; ' +
+    'changing the days keeps the times. Name just the part to change. You never write cron or ' +
+    'convert time zones. The result states the schedule as it is after the change. A schedule ' +
+    'whose timing atTimes / everyMinutes cannot express (a hand-written cron expression) is not ' +
+    'rewritten: the answer says what it is and what you can change on it. Fails if no schedule ' +
+    'with that name exists.',
   inputSchema: UpdateScheduleInput,
   riskLevel: 'write',
   egress: 'none',
   card: 'text',
   defaultApproval: 'require_approval',
   execute: async (input, ctx) => {
-    const hasTimes = input.atTimes && input.atTimes.length > 0;
-    const hasInterval = input.everyMinutes !== undefined;
     if (
-      !hasTimes &&
-      !hasInterval &&
-      !input.task &&
-      !input.newName &&
+      input.atTimes === undefined &&
+      input.everyMinutes === undefined &&
+      input.days === undefined &&
+      input.task === undefined &&
+      input.newName === undefined &&
       input.notifyOnSuccess === undefined &&
-      !input.days &&
       input.dailyBudgetUsd === undefined
     ) {
       return {
@@ -340,59 +299,43 @@ export const updateScheduleTool: ToolDefinition<typeof UpdateScheduleInput, Sche
           'Nothing to update — provide atTimes, everyMinutes, task, newName, notifyOnSuccess, dailyBudgetUsd, or days.',
       };
     }
-    if (hasTimes && hasInterval) {
-      return { ok: false, error: 'Provide either atTimes OR everyMinutes, not both.' };
-    }
     const sched = await resolveSchedule(ctx.db, ctx.entityId, input.name);
     if (!sched) return { ok: false, error: `No schedule named "${input.name}" in this workspace.` };
-    const patch: Record<string, unknown> = { updatedAt: new Date() };
-    // Timezone is the workspace setting, never agent-provided.
-    const tz = await workspaceTimezone(ctx.db, ctx.entityId);
 
-    // Rebuild the cron if the timing changed (atTimes / everyMinutes / days).
-    let newCron: string | null = null;
-    if (hasTimes) {
-      const built = buildCronFromTimes(input.atTimes!, input.days ?? 'daily');
-      if ('error' in built) return { ok: false, error: built.error };
-      newCron = built.cron;
-    } else if (hasInterval) {
-      const built = buildIntervalCron(input.everyMinutes!, input.days ?? 'daily');
-      if ('error' in built) return { ok: false, error: built.error };
-      newCron = built.cron;
-    } else if (input.days) {
-      // days-only change: rebuild from the existing times, keeping the same hours.
-      const built = buildCronFromTimes(deriveTimesFromCron(sched.cronExpr), input.days);
-      if ('error' in built) return { ok: false, error: built.error };
-      newCron = built.cron;
-    }
-    if (newCron) {
-      const nextRun = computeNextRun(newCron, tz);
-      if (!nextRun)
-        return { ok: false, error: `Could not build a valid schedule. Check the times.` };
-      patch['cronExpr'] = newCron;
-      patch['timezone'] = tz;
-      patch['nextRun'] = nextRun;
-    }
-    if (input.task) patch['task'] = input.task;
-    if (input.newName) patch['name'] = input.newName;
-    if (input.notifyOnSuccess !== undefined) patch['notifyOnSuccess'] = input.notifyOnSuccess;
-    if (input.dailyBudgetUsd !== undefined) patch['dailyBudgetUsd'] = input.dailyBudgetUsd;
-    await ctx.db.update(agentSchedules).set(patch).where(eq(agentSchedules.id, sched.id));
-    return { ok: true, message: `Updated schedule "${input.name}".` };
+    // What the call names, and nothing else. The time zone is the schedule's own
+    // (set when it was created): an edit never reinterprets the hours it keeps.
+    const change: ScheduleChange = {
+      ...(input.atTimes !== undefined ? { atTimes: input.atTimes } : {}),
+      ...(input.everyMinutes !== undefined ? { everyMinutes: input.everyMinutes } : {}),
+      ...(input.days !== undefined ? { days: input.days as DayPattern } : {}),
+      ...(input.task !== undefined ? { task: input.task } : {}),
+      ...(input.newName !== undefined ? { name: input.newName } : {}),
+      ...(input.notifyOnSuccess !== undefined ? { notifyOnSuccess: input.notifyOnSuccess } : {}),
+      ...(input.dailyBudgetUsd !== undefined ? { dailyBudgetUsd: input.dailyBudgetUsd } : {}),
+    };
+    const result = applyScheduleChange(sched.state, change);
+    if (!result.ok) return { ok: false, error: result.error };
+
+    await ctx.db
+      .update(agentSchedules)
+      .set({ ...result.patch, updatedAt: new Date() })
+      .where(eq(agentSchedules.id, sched.id));
+
+    const { next } = result;
+    const upcoming =
+      result.upcoming.length > 0
+        ? ` Next runs: ${result.upcoming.map((d) => d.toISOString()).join(', ')}.`
+        : '';
+    return {
+      ok: true,
+      message:
+        `Updated schedule "${next.name}" (changed: ${result.named.join(', ')}). ` +
+        `It now runs ${describeTiming(next.cronExpr, next.timezone)}; ` +
+        `success notification ${next.notifyOnSuccess ? 'on' : 'off'}, ` +
+        `daily budget $${next.dailyBudgetUsd}.${upcoming}`,
+    };
   },
 };
-
-/**
- * Recover "HH:MM" times from an existing cron (minute + comma hours) so a
- * `days`-only update can rebuild the cron without losing the times. Falls back
- * to the raw fields if the cron isn't the simple shape buildCronFromTimes makes.
- */
-function deriveTimesFromCron(cron: string): string[] {
-  const parts = cron.trim().split(/\s+/);
-  if (parts.length !== 5) return [];
-  const min = parts[0]!.padStart(2, '0');
-  return parts[1]!.split(',').map((h) => `${h.padStart(2, '0')}:${min}`);
-}
 
 // Note: there is intentionally NO delete_schedule — deleting is a USER action
 // (dashboard only). An agent can PAUSE a schedule with toggle_schedule instead.

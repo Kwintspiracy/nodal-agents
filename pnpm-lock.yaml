@@ -1231,6 +1231,9 @@ importers:
 
   packages/shared:
     dependencies:
+      cron-parser:
+        specifier: ^5.5.0
+        version: 5.5.0
       zod:
         specifier: ^4.6.6
         version: 4.6.7

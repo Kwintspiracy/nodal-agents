@@ -14,7 +14,8 @@
     "./nodal-instances": "./src/nodal-instances.ts",
     "./sandbox-settings": "./src/sandbox-settings.ts",
     "./node-guard": "./src/node-guard.ts",
-    "./node-version": "./src/node-version.ts"
+    "./node-version": "./src/node-version.ts",
+    "./schedule-change-cases": "./src/tests/schedule-change-cases.ts"
   },
   "scripts": {
     "lint": "eslint src",
@@ -22,6 +23,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "cron-parser": "^5.5.0",
     "zod": "^4.6.6"
   },
   "devDependencies": {
