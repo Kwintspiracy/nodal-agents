@@ -55,3 +55,5 @@ export * from './pdf';
 export * from './bounded-io';
 // A wait for a file that says so when the file does not come, never a silent return (#1042).
 export * from './wait-for-file';
+// Credential-shaped test values assembled at run time, never written whole (#1185).
+export * from './fake-secrets';

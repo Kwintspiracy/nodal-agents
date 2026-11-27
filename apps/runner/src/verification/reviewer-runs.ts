@@ -116,15 +116,17 @@ function sandboxOf(value: unknown): string | null {
 
 function tail(text: unknown): string | null {
   if (typeof text !== 'string' || text === '') return null;
-  const bounded = text.length > MAX_TAIL_CHARS ? text.slice(-MAX_TAIL_CHARS) : text;
-  return redactSecretsInText(bounded);
+  // Masquée AVANT la coupe : une valeur à cheval sur le début de la fin gardée
+  // ne serait plus reconnue, et sa fin resterait lisible.
+  const masked = redactSecretsInText(text);
+  return masked.length > MAX_TAIL_CHARS ? masked.slice(-MAX_TAIL_CHARS) : masked;
 }
 
 /**
  * La commande, telle qu'elle sera LUE par un humain sur la page de run.
  *
  * Elle vient de l'ENTRÉE de l'appel, déjà masquée à l'écriture de la ligne
- * d'audit (`redactSecretsForAudit`). `null` quand l'entrée ne porte pas de
+ * d'audit (`redactSecrets`). `null` quand l'entrée ne porte pas de
  * commande lisible : une ligne de preuve sans commande ne prouve rien, on
  * n'en écrit pas.
  */

@@ -28,7 +28,7 @@ import {
   REVIEW_VERDICT_TOOL,
   type ReviewVerdictRecord,
 } from '@nodal-agents/orchestration';
-import { redactTranscriptForDisplay, redactSecretsInText } from '@nodal-agents/shared';
+import { redactSecrets, redactSecretsInText } from '@nodal-agents/shared';
 import type { JobTriggerContext } from '@nodal-agents/db';
 import { buildConversationFeed } from './conversation-feed.ts';
 import type { ConversationFeed } from './conversation-feed.ts';
@@ -453,13 +453,16 @@ export async function assembleJobFeeds(
       job.channel === 'cron' && triggerContext?.type === 'cron'
         ? triggerContext.scheduleName
         : null;
-    const messages = redactTranscriptForDisplay(
+    const messages = redactSecrets(
       Array.isArray(job.messages) ? (job.messages as Record<string, unknown>[]) : [],
-    );
+    ) as Record<string, unknown>[];
     // La tâche passe par la MÊME rédaction que les messages : le modèle trouve
     // la demande en comparant les deux (`content === task`), et une demande qui
     // contient un secret serait masquée d'un côté seulement (revue passe 18).
-    const [redactedRequest] = redactTranscriptForDisplay([{ role: 'user', content: job.task }]);
+    const [redactedRequest] = redactSecrets([{ role: 'user', content: job.task }]) as Array<{
+      role: string;
+      content: unknown;
+    }>;
     const displayTask =
       typeof redactedRequest?.content === 'string' ? redactedRequest.content : job.task;
 

@@ -13,41 +13,12 @@
 // card to a person, the stored row left untouched as the truth of what
 // happened.
 //
-// Why a blind walk and no field list
-// ----------------------------------
-// A list of card fields to mask (`text`, `excerpt`, `path`, …) would hold only
-// until the next card is added — and a new card that nobody thought to add to
-// the list would be a silent hole, exactly the kind of leak this closes. So
-// every string is masked, wherever it sits, and the structure is returned
-// intact.
+// The masker is the platform's one (`redactSecrets`, packages/shared): every
+// string at any depth masked by shape, every field whose name says secret
+// hidden whole, the structure returned intact. No list of card fields: a new
+// card nobody thought to add to a list would be a silent hole.
 
-import { redactSecretsInText } from '@nodal-agents/shared';
-
-/**
- * Mask credential-shaped substrings in EVERY string of a card payload, at any
- * depth, keeping the shape: objects stay objects, arrays stay arrays, numbers,
- * booleans, `null` and `undefined` are returned as they are.
- *
- * Object KEYS are left alone: a key is a field name written by the card's
- * schema, never a value a tool captured.
- *
- * Pure, and typed `unknown → unknown` because the column is `jsonb`: the
- * payload is parsed and validated AFTER this pass (`parsePresented`), so a row
- * written before the cards existed, or by a future tool, walks through the same
- * way.
- */
-export function redactPresented(presented: unknown): unknown {
-  if (typeof presented === 'string') return redactSecretsInText(presented);
-  if (Array.isArray(presented)) return presented.map(redactPresented);
-  if (presented !== null && typeof presented === 'object') {
-    const out: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(presented as Record<string, unknown>)) {
-      out[key] = redactPresented(value);
-    }
-    return out;
-  }
-  return presented;
-}
+import { redactSecrets, redactSecretsInText } from '@nodal-agents/shared';
 
 /** Une ligne d'audit telle que les lectures d'écran la manipulent. */
 export type AuditRowLike = {
@@ -74,9 +45,9 @@ export type AuditRowLike = {
 export function redactAuditRow<T extends AuditRowLike>(row: T): T {
   return {
     ...row,
-    toolInput: redactPresented(row.toolInput),
+    toolInput: redactSecrets(row.toolInput),
     toolOutput: row.toolOutput === null ? null : redactSecretsInText(row.toolOutput),
-    presented: redactPresented(row.presented),
+    presented: redactSecrets(row.presented),
   };
 }
 
@@ -100,20 +71,20 @@ export function redactAuditRow<T extends AuditRowLike>(row: T): T {
  * réécrit, et un verdict deviendrait illisible — donc absent de l'écran — sans
  * que rien ne le dise (invariant #4).
  *
- * La marche est AVEUGLE (`redactPresented`), et pas une liste de champs : un
+ * La marche est AVEUGLE (`redactSecrets`), et pas une liste de champs : un
  * champ ajouté demain à `ReviewVerdictRecord` serait sinon un trou silencieux,
  * exactement ce que la même décision a écarté pour les cartes.
  *
  * Pourquoi la conversion de type est SÛRE : la marche rend un objet pour un
  * objet, un tableau pour un tableau, et ne réécrit que les FEUILLES de type
- * chaîne — les clés, les nombres et les booléens passent intacts. La forme est
- * donc conservée par construction. Les deux valeurs de `verdict` ne risquent
- * rien non plus : le masqueur ne reconnaît que des préfixes de fournisseurs
- * (`sk-ant-`, `ghp_`, `xoxb-`…), jamais un mot ordinaire.
+ * chaîne, plus la valeur d'un champ dont le NOM dit secret — aucun champ de
+ * `ReviewVerdictRecord` ne s'appelle ainsi. Les clés, les nombres et les
+ * booléens passent intacts. Les deux valeurs de `verdict` ne risquent rien non
+ * plus : aucune forme du masqueur ne reconnaît un mot ordinaire.
  *
  * La ligne STOCKÉE n'est pas touchée : l'orchestration la relit pour décider si
  * une relecture interdit d'annoncer livré (SECRET-001).
  */
 export function redactReviewVerdict<T>(record: T): T {
-  return redactPresented(record) as T;
+  return redactSecrets(record) as T;
 }

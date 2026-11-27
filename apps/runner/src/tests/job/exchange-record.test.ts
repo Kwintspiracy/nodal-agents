@@ -783,7 +783,7 @@ describe('the record is bounded, and says so (#1075) @cap:reprendre-conversation
     const all = JSON.stringify(await replay(conv, 'telegram', current));
     expect(all).not.toContain(secret);
     const [entries] = records(await replay(conv, 'telegram', current));
-    expect(entries![1]).toBe('run_command → ANTHROPIC_API_KEY=[secret masqué] (sk-) ok');
+    expect(entries![1]).toBe('run_command → ANTHROPIC_API_KEY=[secret hidden] ok');
   });
 
   it('a result the context compaction removed, or that was never stored, is said, not invented', async () => {

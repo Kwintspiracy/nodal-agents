@@ -13,7 +13,7 @@
 import { getMcpApprovalContext } from '@nodal-agents/db';
 import {
   explainApproval,
-  redactSecretsForAudit,
+  redactSecrets,
   type ApprovalExplanation,
   type McpServerContext,
   type ShellGateReason,
@@ -58,7 +58,7 @@ export async function explainApprovalRequest(
 
   return explainApproval({
     toolName,
-    toolInput: redactSecretsForAudit(toolInput ?? {}),
+    toolInput: redactSecrets(toolInput ?? {}),
     mcp,
     gateReasons,
   });

@@ -4,7 +4,7 @@
 // Le trou : `assembleJobFeeds` masquait `toolOutput` et `presented` (#150) et
 // laissait `toolInput` traverser brut jusqu'à `buildConversationFeed`. Aucun
 // écran ne rend ce champ aujourd'hui — le fil affiche l'entrée de la
-// TRANSCRIPTION, déjà masquée par `redactTranscriptForDisplay` — et c'est
+// TRANSCRIPTION, déjà masquée par `redactSecrets` — et c'est
 // exactement le raisonnement qui avait laissé le trou de #150, où la carte
 // était rendue en priorité sur une sortie déjà masquée.
 //

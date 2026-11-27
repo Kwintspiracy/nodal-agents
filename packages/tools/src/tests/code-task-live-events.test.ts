@@ -7,9 +7,12 @@
 // du flux (run-job.ts). Cette asymétrie est ce que ce fichier verrouille.
 
 import { describe, it, expect } from 'vitest';
+import type { AnyDrizzleDb } from '@nodal-agents/db';
+import { FAKE_PREFIX, fakeAssignment, fakeSecret } from '@nodal-agents/test-kit';
 import {
   parseLiveToolEvent,
   makeEssentialCapture,
+  makeLiveToolRecorder,
   cliToolCard,
 } from '../builtin/code-task/live-events';
 import {
@@ -267,5 +270,56 @@ describe("cliToolCard — la carte d'un outil interne du CLI (P1)", () => {
   it("un nom inconnu rend generic — l'aveu, pas une devinette", () => {
     expect(cliToolCard('SomethingNew')).toBe('generic');
     expect(cliToolCard('shell')).toBe('generic'); // n'existe pas dans le flux codex --json
+  });
+});
+
+describe('les lignes vivantes partent masquées, avant d’être coupées', () => {
+  /** Une base qui garde ce qu'on lui demande d'écrire, et rien d'autre. */
+  function fakeDb(): { db: AnyDrizzleDb; rows: Array<Record<string, unknown>> } {
+    const rows: Array<Record<string, unknown>> = [];
+    const db = {
+      insert: () => ({
+        values: (v: Record<string, unknown>) => {
+          rows.push(v);
+          return Promise.resolve();
+        },
+      }),
+    } as unknown as AnyDrizzleDb;
+    return { db, rows };
+  }
+
+  function record(input: unknown, output: string): Promise<Record<string, unknown>> {
+    const { db, rows } = fakeDb();
+    const rec = makeLiveToolRecorder({ db, entityId: null, jobId: 'job-1', provider: 'claude' });
+    rec.onLine(
+      JSON.stringify({
+        type: 'assistant',
+        message: { content: [{ type: 'tool_use', id: 'tu_9', name: 'Write', input }] },
+      }),
+    );
+    rec.onLine(
+      JSON.stringify({
+        type: 'user',
+        message: { content: [{ type: 'tool_result', tool_use_id: 'tu_9', content: output }] },
+      }),
+    );
+    return rec.settled().then(() => rows[0]!);
+  }
+
+  it('une clé à cheval sur le plafond de la sortie ne laisse rien de lisible', async () => {
+    const cle = fakeSecret('anthropic', 'E'.repeat(48));
+    const row = await record({ file_path: 'a.txt' }, `${'y'.repeat(8_000 - 21)} ${cle} fin`);
+    expect(String(row['toolOutput'])).not.toContain(FAKE_PREFIX.anthropic);
+    expect(String(row['toolOutput'])).not.toContain('EEEE');
+  });
+
+  it('un jeton dans le contenu écrit est masqué dans l’entrée, le chemin reste lisible', async () => {
+    const cle = fakeSecret('openaiProject', 'F'.repeat(48));
+    const row = await record(
+      { file_path: '.env', content: fakeAssignment('OPENAI_API_KEY', cle) },
+      'ok',
+    );
+    expect(JSON.stringify(row['toolInput'])).not.toContain(cle);
+    expect((row['toolInput'] as { file_path: string }).file_path).toBe('.env');
   });
 });
