@@ -9,11 +9,12 @@ import { dirname, join } from 'node:path';
 import {
   readConfig,
   writeConfig,
+  createConfig,
+  newInstallConfig,
   ensureConfigDir,
   CONFIG_FILE,
   LOG_DIR,
   PG_DATA_DIR,
-  type Config,
 } from '../lib/config.ts';
 import {
   startEmbeddedPostgres,
@@ -23,8 +24,15 @@ import {
   stopOrphanPostgres,
   livePostmasterPid,
   postgresProcessesForDataDir,
-  LEGACY_PG_PASSWORD,
+  PostgresAuthError,
 } from '../lib/postgres.ts';
+import {
+  startWithPassword,
+  finishPasswordChange,
+  passwordMismatchMessage,
+  type PasswordStart,
+} from '../lib/pg-password.ts';
+import { lastGoodCopyPath } from '@nodal-agents/shared/state-files';
 import {
   probeEmbeddedPostgres,
   hydrateEmbeddedPostgres,
@@ -40,8 +48,7 @@ import {
   resolveAuthMode,
 } from '../lib/env.ts';
 import {
-  isPortBindable,
-  findFreePort,
+  allocateServicePorts,
   pidListeningOnPort,
   formatPortRotation,
   type PortRotation,
@@ -73,6 +80,7 @@ import {
   isPidAlive,
   waitForPidDead,
   type SpawnResult,
+  type ProcessRecord,
 } from '../lib/processes.ts';
 import { createClient, assertMasterKeyRestorable } from '@nodal-agents/db';
 import { startHealthWatchdog, probeRunnerHealth, type Watchdog } from '../lib/watchdog.ts';
@@ -232,6 +240,11 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
   }
 
   // ── 1. Load config (write a no-friction default if missing) ───────────────
+  //
+  // `readConfig` answers null for an ABSENT file only. A file that exists but
+  // cannot be read or understood throws here, before anything is started or
+  // written: it holds the only copy of the database password, and treating it
+  // as a first run is what used to write defaults over it (B38-02).
 
   let config = readConfig();
   if (!config) {
@@ -243,21 +256,13 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
     //
     // Power users who want LAN / email-auth / a pre-baked LLM key still run
     // `nodal-agents init` explicitly — that path is unchanged.
+    //
+    // `createConfig` refuses when this home already holds an install (a
+    // database, a master key, a last good copy): a missing config there is a
+    // loss to repair, not a first run.
+    const defaultConfig = newInstallConfig();
+    createConfig(defaultConfig);
     console.log(chalk.cyan('  First run — opening the dashboard to finish setup…\n'));
-    const defaultConfig: Config = {
-      // No `llm` section: the browser onboarding sets it via createLlmKeyAction.
-      ports: { web: 3000, runner: 3001, postgres: 25432 },
-      workerSecret: randomBytes(32).toString('hex'),
-      serverActionsKey: randomBytes(32).toString('base64'),
-      // M-4: authSecret is minted here (distinct from workerSecret) rather
-      // than left for readConfig()'s auto-mint, because this in-memory
-      // `config` is used directly below without a re-read.
-      authSecret: randomBytes(32).toString('base64'),
-      // loopback derives auth: local-trust (no login/signup). Leave `auth`
-      // unset so resolveAuthMode falls back to the loopback → local-trust map.
-      bind: 'loopback',
-    };
-    writeConfig(defaultConfig);
     config = defaultConfig;
   }
 
@@ -722,11 +727,11 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
   // not bindable, rotate to a free one nearby and persist so the next boot
   // uses the working port directly.
 
+  // One decision over the three ports (allocateServicePorts): a port another
+  // service of this configuration holds or was just given is never handed out.
+  const allocation = await allocateServicePorts(config.ports);
   const portChanges: PortRotation[] = [];
-  for (const name of ['web', 'runner', 'postgres'] as const) {
-    const configured = config.ports[name];
-    if (await isPortBindable(configured)) continue;
-    const next = await findFreePort(configured + 1);
+  for (const { name, from: configured, to } of allocation.moved) {
     // WHO still holds it. Asked here, at the moment of the move, because this
     // is the only place that knows the port is being abandoned — and after a
     // hard Ctrl+C with an unreadable process table, the answer is a pid we
@@ -734,11 +739,11 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
     portChanges.push({
       name,
       from: configured,
-      to: next,
+      to,
       heldBy: await pidListeningOnPort(configured),
     });
-    config.ports[name] = next;
   }
+  config = { ...config, ports: { ...config.ports, ...allocation.ports } };
 
   if (portChanges.length > 0) {
     console.log(chalk.yellow('Configured ports unavailable — rotating:'));
@@ -767,25 +772,40 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
   //
   // A cluster created before this field exists still carries the old password:
   // initdb sets it once, so the fix has to go through ALTER USER on a running
-  // server. `pgPassword` is what we start WITH; `pendingRotation` is what we
-  // move to once it is up.
-  const pgPassword = config.postgresPassword ?? LEGACY_PG_PASSWORD;
-  const pendingRotation = config.postgresPassword ? null : randomBytes(24).toString('base64url');
-
+  // server. A change is recorded as `postgresPasswordPending` BEFORE it is made
+  // and confirmed only once the database took it, so a start cut in the middle
+  // loses neither value (lib/pg-password.ts).
+  const pgPort = config.ports.postgres;
   const pgSpinner = ora('Starting embedded Postgres…').start();
-  let pg: Awaited<ReturnType<typeof startEmbeddedPostgres>>;
+  let started: PasswordStart<Awaited<ReturnType<typeof startEmbeddedPostgres>>>;
   try {
-    // `--detach`: the cluster must outlive this launcher, so it is spawned
-    // detached and released from the package's stop-at-exit just before the
-    // exit below (#835). A foreground `up` keeps both: Ctrl+C stops everything.
-    pg = await startEmbeddedPostgres(undefined, config.ports.postgres, pgPassword, undefined, {
-      detached: opts.detach === true,
+    started = await startWithPassword(config, {
+      // `--detach`: the cluster must outlive this launcher, so it is spawned
+      // detached and released from the package's stop-at-exit just before the
+      // exit below (#835). A foreground `up` keeps both: Ctrl+C stops everything.
+      start: (password) =>
+        startEmbeddedPostgres(undefined, pgPort, password, undefined, {
+          detached: opts.detach === true,
+        }),
+      save: (next) => writeConfig(next),
+      mint: () => randomBytes(24).toString('base64url'),
     });
     pgSpinner.succeed(chalk.green(`Postgres ready on port ${config.ports.postgres}`));
   } catch (err) {
     pgSpinner.fail('Failed to start Postgres');
+    if (err instanceof PostgresAuthError) {
+      const lastGood = lastGoodCopyPath(CONFIG_FILE);
+      throw new Error(
+        passwordMismatchMessage(CONFIG_FILE, existsSync(lastGood) ? lastGood : null),
+        {
+          cause: err,
+        },
+      );
+    }
     throw err;
   }
+  config = started.config;
+  const pg = started.pg;
 
   // ── 2b. Shutdown handlers — registered HERE, not at the end ───────────────
   // The moment Postgres is up there is something that must be torn down on
@@ -814,7 +834,14 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
     // Read the tree BEFORE killing: clearPids() wipes it at the end, and on
     // Ctrl+C the live parent/child links are already collapsing (see
     // recordServiceTree for the full account).
-    const recorded = readPids()?.children ?? [];
+    // An unreadable record must not stop the teardown halfway (the database
+    // would stay up): it is said, and what this process holds is still stopped.
+    let recorded: ProcessRecord[] = [];
+    try {
+      recorded = readPids()?.children ?? [];
+    } catch (err) {
+      console.error(chalk.red(`  ${err instanceof Error ? err.message : String(err)}`));
+    }
     await Promise.allSettled(
       [running.runner, running.web].filter((c): c is SpawnResult => c !== null).map(killSilent),
     );
@@ -835,30 +862,16 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
   process.on('SIGINT', () => void shutdown('SIGINT'));
   process.on('SIGTERM', () => void shutdown('SIGTERM'));
 
-  let effectivePgPassword = pgPassword;
-  if (pendingRotation) {
-    // ORDER MATTERS: persist first, then ALTER, then revert on failure. The
-    // reverse order leaves a window where the role has changed and nothing on
-    // disk knows the new value — an install that cannot open its own database.
-    // This way the worst case is a config naming a password the role does not
-    // have yet, which the next boot simply retries.
-    writeConfig({ ...config, postgresPassword: pendingRotation });
-    const rotated = await pg.rotatePassword(pendingRotation);
-    if (rotated) {
-      effectivePgPassword = pendingRotation;
-    } else {
-      writeConfig({ ...config, postgresPassword: undefined });
-      // Not fatal: the install keeps working on the legacy password and retries
-      // next boot. Loud rather than silent (invariant #4) — a database still
-      // reachable with a well-known password is something the owner should know.
-      console.warn(
-        chalk.yellow(
-          '  Could not rotate the local Postgres password — still using the shipped default.\n' +
-            '  Any other process on this machine can read the database. Retried on next start.',
-        ),
-      );
-    }
-  }
+  // After the handlers, so a Ctrl+C during the ALTER still stops the cluster.
+  // Not fatal when the ALTER fails: the install keeps working on the previous
+  // password and the recorded change runs again next start. Loud rather than
+  // silent (invariant #4).
+  const finished = await finishPasswordChange(started, {
+    save: (next) => writeConfig(next),
+    warn: (message) => console.warn(chalk.yellow(message.replace(/^/gm, '  '))),
+  });
+  config = finished.config;
+  const effectivePgPassword = finished.password;
 
   const databaseUrl = buildDatabaseUrl(config.ports.postgres, effectivePgPassword);
 

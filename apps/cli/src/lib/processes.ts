@@ -1,10 +1,16 @@
 // processes.ts — spawn runner and web as child processes
 
 import { execa, type Options, type ResultPromise } from 'execa';
-import { createWriteStream, openSync, writeFileSync, readFileSync, existsSync } from 'fs';
+import { createWriteStream, openSync, existsSync } from 'fs';
+import { z } from 'zod';
+import {
+  readStateFile,
+  replaceStateFile,
+  type StateFileSpec,
+} from '@nodal-agents/shared/state-files';
 import { join, dirname, resolve } from 'path';
 import { fileURLToPath } from 'node:url';
-import { PID_DIR, LOG_DIR, CONFIG_DIR } from './config.ts';
+import { LOG_DIR, CONFIG_DIR, PROCESSES_FILE } from './config.ts';
 import { rotateLogIfNeeded } from './log-rotation.ts';
 import { childProcessEnv, type ChildEnv } from './env.ts';
 import { runWindowsPowerShell } from './windows-powershell.ts';
@@ -1278,18 +1284,56 @@ export async function sweepRecordedChildren(
   return killed;
 }
 
+const ProcessRecordSchema = z
+  .object({ pid: z.number().int(), ppid: z.number().int(), startedAt: z.string() })
+  .loose();
+
+const PidFileSchema = z
+  .object({
+    runner: z.number().int().optional(),
+    web: z.number().int().optional(),
+    children: z.array(ProcessRecordSchema).optional(),
+    roots: z.array(ProcessRecordSchema).optional(),
+  })
+  .loose();
+
+/**
+ * `pids/processes.json`, as `state-files.ts` reads and writes it. No last good
+ * copy: the file describes what runs NOW, and an older version of it names
+ * processes that are gone (a recycled pid could then be stopped for nothing).
+ */
+const PROCESSES_FILE_SPEC: StateFileSpec<PidFile> = {
+  label: 'The record of the processes Nodal-Agents started',
+  parse: (text) => {
+    let raw: unknown;
+    try {
+      raw = JSON.parse(text) as unknown;
+    } catch (err) {
+      throw new Error(`it is not valid JSON (${err instanceof Error ? err.message : String(err)})`);
+    }
+    const parsed = PidFileSchema.safeParse(raw);
+    if (!parsed.success) {
+      throw new Error(`it does not describe processes (${parsed.error.issues[0]?.message ?? ''})`);
+    }
+    return parsed.data as PidFile;
+  },
+  keepsLastGood: false,
+  recovery:
+    'If no Nodal-Agents process is running, delete this file and run the command again. ' +
+    'If some are, stop them yourself first: this file was the record of which ones they are.',
+};
+
 function writePids(pids: PidFile): void {
-  writeFileSync(join(PID_DIR, 'processes.json'), JSON.stringify(pids, null, 2), 'utf-8');
+  replaceStateFile(PROCESSES_FILE, `${JSON.stringify(pids, null, 2)}\n`, PROCESSES_FILE_SPEC);
 }
 
+/**
+ * What the last start recorded, or null when there is no record. A record
+ * that exists but cannot be read throws `StateFileError`: an unreadable record
+ * is not "nothing runs".
+ */
 export function readPids(): PidFile | null {
-  const pidFile = join(PID_DIR, 'processes.json');
-  if (!existsSync(pidFile)) return null;
-  try {
-    return JSON.parse(readFileSync(pidFile, 'utf-8')) as PidFile;
-  } catch {
-    return null;
-  }
+  return readStateFile(PROCESSES_FILE, PROCESSES_FILE_SPEC);
 }
 
 /**
@@ -1313,10 +1357,7 @@ export function retainPids(pids: PidFile, keep: ReadonlySet<number>): void {
 }
 
 export function clearPids(): void {
-  const pidFile = join(PID_DIR, 'processes.json');
-  if (existsSync(pidFile)) {
-    writeFileSync(pidFile, JSON.stringify({}), 'utf-8');
-  }
+  if (existsSync(PROCESSES_FILE)) writePids({});
 }
 
 // ─── Health check ─────────────────────────────────────────────────────────────

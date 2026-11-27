@@ -17,6 +17,7 @@ import {
   scanForProjectKeyCopies,
   scanForMcpToolPrefixCopies,
   scanForNodalHomeCopies,
+  scanForStateFileBypass,
 } from '@nodal-agents/test-kit';
 
 const srcDir = join(fileURLToPath(import.meta.url), '..', '..');
@@ -71,6 +72,20 @@ describe('architecture invariants', () => {
       }),
     );
     assertNoViolations('chemin ~/.nodalai recopié', violations);
+  });
+
+  it('hosts the ONE reader and writer of the state files — no direct write in apps/ or packages/ @cap:installer-et-demarrer/moteur', () => {
+    // Repo-wide, like the two rules above: the config had two writers (CLI and
+    // dashboard), both truncating it in place, and the bench wrote a third.
+    const repo = join(srcDir, '..', '..', '..');
+    const violations = ['apps', 'packages'].flatMap((root) =>
+      scanForStateFileBypass({
+        srcDir: join(repo, root),
+        skipDirs: ['tests', '__tests__'],
+        skipFiles: ['packages/shared/src/state-files.ts'],
+      }),
+    );
+    assertNoViolations('fichier d’état écrit hors de state-files.ts', violations);
   });
 
   it('hosts the ONE path identity rule — no second copy even inside this package', () => {

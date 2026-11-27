@@ -1,7 +1,13 @@
 // ports.test.ts — findFreePort returns a usable port
 
 import { describe, it, expect } from 'vitest';
-import { findFreePort, isPortBindable, DEFAULT_PORTS, formatPortRotation } from '../lib/ports.ts';
+import {
+  allocateServicePorts,
+  findFreePort,
+  isPortBindable,
+  DEFAULT_PORTS,
+  formatPortRotation,
+} from '../lib/ports.ts';
 import { createServer } from 'net';
 import { readFileSync } from 'node:fs';
 
@@ -199,5 +205,62 @@ describe('formatPortRotation @cap:installer-et-demarrer/moteur', () => {
     ]);
     expect(lines.filter((l) => l.includes('→'))).toHaveLength(2);
     expect(lines.filter((l) => l.includes('STILL HELD'))).toHaveLength(1);
+  });
+});
+
+describe('allocateServicePorts: one decision over the three ports @cap:installer-et-demarrer/moteur', () => {
+  /** A machine where `busy` cannot be bound and everything else can. */
+  function machine(busy: number[]): Parameters<typeof allocateServicePorts>[1] {
+    const held = new Set(busy);
+    return {
+      bindable: async (p) => !held.has(p),
+      freeFrom: async (start, reserved) => {
+        let p = start;
+        while (held.has(p) || reserved.has(p)) p++;
+        return p;
+      },
+    };
+  }
+
+  it('never hands the web the runner’s port, though the runner is not listening yet', async () => {
+    const { ports, moved } = await allocateServicePorts(
+      { web: 3000, runner: 3001, postgres: 25432 },
+      machine([3000]),
+    );
+    expect(ports).toEqual({ web: 3002, runner: 3001, postgres: 25432 });
+    expect(moved).toEqual([{ name: 'web', from: 3000, to: 3002 }]);
+  });
+
+  it('two unavailable ports land on two different ports', async () => {
+    const { ports } = await allocateServicePorts(
+      { web: 3000, runner: 3001, postgres: 25432 },
+      machine([3000, 3001]),
+    );
+    expect(new Set([ports.web, ports.runner, ports.postgres]).size).toBe(3);
+    expect(ports.web).not.toBe(3001);
+  });
+
+  it('on the real machine: a held web port is moved past the runner and Postgres ports', async () => {
+    const base = await findFreePort(43100);
+    const holder = createServer();
+    await new Promise<void>((resolve) => holder.listen(base, '127.0.0.1', () => resolve()));
+    try {
+      const { ports } = await allocateServicePorts({
+        web: base,
+        runner: base + 1,
+        postgres: base + 2,
+      });
+      expect(ports.runner).toBe(base + 1);
+      expect(ports.postgres).toBe(base + 2);
+      expect(ports.web).toBeGreaterThan(base + 2);
+    } finally {
+      await new Promise<void>((resolve) => holder.close(() => resolve()));
+    }
+  });
+
+  it('findFreePort never answers a reserved port, free or not', async () => {
+    const base = await findFreePort(43200);
+    const port = await findFreePort(base, 20, new Set([base, base + 1]));
+    expect(port).toBeGreaterThanOrEqual(base + 2);
   });
 });

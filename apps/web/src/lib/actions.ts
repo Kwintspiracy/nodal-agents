@@ -285,6 +285,8 @@ import { readDeclaredUnverified } from './declared-deliverables-read.ts';
 import { requireAuth, LocalAuthProvider, ClaimError } from '@nodal-agents/auth';
 import { env } from './env.ts';
 import { NODALAI_CONFIG_PATH, mergeNodalaiConfig, readNodalaiConfig } from './cli-config.ts';
+import { StateFileError } from '@nodal-agents/shared/state-files';
+import type { NodalConfig } from '@nodal-agents/shared/nodal-config';
 import {
   SERVICE_LOG_NAMES,
   readServiceLogTail,
@@ -11922,18 +11924,27 @@ function readConfiguredAuth(): {
       configPathExists: false,
     };
   }
-  const auth = (cfg['auth'] ?? null) as {
-    mode?: 'local-trust' | 'local-auth';
-    googleClientId?: string;
-    googleClientSecret?: string;
-  } | null;
-  const bind = cfg['bind'] as 'loopback' | 'lan' | undefined;
+  const auth = cfg.auth ?? null;
+  const bind = cfg.bind;
   const fallback: 'local-trust' | 'local-auth' = bind === 'lan' ? 'local-auth' : 'local-trust';
   return {
     configuredMode: auth?.mode ?? fallback,
     googleConfigured: Boolean(auth?.googleClientId && auth?.googleClientSecret),
     configPathExists: true,
   };
+}
+
+/**
+ * The answer an action gives when config.json is absent or unusable: the
+ * reader's own message, which names the file and says how to recover. An
+ * unusable file is never reported as missing (B48-18).
+ */
+function configFileFailure(err: unknown): ActionResult<never> | null {
+  if (!(err instanceof StateFileError)) return null;
+  return fail(
+    err.code === 'STATE_FILE_ABSENT' ? 'cli_config_missing' : 'cli_config_invalid',
+    err.message,
+  );
 }
 
 export async function getSecuritySettingsAction(): Promise<ActionResult<SecurityView>> {
@@ -11948,6 +11959,8 @@ export async function getSecuritySettingsAction(): Promise<ActionResult<Security
       configPathExists: persisted.configPathExists,
     });
   } catch (err) {
+    const configFailure = configFileFailure(err);
+    if (configFailure) return configFailure;
     console.error('[getSecuritySettingsAction]', err);
     return fail('db_error', 'Failed to load security settings');
   }
@@ -11989,7 +12002,7 @@ export async function updateAuthSettingsAction(
     // restart de l'incident du 23/08, par l'autre porte. Refus explicite
     // plutôt qu'un basculement silencieux du bind : couper l'accès réseau de
     // quelqu'un sans le lui dire serait pire que l'erreur.
-    if (parsed.data.mode === 'local-trust' && existing['bind'] === 'lan') {
+    if (parsed.data.mode === 'local-trust' && existing.bind === 'lan') {
       return fail(
         'validation_failed',
         'This install is reachable on the LAN, where sign-in is required. ' +
@@ -11997,9 +12010,8 @@ export async function updateAuthSettingsAction(
       );
     }
 
-    const prevAuth = (existing['auth'] ?? {}) as Record<string, unknown>;
-    const nextAuth: Record<string, unknown> = {
-      ...prevAuth,
+    const nextAuth: NonNullable<NodalConfig['auth']> = {
+      ...existing.auth,
       mode: parsed.data.mode,
     };
 
@@ -12017,20 +12029,14 @@ export async function updateAuthSettingsAction(
       }
     }
 
-    try {
-      mergeNodalaiConfig({ auth: nextAuth });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : '';
-      if (msg === 'cli_config_missing') {
-        return fail('cli_config_missing', 'Config file disappeared between read and write.');
-      }
-      throw err;
-    }
+    mergeNodalaiConfig({ auth: nextAuth });
 
     revalidatePath('/settings');
     const requiresRestart = parsed.data.mode !== env.AUTH_MODE;
     return ok({ requiresRestart });
   } catch (err) {
+    const configFailure = configFileFailure(err);
+    if (configFailure) return configFailure;
     console.error('[updateAuthSettingsAction]', err);
     return fail('db_error', 'Failed to update auth settings');
   }
@@ -12064,7 +12070,7 @@ function readConfiguredBind(): {
   if (!cfg) {
     return { configuredBind: 'loopback', configPathExists: false };
   }
-  const bind = cfg['bind'] as 'loopback' | 'lan' | undefined;
+  const bind = cfg.bind;
   return {
     configuredBind: bind === 'lan' ? 'lan' : 'loopback',
     configPathExists: true,
@@ -12084,6 +12090,8 @@ export async function getNetworkSettingsAction(): Promise<ActionResult<NetworkVi
       configPathExists: persisted.configPathExists,
     });
   } catch (err) {
+    const configFailure = configFileFailure(err);
+    if (configFailure) return configFailure;
     console.error('[getNetworkSettingsAction]', err);
     return fail('db_error', 'Failed to load network settings');
   }
@@ -12120,34 +12128,24 @@ export async function updateNetworkSettingsAction(
     // unauthenticated). The LAN option is documented as "Sign-in required", so
     // switching to LAN aligns the persisted mode instead of writing a config
     // that bricks the next `nodal-agents up`.
-    const patch: Record<string, unknown> = { bind: parsed.data.bind };
+    const patch: Partial<NodalConfig> = { bind: parsed.data.bind };
     let authModeAligned = false;
     if (parsed.data.bind === 'lan') {
-      const existing = readNodalaiConfig();
-      const prevAuth = (existing?.['auth'] ?? null) as Record<string, unknown> | null;
-      if (prevAuth?.['mode'] === 'local-trust') {
-        patch['auth'] = { ...prevAuth, mode: 'local-auth' };
+      const prevAuth = readNodalaiConfig()?.auth;
+      if (prevAuth?.mode === 'local-trust') {
+        patch.auth = { ...prevAuth, mode: 'local-auth' };
         authModeAligned = true;
       }
     }
 
-    try {
-      mergeNodalaiConfig(patch);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : '';
-      if (msg === 'cli_config_missing') {
-        return fail(
-          'cli_config_missing',
-          `Cannot find ${NODALAI_CONFIG_PATH} — run \`nodal-agents init\` first.`,
-        );
-      }
-      throw err;
-    }
+    mergeNodalaiConfig(patch);
 
     revalidatePath('/settings');
     const runtimeBind: 'loopback' | 'lan' = env.BIND === '0.0.0.0' ? 'lan' : 'loopback';
     return ok({ requiresRestart: parsed.data.bind !== runtimeBind, authModeAligned });
   } catch (err) {
+    const configFailure = configFileFailure(err);
+    if (configFailure) return configFailure;
     console.error('[updateNetworkSettingsAction]', err);
     return fail('db_error', 'Failed to update network settings');
   }
