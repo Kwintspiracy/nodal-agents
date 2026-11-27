@@ -822,6 +822,36 @@ describe('loadThreadHistory @cap:reprendre-conversation/moteur', () => {
     expect(resultPart['toolCallId']).toBe(toolCallPart['toolCallId']);
   });
 
+  // #1215 : la forme rejouée est celle de ce qui a été envoyé. Une réponse que
+  // le harnais a envoyée (le résultat du job, écrit en texte par l'agent) ne
+  // revient pas comme un appel de l'outil d'envoi que l'agent n'a pas fait.
+  it.each(['telegram', 'discord', 'slack', 'whatsapp'])(
+    'on %s, an answer the harness sent is replayed as the text the agent wrote (2 messages)',
+    async (channel) => {
+      const chatId = `harness-sent-${channel}`;
+      await insertCompletedJob({
+        chatId,
+        channel,
+        task: 'combien font 6 * 7',
+        result: '6 × 7 = 42',
+        minutesAgo: 5,
+        messages: [
+          { role: 'user', content: 'combien font 6 * 7' },
+          { role: 'assistant', content: [{ type: 'text', text: '6 × 7 = 42' }] },
+        ],
+      });
+      const history = await loadThreadHistory({
+        db: db as unknown as Parameters<typeof loadThreadHistory>[0]['db'],
+        conversationId: await convFor(chatId, channel),
+        channel,
+        excludeJobId: '00000000-0000-0000-0000-000000000000',
+        timezone: 'UTC',
+      });
+      expect(history).toHaveLength(2);
+      expect(history[1]).toEqual({ role: 'assistant', content: '6 × 7 = 42' });
+    },
+  );
+
   // Regression: session-memory CHAINING — a prior job's `messages` JSONB
   // contains BOTH the history that was injected into it when it ran AND
   // its own actual turns. Without slicing from the task boundary, the

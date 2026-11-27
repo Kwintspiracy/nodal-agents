@@ -36,7 +36,7 @@ import { personAnswerRequestId } from '@nodal-agents/shared';
 import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';
 import { executeJob } from '../../job/execute.ts';
-import { answerOfRun } from '../../job/final-answer.ts';
+import { NO_CHAT_SENDS, answerOfRun } from '../../job/final-answer.ts';
 import { currentTurnMessages, saveCheckpoint } from '../../job/state.ts';
 import {
   reclaimJobsOfDeadRunners,
@@ -764,8 +764,10 @@ describe('ce qui ne change pas @cap:approuver-une-action/moteur', () => {
     const turn = currentTurnMessages(row!.messages as unknown[], row!.task);
     expect(turn.some((m) => personAnswerRequestId(m) !== null)).toBe(true);
     const without = turn.filter((m) => personAnswerRequestId(m) === null);
-    expect(answerOfRun(turn, false)).toBe('The page was declined; I will change it as asked.');
-    expect(answerOfRun(turn, false)).toBe(answerOfRun(without, false));
+    expect(answerOfRun(turn, NO_CHAT_SENDS)).toBe(
+      'The page was declined; I will change it as asked.',
+    );
+    expect(answerOfRun(turn, NO_CHAT_SENDS)).toBe(answerOfRun(without, NO_CHAT_SENDS));
     expect(row!.result).toBe('The page was declined; I will change it as asked.');
   }, 60_000);
 });

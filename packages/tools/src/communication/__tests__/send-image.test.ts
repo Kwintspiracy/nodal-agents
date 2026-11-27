@@ -14,6 +14,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createSendImageTool } from '../send-image';
 import type { ToolContext } from '../../types';
+import { toolOutputForModel } from '../../types';
 import { syntheticOutsideSource } from './outside-roots';
 
 // ─── Mock @nodal-agents/delivery ─────────────────────────────────────────────
@@ -163,7 +164,9 @@ describe('createSendImageTool', () => {
       '99887766',
       expect.objectContaining({ kind: 'photo' }),
     );
-    expect(result).toEqual({ ok: true, bytes: TINY_PNG.byteLength });
+    expect(toolOutputForModel(tool, result)).toEqual({ ok: true, bytes: TINY_PNG.byteLength });
+    // The row keeps the platform's receipt; the model never reads it (#1215).
+    expect(result.receipt).toEqual({ channel: 'telegram', chatId: '99887766', messageId: '55' });
   });
 
   it('(b) returns tiny { ok, bytes } with no image data in the result', async () => {
@@ -172,8 +175,8 @@ describe('createSendImageTool', () => {
 
     const result = await tool.execute({ source: SRC_OUTPUT }, ctx);
 
-    // Result must only have ok and bytes — no photo data
-    expect(Object.keys(result)).toEqual(['ok', 'bytes']);
+    // What the model reads must only have ok and bytes — no photo data
+    expect(Object.keys(toolOutputForModel(tool, result) as object)).toEqual(['ok', 'bytes']);
     expect(result.ok).toBe(true);
     expect(typeof result.bytes).toBe('number');
     // Specifically: no base64, no Uint8Array, no ArrayBuffer

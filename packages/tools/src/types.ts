@@ -762,6 +762,18 @@ export interface ToolDefinition<TInput extends z.ZodTypeAny, TOutput> {
   // Method syntax, like `present`: TOutput sits in a parameter, and a property
   // arrow would make every ToolDefinition<_, X> unassignable to <_, unknown>.
   toModelOutput?(output: TOutput): string;
+  /**
+   * The keys of a successful result that the row keeps and the model never
+   * reads: a fact of the platform about the call, not something the tool tells
+   * the model. A send tool records the platform's receipt here (where the
+   * message went, the platform's message id): the outbox keeps the same receipt
+   * on its rows, and a message id handed to a model was once read as words of
+   * the person (2026-09-08).
+   *
+   * Applied by `toolOutputForModel`, like `toModelOutput`, which wins when a
+   * tool declares both.
+   */
+  readonly keptFromModel?: readonly string[];
   execute: (input: z.infer<TInput>, ctx: ToolContext) => Promise<TOutput>;
 }
 
@@ -785,13 +797,17 @@ export type ConnectorToolDefinition<TInput extends z.ZodTypeAny, TOutput> = Omit
 
 /**
  * The value the model reads for a successful call of `tool`: its declared
- * `toModelOutput` rendering, or the output itself.
+ * `toModelOutput` rendering, or the output itself without the keys it keeps
+ * from the model (`keptFromModel`).
  */
 export function toolOutputForModel<TOutput>(
-  tool: { toModelOutput?: (output: TOutput) => string },
+  tool: { toModelOutput?: (output: TOutput) => string; keptFromModel?: readonly string[] },
   output: TOutput,
 ): unknown {
-  return tool.toModelOutput ? tool.toModelOutput(output) : output;
+  if (tool.toModelOutput) return tool.toModelOutput(output);
+  const kept = tool.keptFromModel;
+  if (!kept || kept.length === 0 || output === null || typeof output !== 'object') return output;
+  return Object.fromEntries(Object.entries(output).filter(([key]) => !kept.includes(key)));
 }
 
 // ─── ToolRegistry ─────────────────────────────────────────────────────────────

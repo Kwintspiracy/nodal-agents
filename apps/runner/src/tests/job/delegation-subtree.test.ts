@@ -74,11 +74,12 @@ vi.mock('@nodal-agents/llm', async (importOriginal) => {
 
 // ─── L'ADAPTATEUR D'ENVOI QUI MARCHE (résidu 4) ─────────────────────────────
 //
-// Sans lui, un canal à outil ne peut pas FINIR dans une fixture : l'agent semé
-// n'a aucun outil d'envoi, `telegram_send_message` est refusé, les rappels de
-// livraison s'épuisent et le job retombe sur `telegram_not_delivered`. Le
-// chemin de succès — celui qui porte la couture T08 — n'était donc jamais
-// atteint. L'adaptateur est le SEUL point remplacé : la liste blanche, elle,
+// Sans lui, un job venu d'un chat ne pouvait pas FINIR dans une fixture : l'agent
+// semé n'avait aucun outil d'envoi, `telegram_send_message` était refusé, et le
+// job retombait sur un échec de livraison (qui n'existe plus depuis #1215 : la
+// porte envoie la réponse). Le chemin de succès — celui qui porte la couture
+// T08 — n'était donc jamais atteint. L'adaptateur reçoit aussi ce que la porte
+// envoie. L'adaptateur est le SEUL point remplacé : la liste blanche, elle,
 // reste calculée depuis la base (un jeton de bot sur l'agent), invariant #9.
 const envois: Array<{ chatId: string; text: string }> = [];
 
@@ -482,9 +483,9 @@ describe('le SUCCÈS pose sa livraison dans la transaction terminale @cap:organi
 
     const outcome = await executeJob(jobId as JobId, deps, testEnv);
 
-    // Le chemin de SUCCÈS, atteint pour la première fois sur un canal à outil :
-    // sans adaptateur d'envoi, le job retombait toujours sur
-    // `telegram_not_delivered`.
+    // Le chemin de SUCCÈS sur un job venu d'un chat. L'agent a dit la vérité
+    // lui-même, dans le pas de réponse : la porte n'envoie que la ligne du
+    // runner (#1215), pas une seconde fois ses mots.
     expect(outcome.status).toBe('completed');
     const row = await jobRow(jobId);
     expect(row.status).toBe('completed');
@@ -498,6 +499,7 @@ describe('le SUCCÈS pose sa livraison dans la transaction terminale @cap:organi
     expect(livraisons).toHaveLength(1);
     expect(livraisons[0]?.payload ?? '').toContain(outilPetitEnfant);
     expect(livraisons[0]?.payload ?? '').toContain('no deliverable');
+    expect(livraisons[0]?.payload ?? '').not.toContain('Le spécialiste n’a rien rendu');
     expect(livraisons[0]?.chatId).toBe('4242');
 
     // Et elle PART : le drain qui suit le commit l'a remise à l'adaptateur.

@@ -24,6 +24,8 @@ import {
 } from './delivery-guard';
 import type { ToolDefinition, ToolContext } from '../types';
 import { sentCard } from '../presenters';
+import type { SendResult } from '@nodal-agents/delivery';
+import { RECEIPT_KEY, sendReceipt, withSendAttempt, type SendReceipt } from './receipt';
 
 // Telegram photo size limit. Uploads above this cap silently fail or are
 // rejected server-side; we enforce the cap locally so the error is clear.
@@ -62,7 +64,7 @@ const SendImageInput = z.object({
 });
 
 type SendImageInput = z.infer<typeof SendImageInput>;
-type SendImageOutput = { ok: true; bytes: number };
+type SendImageOutput = { ok: true; bytes: number; receipt: SendReceipt };
 
 // ─── Factory ──────────────────────────────────────────────────────────────────
 
@@ -121,6 +123,7 @@ Fail conditions:
     inputSchema: SendImageInput,
 
     riskLevel: 'write',
+    keptFromModel: [RECEIPT_KEY],
     egress: 'channel',
     card: 'sent',
     present: ({ input, output }) =>
@@ -196,19 +199,23 @@ Fail conditions:
 
       // 5. Upload via the channel-neutral adapter (server-side, zero bytes in LLM context)
       const adapter = getAdapter(channel);
+      let res: SendResult;
       try {
-        await adapter.sendMedia({ botToken }, chatId, {
+        res = await adapter.sendMedia({ botToken }, chatId, {
           kind: 'photo',
           bytes,
           filename,
           caption: input.caption,
         });
       } catch (err) {
-        throw await withoutConversationId(err, ctx, { chatId, channel });
+        throw withSendAttempt(await withoutConversationId(err, ctx, { chatId, channel }), {
+          chatId,
+          channel,
+        });
       }
 
       // 6. Return a tiny result — no image data
-      return { ok: true, bytes: bytes.byteLength };
+      return { ok: true, bytes: bytes.byteLength, receipt: sendReceipt({ chatId, channel }, res) };
     },
   };
 }

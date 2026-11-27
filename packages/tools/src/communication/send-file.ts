@@ -26,6 +26,8 @@ import {
 } from './delivery-guard';
 import type { ToolDefinition, ToolContext } from '../types';
 import { sentCard } from '../presenters';
+import type { SendResult } from '@nodal-agents/delivery';
+import { RECEIPT_KEY, sendReceipt, withSendAttempt, type SendReceipt } from './receipt';
 
 // Telegram sendDocument size limit for bots. Uploads above this are rejected
 // server-side; we enforce the cap locally so the error is clear.
@@ -73,7 +75,7 @@ const SendFileInput = z.object({
 });
 
 type SendFileInput = z.infer<typeof SendFileInput>;
-type SendFileOutput = { ok: true; bytes: number; filename: string };
+type SendFileOutput = { ok: true; bytes: number; filename: string; receipt: SendReceipt };
 
 // ─── Factory ──────────────────────────────────────────────────────────────────
 
@@ -130,6 +132,7 @@ Fail conditions:
     inputSchema: SendFileInput,
 
     riskLevel: 'write',
+    keptFromModel: [RECEIPT_KEY],
     egress: 'channel',
     card: 'sent',
     present: ({ input, output }) =>
@@ -203,19 +206,28 @@ Fail conditions:
       // 5. Upload via the channel-neutral adapter (server-side, zero bytes in LLM context)
       const filename = input.filename ?? derivedName;
       const adapter = getAdapter(channel);
+      let res: SendResult;
       try {
-        await adapter.sendMedia({ botToken }, chatId, {
+        res = await adapter.sendMedia({ botToken }, chatId, {
           kind: 'document',
           bytes,
           filename,
           caption: input.caption,
         });
       } catch (err) {
-        throw await withoutConversationId(err, ctx, { chatId, channel });
+        throw withSendAttempt(await withoutConversationId(err, ctx, { chatId, channel }), {
+          chatId,
+          channel,
+        });
       }
 
       // 6. Return a tiny result — no file data
-      return { ok: true, bytes: bytes.byteLength, filename };
+      return {
+        ok: true,
+        bytes: bytes.byteLength,
+        filename,
+        receipt: sendReceipt({ chatId, channel }, res),
+      };
     },
   };
 }

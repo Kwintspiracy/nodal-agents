@@ -5,11 +5,30 @@
 // le vrai `executeJob` dans final-answer-run.test.ts.
 
 import { describe, it, expect } from 'vitest';
-import { answerOfRun } from '../../job/final-answer.ts';
+import { NO_CHAT_SENDS, answerOfRun, readRunAnswer } from '../../job/final-answer.ts';
+import type { ChatSends } from '../../job/final-answer.ts';
 
-/** Un job qui répond par son résultat, sauf quand le test dit le contraire (#649). */
-const answer = (messages: readonly unknown[], repliesGoBySend = false): string =>
-  answerOfRun(messages, repliesGoBySend);
+/**
+ * Un job dont aucun envoi n'a atteint le chat qui a demandé, sauf quand le test
+ * dit le contraire : `true`, chaque envoi de texte de la transcription l'a
+ * atteint, confirmé (#1215, les faits que `sendsToChat` lit sur les lignes).
+ */
+const answer = (messages: readonly unknown[], sentToTheChat = false): string =>
+  answerOfRun(messages, sentToTheChat ? sendsOf(messages, 'confirmed') : NO_CHAT_SENDS);
+
+/** Chaque appel d'envoi de texte de `messages`, avec l'issue donnée. */
+function sendsOf(messages: readonly unknown[], outcome: 'confirmed' | 'unknown'): ChatSends {
+  const out = new Map<string, 'confirmed' | 'unknown'>();
+  for (const m of messages as Array<{ role?: string; content?: unknown }>) {
+    if (m.role !== 'assistant' || !Array.isArray(m.content)) continue;
+    for (const p of m.content as Array<{ type?: string; toolName?: string; toolCallId?: string }>) {
+      if (p.type === 'tool-call' && p.toolName === 'telegram_send_message' && p.toolCallId) {
+        out.set(p.toolCallId, outcome);
+      }
+    }
+  }
+  return out;
+}
 import { REPAIR_BRIEF_MARK, buildRepairBrief } from '../../verification/repair-brief.ts';
 
 type Call = { name: string; input?: Record<string, unknown> };
@@ -147,7 +166,7 @@ describe('answerOfRun — la réponse est celle de la fin @cap:organiser-equipe/
     ).toBe(REPORT);
   });
 
-  it('quand un outil d’envoi porte les réponses (#649), le reason n’est pas la réponse', () => {
+  it('quand un envoi au chat qui a demandé porte la réponse (#1215), le reason n’est pas la réponse', () => {
     const narrated = [
       user('task'),
       step('Let me check.', { name: 'web_search' }),
@@ -157,8 +176,9 @@ describe('answerOfRun — la réponse est celle de la fin @cap:organiser-equipe/
       step('', { name: 'telegram_send_message', input: { text: REPORT } }, done('Sent.')),
     ];
     expect(answer(narrated, true)).toBe('');
-    // Le fait est la LIVRAISON du job, pas la présence d'un envoi : le même
-    // run sur un job qui répond par son résultat rend son reason.
+    // Le fait est l'ENVOI au chat, lu sur les lignes (`sendsToChat`), pas la
+    // présence d'un appel : le même run dont l'envoi n'a atteint aucun chat de
+    // la demande (un autre chat, un job sans chat) rend son reason.
     expect(answer(narrated, false)).toBe('Sent.');
     // … et un texte écrit dans le pas qui finit reste lu comme avant.
     expect(
@@ -267,5 +287,72 @@ describe('answerOfRun — la réponse est celle de la fin @cap:organiser-equipe/
         step(NOTE),
       ]),
     ).toBe(NOTE);
+  });
+});
+
+// ─── Ce qui reste à livrer au chat qui a demandé (#1215) ──────────────────────
+
+describe('readRunAnswer — ce qu’un envoi a porté n’est pas livré deux fois @cap:parler-par-canal-externe/moteur', () => {
+  const send = (text: string): Call => ({ name: 'telegram_send_message', input: { text } });
+  const read = (messages: readonly unknown[], outcome?: 'confirmed' | 'unknown') =>
+    readRunAnswer(messages, outcome ? sendsOf(messages, outcome) : NO_CHAT_SENDS);
+
+  it('aucun envoi au chat : la réponse à livrer est le résultat (null), pas de renvoi', () => {
+    expect(read([user('task'), step('', write('a')), tool(), step(REPORT)])).toEqual({
+      text: REPORT,
+      unsent: null,
+      resendsUnconfirmed: false,
+    });
+  });
+
+  it('le pas de réponse envoie au chat, confirmé : rien ne reste à livrer', () => {
+    const messages = [user('task'), step('', write('a')), tool(), step('', send(REPORT), done())];
+    expect(read(messages, 'confirmed')).toEqual({
+      text: '',
+      unsent: '',
+      resendsUnconfirmed: false,
+    });
+  });
+
+  it('un accusé envoyé, puis du travail, puis la réponse en texte : l’accusé n’est pas la réponse', () => {
+    const messages = [user('task'), step('', send('On it.'), write('a')), tool(), step(REPORT)];
+    expect(read(messages, 'confirmed')).toEqual({
+      text: REPORT,
+      unsent: null,
+      resendsUnconfirmed: false,
+    });
+  });
+
+  it('un accusé envoyé seul, puis la réponse en texte : la réponse est plus récente, elle est livrée', () => {
+    const messages = [user('task'), step('', send('On it.')), tool(), step(REPORT)];
+    expect(read(messages, 'confirmed').unsent).toBeNull();
+  });
+
+  it('un envoi dont l’issue est inconnue : son texte est à renvoyer, et c’est dit', () => {
+    const messages = [user('task'), step('', send(REPORT), done('Sent, maybe.'))];
+    expect(read(messages, 'unknown')).toEqual({
+      text: '',
+      unsent: REPORT,
+      resendsUnconfirmed: true,
+    });
+  });
+
+  it('une réparation après une réponse envoyée : seul ce que la réparation a dit reste à livrer', () => {
+    const messages = [
+      user('task'),
+      step('', write('doc.html')),
+      tool(),
+      step('', send(REPORT), done()),
+      tool(),
+      user(brief),
+      step('', write('doc.html')),
+      tool(),
+      step(NOTE),
+    ];
+    expect(read(messages, 'confirmed')).toEqual({
+      text: NOTE,
+      unsent: NOTE,
+      resendsUnconfirmed: false,
+    });
   });
 });

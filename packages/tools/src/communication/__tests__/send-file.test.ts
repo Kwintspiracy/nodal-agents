@@ -15,6 +15,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createSendFileTool } from '../send-file';
 import type { ToolContext } from '../../types';
+import { toolOutputForModel } from '../../types';
 import { syntheticOutsideSource } from './outside-roots';
 
 // ─── Mock @nodal-agents/delivery ─────────────────────────────────────────────
@@ -160,7 +161,13 @@ describe('createSendFileTool', () => {
       '99887766',
       expect.objectContaining({ kind: 'document', filename: 'report.md' }),
     );
-    expect(result).toEqual({ ok: true, bytes: TINY_MD.byteLength, filename: 'report.md' });
+    expect(toolOutputForModel(tool, result)).toEqual({
+      ok: true,
+      bytes: TINY_MD.byteLength,
+      filename: 'report.md',
+    });
+    // The row keeps the platform's receipt; the model never reads it (#1215).
+    expect(result.receipt).toEqual({ channel: 'telegram', chatId: '99887766', messageId: '77' });
   });
 
   it('(b) returns a tiny result with no file data', async () => {
@@ -169,7 +176,11 @@ describe('createSendFileTool', () => {
 
     const result = await tool.execute({ source: SRC_REPORT }, ctx);
 
-    expect(Object.keys(result).sort()).toEqual(['bytes', 'filename', 'ok']);
+    expect(Object.keys(toolOutputForModel(tool, result) as object).sort()).toEqual([
+      'bytes',
+      'filename',
+      'ok',
+    ]);
     expect((result as Record<string, unknown>)['document']).toBeUndefined();
     expect((result as Record<string, unknown>)['data']).toBeUndefined();
   });

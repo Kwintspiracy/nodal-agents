@@ -64,7 +64,7 @@ const EM_DASH = String.fromCharCode(0x2014);
 const PINNED: Readonly<Record<string, readonly [string, string]>> = {
   return_result: [
     'Finish a task',
-    'Report that a task succeeded or is blocked. It sends no answer by itself: the agent delivers its answer in the same step, through the right channel.',
+    'Report that a task succeeded or is blocked. It sends no answer by itself: the answer is what the agent wrote, and Nodal sends it where the request was made.',
   ],
   ask_user: ['Ask you a question', 'Pause the job until you choose from 2 to 6 options.'],
   register_project: [

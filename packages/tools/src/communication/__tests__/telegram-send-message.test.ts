@@ -17,6 +17,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { z } from 'zod';
 import { createTelegramSendMessageTool } from '../telegram-send-message';
 import type { ToolContext } from '../../types';
+import { toolOutputForModel } from '../../types';
 import { DeliveryError } from '@nodal-agents/delivery';
 
 // ─── Mock @nodal-agents/delivery ───────────────────────────────────────────────────
@@ -141,10 +142,17 @@ describe('createTelegramSendMessageTool', () => {
 
     const result = await tool.execute({ text: 'Voilà ma réponse.' }, ctx);
 
-    expect(result).toEqual({ sent: true });
+    // La ligne de l'appel garde le reçu de la plateforme (#1215) : où le
+    // message est parti, et son identifiant.
+    expect(result).toEqual({
+      sent: true,
+      receipt: { channel: 'telegram', chatId: '99887766', messageId: '42' },
+    });
     // L'assertion qui compte : l'identifiant rendu par le canal ('42' ici) ne
     // doit apparaître nulle part dans ce que le modèle relira.
-    expect(JSON.stringify(result)).not.toContain('42');
+    const forModel = toolOutputForModel(tool, result);
+    expect(forModel).toEqual({ sent: true });
+    expect(JSON.stringify(forModel)).not.toContain('42');
   });
 
   beforeEach(() => {
@@ -169,7 +177,8 @@ describe('createTelegramSendMessageTool', () => {
     );
     // L'envoi a bien eu lieu — l'identifiant rendu par le canal ne remonte plus
     // au modèle (voir le test « rend "envoyé" » plus haut).
-    expect(result).toEqual({ sent: true });
+    expect(toolOutputForModel(tool, result)).toEqual({ sent: true });
+    expect(result.receipt).toEqual({ channel: 'telegram', chatId: '99887766', messageId: '42' });
     // omitted chatId falls back to jobChatId without an allow-list lookup
     expect(isChatAllowedMock).not.toHaveBeenCalled();
   });
@@ -486,7 +495,7 @@ describe('telegram_send_message — a send that failed partway is resumed, never
       expect((err as Error).message).toContain('parts 1-2 of 4 reached the user');
       expect((err as Error).message).toContain('only parts 3-4');
 
-      expect(await tool.execute({ text }, ctx)).toEqual({ sent: true });
+      expect(toolOutputForModel(tool, await tool.execute({ text }, ctx))).toEqual({ sent: true });
 
       // Call 3 failed; every other body reached the user: each part once.
       const delivered = bodies.filter((_, i) => i !== 2);
@@ -518,5 +527,41 @@ describe('telegram_send_message — a send that failed partway is resumed, never
 
     await tool.execute({ text: 'another reply' }, ctx);
     expect(sendTextMock.mock.calls.at(-1)?.slice(2)).toEqual(['another reply']);
+  });
+});
+
+describe('telegram_send_message — a send whose outcome is unknown keeps where it was going (#1215)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    isChatAllowedMock.mockResolvedValue(true);
+    resolveOwnerChatIdMock.mockResolvedValue(null);
+    installTelegramBindingCredentialsDefault();
+  });
+
+  it('a timeout after the request was transmitted: same message and flag for the model, the destination for the row', async () => {
+    const timeout = new DeliveryError('telegram_request_failed', 'telegram_timeout: no answer');
+    timeout.mayHaveDelivered = true;
+    sendTextMock.mockRejectedValueOnce(timeout);
+    const tool = createTelegramSendMessageTool();
+    const ctx = makeCtx({ jobChatId: '99887766', jobChatChannel: 'telegram' });
+
+    const err = await tool.execute({ text: 'La réponse.' }, ctx).catch((e: unknown) => e);
+
+    expect(err).toMatchObject({
+      message: 'telegram_timeout: no answer',
+      mayHaveDelivered: true,
+      output: { attempt: { channel: 'telegram', chatId: '99887766' } },
+    });
+  });
+
+  it('a definite failure passes through unchanged: nothing was sent, no destination is recorded', async () => {
+    sendTextMock.mockRejectedValueOnce(new DeliveryError('telegram_chat_not_found', 'gone'));
+    const tool = createTelegramSendMessageTool();
+    const ctx = makeCtx({ jobChatId: '99887766', jobChatChannel: 'telegram' });
+
+    const err = await tool.execute({ text: 'La réponse.' }, ctx).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(DeliveryError);
+    expect((err as { output?: unknown }).output).toBeUndefined();
   });
 });
