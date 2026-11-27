@@ -83,10 +83,10 @@ Read and kick the runner's in-process WhatsApp manager for a single agent's pair
 
 Connecting an OAuth provider (Google, Notion, Airtable, …) is a two-leg flow handled by the dashboard:
 
-1. **`POST /api/oauth/{provider}/start`** — authenticated, takes the client id/secret (form-encoded). It generates PKCE + a CSRF state, signs the state into an `HttpOnly` cookie, and redirects the browser to the provider's authorization URL.
-2. **`GET /api/oauth/{provider}/callback`** — the provider redirects back here with `code` + `state`. The handler verifies the CSRF state (constant-time) and the session, exchanges the code for tokens, fetches the account name, persists a credentials row, and redirects back to the dashboard.
+1. **`POST /api/oauth/{provider}/start`** — authenticated, form-encoded. It takes the `connector` being connected (required: the scopes asked for are that connector's), and either the client id/secret of a new credential or the `credentialId` of an existing one to add the connector's access to it (the scopes asked are then that connector's on top of what the credential holds). It generates PKCE + a CSRF state, signs the state into an `HttpOnly` cookie, and redirects the browser to the provider's authorization URL.
+2. **`GET /api/oauth/{provider}/callback`** — the provider redirects back here with `code` + `state`. The handler verifies the CSRF state (constant-time) and the session, exchanges the code for tokens, fetches the account name, stores the scopes the provider actually granted (a new credentials row, or the existing credential it added access to), and redirects back to the dashboard.
 
-`{provider}` is either a catalog connector slug (`google-drive`) or a credential type (`google-oauth`). The redirect URI registered with the provider must be `{appUrl}/api/oauth/{provider}/callback`.
+`{provider}` is a credential type (`google-oauth`, `notion-oauth`, `airtable-oauth`, `microsoft-oauth`). The redirect URI registered with the provider must be `{appUrl}/api/oauth/{provider}/callback`. A connector is then bound to a credential only if the credential's granted scopes cover some of its operations; the operations whose scopes are not granted are not given to agents, and the connector is shown as needing access.
 
 ## Webhook ingress
 

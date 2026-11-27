@@ -104,7 +104,12 @@ export {
 export type { RunCommandRuleAction, SetApprovalRuleInput } from './repos/approval-rules.ts';
 export { createStdioMcpServerRepo, decryptMcpServerEnv } from './repos/mcp-servers.ts';
 export type { StdioMcpServerInput } from './repos/mcp-servers.ts';
-export { createApiKeyConnectorRepo, setAgentConnectorAssignmentRepo } from './repos/connectors.ts';
+export {
+  connectorRenameRefusal,
+  createApiKeyConnectorRepo,
+  findIndistinctAccountOnAgent,
+  setAgentConnectorAssignmentRepo,
+} from './repos/connectors.ts';
 export type {
   CreateApiKeyConnectorInput,
   SetAgentConnectorAssignmentInput,

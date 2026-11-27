@@ -26,7 +26,11 @@ import {
   setRunCommandRuleRepo,
 } from '../repos/approval-rules.ts';
 import { createStdioMcpServerRepo, decryptMcpServerEnv } from '../repos/mcp-servers.ts';
-import { createApiKeyConnectorRepo, setAgentConnectorAssignmentRepo } from '../repos/connectors.ts';
+import {
+  connectorRenameRefusal,
+  createApiKeyConnectorRepo,
+  setAgentConnectorAssignmentRepo,
+} from '../repos/connectors.ts';
 import { addAgentWorkspaceRepo } from '../repos/agent-workspaces.ts';
 import { resolveSkillIdsBySlug } from '../repos/skills.ts';
 
@@ -555,5 +559,101 @@ describe('a stdio MCP server and its environment @cap:connecter-un-service/moteu
     );
     // A value written in clear does not decrypt: the runner would not start the server.
     expect(() => decryptMcpServerEnv({ A: 'D:/records' })).toThrow();
+  });
+});
+
+// Several accounts of one service on one agent: in a job their tools take an
+// `account` argument whose values are the connectors' names. The dashboard's
+// (and the bench's) assignment refuses a second account a model could not
+// tell apart from the first, and so does a rename that would make two of them
+// the same.
+describe('two accounts of one service on one agent carry distinct names @cap:connecter-un-service/moteur', () => {
+  async function agentOf(slug: string): Promise<string> {
+    const [a] = await db
+      .insert(schema.agents)
+      .values({ entityId: seed.entityId, slug, name: slug, personality: 'x' })
+      .returning();
+    return a!.id;
+  }
+  const give = (agentId: string, connectorId: string) =>
+    setAgentConnectorAssignmentRepo(db, seed.entityId, {
+      agentId,
+      connectorId,
+      assigned: true,
+      enabledOperations: null,
+    });
+
+  it('the dashboard assignment refuses a second account under the same name, naming both; distinct names are both given', async () => {
+    const agentId = await agentOf('accounts-dash');
+    const key = await createApiKeyConnectorRepo(db, seed.entityId, {
+      slug: 'airtable',
+      name: 'Sales',
+      apiKey: 'pat-a',
+    });
+    const [oauth] = await db
+      .insert(schema.connectors)
+      .values({
+        entityId: seed.entityId,
+        slug: 'airtable-oauth',
+        name: 'sales ',
+        authType: 'oauth2',
+      })
+      .returning();
+    const other = await createApiKeyConnectorRepo(db, seed.entityId, {
+      slug: 'airtable',
+      name: 'Marketing',
+      apiKey: 'pat-b',
+    });
+
+    expect(await give(agentId, key.id)).toEqual({ ok: true });
+    const refused = await give(agentId, oauth!.id);
+    expect(refused).toMatchObject({ error: 'indistinct_accounts' });
+    const message = 'message' in refused ? refused.message : '';
+    expect(message).toContain('"sales " (airtable-oauth)');
+    expect(message).toContain('"Sales" (airtable)');
+    expect(await give(agentId, other.id)).toEqual({ ok: true });
+    // Changing the operations of a connector the agent holds is not a second account.
+    expect(
+      await setAgentConnectorAssignmentRepo(db, seed.entityId, {
+        agentId,
+        connectorId: key.id,
+        assigned: true,
+        enabledOperations: ['airtable_list_bases'],
+      }),
+    ).toEqual({ ok: true });
+    const held = await db
+      .select({ connectorId: schema.agentConnectorAssignments.connectorId })
+      .from(schema.agentConnectorAssignments)
+      .where(eq(schema.agentConnectorAssignments.agentId, agentId));
+    expect(held.map((h) => h.connectorId).sort()).toEqual([key.id, other.id].sort());
+  });
+
+  it('a rename that would make two accounts of one agent the same name is refused; elsewhere it is free', async () => {
+    const agentId = await agentOf('accounts-rename');
+    const work = await createApiKeyConnectorRepo(db, seed.entityId, {
+      slug: 'notion',
+      name: 'Work notes',
+      apiKey: 's1',
+    });
+    const home = await createApiKeyConnectorRepo(db, seed.entityId, {
+      slug: 'notion',
+      name: 'Home notes',
+      apiKey: 's2',
+    });
+    expect(await give(agentId, work.id)).toEqual({ ok: true });
+    expect(await give(agentId, home.id)).toEqual({ ok: true });
+
+    const refusal = await connectorRenameRefusal(db, home.id, 'WORK NOTES');
+    expect(refusal).toContain('"WORK NOTES" (notion)');
+    expect(refusal).toContain('"Work notes" (notion)');
+    expect(await connectorRenameRefusal(db, home.id, 'Family notes')).toBeNull();
+    // Another service may carry the name: a model tells them apart by the tool.
+    const tavily = await createApiKeyConnectorRepo(db, seed.entityId, {
+      slug: 'tavily',
+      name: 'Search',
+      apiKey: 't',
+    });
+    expect(await give(agentId, tavily.id)).toEqual({ ok: true });
+    expect(await connectorRenameRefusal(db, tavily.id, 'Work notes')).toBeNull();
   });
 });

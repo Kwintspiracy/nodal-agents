@@ -337,3 +337,35 @@ describe('"Apply to all agents" (#917) @cap:regler-autonomie/moteur', () => {
     await expect(syncAgentAutonomyRows(db, randomUUID())).rejects.toThrow(/not found/);
   });
 });
+
+describe('several accounts of one service on one agent: one row per operation @cap:regler-autonomie/moteur', () => {
+  it('two Gmail accounts: the agent holds each Gmail tool once, and one autonomy row per tool', async () => {
+    const e = await workspace('propose_confirm', true);
+    const a = await anAgent(e);
+    for (const name of ['Work', 'Personal']) {
+      const [gmail] = await db
+        .insert(connectors)
+        .values({ entityId: e, slug: 'gmail', name, active: true })
+        .returning();
+      await db.insert(agentConnectorAssignments).values({
+        agentId: a,
+        connectorId: gmail!.id,
+        entityId: e,
+        enabledOperations: name === 'Work' ? null : ['gmail_list_messages'],
+      });
+    }
+
+    const tools = await resolveAgentTools(db, a, WIDEST_PLACEMENT);
+    const gmailNames = tools.filter((t) => t.name.startsWith('gmail_')).map((t) => t.name);
+    expect(gmailNames.filter((n) => n === 'gmail_list_messages')).toHaveLength(1);
+    expect(gmailNames.filter((n) => n === 'gmail_send_email')).toHaveLength(1);
+    expect(new Set(gmailNames).size).toBe(gmailNames.length);
+
+    await syncAgentAutonomyRows(db, a);
+    const rows = await db
+      .select({ toolName: approvalRules.toolName })
+      .from(approvalRules)
+      .where(and(eq(approvalRules.agentId, a), eq(approvalRules.toolName, 'gmail_send_email')));
+    expect(rows).toHaveLength(1);
+  });
+});

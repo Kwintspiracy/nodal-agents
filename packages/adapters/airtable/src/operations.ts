@@ -5,7 +5,14 @@
 //   write       — airtable_create_*, airtable_update_*, airtable_replace_*
 //   destructive — airtable_delete_*
 
-import type { OperationDescriptor } from '@nodal-agents/shared';
+import type { OperationDescriptor, ScopeRequirement } from '@nodal-agents/shared';
+
+// OAuth rights, from the Airtable Web API reference (the scope each endpoint
+// requires). A Personal Access Token carries the same scopes, chosen where the
+// token was created, so the declaration is the same for both connectors.
+const SCHEMA_READ: ScopeRequirement = ['schema.bases:read'];
+const RECORDS_READ: ScopeRequirement = ['data.records:read'];
+const RECORDS_WRITE: ScopeRequirement = ['data.records:write'];
 
 export const AIRTABLE_OPERATIONS: OperationDescriptor[] = [
   // ─── Read (4) ────────────────────────────────────────────────────────────────
@@ -14,6 +21,7 @@ export const AIRTABLE_OPERATIONS: OperationDescriptor[] = [
     name: 'List bases',
     risk: 'read',
     requiresApproval: false,
+    scopes: [SCHEMA_READ],
     description: 'List all Airtable bases the integration has access to.',
   },
   {
@@ -21,6 +29,7 @@ export const AIRTABLE_OPERATIONS: OperationDescriptor[] = [
     name: 'List tables',
     risk: 'read',
     requiresApproval: false,
+    scopes: [SCHEMA_READ],
     description: 'List all tables and field schemas in a base.',
   },
   {
@@ -28,6 +37,7 @@ export const AIRTABLE_OPERATIONS: OperationDescriptor[] = [
     name: 'List records',
     risk: 'read',
     requiresApproval: false,
+    scopes: [RECORDS_READ],
     description: 'List records in a table with optional filtering, sorting, and pagination.',
   },
   {
@@ -35,6 +45,7 @@ export const AIRTABLE_OPERATIONS: OperationDescriptor[] = [
     name: 'Get record',
     risk: 'read',
     requiresApproval: false,
+    scopes: [RECORDS_READ],
     description: 'Retrieve a single record by its ID.',
   },
 
@@ -44,6 +55,7 @@ export const AIRTABLE_OPERATIONS: OperationDescriptor[] = [
     name: 'Create records',
     risk: 'write',
     requiresApproval: false,
+    scopes: [RECORDS_WRITE],
     description: 'Create one or more records in a table (max 10 per call).',
   },
   {
@@ -51,6 +63,7 @@ export const AIRTABLE_OPERATIONS: OperationDescriptor[] = [
     name: 'Update record',
     risk: 'write',
     requiresApproval: false,
+    scopes: [RECORDS_WRITE],
     description: 'Update specific fields on a record (PATCH — unlisted fields unchanged).',
   },
   {
@@ -58,6 +71,7 @@ export const AIRTABLE_OPERATIONS: OperationDescriptor[] = [
     name: 'Replace record',
     risk: 'write',
     requiresApproval: false,
+    scopes: [RECORDS_WRITE],
     description: 'Fully replace all fields on a record (PUT — unlisted fields cleared).',
   },
 
@@ -67,6 +81,7 @@ export const AIRTABLE_OPERATIONS: OperationDescriptor[] = [
     name: 'Delete record',
     risk: 'destructive',
     requiresApproval: true,
+    scopes: [RECORDS_WRITE],
     description: 'Permanently delete a single record. This action is irreversible.',
   },
 ];

@@ -11,7 +11,11 @@
 // invited person and can make the file public to anyone with the link or grant
 // ownership; none of that can be taken back (outbound = permanent side-effect).
 
-import type { OperationDescriptor } from '@nodal-agents/shared';
+import type { OperationDescriptor, ScopeRequirement } from '@nodal-agents/shared';
+
+// OAuth right, from the Drive API reference: the files.* and permissions.*
+// calls the tools make on the person's existing files need the Drive scope.
+const DRIVE: ScopeRequirement = ['https://www.googleapis.com/auth/drive'];
 
 export const DRIVE_OPERATIONS: OperationDescriptor[] = [
   // ─── Read (5) ────────────────────────────────────────────────────────────────
@@ -20,6 +24,7 @@ export const DRIVE_OPERATIONS: OperationDescriptor[] = [
     name: 'List files',
     risk: 'read',
     requiresApproval: false,
+    scopes: [DRIVE],
     description: 'Search and list files in Google Drive.',
   },
   {
@@ -27,6 +32,7 @@ export const DRIVE_OPERATIONS: OperationDescriptor[] = [
     name: 'Read file',
     risk: 'read',
     requiresApproval: false,
+    scopes: [DRIVE],
     description: 'Download and read file content.',
   },
   {
@@ -34,6 +40,7 @@ export const DRIVE_OPERATIONS: OperationDescriptor[] = [
     name: 'Get file info',
     risk: 'read',
     requiresApproval: false,
+    scopes: [DRIVE],
     description: 'Retrieve file metadata (name, size, mimeType, owners).',
   },
   {
@@ -41,6 +48,7 @@ export const DRIVE_OPERATIONS: OperationDescriptor[] = [
     name: 'List permissions',
     risk: 'read',
     requiresApproval: false,
+    scopes: [DRIVE],
     description: 'List sharing permissions on a file or folder.',
   },
   {
@@ -48,6 +56,7 @@ export const DRIVE_OPERATIONS: OperationDescriptor[] = [
     name: 'Export file',
     risk: 'read',
     requiresApproval: false,
+    scopes: [DRIVE],
     description: 'Export a Google Workspace file (Docs, Sheets) to a target format.',
   },
 
@@ -57,6 +66,7 @@ export const DRIVE_OPERATIONS: OperationDescriptor[] = [
     name: 'Upload file',
     risk: 'write',
     requiresApproval: false,
+    scopes: [DRIVE],
     description: 'Upload a new file to Google Drive.',
   },
   {
@@ -64,6 +74,7 @@ export const DRIVE_OPERATIONS: OperationDescriptor[] = [
     name: 'Create folder',
     risk: 'write',
     requiresApproval: false,
+    scopes: [DRIVE],
     description: 'Create a new folder.',
   },
   {
@@ -71,6 +82,7 @@ export const DRIVE_OPERATIONS: OperationDescriptor[] = [
     name: 'Move file',
     risk: 'write',
     requiresApproval: false,
+    scopes: [DRIVE],
     description: 'Move a file to a different folder.',
   },
   {
@@ -78,6 +90,7 @@ export const DRIVE_OPERATIONS: OperationDescriptor[] = [
     name: 'Rename file',
     risk: 'write',
     requiresApproval: false,
+    scopes: [DRIVE],
     description: 'Rename a file or folder.',
   },
   {
@@ -85,6 +98,7 @@ export const DRIVE_OPERATIONS: OperationDescriptor[] = [
     name: 'Copy file',
     risk: 'write',
     requiresApproval: false,
+    scopes: [DRIVE],
     description: 'Make a copy of a file.',
   },
   {
@@ -92,6 +106,7 @@ export const DRIVE_OPERATIONS: OperationDescriptor[] = [
     name: 'Share file',
     risk: 'destructive',
     requiresApproval: true,
+    scopes: [DRIVE],
     description: 'Add or update sharing permissions on a file.',
   },
 
@@ -101,6 +116,7 @@ export const DRIVE_OPERATIONS: OperationDescriptor[] = [
     name: 'Delete file',
     risk: 'destructive',
     requiresApproval: true,
+    scopes: [DRIVE],
     description: 'Permanently delete a file or folder from Google Drive.',
   },
 ];

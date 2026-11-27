@@ -10,7 +10,17 @@ export const STATE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
 export type StatePayload = {
   v: 1;
+  /** The path segment of the start: the credential type. */
   slug: string;
+  /** The connector the authorisation was asked for (its catalog slug). */
+  connector: string;
+  /** The scopes asked of the provider, space-separated, exactly as sent. */
+  requestedScopes: string;
+  /**
+   * Set when the authorisation adds access to this existing credential: the
+   * callback then updates that row instead of inserting a new one.
+   */
+  credentialId?: string;
   entityId: string;
   /** CSRF token */
   state: string;
@@ -144,6 +154,9 @@ export function verifyStateCookie(cookieValue: string): StatePayload | null {
   }
 
   const p = payload as StatePayload;
+  // A cookie written before the start named its connector cannot say which
+  // connector the grant is for: refuse it rather than guess.
+  if (typeof p.connector !== 'string' || typeof p.requestedScopes !== 'string') return null;
 
   // TTL check
   if (Date.now() - p.createdAt > STATE_TTL_MS) return null;

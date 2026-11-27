@@ -478,10 +478,15 @@ export default function ConnectorsTabContent({ agentId, connectors, mcpServers }
       const state = connStates.get(c.connectorId) ?? c;
       const isExpanded = expanded.has(c.connectorId);
       const ops = c.availableOperations;
-      const opsLabel =
+      // Operations the credential's grant does not cover are not given to a
+      // job, whatever is ticked here (same rule as the runner).
+      const withheld = new Set(c.access?.kind === 'needs_access' ? c.access.missingOperations : []);
+      const baseOpsLabel =
         state.enabledOperations === null
           ? `all ${ops.length} ops`
           : `${state.enabledOperations.length} of ${ops.length} ops`;
+      const opsLabel =
+        withheld.size > 0 ? `${baseOpsLabel} · ${withheld.size} need access` : baseOpsLabel;
       return (
         <EdRow
           key={`conn:${c.connectorId}`}
@@ -550,6 +555,14 @@ export default function ConnectorsTabContent({ agentId, connectors, mcpServers }
                           <>
                             <code className="shrink-0 text-mono-12 text-ink-2">{op.slug}</code>
                             <RiskBadge op={op} />
+                            {withheld.has(op.slug) && (
+                              <span
+                                className="shrink-0 rounded bg-warn-bg px-1.5 py-0.5 text-label-11 text-warn"
+                                title="The connector's credential has not been granted the access this operation needs. Add access on the Connectors page."
+                              >
+                                needs access
+                              </span>
+                            )}
                             {op.description && (
                               <span className="truncate text-body-12 italic text-ink-4">
                                 {op.description}

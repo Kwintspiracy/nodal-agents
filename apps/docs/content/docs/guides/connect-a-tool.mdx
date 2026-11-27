@@ -75,8 +75,12 @@ You need a Google Cloud project with the relevant APIs enabled.
    completes the credential.
 
 Once the Google credential exists, every Google connector (Drive, Gmail, Sheets,
-Docs, Calendar) can use it — open the connector, click **Connect**, pick the
-credential.
+Docs, Calendar) can use it. Google is asked only for the access of the connector
+you are connecting: when you pick the credential for another connector whose
+access it does not hold yet, the dashboard says which access is missing and
+offers **Add access**, which asks Google for that connector's access on the same
+account (no client ID or secret to paste again). Sheets and Docs also work on a
+credential that holds Drive access, since Google accepts it for them.
 
 ### Notion (OAuth — Public integration)
 
@@ -109,9 +113,9 @@ Airtable OAuth has two gotchas: a redirect-host restriction and a scopes step.
    **Register new OAuth integration**.
 2. Give it a name (e.g. `Nodal-Agents`).
 3. In **Redirect URIs**, paste the redirect URI from the wizard. Mandatory.
-4. In **Scopes**, check all four: `data.records:read`, `data.records:write`,
-   `schema.bases:read`, `schema.bases:write` — then **save/update** so the scopes
-   persist. If they aren't saved, the OAuth flow returns `invalid_scope`.
+4. In **Scopes**, check all three: `data.records:read`, `data.records:write`,
+   `schema.bases:read` — then **save/update** so the scopes persist. If they
+   aren't saved, the OAuth flow returns `invalid_scope`.
 5. **Register integration** (or Save changes if editing).
 6. On the detail page copy the **Client ID** (a UUID) and **Client secret**.
 7. Paste both into the Credentials wizard.
@@ -134,8 +138,7 @@ Directory) — a free Azure tenant works, no paid subscription required.
    secret **Value** immediately — Azure hides it after you leave the page (the
    adjacent Secret ID is not what you need).
 6. **API permissions → Add a permission → Microsoft Graph → Delegated
-   permissions**, and add: `Mail.ReadWrite`, `Mail.Send`,
-   `MailboxSettings.Read`, `offline_access`.
+   permissions**, and add: `Mail.ReadWrite`, `Mail.Send`, `offline_access`.
 7. Admin consent is not required for these delegated permissions on a personal
    account — the consent screen appears during the connect flow instead.
 8. Paste the Application (client) ID and the client secret value into the
@@ -145,7 +148,10 @@ Directory) — a free Azure tenant works, no paid subscription required.
 
 Go to **Connectors**, open the OAuth connector, click **Connect**, and pick the
 credential you just made. The authorize popup runs once; the connector turns
-connected. Then assign it to an agent: agent edit page → **Connectors** tab →
+connected. If you declined part of the access on the provider's consent screen,
+the connector shows **Needs access** with the missing permissions: the
+operations that need them are not given to agents until you click **Add
+access**. Then assign it to an agent: agent edit page → **Connectors** tab →
 enable it. Tools appear on the agent's next job.
 
 ## API-key connectors

@@ -18,7 +18,7 @@
 import 'server-only';
 import { revalidatePath } from 'next/cache';
 import { getDb } from './server.ts';
-import { refreshAndPersistCredential } from '@nodal-agents/db';
+import { decryptCredentialForDisplay, eq, refreshAndPersistCredential } from '@nodal-agents/db';
 import { credentials } from '@nodal-agents/db';
 import { encrypt, isEncrypted } from '@nodal-agents/secrets';
 import type {
@@ -83,4 +83,64 @@ export async function persistCredentialFromOauthFlow(opts: {
 
   revalidatePath('/credentials');
   return { id: row.id };
+}
+
+/**
+ * The account that answered an authorisation is not the one of the credential
+ * it was meant to add access to. Updating the row would silently move every
+ * connector bound to it onto another account, so the callback refuses.
+ */
+export class CredentialAccountMismatchError extends Error {
+  constructor(expected: string, received: string) {
+    super(
+      `This credential belongs to ${expected}, but the provider answered for ${received}. ` +
+        `Sign in with ${expected} to add access, or create a new credential for the other account.`,
+    );
+    this.name = 'CredentialAccountMismatchError';
+  }
+}
+
+/**
+ * Replace the grant of an existing credential after an authorisation that
+ * added access to it: new tokens, and the scopes the provider granted this
+ * time (which cover what it held, since the start asked for the union).
+ * Name and connectors stay. A refresh token the provider did not reissue is
+ * kept.
+ *
+ * NOT a Server Action — see module header. Only the OAuth callback route calls
+ * this, for a credential id it read from its own signed state cookie.
+ */
+export async function updateCredentialGrantFromOauthFlow(opts: {
+  credentialId: string;
+  ownerUserId: string;
+  credentialType: CredentialType;
+  payload: OauthPayload;
+}): Promise<void> {
+  const { credentialId, ownerUserId, credentialType, payload } = opts;
+  const db = getDb();
+  const existing = await decryptCredentialForDisplay(db, credentialId);
+  if (!existing || existing.ownerUserId !== ownerUserId || existing.type !== credentialType) {
+    throw new Error(`updateCredentialGrantFromOauthFlow: credential ${credentialId} not found`);
+  }
+  // The account must be the credential's own. When the credential names one
+  // and the answer cannot be identified, the update is refused too: there is
+  // nothing to show it is the same account.
+  const held = existing.payload.accountName;
+  if (held && held !== payload.accountName) {
+    throw new CredentialAccountMismatchError(
+      held,
+      payload.accountName || 'an account Nodal could not identify',
+    );
+  }
+  const merged: OauthPayload = {
+    ...payload,
+    refreshToken: payload.refreshToken ?? existing.payload.refreshToken,
+    accountName: payload.accountName || held,
+  };
+  await db
+    .update(credentials)
+    .set({ payload: encrypt(JSON.stringify(merged)), updatedAt: new Date() })
+    .where(eq(credentials.id, credentialId));
+  revalidatePath('/credentials');
+  revalidatePath('/connectors');
 }

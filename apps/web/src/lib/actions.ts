@@ -158,6 +158,7 @@ import {
   setReadOnlyPresetRepo,
   createApiKeyConnectorRepo,
   setAgentConnectorAssignmentRepo,
+  connectorRenameRefusal,
   addAgentWorkspaceRepo,
   orchestratorModelToolsError,
   setAgentModelRepo,
@@ -188,6 +189,7 @@ import {
   showConversationsTo,
   workspaceSandboxReader,
   isSingleUserInstall,
+  decryptCredentialForDisplay,
 } from '@nodal-agents/db';
 import {
   deliverableStatuses,
@@ -249,6 +251,7 @@ import type {
   AgentMemory,
   CliModelUsage,
   CredentialType,
+  ConnectorAccess,
   OperationDescriptor,
   ConstatedBy,
 } from '@nodal-agents/shared';
@@ -337,7 +340,8 @@ import { connectMcp, type McpToolDescriptor } from '@nodal-agents/adapter-mcp';
 import { getOAuthProvider } from './oauth-providers.ts';
 import { computeNextRun } from './cron.ts';
 import { ROLLUP_MAX_DEPTH, rollupRoot, pipelineMembers } from './coding-rollup.ts';
-import { ADAPTER_REGISTRY } from '@nodal-agents/runner-adapters';
+import { ADAPTER_REGISTRY, connectorAccessFor } from '@nodal-agents/runner-adapters';
+import { bindingRefusalFor, readCredentialGrant } from './connector-access.ts';
 import { APPROVALS_READ_LIMIT } from './approvals-window.ts';
 import type { PartialTotal } from './partial-total.ts';
 
@@ -4617,6 +4621,12 @@ export type ConnectorRow = {
   credentialAccountName: string | null;
   credentialExpiresAt: Date | null;
   credentialScopes: string | null;
+  /**
+   * What the connector may do under its credential's grant (the rule a job's
+   * tool list applies, `connectorAccessFor`). Null when no grant is in play:
+   * an API-key connector, or an OAuth connector with no credential.
+   */
+  access: ConnectorAccess | null;
   createdAt: Date | null;
   updatedAt: Date | null;
 };
@@ -4706,6 +4716,10 @@ export async function listConnectorsAction(): Promise<ActionResult<ConnectorsLis
         credentialAccountName: display?.accountName ?? null,
         credentialExpiresAt: display?.expiresAt ?? null,
         credentialScopes: display?.scopes ?? null,
+        access:
+          row.authType === 'oauth2' && display?.scopes != null && ADAPTER_REGISTRY[row.slug]
+            ? connectorAccessFor(row.slug, display.scopes)
+            : null,
         createdAt: row.createdAt,
         updatedAt: row.updatedAt,
       };
@@ -5808,9 +5822,16 @@ export async function assignCredentialAction(
           `Credential type '${existingCred.type}' is not compatible with connector '${existingConnector.slug}' (expects '${provider.credentialType}')`,
         );
       }
+
+      // 4. The grant must cover some of what the connector does.
+      const refusal = bindingRefusalFor(
+        existingConnector.slug,
+        await readCredentialGrant(db, credentialId),
+      );
+      if (refusal) return fail('missing_access', refusal);
     }
 
-    // 4. Update FK
+    // 5. Update FK
     await db
       .update(connectors)
       .set({ credentialId, updatedAt: new Date() })
@@ -5887,6 +5908,11 @@ export async function createOrAssignOAuthConnectorAction(
       );
     }
 
+    // The grant must cover some of what the connector does (same rule as
+    // assignCredentialAction: one function decides for both).
+    const refusal = bindingRefusalFor(slug, await readCredentialGrant(db, credentialId));
+    if (refusal) return fail('missing_access', refusal);
+
     // Multi-instance: pure INSERT, no lookup-and-update. The user can have
     // multiple connectors of the same slug (e.g. Gmail perso + Gmail boulot).
     const instanceName = name ?? existingCred.name ?? catalogEntry.label;
@@ -5937,6 +5963,10 @@ export async function renameConnectorAction(
       .from(connectors)
       .where(and(eq(connectors.id, connectorId), eq(connectors.entityId, session.entityId)));
     if (!existing) return fail('not_found', 'Connector not found');
+    // Two accounts of one service on one agent carry names a model can tell
+    // apart: the name is the value of the tools' `account` argument.
+    const refusal = await connectorRenameRefusal(db, connectorId, nameParsed.data);
+    if (refusal) return fail('indistinct_accounts', refusal);
     await db
       .update(connectors)
       .set({ name: nameParsed.data, updatedAt: new Date() })
@@ -12911,6 +12941,12 @@ export type AgentConnectorRow = {
   assigned: boolean;
   enabledOperations: string[] | null;
   availableOperations: OperationDescriptor[];
+  /**
+   * What the connector may do under its credential's grant: operations listed
+   * in `missingOperations` are not given to a job, whatever `enabledOperations`
+   * says. Null for API-key connectors and OAuth connectors with no credential.
+   */
+  access: ConnectorAccess | null;
 };
 
 /**
@@ -12956,12 +12992,22 @@ export async function listAgentConnectorsAction(
       ),
     ];
     const credNameById = new Map<string, string>();
+    const credGrantById = new Map<string, string>();
     if (credentialIds.length > 0) {
       const credRows = await db
         .select({ id: credentials.id, name: credentials.name })
         .from(credentials)
         .where(inArray(credentials.id, credentialIds));
       for (const c of credRows) credNameById.set(c.id, c.name);
+      for (const id of credentialIds) {
+        const decrypted = await decryptCredentialForDisplay(db, id).catch((err: unknown) => {
+          // Unreadable payload: logged, and the grid shows no grant for it
+          // rather than guessing one.
+          console.error(`[listAgentConnectorsAction] credential ${id} unreadable`, err);
+          return null;
+        });
+        if (decrypted) credGrantById.set(id, decrypted.payload.scopes);
+      }
     }
 
     // Fetch existing assignments for this agent
@@ -12997,6 +13043,12 @@ export async function listAgentConnectorsAction(
         assigned: assignment !== undefined,
         enabledOperations: assignment?.enabledOperations ?? null,
         availableOperations: adapterEntry.operations,
+        access:
+          adapterEntry.credentialType !== 'api_key' &&
+          row.credentialId &&
+          credGrantById.has(row.credentialId)
+            ? connectorAccessFor(row.slug, credGrantById.get(row.credentialId))
+            : null,
       });
     }
 
@@ -13225,6 +13277,7 @@ export async function setAgentConnectorAssignmentAction(
       enabledOperations: enabledOperations ?? null,
     });
     if ('error' in res) {
+      if (res.error === 'indistinct_accounts') return fail(res.error, res.message);
       return fail(
         'not_found',
         res.error === 'agent_not_found' ? 'Agent not found' : 'Connector not found',
