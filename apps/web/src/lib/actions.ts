@@ -347,7 +347,8 @@ import type { PartialTotal } from './partial-total.ts';
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export type ActionResult<T = void> =
-  { ok: true; data: T } | { ok: false; code: string; message: string };
+  | { ok: true; data: T }
+  | { ok: false; code: string; message: string };
 
 function ok<T>(data: T): ActionResult<T> {
   return { ok: true, data };
@@ -2780,12 +2781,14 @@ export async function getSpaceConversationAction(
         .filter(
           (r) => r.decisionStatus === 'not_configured' || r.decisionStatus === 'pending_approval',
         )
-        .map((r): VerificationUnconfiguredView => ({
-          deliverableType: r.deliverableType,
-          canonicalKey: r.canonicalKey,
-          displayPath: r.displayPath,
-          reason: r.decisionStatus === 'pending_approval' ? 'pending_approval' : 'not_configured',
-        })),
+        .map(
+          (r): VerificationUnconfiguredView => ({
+            deliverableType: r.deliverableType,
+            canonicalKey: r.canonicalKey,
+            displayPath: r.displayPath,
+            reason: r.decisionStatus === 'pending_approval' ? 'pending_approval' : 'not_configured',
+          }),
+        ),
       // P12 — l'état de chaque DOCUMENT, rangé par sa clé canonique.
       deliverables: deliverableStatuses(unconfiguredRows),
     };
@@ -5422,7 +5425,9 @@ export async function updateMcpServerConfigAction(
       const effectiveUrl = (parsed.data.url ?? existing.url ?? '').trim();
       if (!effectiveUrl) return fail('validation_failed', 'Server URL is required');
       const effectiveScheme = (parsed.data.authScheme ?? existing.authScheme ?? 'header') as
-        'header' | 'query' | 'bearer';
+        | 'header'
+        | 'query'
+        | 'bearer';
       const effectiveParam =
         effectiveScheme === 'bearer'
           ? 'Authorization'
@@ -9286,7 +9291,8 @@ export async function previewCommunitySkillUpdateAction(
       return fail('network_error', 'Could not reach the runner — is it running?');
     }
     const body = (await res.json()) as
-      ({ ok: true } & CommunitySkillUpdatePreview) | { ok: false; error: string; message: string };
+      | ({ ok: true } & CommunitySkillUpdatePreview)
+      | { ok: false; error: string; message: string };
     if (!body.ok) return fail(body.error, body.message);
     return ok({
       currentContent: body.currentContent,
@@ -9391,7 +9397,8 @@ export async function acknowledgeSkillUpdateAction(
       return fail('network_error', 'Could not reach the runner — is it running?');
     }
     const body = (await res.json()) as
-      { ok: true; contentChanged: boolean } | { ok: false; error: string; message: string };
+      | { ok: true; contentChanged: boolean }
+      | { ok: false; error: string; message: string };
     if (!body.ok) {
       return fail(body.error, body.message);
     }
