@@ -39,6 +39,8 @@ import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';
 import { executeJob } from '../../job/execute.ts';
 import { executeReadyTasks } from '../../cron/execute-ready.ts';
+import { resolveApprovalDecision } from '../../approvals/resolve.ts';
+import { validateMessageStructure } from '@nodal-agents/llm';
 import { deliverCompletedRoots } from '../../cron/deliver-results.ts';
 import type { JobId } from '@nodal-agents/orchestration';
 
@@ -626,5 +628,236 @@ describe('a delegation the gate refuses or holds is told as such @cap:organiser-
     expect(out).toContain('delegation_limit_reached');
     expect(out).toContain('at most 14 times');
     expect(await childrenOf(id)).toHaveLength(0);
+  });
+});
+
+// ─── 3. A delegation a person approved runs, the way every delegation runs ────
+
+describe('a delegation held for a person runs once approved, and says no when refused @cap:organiser-equipe/moteur', () => {
+  /** Every block of the transcript that answers `callId`. */
+  function answersOf(messages: unknown, callId: string): unknown[] {
+    return ((messages ?? []) as Array<{ role: string; content: unknown }>)
+      .filter((m) => m.role === 'tool' && Array.isArray(m.content))
+      .flatMap((m) => m.content as Array<{ toolCallId?: string }>)
+      .filter((p) => p.toolCallId === callId);
+  }
+
+  async function pendingRequestOf(id: string): Promise<string> {
+    const rows = await db
+      .select({ id: approvalRequests.id, status: approvalRequests.status })
+      .from(approvalRequests)
+      .where(and(eq(approvalRequests.jobId, id), eq(approvalRequests.toolName, assignTool)));
+    expect(rows.map((r) => r.status)).toEqual(['pending']);
+    return rows[0]!.id;
+  }
+
+  async function decide(
+    client: RunnerDeps['llmClient'],
+    requestId: string,
+    decision: 'approve' | 'reject',
+    notes?: string,
+  ) {
+    const decided = await resolveApprovalDecision(deps(client), testEnv, {
+      answeredBy: { userId: '00000000-0000-4000-8000-0000000000a1' },
+      approvalRequestId: requestId,
+      decision,
+      resolvedBy: 'api',
+      ...(notes !== undefined ? { notes } : {}),
+    });
+    expect(decided.ok).toBe(true);
+  }
+
+  /** The held call, approved: one child, one answer for the call, the child's record in it. */
+  async function expectDelegatedOnce(id: string, callId: string, childText: string) {
+    const children = await db
+      .select({ status: agentJobs.status, result: agentJobs.result })
+      .from(agentJobs)
+      .where(eq(agentJobs.parentJobId, id));
+    expect(children).toEqual([{ status: 'completed', result: childText }]);
+    const row = await jobRow(id);
+    expect(row.status).toBe('completed');
+    const answers = answersOf(row.messages, callId);
+    expect(answers).toHaveLength(1);
+    expect(JSON.stringify(answers[0])).toContain(childText);
+    expect(JSON.stringify(answers[0])).not.toContain('[AWAITING_APPROVAL]');
+    expect(() => validateMessageStructure(row.messages as never)).not.toThrow();
+  }
+
+  it('an API job: approved, the child runs and its record replaces the approval marker', async () => {
+    await withRule('require_approval', async () => {
+      const id = await rootJob('Delegate the survey ASK1');
+      const client = scriptedModel({
+        // The child's request names its own key first: it holds both words.
+        'survey ASK1-child': [{ text: 'Survey results: 12 answers.' }],
+        ASK1: [
+          {
+            toolCalls: [
+              {
+                toolCallId: 'as-ask1',
+                toolName: assignTool,
+                args: {
+                  task: 'Run the survey ASK1-child.',
+                  purpose: 'The survey needs the worker.',
+                },
+              },
+            ],
+          },
+          { text: 'The survey is done: 12 answers.' },
+        ],
+      });
+      expect((await executeJob(id as JobId, deps(client), testEnv)).status).toBe(
+        'awaiting_approval',
+      );
+      expect(await childrenOf(id)).toHaveLength(0);
+      const requestId = await pendingRequestOf(id);
+
+      await decide(client, requestId, 'approve');
+      const resumed = await executeJob(id as JobId, deps(client), testEnv);
+
+      expect(resumed.status).toBe('completed');
+      await expectDelegatedOnce(id, 'as-ask1', 'Survey results: 12 answers.');
+      const [closed] = await db
+        .select({ executedAt: approvalRequests.executedAt })
+        .from(approvalRequests)
+        .where(eq(approvalRequests.id, requestId));
+      expect(closed?.executedAt).not.toBeNull();
+    });
+  });
+
+  it('a channel job (Telegram): the person is told it waits, approves, and the call still has one answer', async () => {
+    await db
+      .update(agents)
+      .set({ telegramBotToken: 'fake-token' })
+      .where(eq(agents.id, seed.agentId));
+    try {
+      await withRule('require_approval', async () => {
+        const id = await rootJob('Delegate the survey ASKTG', {
+          channel: 'telegram',
+          chatId: '5151',
+          chatChannel: 'telegram',
+        });
+        const client = scriptedModel({
+          'survey ASKTG-child': [{ text: 'Survey results: 7 answers.' }],
+          ASKTG: [
+            {
+              toolCalls: [
+                {
+                  toolCallId: 'as-asktg',
+                  toolName: assignTool,
+                  args: {
+                    task: 'Run the survey ASKTG-child.',
+                    purpose: 'The survey needs the worker.',
+                  },
+                },
+              ],
+            },
+            // The heads-up turn: the agent tells the person it waits.
+            {
+              toolCalls: [
+                {
+                  toolCallId: 'tg-wait',
+                  toolName: 'telegram_send_message',
+                  args: { text: 'Waiting for your approval to hand the survey over.' },
+                },
+              ],
+            },
+            {
+              toolCalls: [
+                {
+                  toolCallId: 'tg-done',
+                  toolName: 'telegram_send_message',
+                  args: { text: 'Survey done: 7 answers.' },
+                },
+                { toolCallId: 'rr-asktg', toolName: 'return_result', args: { status: 'success' } },
+              ],
+            },
+          ],
+        });
+        sendTextMock.mockClear();
+        expect((await executeJob(id as JobId, deps(client), testEnv)).status).toBe(
+          'awaiting_approval',
+        );
+        expect(await childrenOf(id)).toHaveLength(0);
+        const requestId = await pendingRequestOf(id);
+
+        await decide(client, requestId, 'approve');
+        const resumed = await executeJob(id as JobId, deps(client), testEnv);
+
+        expect(resumed.status).toBe('completed');
+        await expectDelegatedOnce(id, 'as-asktg', 'Survey results: 7 answers.');
+        expect(sendTextMock).toHaveBeenCalledWith({
+          chatId: '5151',
+          text: 'Survey done: 7 answers.',
+        });
+      });
+    } finally {
+      await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
+    }
+  });
+
+  it('a dashboard chat job: approved, the child runs and the call has one answer', async () => {
+    await withRule('require_approval', async () => {
+      const id = await rootJob('Delegate the survey ASKDASH', { channel: 'dashboard' });
+      const client = scriptedModel({
+        'survey ASKDASH-child': [{ text: 'Survey results: 3 answers.' }],
+        ASKDASH: [
+          {
+            toolCalls: [
+              {
+                toolCallId: 'as-askdash',
+                toolName: assignTool,
+                args: {
+                  task: 'Run the survey ASKDASH-child.',
+                  purpose: 'The survey needs the worker.',
+                },
+              },
+            ],
+          },
+          { text: 'The survey is done: 3 answers.' },
+        ],
+      });
+      expect((await executeJob(id as JobId, deps(client), testEnv)).status).toBe(
+        'awaiting_approval',
+      );
+      const requestId = await pendingRequestOf(id);
+      await decide(client, requestId, 'approve');
+      expect((await executeJob(id as JobId, deps(client), testEnv)).status).toBe('completed');
+      await expectDelegatedOnce(id, 'as-askdash', 'Survey results: 3 answers.');
+    });
+  });
+
+  it('refused by the person: no child runs, the model reads a refusal, nothing tells it to call again', async () => {
+    await withRule('require_approval', async () => {
+      const id = await rootJob('Delegate the survey ASKNO');
+      const client = scriptedModel({
+        ASKNO: [
+          {
+            toolCalls: [
+              {
+                toolCallId: 'as-askno',
+                toolName: assignTool,
+                args: { task: 'Run the survey.', purpose: 'The survey needs the worker.' },
+              },
+            ],
+          },
+          { text: 'Understood, I will not run the survey.' },
+        ],
+      });
+      expect((await executeJob(id as JobId, deps(client), testEnv)).status).toBe(
+        'awaiting_approval',
+      );
+      const requestId = await pendingRequestOf(id);
+      await decide(client, requestId, 'reject', 'Not this week.');
+      expect((await executeJob(id as JobId, deps(client), testEnv)).status).toBe('completed');
+
+      expect(await childrenOf(id)).toHaveLength(0);
+      const row = await jobRow(id);
+      const answers = answersOf(row.messages, 'as-askno');
+      expect(answers).toHaveLength(1);
+      const out = JSON.stringify(answers[0]);
+      expect(out).toContain('[REJECTED]');
+      expect(out).toContain('Not this week.');
+      expect(out).not.toContain('call it again');
+    });
   });
 });
