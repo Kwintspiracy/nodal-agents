@@ -1053,12 +1053,17 @@ export async function startEmbeddedPostgres(
   const url = buildPgUrl(port, password);
 
   // Try to enable pgvector; if unavailable, warn and continue
+  //
+  // The client is closed whatever happens. The embedded cluster ships no
+  // pgvector, so this query fails on every start of a stock install, and the
+  // client used to stay connected to the database from then on: a session
+  // nobody owned, on the database `up` is about to copy before migrating
+  // (a copy needs no other session on its source, PostgreSQL's own rule).
   let vectorAvailable = false;
+  const client = pg.getPgClient(PG_DATABASE);
   try {
-    const client = pg.getPgClient(PG_DATABASE);
     await client.connect();
     await client.query('CREATE EXTENSION IF NOT EXISTS vector');
-    await client.end();
     vectorAvailable = true;
   } catch {
     process.stderr.write(
@@ -1066,6 +1071,8 @@ export async function startEmbeddedPostgres(
         '  To enable: install pgvector (Mac: brew install pgvector; Win: see README).\n' +
         '  Continuing in keyword-only memory mode (vector columns rewritten to text).\x1b[0m\n',
     );
+  } finally {
+    await client.end().catch(() => undefined);
   }
 
   return {
