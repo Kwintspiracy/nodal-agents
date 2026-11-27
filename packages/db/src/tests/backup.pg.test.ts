@@ -746,12 +746,12 @@ describe('backup: nothing that looks complete unless it is @cap:installer-et-dem
     const a = await createBackup(url, backupOptions(home, { keep: 2 }));
     const b = await createBackup(url, backupOptions(home, { keep: 2 }));
     expect(listBackups(dir).map((f) => f.path)).toEqual([b.path, a.path]);
-    // A third that fails removes nothing.
+    // A third that fails removes nothing, even asked to keep only one.
     await rejection(
       createBackup(
         url,
         backupOptions(home, {
-          keep: 2,
+          keep: 1,
           seams: {
             at: (s) => {
               if (s === 'verified') throw new Error('no');
