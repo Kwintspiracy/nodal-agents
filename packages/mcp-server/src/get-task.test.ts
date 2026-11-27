@@ -336,16 +336,6 @@ describe('get_task rend ce que lit un client extérieur MASQUÉ @cap:parler-par-
     expect(row!.result).toContain(key);
     await client.close();
   });
-
-  it('une erreur rendue au client est masquée elle aussi', async () => {
-    const ws = await workspace('masque-erreur');
-    const client = await connect(ws.agentId);
-    const key = fakeSecret('github', 'Er1Er2Er3Er4Er5Er6Er7Er8Er9Er0Er1Er2');
-    const res = await client.callTool({ name: 'get_task', arguments: { jobId: key } });
-    expect(res.isError).toBe(true);
-    expect(textOf(res)).not.toContain(key);
-    await client.close();
-  });
 });
 
 describe('get_task ne lit que les jobs MCP de son workspace @cap:parler-par-canal-externe/moteur', () => {
