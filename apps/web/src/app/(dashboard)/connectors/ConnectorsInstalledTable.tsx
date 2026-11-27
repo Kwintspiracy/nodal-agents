@@ -28,10 +28,11 @@ import Modal from '@/components/ui/Modal';
 import ConnectorForm from './ConnectorForm.tsx';
 import { CONN_BRAND_COLORS, connGlyph } from './connector-brand.ts';
 import ConnectorDisc from './ConnectorDisc.tsx';
+import AddAccessButton from './AddAccessButton.tsx';
 
 type Props = {
   instances: ConnectorRow[];
-  credsByType: Record<string, CompatibleCredential[]>;
+  credsBySlug: Record<string, CompatibleCredential[]>;
 };
 
 /**
@@ -50,7 +51,7 @@ type Props = {
  * close it, only ConnectorForm's own explicit actions (or the Close button)
  * do, so a mid-edit click-away can't silently discard state.
  */
-export default function ConnectorsInstalledTable({ instances, credsByType }: Props) {
+export default function ConnectorsInstalledTable({ instances, credsBySlug }: Props) {
   return (
     <Table>
       <THead>
@@ -78,9 +79,7 @@ export default function ConnectorsInstalledTable({ instances, credsByType }: Pro
                 credentialType: inst.credentialType ?? null,
                 scopeDisclosure: null,
               };
-          const compatibleCredentials = catalogEntry.credentialType
-            ? (credsByType[catalogEntry.credentialType] ?? [])
-            : [];
+          const compatibleCredentials = credsBySlug[inst.slug] ?? [];
           return (
             <ConnectorRow
               key={inst.id}
@@ -109,6 +108,9 @@ function ConnectorRow({
   const [isPending, startTransition] = useTransition();
 
   const isConnected = instance.active;
+  // The grant decides, as it does for a job's tools: a connector whose
+  // credential lacks some of its rights is not "connected", it needs access.
+  const missingAccess = instance.access?.kind === 'needs_access' ? instance.access : null;
   const scopeList = instance.credentialScopes
     ? instance.credentialScopes.split(/\s+/).filter(Boolean)
     : [];
@@ -153,14 +155,28 @@ function ConnectorRow({
         </Td>
 
         <Td>
-          <StatusPill
-            variant={isConnected ? 'done' : 'warn'}
-            label={isConnected ? 'Connected' : 'Needs auth'}
-          />
+          {missingAccess ? (
+            <span title={`Missing: ${missingAccess.missingScopes.join(', ')}`}>
+              <StatusPill variant="warn" label="Needs access" />
+            </span>
+          ) : (
+            <StatusPill
+              variant={isConnected ? 'done' : 'warn'}
+              label={isConnected ? 'Connected' : 'Needs auth'}
+            />
+          )}
         </Td>
 
         <Td align="right">
           <CellActions>
+            {missingAccess && instance.credentialId && instance.credentialType && (
+              <AddAccessButton
+                credentialType={instance.credentialType}
+                connector={instance.slug}
+                credentialId={instance.credentialId}
+                returnTo={`/connectors?connected=${instance.slug}`}
+              />
+            )}
             <RowActionButton
               square
               icon={<PencilSimple size={16} />}

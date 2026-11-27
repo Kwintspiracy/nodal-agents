@@ -3,10 +3,10 @@ import PageShell from '@/components/ui/PageShell';
 import { listConnectorsAction, createOrAssignOAuthConnectorAction } from '@/lib/actions.ts';
 import { listCredentialsAction } from '@/lib/credentials.ts';
 import { CONNECTOR_CATALOG } from '@/lib/connector-catalog.ts';
+import { compatibleCredentialsBySlug } from '@/lib/connector-access.ts';
 import OAuthNotify from './OAuthNotify.tsx';
 import OAuthErrorBanner from './OAuthErrorBanner.tsx';
 import ConnectorsClient from './ConnectorsClient.tsx';
-import type { CompatibleCredential } from './ConnectorForm.tsx';
 import Banner from '@/components/ui/Banner';
 
 export const dynamic = 'force-dynamic';
@@ -21,6 +21,10 @@ const OAUTH_ERROR_MESSAGES: Record<string, string> = {
   token_exchange_failed:
     'Failed to exchange the authorisation code for a token. Check your Client Secret and try again.',
   unknown_provider: 'Unknown provider — the OAuth flow could not be started.',
+  missing_access:
+    'The provider did not grant any of the access this connector needs. Connect again and keep its permissions ticked on the consent screen.',
+  account_mismatch:
+    'The provider answered for a different account than this credential. Sign in with the credential’s own account to add access, or create a new credential.',
   missing_code: 'No authorisation code was returned by the provider.',
   // Standard OAuth 2.0 error codes (RFC 6749 §4.1.2.1) — forwarded from provider
   access_denied: 'Access was denied by the provider. You can try again anytime.',
@@ -56,7 +60,9 @@ export default async function ConnectorsPage({ searchParams }: PageProps) {
 
   // ── Server-side credential auto-assignment ────────────────────────────────
   if (sp.connectorSlug && sp.credentialId) {
-    await createOrAssignOAuthConnectorAction(sp.connectorSlug, sp.credentialId);
+    const bound = await createOrAssignOAuthConnectorAction(sp.connectorSlug, sp.credentialId);
+    // A refused binding is said, never announced as "connected".
+    if (!bound.ok) redirect(`/connectors?oauth_error=${encodeURIComponent(bound.code)}`);
     redirect(`/connectors?just_connected=${sp.connectorSlug}`);
   }
 
@@ -83,18 +89,10 @@ export default async function ConnectorsPage({ searchParams }: PageProps) {
 
   const { instances, catalog } = result.data;
 
-  // ── Fetch all credentials once, group by type ──────────────────────────────
+  // ── Fetch all credentials once; per connector, what each one grants it ────
   const credentialsResult = await listCredentialsAction();
   const allCredentials = credentialsResult.ok ? credentialsResult.data : [];
-
-  const credsByTypeMap = new Map<string, CompatibleCredential[]>();
-  for (const cred of allCredentials) {
-    const list = credsByTypeMap.get(cred.type) ?? [];
-    list.push({ id: cred.id, name: cred.name, accountName: cred.accountName });
-    credsByTypeMap.set(cred.type, list);
-  }
-  // Convert Map to plain object for client serialisation
-  const credsByType: Record<string, CompatibleCredential[]> = Object.fromEntries(credsByTypeMap);
+  const credsBySlug = compatibleCredentialsBySlug(catalog, allCredentials);
 
   return (
     <>
@@ -106,7 +104,7 @@ export default async function ConnectorsPage({ searchParams }: PageProps) {
         <OAuthErrorBanner code={sp.oauth_error} message={errorMessage} />
       )}
 
-      <ConnectorsClient instances={instances} catalog={catalog} credsByType={credsByType} />
+      <ConnectorsClient instances={instances} catalog={catalog} credsBySlug={credsBySlug} />
     </>
   );
 }

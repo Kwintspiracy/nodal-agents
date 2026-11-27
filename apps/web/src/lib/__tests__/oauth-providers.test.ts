@@ -198,7 +198,9 @@ describe('Microsoft OAuth provider (outlook-mail) — attributes', () => {
     const scopes = getOAuthProvider('outlook-mail')?.scopes ?? [];
     expect(scopes).toContain('https://graph.microsoft.com/Mail.ReadWrite');
     expect(scopes).toContain('https://graph.microsoft.com/Mail.Send');
-    expect(scopes).toContain('https://graph.microsoft.com/MailboxSettings.Read');
+    // No operation reads mailbox settings, so the entry no longer asks for them
+    // (the entry asks for its operations' rights, nothing more).
+    expect(scopes).not.toContain('https://graph.microsoft.com/MailboxSettings.Read');
   });
 
   it('has accountInfo pointing at the OIDC userinfo endpoint with email/preferred_username fallback', () => {

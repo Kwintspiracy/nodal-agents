@@ -7,10 +7,14 @@ import { NextResponse } from 'next/server';
 import { timingSafeEqual } from 'node:crypto';
 import { decrypt } from '@nodal-agents/secrets';
 import { getAuthProvider } from '@/lib/server.ts';
-import { getOAuthProvider, getProviderByCredentialType } from '@/lib/oauth-providers.ts';
+import { getOAuthProvider } from '@/lib/oauth-providers.ts';
 import { verifyStateCookie, STATE_COOKIE_NAME } from '@/lib/oauth-state.ts';
-import { persistCredentialFromOauthFlow } from '@/lib/credentials-internal.ts';
-import type { CredentialType } from '@nodal-agents/shared';
+import {
+  CredentialAccountMismatchError,
+  persistCredentialFromOauthFlow,
+  updateCredentialGrantFromOauthFlow,
+} from '@/lib/credentials-internal.ts';
+import { CREDENTIAL_TYPES, type CredentialType } from '@nodal-agents/shared';
 import type { OAuthProvider } from '@/lib/oauth-providers.ts';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -105,10 +109,8 @@ export async function GET(
   const url = new URL(req.url);
   const origin = url.origin;
 
-  // 1. Resolve provider — slug can be either a catalog connector slug (e.g. 'google-drive')
-  // or a credentialType (e.g. 'google-oauth') when wizard-initiated via credential type.
-  const provider = getOAuthProvider(slug) ?? getProviderByCredentialType(slug as CredentialType);
-  if (!provider) {
+  // 1. The path names the credential type, exactly as the start route did.
+  if (!(CREDENTIAL_TYPES as readonly string[]).includes(slug)) {
     return redirectError(origin, 'unknown_provider');
   }
 
@@ -128,6 +130,18 @@ export async function GET(
   const payload = verifyStateCookie(rawCookie);
   if (!payload) {
     return redirectError(origin, 'invalid_state');
+  }
+
+  // The provider is the one of the connector the authorisation was asked for,
+  // and it must be reached through this path's credential type.
+  const provider = getOAuthProvider(payload.connector);
+  if (
+    !provider ||
+    provider.credentialType !== slug ||
+    payload.credentialType !== slug ||
+    payload.slug !== slug
+  ) {
+    return redirectError(origin, 'unknown_provider');
   }
 
   // 3. Check for provider-side error. The OAuth spec defines several error codes
@@ -199,7 +213,7 @@ export async function GET(
       access_token: `mock-at-${Date.now()}`,
       refresh_token: `mock-rt-${Date.now()}`,
       expires_in: 3600,
-      scope: provider.scopes.join(' '),
+      scope: payload.requestedScopes,
       token_type: 'Bearer',
     } as GoogleTokenResponse;
   } else {
@@ -228,7 +242,11 @@ export async function GET(
   const refreshToken = (tokenResponse as GoogleTokenResponse).refresh_token ?? null;
   const expiresIn = (tokenResponse as GoogleTokenResponse).expires_in;
   const expiresAt = expiresIn != null ? new Date(Date.now() + expiresIn * 1000) : null;
-  const scopeStr = (tokenResponse as GoogleTokenResponse).scope ?? null;
+  // What the provider GRANTED is the only truth about the credential from now
+  // on. A provider that grants less than asked (the person unticked a box)
+  // says so here. RFC 6749 §5.1 lets it omit `scope` only when the grant is
+  // identical to the request, so an absent field means what was asked.
+  const grantedScopes = (tokenResponse as GoogleTokenResponse).scope ?? payload.requestedScopes;
 
   // 9. Resolve account name
   let accountName: string | null = null;
@@ -264,24 +282,39 @@ export async function GET(
     refreshToken,
     accessToken,
     expiresAt: expiresAt ? expiresAt.toISOString() : null,
-    scopes: scopeStr ?? (provider.scopes.length > 0 ? provider.scopes.join(' ') : ''),
+    scopes: grantedScopes,
     accountName: accountName ?? '',
     tokenUrl: provider.tokenUrl,
   };
 
-  // 11. Persist credential (creates a new credentials row, never upserts)
+  // 11. Persist the credential: a new row, or the grant of the credential the
+  // authorisation added access to (same account, its connectors unchanged).
   let credentialId: string;
   try {
-    const credentialName = payload.name ?? `${provider.label} (${accountName ?? 'Unknown'})`;
-    const result = await persistCredentialFromOauthFlow({
-      ownerUserId: sessionUserId,
-      credentialType: payload.credentialType as CredentialType,
-      name: credentialName,
-      payload: credentialPayload,
-    });
-    credentialId = result.id;
+    if (payload.credentialId !== undefined) {
+      await updateCredentialGrantFromOauthFlow({
+        credentialId: payload.credentialId,
+        ownerUserId: sessionUserId,
+        credentialType: slug as CredentialType,
+        payload: credentialPayload,
+      });
+      credentialId = payload.credentialId;
+    } else {
+      const credentialName = payload.name ?? `${provider.label} (${accountName ?? 'Unknown'})`;
+      const result = await persistCredentialFromOauthFlow({
+        ownerUserId: sessionUserId,
+        credentialType: slug as CredentialType,
+        name: credentialName,
+        payload: credentialPayload,
+      });
+      credentialId = result.id;
+    }
   } catch (err) {
-    console.error('[oauth callback] persistCredentialFromOauthFlow failed', err);
+    if (err instanceof CredentialAccountMismatchError) {
+      console.error(`[oauth callback] ${err.message}`);
+      return redirectError(origin, 'account_mismatch');
+    }
+    console.error('[oauth callback] persisting the credential failed', err);
     return redirectError(origin, 'token_exchange_failed');
   }
 

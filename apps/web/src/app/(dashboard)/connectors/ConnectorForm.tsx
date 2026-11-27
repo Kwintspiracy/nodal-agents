@@ -22,6 +22,7 @@ import FieldLabel from '@/components/ui/FieldLabel';
 import { ModalFooter } from '@/components/ui/Modal.tsx';
 import CredentialWizard, { type CredentialWizardType } from '../credentials/CredentialWizard.tsx';
 import { formatExpiry, isExpired } from '@/lib/format-time';
+import AddAccessButton from './AddAccessButton.tsx';
 
 /** One labelled row in the connector's metadata block — replaces the old
  *  unlabelled "gmail · oauth2" stack (UX-B7: raw values with no context). */
@@ -39,11 +40,8 @@ function MetaField({ label, value, mono }: { label: string; value: ReactNode; mo
 /** Credential types that do not support access-token refresh (Notion). */
 const OAUTH_NO_REFRESH_SLUGS: ReadonlySet<string> = new Set(['notion-oauth']);
 
-export type CompatibleCredential = {
-  id: string;
-  name: string;
-  accountName: string | null;
-};
+export type { CompatibleCredential } from '@/lib/connector-access-types.ts';
+import type { CompatibleCredential } from '@/lib/connector-access-types.ts';
 
 interface Props {
   instance: ConnectorRow;
@@ -97,6 +95,8 @@ export default function ConnectorForm({
   const isTokenExpired = isExpired(connectedExpiresAt ?? null);
 
   const status: 'connected' | 'inactive' = isConnected ? 'connected' : 'inactive';
+  // Same grant, same rule as a job's tool list (`instance.access`).
+  const missingAccess = instance.access?.kind === 'needs_access' ? instance.access : null;
 
   function performDelete() {
     setConfirmOpen(false);
@@ -224,11 +224,15 @@ export default function ConnectorForm({
             </div>
           )}
         </div>
-        <StatusPill
-          variant={status === 'connected' ? 'done' : 'warn'}
-          label={status === 'connected' ? 'Connected' : 'Needs auth'}
-          className="shrink-0"
-        />
+        {missingAccess ? (
+          <StatusPill variant="warn" label="Needs access" className="shrink-0" />
+        ) : (
+          <StatusPill
+            variant={status === 'connected' ? 'done' : 'warn'}
+            label={status === 'connected' ? 'Connected' : 'Needs auth'}
+            className="shrink-0"
+          />
+        )}
       </div>
 
       {/* Labelled metadata — replaces the old unlabelled "gmail / oauth2 /
@@ -253,6 +257,14 @@ export default function ConnectorForm({
       <div className="flex flex-wrap items-center gap-2 pt-1">
         {isOAuth ? (
           <>
+            {missingAccess && connectedCredentialId && instance.credentialType && (
+              <AddAccessButton
+                credentialType={instance.credentialType}
+                connector={instance.slug}
+                credentialId={connectedCredentialId}
+                returnTo={`/connectors?connected=${instance.slug}`}
+              />
+            )}
             {supportsRefresh && (
               <PrimaryButton
                 variant="neutral"
@@ -366,6 +378,14 @@ export default function ConnectorForm({
                 </span>
               ))}
             </div>
+          )}
+          {missingAccess && (
+            <p className="text-xs text-warn">
+              {missingAccess.missingOperations.length} of{' '}
+              {missingAccess.missingOperations.length + missingAccess.grantedOperations.length}{' '}
+              operations are not available to agents until access is added. Missing:{' '}
+              <span className="font-mono">{missingAccess.missingScopes.join(', ')}</span>
+            </p>
           )}
           {supportsRefresh && <p className="text-xs text-ink-3">Auto-refreshes when used</p>}
           {!supportsRefresh && connectedExpiresAt && (

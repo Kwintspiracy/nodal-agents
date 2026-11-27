@@ -3,13 +3,32 @@
 // No runner imports, no user-facing strings except `label`.
 
 import type { CredentialType } from '../entities/credential.ts';
+import type { GrantedScopeForm } from './scopes.ts';
 
 export type OAuthProvider = {
   slug: string;
   label: string;
   authUrl: string;
   tokenUrl: string;
+  /**
+   * Every scope a start for this connector asks the provider for: the rights
+   * its operations declare (`OperationDescriptor.scopes`, the one declaration)
+   * plus `accountScopes`. `connector-scopes.test.ts` (runner-adapters) holds
+   * the two equal, so the entry never asks for less, nor for more, than the
+   * connector's operations need.
+   */
   scopes: readonly string[];
+  /**
+   * The scopes asked for the account itself rather than for an operation:
+   * identity (the callback names the credential after the account) and
+   * offline access. Never part of a connector's requirements.
+   */
+  accountScopes: readonly string[];
+  /**
+   * How the provider writes the scopes it granted, when it is not how they are
+   * asked (see `GrantedScopeForm`). Absent: compared exactly.
+   */
+  grantedScopeForm?: GrantedScopeForm;
   /** 'pkce-s256' for Google + Airtable; 'none' for Notion */
   pkce: 'pkce-s256' | 'none';
   /** How credentials are sent to tokenUrl */
@@ -66,6 +85,7 @@ export const OAUTH_PROVIDERS: Record<string, OAuthProvider> = {
     pkce: 'pkce-s256',
     tokenAuth: 'body',
     tokenBodyType: 'form',
+    accountScopes: GOOGLE_IDENTITY_SCOPES,
     accountInfo: GOOGLE_ACCOUNT_INFO,
     supportsRefresh: true,
     authExtraParams: GOOGLE_AUTH_EXTRA,
@@ -76,14 +96,24 @@ export const OAUTH_PROVIDERS: Record<string, OAuthProvider> = {
     label: 'Gmail',
     authUrl: GOOGLE_AUTH_URL,
     tokenUrl: GOOGLE_TOKEN_URL,
+    // The union of what the Gmail operations declare (packages/adapters/gmail
+    // operations.ts, from the Gmail API reference): read, send, drafts,
+    // labels, organise (modify/trash) and the permanent delete, which Google
+    // grants under the full mailbox scope only. It was read + send, which left
+    // thirteen of the twenty-five operations failing on every call.
     scopes: [
       'https://www.googleapis.com/auth/gmail.readonly',
       'https://www.googleapis.com/auth/gmail.send',
+      'https://www.googleapis.com/auth/gmail.compose',
+      'https://www.googleapis.com/auth/gmail.labels',
+      'https://www.googleapis.com/auth/gmail.modify',
+      'https://mail.google.com/',
       ...GOOGLE_IDENTITY_SCOPES,
     ],
     pkce: 'pkce-s256',
     tokenAuth: 'body',
     tokenBodyType: 'form',
+    accountScopes: GOOGLE_IDENTITY_SCOPES,
     accountInfo: GOOGLE_ACCOUNT_INFO,
     supportsRefresh: true,
     authExtraParams: GOOGLE_AUTH_EXTRA,
@@ -115,6 +145,7 @@ export const OAUTH_PROVIDERS: Record<string, OAuthProvider> = {
     pkce: 'pkce-s256',
     tokenAuth: 'body',
     tokenBodyType: 'form',
+    accountScopes: GOOGLE_IDENTITY_SCOPES,
     accountInfo: GOOGLE_ACCOUNT_INFO,
     supportsRefresh: true,
     authExtraParams: GOOGLE_AUTH_EXTRA,
@@ -132,6 +163,7 @@ export const OAUTH_PROVIDERS: Record<string, OAuthProvider> = {
     pkce: 'pkce-s256',
     tokenAuth: 'body',
     tokenBodyType: 'form',
+    accountScopes: GOOGLE_IDENTITY_SCOPES,
     accountInfo: GOOGLE_ACCOUNT_INFO,
     supportsRefresh: true,
     authExtraParams: GOOGLE_AUTH_EXTRA,
@@ -148,6 +180,7 @@ export const OAUTH_PROVIDERS: Record<string, OAuthProvider> = {
     pkce: 'pkce-s256',
     tokenAuth: 'body',
     tokenBodyType: 'form',
+    accountScopes: GOOGLE_IDENTITY_SCOPES,
     accountInfo: GOOGLE_ACCOUNT_INFO,
     supportsRefresh: true,
     authExtraParams: GOOGLE_AUTH_EXTRA,
@@ -160,6 +193,7 @@ export const OAUTH_PROVIDERS: Record<string, OAuthProvider> = {
     tokenUrl: 'https://api.notion.com/v1/oauth/token',
     // Notion does not use scope in the auth URL — capabilities are defined in the integration config.
     scopes: [],
+    accountScopes: [],
     pkce: 'none',
     tokenAuth: 'basic',
     tokenBodyType: 'json',
@@ -177,7 +211,12 @@ export const OAUTH_PROVIDERS: Record<string, OAuthProvider> = {
     label: 'Airtable',
     authUrl: 'https://airtable.com/oauth2/v1/authorize',
     tokenUrl: 'https://airtable.com/oauth2/v1/token',
-    scopes: ['data.records:read', 'data.records:write', 'schema.bases:read', 'schema.bases:write'],
+    // The rights the Airtable operations declare. `schema.bases:write` is no
+    // longer asked: no operation changes a base's schema. (Airtable refuses a
+    // scope the integration has not enabled, so asking for less than the
+    // setup guide enables is safe; asking for more would not be.)
+    scopes: ['data.records:read', 'data.records:write', 'schema.bases:read'],
+    accountScopes: [],
     pkce: 'pkce-s256',
     tokenAuth: 'basic',
     tokenBodyType: 'form',
@@ -191,6 +230,9 @@ export const OAUTH_PROVIDERS: Record<string, OAuthProvider> = {
     label: 'Outlook Mail',
     authUrl: 'https://login.microsoftonline.com/common/oauth2/v2.0/authorize',
     tokenUrl: 'https://login.microsoftonline.com/common/oauth2/v2.0/token',
+    // The rights the Outlook operations declare: Mail.ReadWrite (read and
+    // change) and Mail.Send. `MailboxSettings.Read` is no longer asked: no
+    // operation reads the mailbox settings.
     scopes: [
       'offline_access',
       'openid',
@@ -198,8 +240,13 @@ export const OAUTH_PROVIDERS: Record<string, OAuthProvider> = {
       'profile',
       'https://graph.microsoft.com/Mail.ReadWrite',
       'https://graph.microsoft.com/Mail.Send',
-      'https://graph.microsoft.com/MailboxSettings.Read',
     ],
+    accountScopes: ['offline_access', 'openid', 'email', 'profile'],
+    // Microsoft's token response writes a Graph permission with or without its
+    // resource prefix ("scope=User.Read is equivalent to
+    // https://graph.microsoft.com/User.Read", identity platform docs), and its
+    // examples change the case between request and response.
+    grantedScopeForm: { resourcePrefix: 'https://graph.microsoft.com/', caseInsensitive: true },
     pkce: 'pkce-s256',
     tokenAuth: 'body',
     tokenBodyType: 'form',
@@ -226,7 +273,10 @@ export function getOAuthProvider(slug: string): OAuthProvider | null {
 
 /**
  * Returns the first OAuth provider whose credentialType matches the given type.
- * Used by refreshAndPersistCredential to resolve provider from credential row.
+ * Used by the token refresh only (refreshAndPersistCredential), which needs
+ * the token endpoint and its encoding, identical for every entry of a type
+ * (held by a test). Never used to choose scopes: an authorisation is asked
+ * for a named connector (`getOAuthProvider`).
  */
 export function getProviderByCredentialType(type: CredentialType): OAuthProvider | null {
   for (const provider of Object.values(OAUTH_PROVIDERS)) {

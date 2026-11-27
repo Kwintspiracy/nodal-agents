@@ -11,7 +11,34 @@
 // (outbound = permanent side-effect; owner's decision on #711).
 // gmail_trash_* and gmail_modify_* are `write` (reversible).
 
-import type { OperationDescriptor } from '@nodal-agents/shared';
+import type { OperationDescriptor, ScopeRequirement } from '@nodal-agents/shared';
+
+// OAuth rights, from the Gmail API reference ("Authorization scopes" of each
+// users.* method the tools call). First = the narrowest scope Nodal asks for;
+// the others are the broader scopes Google also accepts for the same calls.
+const GMAIL = 'https://www.googleapis.com/auth/gmail';
+const READONLY = `${GMAIL}.readonly`;
+const SEND = `${GMAIL}.send`;
+const COMPOSE = `${GMAIL}.compose`;
+const LABELS = `${GMAIL}.labels`;
+const MODIFY = `${GMAIL}.modify`;
+const FULL_MAILBOX = 'https://mail.google.com/';
+/** messages / threads / history list and get, attachments.get */
+const READ: ScopeRequirement = [READONLY, MODIFY, FULL_MAILBOX];
+/** labels.list / labels.get (the labels scope reads them too) */
+const READ_LABELS: ScopeRequirement = [READONLY, LABELS, MODIFY, FULL_MAILBOX];
+/** drafts.list / drafts.get */
+const READ_DRAFTS: ScopeRequirement = [READONLY, COMPOSE, MODIFY, FULL_MAILBOX];
+/** messages.send */
+const SEND_MAIL: ScopeRequirement = [SEND, COMPOSE, MODIFY, FULL_MAILBOX];
+/** drafts.create / update / send / delete */
+const DRAFTS: ScopeRequirement = [COMPOSE, MODIFY, FULL_MAILBOX];
+/** labels.create / patch / delete */
+const WRITE_LABELS: ScopeRequirement = [LABELS, MODIFY, FULL_MAILBOX];
+/** messages / threads modify, trash, untrash */
+const ORGANISE: ScopeRequirement = [MODIFY, FULL_MAILBOX];
+/** messages.delete (permanent): the full mailbox scope only */
+const PERMANENT_DELETE: ScopeRequirement = [FULL_MAILBOX];
 
 export const GMAIL_OPERATIONS: OperationDescriptor[] = [
   // ─── Read (9) ────────────────────────────────────────────────────────────────
@@ -20,6 +47,7 @@ export const GMAIL_OPERATIONS: OperationDescriptor[] = [
     name: 'List messages',
     risk: 'read',
     requiresApproval: false,
+    scopes: [READ],
     description: 'Search and list emails by query.',
   },
   {
@@ -27,6 +55,7 @@ export const GMAIL_OPERATIONS: OperationDescriptor[] = [
     name: 'Get message',
     risk: 'read',
     requiresApproval: false,
+    scopes: [READ],
     description: 'Retrieve a single email by ID.',
   },
   {
@@ -34,6 +63,7 @@ export const GMAIL_OPERATIONS: OperationDescriptor[] = [
     name: 'List threads',
     risk: 'read',
     requiresApproval: false,
+    scopes: [READ],
     description: 'List email conversation threads.',
   },
   {
@@ -41,6 +71,7 @@ export const GMAIL_OPERATIONS: OperationDescriptor[] = [
     name: 'Get thread',
     risk: 'read',
     requiresApproval: false,
+    scopes: [READ],
     description: 'Retrieve all messages in a thread.',
   },
   {
@@ -48,6 +79,7 @@ export const GMAIL_OPERATIONS: OperationDescriptor[] = [
     name: 'List labels',
     risk: 'read',
     requiresApproval: false,
+    scopes: [READ_LABELS],
     description: 'List all Gmail labels.',
   },
   {
@@ -55,6 +87,7 @@ export const GMAIL_OPERATIONS: OperationDescriptor[] = [
     name: 'Get label',
     risk: 'read',
     requiresApproval: false,
+    scopes: [READ_LABELS],
     description: 'Retrieve a single label by ID.',
   },
   {
@@ -62,6 +95,7 @@ export const GMAIL_OPERATIONS: OperationDescriptor[] = [
     name: 'List drafts',
     risk: 'read',
     requiresApproval: false,
+    scopes: [READ_DRAFTS],
     description: 'List email drafts.',
   },
   {
@@ -69,6 +103,7 @@ export const GMAIL_OPERATIONS: OperationDescriptor[] = [
     name: 'Get attachment',
     risk: 'read',
     requiresApproval: false,
+    scopes: [READ],
     description: 'Download an email attachment by ID.',
   },
   {
@@ -76,6 +111,7 @@ export const GMAIL_OPERATIONS: OperationDescriptor[] = [
     name: 'List history',
     risk: 'read',
     requiresApproval: false,
+    scopes: [READ],
     description: 'List mailbox history changes since a given historyId.',
   },
 
@@ -85,6 +121,7 @@ export const GMAIL_OPERATIONS: OperationDescriptor[] = [
     name: 'Modify labels',
     risk: 'write',
     requiresApproval: false,
+    scopes: [ORGANISE],
     description: 'Add or remove labels on a message.',
   },
   {
@@ -92,6 +129,7 @@ export const GMAIL_OPERATIONS: OperationDescriptor[] = [
     name: 'Trash message',
     risk: 'write',
     requiresApproval: false,
+    scopes: [ORGANISE],
     description: 'Move a message to Trash (reversible).',
   },
   {
@@ -99,6 +137,7 @@ export const GMAIL_OPERATIONS: OperationDescriptor[] = [
     name: 'Untrash message',
     risk: 'write',
     requiresApproval: false,
+    scopes: [ORGANISE],
     description: 'Restore a message from Trash.',
   },
   {
@@ -106,6 +145,7 @@ export const GMAIL_OPERATIONS: OperationDescriptor[] = [
     name: 'Modify thread labels',
     risk: 'write',
     requiresApproval: false,
+    scopes: [ORGANISE],
     description: 'Add or remove labels on all messages in a thread.',
   },
   {
@@ -113,6 +153,7 @@ export const GMAIL_OPERATIONS: OperationDescriptor[] = [
     name: 'Trash thread',
     risk: 'write',
     requiresApproval: false,
+    scopes: [ORGANISE],
     description: 'Move an entire thread to Trash (reversible).',
   },
   {
@@ -120,6 +161,7 @@ export const GMAIL_OPERATIONS: OperationDescriptor[] = [
     name: 'Create label',
     risk: 'write',
     requiresApproval: false,
+    scopes: [WRITE_LABELS],
     description: 'Create a new Gmail label.',
   },
   {
@@ -127,6 +169,7 @@ export const GMAIL_OPERATIONS: OperationDescriptor[] = [
     name: 'Update label',
     risk: 'write',
     requiresApproval: false,
+    scopes: [WRITE_LABELS],
     description: 'Rename or update a Gmail label.',
   },
   {
@@ -134,6 +177,7 @@ export const GMAIL_OPERATIONS: OperationDescriptor[] = [
     name: 'Create draft',
     risk: 'write',
     requiresApproval: false,
+    scopes: [DRAFTS, READ],
     description: 'Compose an email draft without sending.',
   },
   {
@@ -141,6 +185,7 @@ export const GMAIL_OPERATIONS: OperationDescriptor[] = [
     name: 'Update draft',
     risk: 'write',
     requiresApproval: false,
+    scopes: [DRAFTS],
     description: 'Update an existing email draft.',
   },
 
@@ -150,6 +195,7 @@ export const GMAIL_OPERATIONS: OperationDescriptor[] = [
     name: 'Reply to message',
     risk: 'destructive',
     requiresApproval: true,
+    scopes: [READ, SEND_MAIL],
     description: 'Send a reply in an existing thread.',
   },
   {
@@ -157,6 +203,7 @@ export const GMAIL_OPERATIONS: OperationDescriptor[] = [
     name: 'Forward message',
     risk: 'destructive',
     requiresApproval: true,
+    scopes: [READ, SEND_MAIL],
     description: 'Forward an email to new recipients.',
   },
   {
@@ -164,6 +211,7 @@ export const GMAIL_OPERATIONS: OperationDescriptor[] = [
     name: 'Send email',
     risk: 'destructive',
     requiresApproval: true,
+    scopes: [SEND_MAIL],
     description: 'Send an email from the connected mailbox (irreversible).',
   },
   {
@@ -171,6 +219,7 @@ export const GMAIL_OPERATIONS: OperationDescriptor[] = [
     name: 'Send draft',
     risk: 'destructive',
     requiresApproval: true,
+    scopes: [DRAFTS],
     description: 'Send a saved draft (irreversible).',
   },
   {
@@ -178,6 +227,7 @@ export const GMAIL_OPERATIONS: OperationDescriptor[] = [
     name: 'Delete message',
     risk: 'destructive',
     requiresApproval: true,
+    scopes: [PERMANENT_DELETE],
     description: 'Permanently delete a message (bypasses Trash).',
   },
   {
@@ -185,6 +235,7 @@ export const GMAIL_OPERATIONS: OperationDescriptor[] = [
     name: 'Delete label',
     risk: 'destructive',
     requiresApproval: true,
+    scopes: [WRITE_LABELS],
     description: 'Permanently delete a Gmail label.',
   },
   {
@@ -192,6 +243,7 @@ export const GMAIL_OPERATIONS: OperationDescriptor[] = [
     name: 'Delete draft',
     risk: 'destructive',
     requiresApproval: true,
+    scopes: [DRAFTS],
     description: 'Permanently delete an email draft.',
   },
 ];

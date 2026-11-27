@@ -8,7 +8,14 @@
 //                 docs_batch_update
 //   destructive — docs_delete_content_range
 
-import type { OperationDescriptor } from '@nodal-agents/shared';
+import type { OperationDescriptor, ScopeRequirement } from '@nodal-agents/shared';
+
+// OAuth right, from the Docs API reference: documents.get / create /
+// batchUpdate accept the documents scope, and the Drive scope too.
+const DOCS: ScopeRequirement = [
+  'https://www.googleapis.com/auth/documents',
+  'https://www.googleapis.com/auth/drive',
+];
 
 export const DOCS_OPERATIONS: OperationDescriptor[] = [
   // ─── Read (2) ────────────────────────────────────────────────────────────────
@@ -17,6 +24,7 @@ export const DOCS_OPERATIONS: OperationDescriptor[] = [
     name: 'Get document',
     risk: 'read',
     requiresApproval: false,
+    scopes: [DOCS],
     description: 'Retrieve full document structure and content.',
   },
   {
@@ -24,6 +32,7 @@ export const DOCS_OPERATIONS: OperationDescriptor[] = [
     name: 'Get document text',
     risk: 'read',
     requiresApproval: false,
+    scopes: [DOCS],
     description: 'Extract plain text from a Google Doc.',
   },
 
@@ -33,6 +42,7 @@ export const DOCS_OPERATIONS: OperationDescriptor[] = [
     name: 'Create document',
     risk: 'write',
     requiresApproval: false,
+    scopes: [DOCS],
     description: 'Create a new Google Docs document.',
   },
   {
@@ -40,6 +50,7 @@ export const DOCS_OPERATIONS: OperationDescriptor[] = [
     name: 'Insert text',
     risk: 'write',
     requiresApproval: false,
+    scopes: [DOCS],
     description: 'Insert text at a specific index in the document.',
   },
   {
@@ -47,6 +58,7 @@ export const DOCS_OPERATIONS: OperationDescriptor[] = [
     name: 'Append text',
     risk: 'write',
     requiresApproval: false,
+    scopes: [DOCS],
     description: 'Append text at the end of the document.',
   },
   {
@@ -54,6 +66,7 @@ export const DOCS_OPERATIONS: OperationDescriptor[] = [
     name: 'Replace text',
     risk: 'write',
     requiresApproval: false,
+    scopes: [DOCS],
     description: 'Find and replace text throughout the document.',
   },
   {
@@ -61,6 +74,7 @@ export const DOCS_OPERATIONS: OperationDescriptor[] = [
     name: 'Insert paragraph',
     risk: 'write',
     requiresApproval: false,
+    scopes: [DOCS],
     description: 'Insert a new paragraph at a given index.',
   },
   {
@@ -68,6 +82,7 @@ export const DOCS_OPERATIONS: OperationDescriptor[] = [
     name: 'Insert page break',
     risk: 'write',
     requiresApproval: false,
+    scopes: [DOCS],
     description: 'Insert a page break at a given index.',
   },
   {
@@ -75,6 +90,7 @@ export const DOCS_OPERATIONS: OperationDescriptor[] = [
     name: 'Insert table',
     risk: 'write',
     requiresApproval: false,
+    scopes: [DOCS],
     description: 'Insert a table with specified rows and columns.',
   },
   {
@@ -82,6 +98,7 @@ export const DOCS_OPERATIONS: OperationDescriptor[] = [
     name: 'Insert image',
     risk: 'write',
     requiresApproval: false,
+    scopes: [DOCS],
     description: 'Insert an image from a URL into the document.',
   },
   {
@@ -89,6 +106,7 @@ export const DOCS_OPERATIONS: OperationDescriptor[] = [
     name: 'Format text',
     risk: 'write',
     requiresApproval: false,
+    scopes: [DOCS],
     description: 'Apply text formatting (bold, italic, color) to a range.',
   },
   {
@@ -96,6 +114,7 @@ export const DOCS_OPERATIONS: OperationDescriptor[] = [
     name: 'Apply named style',
     risk: 'write',
     requiresApproval: false,
+    scopes: [DOCS],
     description: 'Apply a heading or paragraph style to a range.',
   },
   {
@@ -103,6 +122,7 @@ export const DOCS_OPERATIONS: OperationDescriptor[] = [
     name: 'Batch update',
     risk: 'write',
     requiresApproval: false,
+    scopes: [DOCS],
     description: 'Send multiple document update requests in a single API call.',
   },
 
@@ -112,6 +132,7 @@ export const DOCS_OPERATIONS: OperationDescriptor[] = [
     name: 'Delete content range',
     risk: 'destructive',
     requiresApproval: true,
+    scopes: [DOCS],
     description: 'Delete a range of content from the document (irreversible).',
   },
 ];
