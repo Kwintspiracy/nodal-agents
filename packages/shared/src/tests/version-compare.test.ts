@@ -4,7 +4,7 @@
 // triple-only or a string comparison gets wrong.
 
 import { describe, it, expect } from 'vitest';
-import { compareVersions, isNewerVersion } from '../version-compare.ts';
+import { compareVersions, isNewerVersion } from '../version-compare';
 
 describe('compareVersions: semver precedence @cap:installer-et-demarrer/moteur', () => {
   it('orders the numeric triple as numbers, not strings', () => {

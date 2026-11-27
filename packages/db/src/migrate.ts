@@ -65,8 +65,14 @@ export async function runMigrations(
 
   const migrationsFolder = effectiveMigrationsFolder(opts);
 
-  await migrate(db, { migrationsFolder });
-  await sql.end();
+  // Closed on failure too: a failed migration used to leave its connection
+  // open, and a database with a session on it can be neither copied nor
+  // renamed (the copy taken before it could not be swapped back in).
+  try {
+    await migrate(db, { migrationsFolder });
+  } finally {
+    await sql.end();
+  }
 }
 
 /**
