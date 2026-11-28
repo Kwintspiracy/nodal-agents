@@ -96,6 +96,12 @@ export interface JobContext {
    */
   availableToolNames?: readonly string[];
   /**
+   * The attached sources this job cannot use, one sentence each from their
+   * connection state (the runner's `withheldNote`). Rendered in the
+   * capabilities block. Omitted: none, or a caller without a job.
+   */
+  unavailableSources?: readonly string[];
+  /**
    * L'index des outils DIFFÉRÉS de ce job (#612) : leur nom et une ligne, pour
    * ceux dont le schéma ne part pas à chaque tour. `executeJob` le passe depuis
    * la même liste blanche que `availableToolNames`, MCP et connecteurs compris.
@@ -1700,6 +1706,9 @@ export async function buildSystemPrompt(
     configuredChannelSlugs: messagingChannels.configuredChannels,
     nodalTools: hasNodalTools,
     availableTools,
+    ...(jobContext?.unavailableSources
+      ? { unavailableSources: jobContext.unavailableSources }
+      : {}),
   });
 
   //    Messaging channels block — content assembled from `messagingChannelsBlock`

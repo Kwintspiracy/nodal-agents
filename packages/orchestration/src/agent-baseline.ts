@@ -316,6 +316,14 @@ export interface DiscoverabilityInput {
    * inconnu : aucun outil nommé.
    */
   availableTools?: readonly string[];
+  /**
+   * The sources attached to this agent that this job cannot use, one
+   * sentence each, written by the runner from their connection state
+   * (`connectionNoteForModel`): the same sentence a tool's error carries. A
+   * connector or server attached but disconnected is named here, never left
+   * out: an agent that does not know a service is attached improvises.
+   */
+  unavailableSources?: readonly string[];
 }
 
 /**
@@ -408,6 +416,14 @@ export function buildDiscoverabilityBlock(input: DiscoverabilityInput): string {
       'the section that fits before you answer — do NOT pretend you already can, do NOT ' +
       'refuse flatly, and do NOT ask the user to set up something that is already there.',
   ];
+
+  if (input.unavailableSources && input.unavailableSources.length > 0) {
+    lines.push(
+      '',
+      'Attached to you but not usable in this job (their tools are not in your list):',
+    );
+    for (const note of input.unavailableSources) lines.push(`- ${note}`);
+  }
 
   if (skills.length > 0) {
     lines.push('', 'Skills you can ask to be assigned:');

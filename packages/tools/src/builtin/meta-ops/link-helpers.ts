@@ -8,6 +8,7 @@
 import {
   eq,
   and,
+  asc,
   or,
   ilike,
   agents,
@@ -16,8 +17,10 @@ import {
   connectors,
   attachMcpServerToAgent,
   agentConnectorAssignments,
+  findIndistinctAccountOnAgent,
 } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
+import { accountNameKey, indistinctAccountsMessage } from '@nodal-agents/shared';
 
 /**
  * Escape ILIKE metacharacters (`%`, `_`, `\`) so a `slugOrName` value is
@@ -146,14 +149,23 @@ export async function resolveSkillId(
   return row?.id ?? null;
 }
 
-/** Resolve a connector by slug OR name within an entity. */
+/**
+ * Resolve a connector by name OR slug within an entity.
+ *
+ * A workspace may hold several connectors of one slug (a personal and a work
+ * Gmail): a slug then names several, and none is picked for the caller. A
+ * name designates the connector that carries it; a slug, the one connector of
+ * that slug. When the words designate several, the answer is `ambiguous` with
+ * their names, and the caller says so: never the first row the database
+ * returns.
+ */
 export async function resolveConnectorId(
   db: AnyDrizzleDb,
   entityId: string,
   slugOrName: string,
-): Promise<string | null> {
-  const [row] = await db
-    .select({ id: connectors.id })
+): Promise<{ id: string } | { ambiguous: string[] } | null> {
+  const rows = await db
+    .select({ id: connectors.id, slug: connectors.slug, name: connectors.name })
     .from(connectors)
     .where(
       and(
@@ -161,8 +173,20 @@ export async function resolveConnectorId(
         or(eq(connectors.slug, slugOrName), ilike(connectors.name, escapeLikePattern(slugOrName))),
       ),
     )
-    .limit(1);
-  return row?.id ?? null;
+    .orderBy(asc(connectors.name), asc(connectors.id));
+  const byName = rows.filter((r) => accountNameKey(r.name) === accountNameKey(slugOrName));
+  const candidates = byName.length > 0 ? byName : rows.filter((r) => r.slug === slugOrName);
+  if (candidates.length === 0) return null;
+  if (candidates.length === 1) return { id: candidates[0]!.id };
+  return { ambiguous: candidates.map((r) => `"${r.name}" (${r.slug})`) };
+}
+
+/** What a caller says when `resolveConnectorId` answered `ambiguous`. */
+export function ambiguousConnectorMessage(words: string, candidates: readonly string[]): string {
+  return (
+    `"${words}" names several connectors of this workspace: ${candidates.join(', ')}. ` +
+    `Call again with the name of the one you mean.`
+  );
 }
 
 /**
@@ -180,15 +204,29 @@ export async function linkMcpToAgent(
   return attached.ok ? { ok: true } : { ok: false, error: attached.message };
 }
 
-/** Link a connector to an agent (idempotent). */
+/**
+ * Link a connector to an agent (idempotent: an existing link keeps its
+ * operations). Refused when the agent already holds another account of the
+ * same service under a name a model could not tell apart from this one's:
+ * the tools of several accounts take an `account` argument whose values are
+ * their names. The error names both connectors.
+ */
 export async function linkConnectorToAgent(
   db: AnyDrizzleDb,
   entityId: string,
   agentId: string,
   connectorId: string,
-): Promise<void> {
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const [connector] = await db
+    .select({ id: connectors.id, slug: connectors.slug, name: connectors.name })
+    .from(connectors)
+    .where(and(eq(connectors.id, connectorId), eq(connectors.entityId, entityId)));
+  if (!connector) return { ok: false, error: 'Connector not found in this workspace.' };
+  const clash = await findIndistinctAccountOnAgent(db, agentId, connector);
+  if (clash) return { ok: false, error: indistinctAccountsMessage(connector, clash) };
   await db
     .insert(agentConnectorAssignments)
     .values({ entityId, agentId, connectorId, enabledOperations: null })
     .onConflictDoNothing();
+  return { ok: true };
 }

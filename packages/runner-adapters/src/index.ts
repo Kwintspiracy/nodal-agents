@@ -3,3 +3,4 @@
 
 export { ADAPTER_REGISTRY, bindOperationDescriptors } from './registry';
 export type { AdapterEntry } from './registry';
+export { connectorAccessFor } from './connector-access';

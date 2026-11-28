@@ -313,7 +313,12 @@ export async function applyCampaignConfig(
         assigned: true,
         enabledOperations: [...conn.operations],
       });
-      if ('error' in r) fail('campaign_connector', `${a.slug} ← ${conn.slug}: ${r.error}`);
+      if ('error' in r) {
+        fail(
+          'campaign_connector',
+          `${a.slug} ← ${conn.slug}: ${'message' in r ? r.message : r.error}`,
+        );
+      }
     }
 
     for (const [i, f] of a.folders.entries()) {

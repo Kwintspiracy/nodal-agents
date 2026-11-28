@@ -41,14 +41,13 @@ the **···** menu → **Connections** → select your integration. Then retry.
 
 **Symptom.** The Airtable OAuth flow fails with `invalid_scope`.
 
-**Cause.** The four required scopes weren't saved on the integration before you
+**Cause.** The three required scopes weren't saved on the integration before you
 started the flow. Checking the boxes isn't enough — the integration has to be
 saved/updated so the scopes persist.
 
 **Fix.** At [airtable.com/create/oauth](https://airtable.com/create/oauth) check
-`data.records:read`, `data.records:write`, `schema.bases:read`,
-`schema.bases:write`, then **save/update** the integration so the scopes stick,
-and retry.
+`data.records:read`, `data.records:write`, `schema.bases:read`, then
+**save/update** the integration so the scopes stick, and retry.
 
 <Callout type="warn">
   Airtable also rejects raw LAN-IP redirect URIs (e.g. `192.168.x.x`). If your dashboard runs on a

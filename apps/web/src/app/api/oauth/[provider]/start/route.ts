@@ -1,14 +1,29 @@
 // POST /api/oauth/[provider]/start
-// Initiates the OAuth authorization code flow: validates session + input,
-// generates PKCE + CSRF state, signs a cookie, and redirects the browser
-// to the provider's authorization URL.
+// Initiates the OAuth authorization code flow FOR A CONNECTOR: validates
+// session + input, generates PKCE + CSRF state, signs a cookie, and redirects
+// the browser to the provider's authorization URL.
+//
+// `[provider]` is the credential type (`google-oauth`, `microsoft-oauth`, …):
+// it names the OAuth client the person registered, so it is also the redirect
+// URI they registered with the provider. The connector being connected comes
+// in the body (`connector`), and the scopes asked for are that connector's
+// provider entry, on top of what the credential already holds when the start
+// adds access to an existing credential (`credentialId`). A start that names
+// no connector is refused: there is no "first provider of the type" to fall
+// back to, since that is how a Gmail card ended up asking for Drive.
 
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { encrypt } from '@nodal-agents/secrets';
-import { getAuthProvider, requireAuth } from '@/lib/server.ts';
-import { getOAuthProvider, getProviderByCredentialType } from '@/lib/oauth-providers.ts';
-import type { CredentialType } from '@nodal-agents/shared';
+import { decryptCredentialForDisplay } from '@nodal-agents/db';
+import { getAuthProvider, getDb, requireAuth } from '@/lib/server.ts';
+import { getOAuthProvider } from '@/lib/oauth-providers.ts';
+import {
+  CREDENTIAL_TYPES,
+  parseScopes,
+  unionScopes,
+  type CredentialType,
+} from '@nodal-agents/shared';
 import {
   generatePkce,
   generateState,
@@ -16,23 +31,33 @@ import {
   STATE_COOKIE_NAME,
 } from '@/lib/oauth-state.ts';
 
-const StartBodySchema = z.object({
-  clientId: z.string().min(1, 'Client ID is required'),
-  clientSecret: z.string().min(1, 'Client secret is required'),
-  // name comes from a non-required HTML input; empty string → treat as absent.
-  name: z
+/** An HTML input left empty arrives as '' — treat it as absent. */
+const optionalText = (max: number) =>
+  z
     .string()
-    .max(120)
+    .max(max)
     .optional()
-    .transform((v) => (v === '' || v === undefined ? undefined : v)),
+    .transform((v) => (v === '' || v === undefined ? undefined : v));
+
+const StartBodySchema = z.object({
+  connector: z
+    .string({ error: 'connector is required: an authorisation is asked for one connector' })
+    .min(1, 'connector is required: an authorisation is asked for one connector')
+    .max(80),
+  // Present when the start ADDS access to a credential the person already
+  // has: its client id and secret are reused, its granted scopes are kept.
+  credentialId: optionalText(64).pipe(z.string().guid('Invalid credential id').optional()),
+  clientId: optionalText(500),
+  clientSecret: optionalText(500),
+  name: optionalText(120),
   // Optional URL to redirect to after the credential is created.
   // The callback will append ?credentialId={id} to this URL.
-  returnTo: z
-    .string()
-    .max(500)
-    .optional()
-    .transform((v) => (v === '' || v === undefined ? undefined : v)),
+  returnTo: optionalText(500),
 });
+
+function isCredentialType(value: string): value is CredentialType {
+  return (CREDENTIAL_TYPES as readonly string[]).includes(value);
+}
 
 export async function POST(
   req: Request,
@@ -48,12 +73,11 @@ export async function POST(
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  // 2. Resolve provider — slug can be either a catalog connector slug (e.g. 'google-drive')
-  // or a credentialType (e.g. 'google-oauth') when the wizard posts directly via type.
-  const provider = getOAuthProvider(slug) ?? getProviderByCredentialType(slug as CredentialType);
-  if (!provider) {
+  // 2. The path names the credential type (the OAuth client).
+  if (!isCredentialType(slug)) {
     return NextResponse.json({ error: `Unknown OAuth provider: ${slug}` }, { status: 400 });
   }
+  const credentialType = slug;
 
   // 3. Parse form-encoded body
   let rawBody: Record<string, string>;
@@ -70,19 +94,63 @@ export async function POST(
     return NextResponse.json({ error: message }, { status: 400 });
   }
 
-  const { clientId, clientSecret, name, returnTo } = parsed.data;
+  const { connector, credentialId, name, returnTo } = parsed.data;
 
-  // 4. Encrypt clientSecret for storage in signed cookie
+  // 4. The connector decides the scopes; it must authorise through this type.
+  const provider = getOAuthProvider(connector);
+  if (!provider || provider.credentialType !== credentialType) {
+    return NextResponse.json(
+      { error: `Connector '${connector}' does not authorise through '${credentialType}'` },
+      { status: 400 },
+    );
+  }
+
+  // 5. Adding access to an existing credential: reuse its client, keep its grant.
+  let clientId: string;
+  let clientSecret: string;
+  let heldScopes: string[] = [];
+  if (credentialId !== undefined) {
+    const existing = await decryptCredentialForDisplay(getDb(), credentialId);
+    if (!existing || existing.ownerUserId !== session.userId) {
+      return NextResponse.json({ error: 'Credential not found' }, { status: 404 });
+    }
+    if (existing.type !== credentialType) {
+      return NextResponse.json(
+        { error: `Credential type '${existing.type}' is not '${credentialType}'` },
+        { status: 400 },
+      );
+    }
+    clientId = existing.payload.clientId;
+    clientSecret = existing.payload.clientSecret;
+    heldScopes = parseScopes(existing.payload.scopes);
+  } else {
+    if (!parsed.data.clientId) {
+      return NextResponse.json({ error: 'Client ID is required' }, { status: 400 });
+    }
+    if (!parsed.data.clientSecret) {
+      return NextResponse.json({ error: 'Client secret is required' }, { status: 400 });
+    }
+    clientId = parsed.data.clientId;
+    clientSecret = parsed.data.clientSecret;
+  }
+
+  // The union: the connector's scopes on top of what the grant already holds,
+  // so the new token never covers less than the one it replaces (a provider
+  // that merges grants itself, like Google with include_granted_scopes, gets
+  // the same answer; one that does not still gets the full list).
+  const requestedScopes = unionScopes(provider.scopes, heldScopes);
+
+  // 6. Encrypt clientSecret for storage in signed cookie
   const clientSecretEnc = encrypt(clientSecret);
 
-  // 5. PKCE
+  // 7. PKCE
   const { codeVerifier, codeChallenge } =
     provider.pkce === 'pkce-s256' ? generatePkce() : { codeVerifier: '', codeChallenge: '' };
 
-  // 6. CSRF state
+  // 8. CSRF state
   const csrfState = generateState();
 
-  // 7. Build + sign the state cookie payload
+  // 9. Build + sign the state cookie payload
   const statePayload = {
     v: 1 as const,
     slug,
@@ -91,14 +159,17 @@ export async function POST(
     codeVerifier,
     clientId,
     clientSecretEnc,
-    credentialType: provider.credentialType,
+    credentialType,
+    connector,
+    requestedScopes: requestedScopes.join(' '),
+    ...(credentialId !== undefined ? { credentialId } : {}),
     ...(name !== undefined ? { name } : {}),
     ...(returnTo !== undefined ? { returnTo } : {}),
     createdAt: Date.now(),
   };
   const cookieValue = signStatePayload(statePayload);
 
-  // 8. Cookie attributes
+  // 10. Cookie attributes
   const isHttps = new URL(req.url).protocol === 'https:';
   const cookieAttr = [
     `${STATE_COOKIE_NAME}=${cookieValue}`,
@@ -109,7 +180,7 @@ export async function POST(
     ...(isHttps ? ['Secure'] : []),
   ].join('; ');
 
-  // 9. Build the provider authorization URL
+  // 11. Build the provider authorization URL
   const origin = new URL(req.url).origin;
   const redirectUri = `${origin}/api/oauth/${slug}/callback`;
 
@@ -119,8 +190,8 @@ export async function POST(
   authParams.set('response_type', 'code');
   authParams.set('state', csrfState);
 
-  if (provider.scopes.length > 0) {
-    authParams.set('scope', provider.scopes.join(' '));
+  if (requestedScopes.length > 0) {
+    authParams.set('scope', requestedScopes.join(' '));
   }
 
   if (provider.pkce === 'pkce-s256') {
@@ -136,7 +207,7 @@ export async function POST(
 
   const authUrl = `${provider.authUrl}?${authParams.toString()}`;
 
-  // 10. Redirect with cookie
+  // 12. Redirect with cookie
   const response = NextResponse.redirect(authUrl, 302);
   response.headers.set('Set-Cookie', cookieAttr);
   return response;

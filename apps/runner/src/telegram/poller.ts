@@ -37,6 +37,7 @@ import {
   buildAuthConfirmKeyboard,
 } from './auth-callback.ts';
 import { stopReaction } from '../channels/turn.ts';
+import { deliveryLinkSignal, recordChannelLink } from '../channels/link-state.ts';
 
 export interface PollerOpts {
   agentId: string;
@@ -230,6 +231,9 @@ export async function runTelegramPoller(opts: PollerOpts): Promise<PollerExit> {
   // its update either succeeds or is dead-lettered, so this never accumulates
   // beyond "currently-failing updates we haven't given up on yet".
   const failureCounts = new Map<number, number>();
+  // The link's state as last recorded (connection_states), so a long poll
+  // writes on a change only, not every 25 seconds.
+  let link: 'unknown' | 'working' | 'failed' = 'unknown';
 
   while (!signal.aborted) {
     let updates: TelegramUpdate[];
@@ -245,9 +249,15 @@ export async function runTelegramPoller(opts: PollerOpts): Promise<PollerExit> {
 
       if (err instanceof DeliveryError && err.code === 'telegram_invalid_token') {
         // The token was revoked, deleted, or rotated. Stop polling — the next
-        // (re)configuration via the dashboard will respawn this poller.
+        // (re)configuration via the dashboard will respawn this poller. The
+        // link's state says it, on the agent's Channels tab.
         console.warn(`[telegram-poller agent=${agentId}] invalid_token; stopping`);
+        await recordChannelLink(deps.db, agentId, 'telegram', deliveryLinkSignal(err));
         return { reason: 'invalid_token', finalOffset: offset };
+      }
+      if (link !== 'failed') {
+        link = 'failed';
+        await recordChannelLink(deps.db, agentId, 'telegram', deliveryLinkSignal(err));
       }
 
       // Transient error — back off and retry. Don't burn CPU on hard failures.
@@ -263,6 +273,10 @@ export async function runTelegramPoller(opts: PollerOpts): Promise<PollerExit> {
 
     // Recovered from any transient — reset backoff.
     backoffMs = BACKOFF_INITIAL_MS;
+    if (link !== 'working') {
+      link = 'working';
+      await recordChannelLink(deps.db, agentId, 'telegram', { link: 'up' });
+    }
 
     for (const update of updates) {
       if (signal.aborted) break;
