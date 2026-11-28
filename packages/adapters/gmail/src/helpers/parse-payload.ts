@@ -152,3 +152,37 @@ export function parseGmailHeaders(
   }
   return result;
 }
+
+/** A file a message carries: an attachment, or an inline part such as an image in the body. */
+export interface CarriedFileInfo {
+  filename: string;
+  mimeType: string;
+  inline: boolean;
+}
+
+/**
+ * Every named file part of a message, attachments and inline parts alike, so a
+ * forward can say what it carried. A part counts as inline when its
+ * Content-Disposition says so, or when it has a Content-ID and no disposition
+ * (the form an image referenced by `cid:` in an HTML body takes).
+ */
+export function extractCarriedFiles(
+  payload: gmail_v1.Schema$MessagePart | undefined,
+  out: CarriedFileInfo[] = [],
+): CarriedFileInfo[] {
+  if (!payload) return out;
+  if (payload.filename) {
+    const headers = parseGmailHeaders(payload);
+    const disposition = (headers['content-disposition'] ?? '').trim().toLowerCase();
+    const inline =
+      disposition.startsWith('inline') ||
+      (disposition === '' && headers['content-id'] !== undefined);
+    out.push({
+      filename: payload.filename,
+      mimeType: payload.mimeType ?? 'application/octet-stream',
+      inline,
+    });
+  }
+  for (const part of payload.parts ?? []) extractCarriedFiles(part, out);
+  return out;
+}

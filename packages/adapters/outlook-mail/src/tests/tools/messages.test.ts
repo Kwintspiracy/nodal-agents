@@ -6,8 +6,6 @@ import {
   createListMessagesTool,
   createGetMessageTool,
   createSendEmailTool,
-  createReplyMessageTool,
-  createForwardMessageTool,
   createDeleteMessageTool,
   createUpdateMessageTool,
   createMoveMessageTool,
@@ -251,54 +249,9 @@ describe('outlook_send_email', () => {
   });
 });
 
-describe('outlook_reply_message', () => {
-  it('posts to /reply by default', async () => {
-    const req = makeMockRequest();
-    req.post.mockResolvedValueOnce(undefined);
-    const { client } = makeMockClient({ '/me/messages/m-1/reply': req });
-
-    const tool = createReplyMessageTool(client);
-    const result = await tool.execute({ message_id: 'm-1', comment: 'Thanks!' }, {} as never);
-
-    expect(result).toEqual({ sent: true, replyAll: false });
-    expect(req.post).toHaveBeenCalledWith({ comment: 'Thanks!' });
-  });
-
-  it('posts to /replyAll when reply_all is true', async () => {
-    const req = makeMockRequest();
-    req.post.mockResolvedValueOnce(undefined);
-    const { client, api } = makeMockClient({ '/me/messages/m-1/replyAll': req });
-
-    const tool = createReplyMessageTool(client);
-    const result = await tool.execute(
-      { message_id: 'm-1', comment: 'Thanks all!', reply_all: true },
-      {} as never,
-    );
-
-    expect(api).toHaveBeenCalledWith('/me/messages/m-1/replyAll');
-    expect(result.replyAll).toBe(true);
-  });
-});
-
-describe('outlook_forward_message', () => {
-  it('posts recipients and comment to /forward', async () => {
-    const req = makeMockRequest();
-    req.post.mockResolvedValueOnce(undefined);
-    const { client } = makeMockClient({ '/me/messages/m-1/forward': req });
-
-    const tool = createForwardMessageTool(client);
-    const result = await tool.execute(
-      { message_id: 'm-1', to: 'x@example.com', comment: 'FYI' },
-      {} as never,
-    );
-
-    expect(result.sent).toBe(true);
-    expect(req.post).toHaveBeenCalledWith({
-      comment: 'FYI',
-      toRecipients: [{ emailAddress: { address: 'x@example.com' } }],
-    });
-  });
-});
+// outlook_reply_message and outlook_forward_message are proved by the mail
+// contract's conformance suite (../mail-contract.test.ts), on the requests
+// Graph would receive.
 
 describe('outlook_delete_message', () => {
   it('moves the message to deleteditems and returns the new id', async () => {
