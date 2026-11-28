@@ -98,6 +98,7 @@ import {
   type ProjectManifests,
   type VerifyCommand,
   type VerificationSurfaces,
+  MODEL_PROVIDER_NAMES,
 } from '@nodal-agents/shared';
 import {
   currentManifestHash,
@@ -348,7 +349,7 @@ import { readReviewVerdicts, type ReviewVerdictView } from './review-verdicts.ts
 import { afterJobItems, type ThreadJob } from './conversation-thread.ts';
 import type { ThreadDeclaredDeliverable } from './declared-proof.ts';
 import { classifyProduction, constatedTurnKey } from './chat-or-work.ts';
-import { probeContextWindow, providerFetch } from '@nodal-agents/llm';
+import { probeContextWindow, providerFetch, resolveProviderEndpoint } from '@nodal-agents/llm';
 import {
   systemSkillSlugs,
   skillKindOfSlug,
@@ -12650,19 +12651,9 @@ export async function claimOwnerAccountAction(raw: unknown): Promise<ActionResul
 //   • testLlmKeyAction redacts the apiKey in any error message before return.
 //   • All actions verify entityId ownership via getSession().
 
-const PROVIDER_VALUES = [
-  'anthropic',
-  'openai',
-  'openai-compatible',
-  'ollama',
-  'openrouter',
-  'google',
-  'mistral',
-  'groq',
-  'deepseek',
-  'minimax',
-  'moonshot',
-] as const;
+// The one list of providers, beside the address each one is reached at
+// (`PROVIDER_ENDPOINTS`, @nodal-agents/shared).
+const PROVIDER_VALUES = MODEL_PROVIDER_NAMES;
 
 export type LlmProvider = (typeof PROVIDER_VALUES)[number];
 
@@ -13112,48 +13103,31 @@ async function ssrfSafeFetch(url: string, init: RequestInit): Promise<Response> 
   return res;
 }
 
+/**
+ * The probe of each provider: which path answers for a key, and how the key is
+ * presented. WHERE it is sent is not here: the address comes from
+ * `resolveProviderEndpoint` (@nodal-agents/llm), the function every model
+ * client of the runner is built from, so a test and a real call reach the
+ * same address for the same row.
+ */
 const PROVIDER_TEST_CONFIG: Record<
   LlmProvider,
   {
-    canonicalBase: string | null;
     path: string;
     auth: 'bearer' | 'x-api-key' | 'query' | 'none';
   }
 > = {
-  anthropic: {
-    canonicalBase: 'https://api.anthropic.com/v1',
-    path: '/models',
-    auth: 'x-api-key',
-  },
-  openai: { canonicalBase: 'https://api.openai.com/v1', path: '/models', auth: 'bearer' },
-  openrouter: {
-    canonicalBase: 'https://openrouter.ai/api/v1',
-    path: '/auth/key',
-    auth: 'bearer',
-  },
-  google: {
-    canonicalBase: 'https://generativelanguage.googleapis.com/v1beta',
-    path: '/models',
-    auth: 'query',
-  },
-  mistral: { canonicalBase: 'https://api.mistral.ai/v1', path: '/models', auth: 'bearer' },
-  groq: { canonicalBase: 'https://api.groq.com/openai/v1', path: '/models', auth: 'bearer' },
-  'openai-compatible': { canonicalBase: null, path: '/models', auth: 'bearer' },
-  ollama: { canonicalBase: null, path: '/api/tags', auth: 'none' },
-  // /v1 matters here — the runtime registry (packages/llm/src/providers/registry.ts,
-  // the source of truth) uses api.deepseek.com/v1; this canonicalBase had
-  // drifted to the bare host (toilettage, audit #2).
-  deepseek: { canonicalBase: 'https://api.deepseek.com/v1', path: '/models', auth: 'bearer' },
-  minimax: {
-    canonicalBase: 'https://api.minimax.io/anthropic',
-    path: '/v1/models',
-    auth: 'bearer',
-  },
-  moonshot: {
-    canonicalBase: 'https://api.moonshot.ai/v1',
-    path: '/models',
-    auth: 'bearer',
-  },
+  anthropic: { path: '/models', auth: 'x-api-key' },
+  openai: { path: '/models', auth: 'bearer' },
+  openrouter: { path: '/auth/key', auth: 'bearer' },
+  google: { path: '/models', auth: 'query' },
+  mistral: { path: '/models', auth: 'bearer' },
+  groq: { path: '/models', auth: 'bearer' },
+  'openai-compatible': { path: '/models', auth: 'bearer' },
+  ollama: { path: '/api/tags', auth: 'none' },
+  deepseek: { path: '/models', auth: 'bearer' },
+  minimax: { path: '/v1/models', auth: 'bearer' },
+  moonshot: { path: '/models', auth: 'bearer' },
 };
 
 /**
@@ -13256,17 +13230,18 @@ export async function testLlmKeyAction(raw: unknown): Promise<ActionResult<{ mes
     }
 
     // ── Build the test request per provider ────────────────────────────────────
-    // Each provider has a canonical base URL; the user's baseUrl (if set)
-    // takes precedence so proxies / alternate regions / mocks can be tested.
-    // The validation path is always the auth-required endpoint for that
+    // The address is the one a real call of the runner reaches for the same
+    // values: `resolveProviderEndpoint`, the stored baseUrl if set, else the
+    // provider's official address; never one read from the environment. The
+    // validation path is always the auth-required endpoint for that
     // provider — `/models` is public on OpenRouter so we hit `/auth/key`
     // there instead, which 401s on a bad key.
     const cfg = PROVIDER_TEST_CONFIG[provider];
-    // Resolve the effective base: user-provided wins, else canonical.
-    // openai-compatible and ollama require a user-provided baseUrl.
-    const effectiveBase = (baseUrl ?? '').replace(/\/$/, '') || cfg.canonicalBase;
-    if (!effectiveBase) {
-      return fail('validation_failed', `baseUrl is required for ${provider}`);
+    let effectiveBase: string;
+    try {
+      effectiveBase = resolveProviderEndpoint({ provider, baseURL: baseUrl, apiKey }).baseURL;
+    } catch (err) {
+      return fail('validation_failed', err instanceof Error ? err.message : String(err));
     }
 
     const ssrfError = await assertSsrfSafeUrl(effectiveBase);
@@ -13347,9 +13322,12 @@ export async function listKeyModelsAction(keyId: string): Promise<ActionResult<s
     const decryptedKey =
       saved.apiKey && saved.apiKey.length > 0 ? decrypt(saved.apiKey) : undefined;
 
-    const cfg = PROVIDER_TEST_CONFIG[provider];
-    const effectiveBase = (saved.baseUrl ?? '').replace(/\/$/, '') || cfg?.canonicalBase;
-    if (!effectiveBase) return ok([]);
+    // Same address as a real call for this row (`resolveProviderEndpoint`).
+    const effectiveBase = resolveProviderEndpoint({
+      provider,
+      baseURL: saved.baseUrl,
+      apiKey: decryptedKey,
+    }).baseURL;
 
     const modelIds = await fetchProviderModelIds(provider, effectiveBase, decryptedKey);
     return ok(modelIds);

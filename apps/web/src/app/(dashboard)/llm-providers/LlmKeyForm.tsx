@@ -9,6 +9,7 @@ import {
   type LlmKeyUiRow,
   type LlmProvider,
 } from '@/lib/actions.ts';
+import { PROVIDER_ENDPOINTS } from '@nodal-agents/shared';
 import { prettyProviderName } from '@/lib/provider-names.ts';
 import PrimaryButton from '@/components/ui/PrimaryButton.tsx';
 import RowActionButton from '@/components/ui/RowActionButton';
@@ -16,24 +17,16 @@ import TextInput from '@/components/ui/TextInput';
 import Select from '@/components/ui/Select';
 import Checkbox from '@/components/ui/Checkbox';
 
-// Inline preset table — packages/llm is server-only, so we can't import its
-// PROVIDER_PRESETS map into a client component. Canonical URLs shown as
-// placeholders so users have a known-good default to start from. Cloud
-// providers can leave the field blank (server falls back to canonical);
-// openai-compatible and ollama require a value.
-const BASE_URL_PRESETS: Record<LlmProvider, string> = {
-  anthropic: 'https://api.anthropic.com/v1',
-  openai: 'https://api.openai.com/v1',
-  'openai-compatible': 'http://localhost:1234/v1',
-  ollama: 'http://localhost:11434',
-  openrouter: 'https://openrouter.ai/api/v1',
-  google: 'https://generativelanguage.googleapis.com/v1beta',
-  mistral: 'https://api.mistral.ai/v1',
-  groq: 'https://api.groq.com/openai/v1',
-  deepseek: 'https://api.deepseek.com/v1',
-  minimax: 'https://api.minimax.io/anthropic',
-  moonshot: 'https://api.moonshot.ai/v1',
-};
+// Where a key is sent when the address field is left blank: the provider's
+// official address, from the same table the runner's clients and the
+// connection test read (`PROVIDER_ENDPOINTS`, @nodal-agents/shared). A server
+// the person runs (openai-compatible) has none: the field is required and the
+// suggestion is LM Studio's default address.
+const LOCAL_SERVER_SUGGESTION = 'http://localhost:1234/v1';
+
+function suggestedBaseUrl(p: LlmProvider): string {
+  return PROVIDER_ENDPOINTS[p].officialBaseUrl ?? LOCAL_SERVER_SUGGESTION;
+}
 
 const PROVIDER_OPTIONS: LlmProvider[] = [
   'anthropic',
@@ -120,8 +113,8 @@ export default function LlmKeyForm(props: Props) {
   function handleProviderChange(next: LlmProvider) {
     setProvider(next);
     // Suggest a sensible baseUrl when there's no value yet
-    if (!baseUrl && BASE_URL_PRESETS[next]) {
-      setBaseUrl(BASE_URL_PRESETS[next]);
+    if (!baseUrl) {
+      setBaseUrl(suggestedBaseUrl(next));
     }
     markStale();
   }
@@ -192,7 +185,7 @@ export default function LlmKeyForm(props: Props) {
     });
   }
 
-  const baseUrlPlaceholder = BASE_URL_PRESETS[provider] || 'https://...';
+  const baseUrlPlaceholder = suggestedBaseUrl(provider);
 
   return (
     <form

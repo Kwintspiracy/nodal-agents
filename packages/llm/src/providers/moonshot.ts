@@ -28,8 +28,7 @@ import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import type { LanguageModel } from 'ai';
 import { findModelCatalogEntry } from '@nodal-agents/shared';
 import type { ProviderConfig } from '../types';
-import { ProviderConfigError } from '../errors';
-import { PROVIDER_PRESETS } from './registry';
+import { resolveProviderEndpoint } from '../endpoint';
 import { createTolerantFetch } from './tolerant-fetch';
 import { sanitizeMoonshotTools } from './moonshot-schema';
 import { providerFetch } from '../transport';
@@ -115,11 +114,7 @@ function createMoonshotFetch(
 // ─── Provider builder ──────────────────────────────────────────────────────────
 
 export function buildMoonshotModel(config: ProviderConfig): LanguageModel {
-  if (!config.apiKey) {
-    throw new ProviderConfigError('moonshot provider requires an apiKey');
-  }
-
-  const baseURL = config.baseURL ?? PROVIDER_PRESETS.moonshot.defaultBaseURL;
+  const { baseURL, apiKey } = resolveProviderEndpoint(config);
 
   // Gate thinking injection on the catalog reasoning flag AND the K2 line.
   // `thinking: {type:'enabled'}` is a K2-line parameter (kimi-k2.6,
@@ -146,7 +141,7 @@ export function buildMoonshotModel(config: ProviderConfig): LanguageModel {
   const provider = createOpenAICompatible({
     name: 'moonshot',
     baseURL,
-    apiKey: config.apiKey,
+    apiKey,
     fetch: createMoonshotFetch({ injectThinking: isReasoning, reasoningEffort: k3Effort }),
     // Same as openai-compatible.ts: ask for the usage of a streamed turn.
     includeUsage: true,

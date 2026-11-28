@@ -35,6 +35,7 @@ export * from './connector-catalog';
 export * from './connector-accounts';
 export * from './community-skill-catalog';
 export * from './model-catalog';
+export * from './provider-endpoints';
 export * from './model-image-budget';
 export * from './mcp-catalog';
 export * from './timezone';

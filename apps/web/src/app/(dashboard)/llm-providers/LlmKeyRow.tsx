@@ -9,6 +9,7 @@ import ConfirmDialog from '@/components/ConfirmDialog.tsx';
 import RowActionButton from '@/components/ui/RowActionButton';
 import Switch from '@/components/ui/Switch';
 import { deleteLlmKeyAction, setLlmKeyActiveAction, type LlmKeyUiRow } from '@/lib/actions.ts';
+import { isModelProviderName, providerDestination } from '@nodal-agents/shared';
 import { prettyProviderName } from '@/lib/provider-names.ts';
 
 interface Props {
@@ -48,6 +49,9 @@ export default function LlmKeyRow({ row, onEdit, onDeleted }: Props) {
   }
 
   const { bg, fg, initials } = providerGlyph(row.provider);
+  const destination = isModelProviderName(row.provider)
+    ? providerDestination(row.provider, row.baseUrl)
+    : row.baseUrl;
 
   return (
     <div className="flex flex-col gap-3 rounded-2xl border border-rule-2 bg-paper p-[18px]">
@@ -86,10 +90,12 @@ export default function LlmKeyRow({ row, onEdit, onDeleted }: Props) {
 
       {/* Detail row: base URL + API key indicator */}
       <div className="flex flex-col gap-1">
-        {row.baseUrl && (
+        {/* Where this key is sent: the stored address, else the provider's
+            official one (the address every call and the connection test use). */}
+        {destination && (
           <div className="flex items-center gap-2 rounded-lg bg-canvas px-[10px] py-[7px]">
             <code className="flex-1 truncate text-mono-13 leading-none! text-ink">
-              {row.baseUrl}
+              {destination}
             </code>
           </div>
         )}

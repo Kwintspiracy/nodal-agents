@@ -252,6 +252,91 @@ export function scanForForbiddenPackageImports(
 }
 
 /**
+ * The packages whose factories build a model provider client. When a base URL
+ * or a key is not passed, these factories read one from the process
+ * environment, so the destination of a key would be decided by whatever the
+ * shell that started Nodal exports. `@ai-sdk/provider` and
+ * `@ai-sdk/provider-utils` are type and helper packages, not clients.
+ */
+const PROVIDER_SDK_SPECIFIER = String.raw`['"](@ai-sdk\/(?!provider(?:-utils)?['"/])[^'"/]+|@openrouter\/ai-sdk-provider|ollama-ai-provider[^'"/]*|@anthropic-ai\/sdk|openai|@google\/genai|@google\/generative-ai|@mistralai\/[^'"/]+|groq-sdk)(?:\/[^'"]*)?['"]`;
+
+export const MODEL_PROVIDER_SDK_IMPORT = new RegExp(
+  String.raw`(?:from\s+|import\s*\(\s*)` + PROVIDER_SDK_SPECIFIER,
+);
+
+/**
+ * Invariant: a model provider client is built in ONE package (`@nodal-agents/llm`).
+ * Run over any other package's source: every import of a provider SDK is a
+ * violation, because a client built there would not go through the endpoint
+ * resolution (`resolveProviderEndpoint`) that decides where a key is sent.
+ */
+export function scanForModelProviderSdkImports(opts: ScanOptions): Violation[] {
+  return scanForPattern(opts, {
+    pattern: MODEL_PROVIDER_SDK_IMPORT,
+    rule: 'model-provider-sdk-import',
+  });
+}
+
+/**
+ * Invariant: inside the package that builds model clients, every factory call
+ * of a provider SDK is matched by a `resolveProviderEndpoint(` call in the same
+ * file, so each client receives the stored (or official) address and the
+ * stored key explicitly, never an environment default.
+ *
+ * The factories are found from the file's own imports of a provider SDK, not
+ * from a list of names: a new SDK, or a new factory of a known one, is counted
+ * the day it is imported.
+ */
+export function scanForModelClientsWithoutEndpoint(opts: ScanOptions): Violation[] {
+  const files = collectTsFiles(
+    opts.srcDir,
+    opts.skipDirs ?? DEFAULT_SKIP,
+    [],
+    opts.extensions ?? TS_EXTENSIONS,
+  ).filter((f) => !isSkipped(f, opts.skipFiles ?? []));
+  const importRe = new RegExp(
+    String.raw`import\s*(type\s+)?\{([^}]*)\}\s*from\s*` + PROVIDER_SDK_SPECIFIER,
+    'g',
+  );
+  const out: Violation[] = [];
+  for (const file of files) {
+    const text = readFileSync(file, 'utf-8');
+    const factories: string[] = [];
+    for (const m of text.matchAll(importRe)) {
+      if (m[1]) continue; // `import type { … }`: no factory
+      for (const part of (m[2] ?? '').split(',')) {
+        const spec = part.trim();
+        if (spec.length === 0 || spec.startsWith('type ')) continue;
+        const local = spec
+          .split(/\s+as\s+/)
+          .pop()
+          ?.trim();
+        if (local && /^create[A-Z]/.test(local)) factories.push(local);
+      }
+    }
+    if (factories.length === 0) continue;
+    const lines = text.split('\n');
+    const isCode = (line: string): boolean => !/^\s*(\/\/|\*|\/\*)/.test(line);
+    const resolverCalls = lines.filter(
+      (l) => isCode(l) && /\bresolveProviderEndpoint\s*\(/.test(l),
+    ).length;
+    const factoryLines: Array<{ line: number; text: string }> = [];
+    lines.forEach((l, i) => {
+      if (!isCode(l) || /^\s*import\b/.test(l)) return;
+      if (factories.some((f) => new RegExp(String.raw`\b${f}\s*\(`).test(l))) {
+        factoryLines.push({ line: i + 1, text: l.trim().slice(0, 120) });
+      }
+    });
+    if (factoryLines.length > resolverCalls) {
+      for (const f of factoryLines) {
+        out.push({ file, line: f.line, text: f.text, rule: 'model-client-without-endpoint' });
+      }
+    }
+  }
+  return out;
+}
+
+/**
  * Generic line scanner, so a package-specific rule reuses the shared walker
  * instead of shipping its twelfth copy of a recursive readdir.
  */
