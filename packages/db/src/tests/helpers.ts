@@ -571,10 +571,31 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       fact_hash text,
       archived boolean DEFAULT false,
       importance_locked boolean NOT NULL DEFAULT false,
+      -- mirrors migration 0172
+      version integer NOT NULL DEFAULT 1,
       last_accessed_at timestamptz DEFAULT now(),
       access_count integer DEFAULT 0,
       created_at timestamptz DEFAULT now(),
       updated_at timestamptz DEFAULT now()
+    );
+
+    -- mirrors migration 0172
+    CREATE TABLE IF NOT EXISTS agent_memory_versions (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      memory_id uuid NOT NULL REFERENCES agent_memory(id) ON DELETE CASCADE,
+      entity_id uuid REFERENCES entities(id) ON DELETE CASCADE,
+      version integer NOT NULL,
+      fact text NOT NULL,
+      category text,
+      importance integer,
+      importance_locked boolean NOT NULL,
+      archived boolean NOT NULL,
+      valid_to timestamptz,
+      changed_by text NOT NULL CHECK (changed_by IN ('owner','agent','curator','lifecycle')),
+      agent_id uuid REFERENCES agents(id) ON DELETE SET NULL,
+      action text NOT NULL CHECK (action IN ('edit','archive','retire','restore','rescore','pin','unpin','revert')),
+      reason text,
+      created_at timestamptz NOT NULL DEFAULT now()
     );
 
     CREATE TABLE IF NOT EXISTS webhook_triggers (

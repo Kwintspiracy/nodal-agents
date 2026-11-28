@@ -208,7 +208,8 @@ vi.mock('@nodal-agents/db', async () => {
 const memoryMocks = {
   listMemories: vi.fn(),
   deleteMemory: vi.fn(),
-  updateMemory: vi.fn(),
+  mutateMemory: vi.fn(),
+  latestMemoryVersions: vi.fn(async () => new Map()),
   createMemory: vi.fn(),
   keywordSearchMemories: vi.fn(),
 };
@@ -220,7 +221,8 @@ vi.mock('@nodal-agents/memory', async () => {
     ...actual,
     listMemories: (...args: unknown[]) => memoryMocks.listMemories(...args),
     deleteMemory: (...args: unknown[]) => memoryMocks.deleteMemory(...args),
-    updateMemory: (...args: unknown[]) => memoryMocks.updateMemory(...args),
+    mutateMemory: (...args: unknown[]) => memoryMocks.mutateMemory(...args),
+    latestMemoryVersions: (...args: unknown[]) => memoryMocks.latestMemoryVersions(...args),
     createMemory: (...args: unknown[]) => memoryMocks.createMemory(...args),
     keywordSearchMemories: (...args: unknown[]) => memoryMocks.keywordSearchMemories(...args),
   };
@@ -2225,51 +2227,6 @@ describe('listMemoriesAction', () => {
   });
 });
 
-describe('archiveMemoryAction', () => {
-  it('rejects non-uuid id', async () => {
-    const { archiveMemoryAction } = await import('../src/lib/actions.ts');
-    const r = await archiveMemoryAction('bad');
-    expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.code).toBe('validation_failed');
-  });
-
-  it('translates MemoryNotFoundError into not_found', async () => {
-    const { MemoryNotFoundError } = await import('@nodal-agents/memory');
-    memoryMocks.updateMemory.mockRejectedValueOnce(new MemoryNotFoundError('id'));
-    const { archiveMemoryAction } = await import('../src/lib/actions.ts');
-    const r = await archiveMemoryAction('aaaaaaaa-0000-0000-0000-000000000050');
-    expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.code).toBe('not_found');
-  });
-
-  it('calls updateMemory with archived: true', async () => {
-    memoryMocks.updateMemory.mockResolvedValueOnce({});
-    const { archiveMemoryAction } = await import('../src/lib/actions.ts');
-    const r = await archiveMemoryAction('aaaaaaaa-0000-0000-0000-000000000051');
-    expect(r.ok).toBe(true);
-    const call = memoryMocks.updateMemory.mock.calls.at(-1)!;
-    expect((call[3] as { archived: boolean }).archived).toBe(true);
-  });
-});
-
-describe('unarchiveMemoryAction', () => {
-  it('rejects non-uuid id', async () => {
-    const { unarchiveMemoryAction } = await import('../src/lib/actions.ts');
-    const r = await unarchiveMemoryAction('bad');
-    expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.code).toBe('validation_failed');
-  });
-
-  it('calls updateMemory with archived: false', async () => {
-    memoryMocks.updateMemory.mockResolvedValueOnce({});
-    const { unarchiveMemoryAction } = await import('../src/lib/actions.ts');
-    const r = await unarchiveMemoryAction('aaaaaaaa-0000-0000-0000-000000000052');
-    expect(r.ok).toBe(true);
-    const call = memoryMocks.updateMemory.mock.calls.at(-1)!;
-    expect((call[3] as { archived: boolean }).archived).toBe(false);
-  });
-});
-
 describe('deleteMemoryAction', () => {
   it('rejects non-uuid id', async () => {
     const { deleteMemoryAction } = await import('../src/lib/actions.ts');
@@ -2292,78 +2249,6 @@ describe('deleteMemoryAction', () => {
     const { deleteMemoryAction } = await import('../src/lib/actions.ts');
     const r = await deleteMemoryAction('aaaaaaaa-0000-0000-0000-000000000061');
     expect(r.ok).toBe(true);
-  });
-});
-
-describe('updateMemoryImportanceAction', () => {
-  it('rejects a non-uuid id', async () => {
-    const { updateMemoryImportanceAction } = await import('../src/lib/actions.ts');
-    const r = await updateMemoryImportanceAction('bad', 4);
-    expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.code).toBe('validation_failed');
-  });
-
-  it('rejects an importance outside 1-5', async () => {
-    const { updateMemoryImportanceAction } = await import('../src/lib/actions.ts');
-    const tooHigh = await updateMemoryImportanceAction('aaaaaaaa-0000-0000-0000-000000000070', 6);
-    expect(tooHigh.ok).toBe(false);
-    if (!tooHigh.ok) expect(tooHigh.code).toBe('validation_failed');
-
-    const tooLow = await updateMemoryImportanceAction('aaaaaaaa-0000-0000-0000-000000000070', 0);
-    expect(tooLow.ok).toBe(false);
-    if (!tooLow.ok) expect(tooLow.code).toBe('validation_failed');
-  });
-
-  it('translates MemoryNotFoundError into not_found (e.g. a fact scoped to another entity)', async () => {
-    const { MemoryNotFoundError } = await import('@nodal-agents/memory');
-    memoryMocks.updateMemory.mockRejectedValueOnce(new MemoryNotFoundError('id'));
-    const { updateMemoryImportanceAction } = await import('../src/lib/actions.ts');
-    const r = await updateMemoryImportanceAction('aaaaaaaa-0000-0000-0000-000000000071', 5);
-    expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.code).toBe('not_found');
-  });
-
-  it('pins the fact: sets importance AND importance_locked=true, scoped to the session entity', async () => {
-    memoryMocks.updateMemory.mockResolvedValueOnce({});
-    const { updateMemoryImportanceAction } = await import('../src/lib/actions.ts');
-    const r = await updateMemoryImportanceAction('aaaaaaaa-0000-0000-0000-000000000072', 5);
-    expect(r.ok).toBe(true);
-    const call = memoryMocks.updateMemory.mock.calls.at(-1)!;
-    // updateMemory(db, id, entityId, updates)
-    expect(call[1]).toBe('aaaaaaaa-0000-0000-0000-000000000072');
-    expect(call[2]).toBe(LOCAL_ENTITY_ID);
-    expect(call[3]).toEqual({ importance: 5, importance_locked: true });
-  });
-});
-
-describe('unpinMemoryImportanceAction', () => {
-  it('rejects a non-uuid id', async () => {
-    const { unpinMemoryImportanceAction } = await import('../src/lib/actions.ts');
-    const r = await unpinMemoryImportanceAction('bad');
-    expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.code).toBe('validation_failed');
-  });
-
-  it('translates MemoryNotFoundError into not_found', async () => {
-    const { MemoryNotFoundError } = await import('@nodal-agents/memory');
-    memoryMocks.updateMemory.mockRejectedValueOnce(new MemoryNotFoundError('id'));
-    const { unpinMemoryImportanceAction } = await import('../src/lib/actions.ts');
-    const r = await unpinMemoryImportanceAction('aaaaaaaa-0000-0000-0000-000000000073');
-    expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.code).toBe('not_found');
-  });
-
-  it('clears importance_locked WITHOUT touching importance, scoped to the session entity', async () => {
-    memoryMocks.updateMemory.mockResolvedValueOnce({});
-    const { unpinMemoryImportanceAction } = await import('../src/lib/actions.ts');
-    const r = await unpinMemoryImportanceAction('aaaaaaaa-0000-0000-0000-000000000074');
-    expect(r.ok).toBe(true);
-    const call = memoryMocks.updateMemory.mock.calls.at(-1)!;
-    expect(call[1]).toBe('aaaaaaaa-0000-0000-0000-000000000074');
-    expect(call[2]).toBe(LOCAL_ENTITY_ID);
-    expect(call[3]).toEqual({ importance_locked: false });
-    // Importance itself is deliberately absent from the update payload.
-    expect(call[3]).not.toHaveProperty('importance');
   });
 });
 

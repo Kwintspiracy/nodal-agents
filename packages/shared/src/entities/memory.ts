@@ -28,6 +28,10 @@ export const AgentMemorySchema = z
     // re-score importance for this fact. Defaulted so rows/objects predating
     // the column still parse.
     importance_locked: z.boolean().default(false),
+    // The row's version (migration 0172): every change goes through
+    // mutateMemory, which applies only to the version the caller read and
+    // bumps it. Defaulted so objects predating the column still parse.
+    version: z.number().int().min(1).default(1),
     last_accessed_at: z.string().datetime().nullable(),
     access_count: z.number().int().min(0),
     created_at: z.string().datetime(),
@@ -42,6 +46,7 @@ export const AgentMemoryInsertSchema = AgentMemorySchema.omit({
   fact_hash: true,
   archived: true,
   importance_locked: true,
+  version: true,
   last_accessed_at: true,
   access_count: true,
   valid_from: true,
