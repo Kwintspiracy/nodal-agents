@@ -412,9 +412,9 @@ describe('a masked read is never written back @cap:travailler-sur-des-fichiers/m
     expect(onDisk).toContain(`GH=${shaped}`);
   });
 
-  it('a whole overwrite after a masked read is refused even without the mark: the hidden values are not erased', async () => {
-    // The text-layer guard of #1212 compares with the job's last view of the
-    // file; a view the boundary masked is not a view of the whole content.
+  it('a whole overwrite after a masked read is refused even without the mark: the file bytes are untouched', async () => {
+    // A job that read the file with values hidden from it cannot reproduce
+    // them: replacing it whole would erase them (#1212's text layer x #1230).
     const { res, original, onDisk } = await readThenWrite('file_write', {
       content: 'NAME=demo\nPORT=9090\n',
       purpose: 'Rewrite the settings.',
@@ -427,25 +427,76 @@ describe('a masked read is never written back @cap:travailler-sur-des-fichiers/m
     expect(onDisk).toContain(`ACME_KEY=${registered}`);
   });
 
-  it('a whole overwrite after a read with nothing hidden goes through, for any file', async () => {
-    const file = join(dir, 'plain.txt');
-    await writeFile(file, 'one\ntwo\n');
+  it('a masked read, then a read of a window with nothing hidden, then a whole overwrite: still refused', async () => {
+    const file = join(dir, 'window.env');
+    const original = ['NAME=demo', `ACME_KEY=${registered}`, 'PORT=8080', ''].join('\n');
+    await writeFile(file, original);
     const c = await ctx();
-    const read = await executeTool(
+    const whole = await executeTool(
       builtin('file_read'),
-      { path: 'plain.txt', purpose: 'Read.' },
+      { path: 'window.env', purpose: 'Read.' },
       c,
       opts(),
     );
-    expect(JSON.stringify(read)).not.toContain(REDACTED_TEXT);
+    expect(JSON.stringify(whole)).toContain(REDACTED_TEXT);
+    const window = await executeTool(
+      builtin('file_read'),
+      { path: 'window.env', offset: 3, limit: 1, purpose: 'Read the port.' },
+      c,
+      opts(),
+    );
+    expect(JSON.stringify(window)).toContain('PORT=8080');
+    expect(JSON.stringify(window)).not.toContain(REDACTED_TEXT);
+    const rows = await rowsOf(c.jobId!);
+    expect(rows.map((r) => r.resultMasked)).toEqual([true, false]);
     const res = await executeTool(
       builtin('file_write'),
-      { path: 'plain.txt', content: 'three\n', purpose: 'Rewrite.' },
+      { path: 'window.env', content: 'NAME=demo\nPORT=9090\n', purpose: 'Rewrite.' },
+      c,
+      opts(),
+    );
+    expect((res as { output: { ok: boolean } }).output.ok).toBe(false);
+    expect(await readFile(file, 'utf8')).toBe(original);
+  });
+
+  it('a file this job never read is overwritten as before', async () => {
+    const file = join(dir, 'never-read.env');
+    await writeFile(file, ['NAME=demo', `ACME_KEY=${registered}`, ''].join('\n'));
+    const c = await ctx();
+    const res = await executeTool(
+      builtin('file_write'),
+      { path: 'never-read.env', content: 'NAME=other\n', purpose: 'Replace.' },
       c,
       opts(),
     );
     expect((res as { output: { ok: boolean } }).output.ok).toBe(true);
-    expect(await readFile(file, 'utf8')).toBe('three\n');
+    expect(await readFile(file, 'utf8')).toBe('NAME=other\n');
+  });
+
+  it('the switch off and no registered value in the file: read, then a whole overwrite, goes through', async () => {
+    const file = join(dir, 'shaped.env');
+    await writeFile(file, ['NAME=demo', `GH=${shaped}`, ''].join('\n'));
+    await db.update(agents).set({ maskSecretShapes: false }).where(eq(agents.id, seed.agentId));
+    try {
+      const c = await ctx();
+      const read = await executeTool(
+        builtin('file_read'),
+        { path: 'shaped.env', purpose: 'Read.' },
+        c,
+        opts(),
+      );
+      expect(JSON.stringify(read)).toContain(shaped);
+      const res = await executeTool(
+        builtin('file_write'),
+        { path: 'shaped.env', content: 'NAME=demo\n', purpose: 'Drop the token.' },
+        c,
+        opts(),
+      );
+      expect((res as { output: { ok: boolean } }).output.ok).toBe(true);
+      expect(await readFile(file, 'utf8')).toBe('NAME=demo\n');
+    } finally {
+      await db.update(agents).set({ maskSecretShapes: true }).where(eq(agents.id, seed.agentId));
+    }
   });
 
   it('a file that already holds the words is edited like any other', async () => {

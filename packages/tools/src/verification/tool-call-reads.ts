@@ -103,10 +103,12 @@ export async function lastContentSeenByJob(
 
 /**
  * The last view this job had of `absPath` (see `lastContentSeenByJob`), and
- * whether it was a read whose result the boundary masked
- * (`tool_calls.result_masked`, 0175): the model then saw the file with values
- * hidden from it, never its whole content. A write's view is what it wrote,
- * never masked.
+ * whether the job read the file with a result the boundary masked
+ * (`tool_calls.result_masked`, 0175) since its last successful write of it:
+ * the model then saw the file with values hidden from it, and a later read of
+ * another part of it does not show them either. A successful write sets the
+ * view to what it wrote, and starts the count again. Read from the rows, so
+ * it is the same after a suspension.
  */
 export async function lastViewByJob(
   db: AnyDrizzleDb,
@@ -138,14 +140,19 @@ export async function lastViewByJob(
       ),
     )
     .orderBy(desc(toolCalls.seq));
+  let last: string | null = null;
+  let masked = false;
   for (const r of rows) {
     if (r.writeId !== null) {
       if (r.writeSource === 'written' && r.writeSha !== null) {
-        return { sha256: r.writeSha, masked: false };
+        return { sha256: last ?? r.writeSha, masked };
       }
       continue;
     }
-    if (r.readSha !== null) return { sha256: r.readSha, masked: r.resultMasked };
+    if (r.readSha !== null) {
+      last ??= r.readSha;
+      masked ||= r.resultMasked;
+    }
   }
-  return null;
+  return last === null ? null : { sha256: last, masked };
 }

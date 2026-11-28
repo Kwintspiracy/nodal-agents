@@ -432,13 +432,15 @@ export async function notTextReason(
  * rien n'est comparé.
  *
  * Un remplacement ENTIER (`replacement: 'whole'`, `file_write` sur un fichier
- * qui existe) demande une vue du contenu entier : une dernière vue qui était
- * une lecture MASQUÉE (`tool_calls.result_masked`, la frontière des résultats
- * d'outil) n'en est pas une — le modèle a vu le fichier sans les valeurs qui
- * lui sont cachées, et le remplacer les effacerait. L'appel est refusé et dit
- * d'éditer les autres lignes (`file_edit`), qui laissent ces valeurs sur le
- * disque. Une édition (`'part'`) n'est pas concernée : la garde du masque
- * (`mask-guard.ts`) refuse déjà de citer ou d'écrire une ligne masquée.
+ * qui existe) demande d'avoir vu le contenu entier : si ce job a lu ce fichier
+ * avec un résultat MASQUÉ (`tool_calls.result_masked`, la frontière des
+ * résultats d'outil) depuis sa dernière écriture réussie de ce fichier, il n'a
+ * jamais vu les valeurs cachées et ne peut pas les reproduire — une lecture
+ * ultérieure d'une autre fenêtre du fichier ne les lui montre pas non plus.
+ * L'appel est refusé et dit d'éditer les autres lignes (`file_edit`), qui
+ * laissent ces valeurs sur le disque. Une édition (`'part'`) n'est pas
+ * concernée : la garde du masque (`mask-guard.ts`) refuse déjà de citer ou
+ * d'écrire une ligne masquée. Un fichier jamais lu garde la règle d'avant.
  *
  * Rend la raison du refus, ou `null` quand l'appel peut continuer.
  */
@@ -454,7 +456,7 @@ export async function changedSinceSeen(
   if (view === null) return null;
   if (replacement === 'whole' && view.masked) {
     return (
-      `"${displayPath}" was last read with values hidden from you, so replacing it whole ` +
+      `"${displayPath}" was read with values hidden from you, so replacing it whole ` +
       'would erase them. Nothing was written. Change the other lines with file_edit; the ' +
       'hidden values stay as they are on disk.'
     );
