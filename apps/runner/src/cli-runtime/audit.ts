@@ -8,12 +8,7 @@
 //
 // D'où cette fonction : PURE, donc le masquage se prouve au lieu de se relire.
 
-import {
-  maskToolResultText,
-  redactSecrets,
-  toolResultKindOf,
-  type ToolResultMaskPolicy,
-} from '@nodal-agents/shared';
+import { maskToolResultText, redactSecrets, type ToolResultMaskPolicy } from '@nodal-agents/shared';
 
 /**
  * Plafond par ligne d'audit. La sortie d'un outil peut peser des mégaoctets
@@ -66,11 +61,10 @@ export function buildCliAuditRow(args: {
   return {
     toolName: `cli:${args.toolName}`,
     toolInput: redactSecrets(args.toolInput) as Record<string, unknown>,
-    toolOutput: maskToolResultText(
-      args.toolOutput ?? '',
-      args.policy,
-      toolResultKindOf(args.toolInput),
-    ).slice(0, MAX_AUDIT_OUTPUT_CHARS),
+    toolOutput: maskToolResultText(args.toolOutput ?? '', args.policy).slice(
+      0,
+      MAX_AUDIT_OUTPUT_CHARS,
+    ),
     toolCallId: args.toolCallId,
     durationMs: args.now - args.startedAt,
   };

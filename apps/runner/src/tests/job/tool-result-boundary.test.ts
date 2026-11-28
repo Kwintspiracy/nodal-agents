@@ -30,7 +30,13 @@ import {
   toolCalls,
 } from '@nodal-agents/db';
 import { REDACTED_TEXT } from '@nodal-agents/shared';
-import { fakeAlnum, fakeSecret } from '@nodal-agents/test-kit';
+import {
+  CONTINUATION_SAMPLES,
+  continuationJson,
+  holdsContinuation,
+  fakeAlnum,
+  fakeSecret,
+} from '@nodal-agents/test-kit';
 import type { JobId } from '@nodal-agents/orchestration';
 import { executeJob } from '../../job/execute.ts';
 import { resolveApprovalDecision } from '../../approvals/resolve.ts';
@@ -199,5 +205,32 @@ describe('a tool result reaches the model and every store masked, the same text 
     }
     // The stored message of the read is the same before and after the resume.
     expect(storedReadOf((await jobRow(db, jobId)).messages)).toBe(storedBefore);
+  });
+});
+
+describe('a value the model hands back to continue reaches its next request as it is @cap:connecter-un-service/moteur', () => {
+  it('page tokens, cursors, ids and links read from a file: untouched in the request and the row, the secrets beside them hidden', async () => {
+    await writeFile(
+      join(dir, 'page.json'),
+      `${continuationJson()}\n${JSON.stringify({ apiKey: registered, auth: shaped })}\n`,
+    );
+    const { jobId } = await seeded({ model: 'anthropic/claude-sonnet-5.5', role: 'agent' });
+    const bodies = scriptProvider([
+      { calls: [{ name: 'file_read', args: { path: 'page.json', purpose: 'Read the page.' } }] },
+      { text: 'Done.' },
+    ]);
+    await executeJob(jobId as JobId, makeDeps(db), testEnv);
+
+    const request = JSON.stringify(bodies[1]!.messages);
+    const [row] = await db
+      .select()
+      .from(toolCalls)
+      .where(and(eq(toolCalls.jobId, jobId), eq(toolCalls.toolName, 'file_read')));
+    for (const s of CONTINUATION_SAMPLES) {
+      expect(holdsContinuation(request, s), `${s.what} hidden from the model`).toBe(true);
+      expect(holdsContinuation(row!.toolOutput ?? '', s), `${s.what} not stored`).toBe(true);
+    }
+    holdsNeither(request, 'request to the provider');
+    holdsNeither(row!.toolOutput ?? '', 'tool_calls.tool_output');
   });
 });

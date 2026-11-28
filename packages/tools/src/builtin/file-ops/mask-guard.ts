@@ -38,7 +38,7 @@ export async function refusePlaceholderWrite(
         'masking policy it needs to name the hidden lines.',
     );
   }
-  const lines = args.current === null ? [] : await ctx.maskedLinesOf(args.current, args.path);
+  const lines = args.current === null ? [] : await ctx.maskedLinesOf(args.current);
   const where =
     lines.length > 0
       ? ` In "${args.shownPath}", the hidden values are on line${lines.length > 1 ? 's' : ''} ${lines.join(', ')}.`

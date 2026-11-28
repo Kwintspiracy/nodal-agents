@@ -9,8 +9,9 @@
 //                                  at any depth, is masked by shape;
 //   - `createStreamRedactor()`     a text that arrives in chunks;
 //   - `redactSecretValuesInText`   a whole string, by the shapes that know a
-//                                  value by its own form only (the lighter
-//                                  pass a source file gets in a tool result);
+//                                  value by its own form only, never by the
+//                                  name written before it (the mode of the
+//                                  tool-result boundary, in front of the model);
 //   - `secretRangesInText`         where a whole-text form hides something.
 //
 // The stream form is derived, not written beside: it runs the same scanner as
@@ -190,10 +191,11 @@ interface Shape {
   readonly name: string;
   /**
    * The shape recognises a secret by the NAME written before it (a variable,
-   * a parameter, a key), not by the value's own form. Such a shape is a guess
-   * that source code makes wrong at every line (`password = read_env(...)`),
-   * so a source file read by an agent is masked without them
-   * (`redactSecretValuesInText`).
+   * a parameter, a key), not by the value's own form. A display heuristic: on
+   * a screen a false positive is cosmetic; in front of the model it hides what
+   * the model must read (a page token in a field named `nextPageToken`, a
+   * line of source code that names a password without holding it). The
+   * tool-result boundary masks without them (`redactSecretValuesInText`).
    */
   readonly byName?: true;
   /** Kept as it is, before the hidden part. */
@@ -546,8 +548,8 @@ export function secretRangesInText(
  * Mask the values a text holds BY THEIR OWN FORM (a key's prefix and
  * alphabet, a token's segments, a private key block, a password in a URL),
  * without the shapes that guess a secret from the name written before it.
- * The lighter pass, for source code: code names secrets at every line
- * without holding them.
+ * The mode of the tool-result boundary (`tool-result-mask.ts`): a value is
+ * hidden from the model for what it is, never for the name of its field.
  */
 export function redactSecretValuesInText(text: string): string {
   return replaceRanges(text, secretRangesInText(text, { byName: false }));

@@ -10,7 +10,7 @@ import { SectionHead } from './SectionCard.tsx';
 //
 // The screen of the setting the engine reads for every tool result of this
 // agent (`loadToolResultMaskPolicy`): what is shown here is what is applied.
-// On (the default), a value shaped like a key, a token or a password is hidden
+// On (the default), a value that has the form of a key or a token is hidden
 // before the model reads it, and Nodal records what the model read. Off, those
 // values pass. The keys Nodal itself holds for the workspace are hidden in
 // both cases, and the screen says so. For an agent served by a coding CLI, the
@@ -20,8 +20,8 @@ import { SectionHead } from './SectionCard.tsx';
 /** The current state, in the words the owner reads. */
 export function secretMaskStateLine(on: boolean): string {
   return on
-    ? 'On: this agent cannot read a secret value from a tool result. A value shaped like a key, a token or a password is hidden before it reads it, and in what Nodal records of the run.'
-    : 'Off: a value shaped like a key reaches this agent as its tools return it, and is recorded as it read it. A past result quoted from the conversation history is still hidden.';
+    ? 'On: this agent cannot read a secret value from a tool result. A value that has the form of a key or a token is hidden before it reads it, and in what Nodal records of the run.'
+    : 'Off: a value that has the form of a key reaches this agent as its tools return it, and is recorded as it read it. A past result quoted from the conversation history is still hidden.';
 }
 
 /** Always true, whatever the switch: said beside it. */

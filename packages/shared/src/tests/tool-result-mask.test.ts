@@ -10,6 +10,9 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { randomBytes } from 'node:crypto';
 import {
+  CONTINUATION_SAMPLES,
+  continuationJson,
+  continuationText,
   fakeAlnum,
   fakeAssignment,
   fakeB64,
@@ -22,19 +25,16 @@ import {
   REDACTED_TEXT,
   _resetInstallSecretValuesForTests,
   installSecretValues,
-  isSourceCodePath,
   maskToolResult,
   maskToolResultText,
   maskedLinesOf,
+  outboundText,
   registerInstallSecretValues,
   registeredSecrets,
   secretValueForms,
-  toolResultKindOf,
   type ToolResultMaskPolicy,
 } from '../index';
 
-const TEXT = { sourceCode: false };
-const CODE = { sourceCode: true };
 /** A value with no credential shape: only the registry can know it is one. */
 const plain = (): string => randomBytes(20).toString('hex');
 const policy = (values: string[], shapes = true): ToolResultMaskPolicy => ({
@@ -58,7 +58,7 @@ describe('a registered value is hidden in every form it takes in a text @cap:con
       `url: https://api.example.com/?k=${encodeURIComponent(trimmed)}`,
     ];
     for (const t of texts) {
-      const out = maskToolResultText(t, p, TEXT);
+      const out = maskToolResultText(t, p);
       expect(out, t).toContain(REDACTED_TEXT);
       expect(out).not.toContain(trimmed);
       expect(out).not.toContain(JSON.stringify(trimmed).slice(1, -1));
@@ -71,10 +71,10 @@ describe('a registered value is hidden in every form it takes in a text @cap:con
     const block = fakePrivateKeyBlock('RSA', lines.join('\n'));
     // The registry alone, the shapes off: the value is known, not guessed.
     const p = policy([block], false);
-    expect(maskToolResultText(`key:\n${block}\nend`, p, TEXT)).toBe(`key:\n${REDACTED_TEXT}\nend`);
-    const one = maskToolResultText(`a log quoting ${lines[1]} once`, p, TEXT);
+    expect(maskToolResultText(`key:\n${block}\nend`, p)).toBe(`key:\n${REDACTED_TEXT}\nend`);
+    const one = maskToolResultText(`a log quoting ${lines[1]} once`, p);
     expect(one).toBe(`a log quoting ${REDACTED_TEXT} once`);
-    const joined = maskToolResultText(`inline=${lines.join('')}`, p, TEXT);
+    const joined = maskToolResultText(`inline=${lines.join('')}`, p);
     expect(joined).toBe(`inline=${REDACTED_TEXT}`);
     // The armour lines are labels, not the key: a public block keeps them.
     expect(secretValueForms(block)).not.toContain(fakePrivateKeyHeader('RSA'));
@@ -83,15 +83,13 @@ describe('a registered value is hidden in every form it takes in a text @cap:con
 
   it('a value shorter than the minimum is not registered: it would hide ordinary words', () => {
     expect(registeredSecrets(['abc123']).size).toBe(0);
-    expect(maskToolResultText('abc123 is a word', policy(['abc123']), TEXT)).toBe(
-      'abc123 is a word',
-    );
+    expect(maskToolResultText('abc123 is a word', policy(['abc123']))).toBe('abc123 is a word');
   });
 
   it('values of another workspace are not in this registry: their bytes pass untouched', () => {
     const mine = plain();
     const theirs = plain();
-    const out = maskToolResultText(`${mine} ${theirs}`, policy([mine]), TEXT);
+    const out = maskToolResultText(`${mine} ${theirs}`, policy([mine]));
     expect(out).toBe(`${REDACTED_TEXT} ${theirs}`);
   });
 
@@ -108,7 +106,7 @@ describe('the two layers and the agent’s switch @cap:connecter-un-service/mote
   it('switch on: the registered value and the shaped one are both hidden', () => {
     const registered = plain();
     const token = shaped();
-    const out = maskToolResultText(`a=${registered} b ${token}`, policy([registered]), TEXT);
+    const out = maskToolResultText(`a=${registered} b ${token}`, policy([registered]));
     expect(out).not.toContain(registered);
     expect(out).not.toContain(token);
   });
@@ -116,13 +114,13 @@ describe('the two layers and the agent’s switch @cap:connecter-un-service/mote
   it('switch off: a shaped value passes, a registered value is still hidden', () => {
     const registered = plain();
     const token = shaped();
-    const out = maskToolResultText(`a=${registered} b ${token}`, policy([registered], false), TEXT);
+    const out = maskToolResultText(`a=${registered} b ${token}`, policy([registered], false));
     expect(out).toBe(`a=${REDACTED_TEXT} b ${token}`);
   });
 
   it('a registered value that also has a shape is hidden once, by the registry', () => {
     const token = shaped();
-    expect(maskToolResultText(`x ${token} y`, policy([token]), TEXT)).toBe(`x ${REDACTED_TEXT} y`);
+    expect(maskToolResultText(`x ${token} y`, policy([token]))).toBe(`x ${REDACTED_TEXT} y`);
   });
 
   it('a structured result: every string at any depth, keys and other values kept', () => {
@@ -133,7 +131,7 @@ describe('the two layers and the agent’s switch @cap:connecter-un-service/mote
       count: 3,
       items: [{ body: `see ${token}`, nextPageToken: 'CAESBggDEAEYAQ' }, { note: registered }],
     };
-    const { value, masked } = maskToolResult(result, policy([registered]), TEXT);
+    const { value, masked } = maskToolResult(result, policy([registered]));
     expect(masked).toBe(true);
     expect(value).toEqual({
       ok: true,
@@ -149,7 +147,7 @@ describe('the two layers and the agent’s switch @cap:connecter-un-service/mote
 
   it('a result with nothing to hide comes back as the same value', () => {
     const result = { ok: true, text: 'nothing secret here' };
-    const out = maskToolResult(result, policy([plain()]), TEXT);
+    const out = maskToolResult(result, policy([plain()]));
     expect(out.masked).toBe(false);
     expect(out.value).toBe(result);
   });
@@ -179,35 +177,36 @@ describe('ordinary data that merely looks like a secret reaches the model as it 
   ];
   for (const [what, text] of ordinary) {
     it(what, () => {
-      expect(maskToolResultText(text, policy([plain()]), TEXT)).toBe(text);
+      expect(maskToolResultText(text, policy([plain()]))).toBe(text);
     });
   }
 
-  it('source code: names a secret without holding it, every line kept (lighter pass)', () => {
+  it('source code: names a secret without holding it, every line kept', () => {
     const code = [
       'const password = process.env.DB_PASSWORD;',
       'API_KEY=process.env.API_KEY',
       'headers = {"api_key": config.get("api_key")}',
       'if (url.includes("?access_token=")) return;',
     ].join('\n');
-    expect(maskToolResultText(code, policy([]), CODE)).toBe(code);
-    // The same text read as configuration is masked by name: a `.env` holds values.
-    expect(maskToolResultText(code, policy([]), TEXT)).not.toBe(code);
+    expect(maskToolResultText(code, policy([]))).toBe(code);
   });
 
-  it('source code still loses a key that has a key’s own form', () => {
+  it('a key that has a key’s own form is hidden wherever it sits, code included', () => {
     const token = fakeSecret('github', fakeAlnum(36));
     const code = `const t = "${token}";`;
-    expect(maskToolResultText(code, policy([]), CODE)).toBe(`const t = "${REDACTED_TEXT}";`);
+    expect(maskToolResultText(code, policy([]))).toBe(`const t = "${REDACTED_TEXT}";`);
   });
 
-  it('the kind is read from the path the call named', () => {
-    expect(toolResultKindOf({ path: 'src/app.ts' })).toEqual(CODE);
-    expect(toolResultKindOf({ file_path: 'C:\\work\\tool.py' })).toEqual(CODE);
-    expect(toolResultKindOf({ path: 'config/.env' })).toEqual(TEXT);
-    expect(toolResultKindOf({ path: 'settings.json' })).toEqual(TEXT);
-    expect(toolResultKindOf({ command: 'cat app.ts' })).toEqual(TEXT);
-    expect(isSourceCodePath('Makefile')).toBe(false);
+  it('the trade-off, stated: a secret with no form of its own after a secret name reaches the model; the outbound layer still hides it from people; an install value is hidden whatever its form', () => {
+    const thirdParty = plain();
+    const own = plain();
+    const text = `${fakeAssignment('PARTNER_API_KEY', thirdParty)}\n{"password": "${own}"}`;
+    const p = policy([own]);
+    const seen = maskToolResultText(text, p);
+    expect(seen).toContain(thirdParty);
+    expect(seen).not.toContain(own);
+    // What leaves for a person goes through the full masker (`outbound.ts`).
+    expect(outboundText(seen)).not.toContain(thirdParty);
   });
 });
 
@@ -224,8 +223,8 @@ describe('the lines a mask hides, for the write tools @cap:travailler-sur-des-fi
       block,
       'END=1',
     ].join('\n');
-    expect(maskedLinesOf(text, policy([registered]), TEXT)).toEqual([2, 4, 5, 6, 7, 8]);
-    expect(maskedLinesOf(text, policy([registered], false), TEXT)).toEqual([2]);
+    expect(maskedLinesOf(text, policy([registered]))).toEqual([2, 4, 5, 6, 7, 8]);
+    expect(maskedLinesOf(text, policy([registered], false))).toEqual([2]);
   });
 });
 
@@ -242,12 +241,44 @@ describe('cost of the boundary on a large result @cap:connecter-un-service/moteu
     const big = line.repeat(Math.ceil(1_000_000 / line.length)).slice(0, 1_000_000);
     const input = `${big}${values[7]}`;
     const t0 = performance.now();
-    const out = maskToolResultText(input, p, TEXT);
+    const out = maskToolResultText(input, p);
     const ms = performance.now() - t0;
     expect(out.endsWith(REDACTED_TEXT)).toBe(true);
     console.warn(
       `[tool-result-mask] 1 MB, ${p.registry.size} registered forms: ${ms.toFixed(1)} ms`,
     );
     expect(ms).toBeLessThan(1500);
+  });
+});
+
+describe('a value the model hands back to continue its work reaches it as it is @cap:connecter-un-service/moteur', () => {
+  // A page token, a cursor, a sync token, an ETag, an id, a next-page or an
+  // upload URL: they sit in fields named like secrets and none is one. The
+  // boundary masks a value for what it IS, never for the name of its field.
+  const withSecrets = (text: string, registered: string, token: string): string =>
+    `${text}\nACME_KEY=${registered}\nauth ${token}`;
+
+  for (const sample of CONTINUATION_SAMPLES) {
+    it(`${sample.what} (${sample.field}), in JSON, in plain text and in a structured result`, () => {
+      const registered = plain();
+      const token = fakeSecret('github', fakeAlnum(36));
+      const p = policy([registered]);
+      const json = JSON.stringify({ [sample.field]: sample.value });
+      const text = `${sample.field}: ${sample.value}`;
+      for (const shown of [json, text, `${sample.field}=${sample.value}`]) {
+        const out = maskToolResultText(withSecrets(shown, registered, token), p);
+        expect(out.startsWith(`${shown}\n`), `${shown} -> ${out}`).toBe(true);
+        expect(out).not.toContain(registered);
+        expect(out).not.toContain(token);
+      }
+      const structured = maskToolResult({ [sample.field]: sample.value, note: token }, p);
+      expect(structured.value).toEqual({ [sample.field]: sample.value, note: REDACTED_TEXT });
+    });
+  }
+
+  it('the whole table, as an API body and as printed text, comes back byte for byte', () => {
+    const p = policy([plain()]);
+    expect(maskToolResultText(continuationJson(), p)).toBe(continuationJson());
+    expect(maskToolResultText(continuationText(), p)).toBe(continuationText());
   });
 });

@@ -29,7 +29,13 @@ import {
 } from '@nodal-agents/db';
 // The one encryption Nodal stores secrets with, through the package that owns it.
 import { REDACTED_TEXT } from '@nodal-agents/shared';
-import { fakeAlnum, fakeSecret } from '@nodal-agents/test-kit';
+import {
+  CONTINUATION_SAMPLES,
+  continuationObjects,
+  holdsContinuation,
+  fakeAlnum,
+  fakeSecret,
+} from '@nodal-agents/test-kit';
 import { createToolRegistry } from '../registry';
 import { registerBuiltins } from '../builtin';
 import { executeTool } from '../execute';
@@ -423,4 +429,66 @@ describe('a masked read is never written back @cap:travailler-sur-des-fichiers/m
     );
     expect((res as { output: { ok: boolean } }).output.ok).toBe(true);
   });
+});
+
+describe('a value the model hands back reaches it and the store as it is, and a second call can use it @cap:connecter-un-service/moteur', () => {
+  const PAGE = CONTINUATION_SAMPLES[1]!.value;
+
+  /** A list tool that pages: page 1 hands a token (and secrets beside it), page 2 needs it. */
+  function pagingTool(name: string, form: 'structured' | 'text') {
+    return {
+      ...builtin('file_list'),
+      name,
+      inputSchema: z.object({ pageToken: z.string().optional() }),
+      riskLevel: 'read',
+      card: 'generic',
+      present: undefined,
+      execute: async (input: { pageToken?: string }) => {
+        const body =
+          input.pageToken === undefined
+            ? {
+                items: [{ note: `key ${registered}`, auth: shaped }, ...continuationObjects()],
+                nextPageToken: PAGE,
+              }
+            : input.pageToken === PAGE
+              ? { items: [{ page: 2 }] }
+              : { error: `unknown page token ${input.pageToken}` };
+        return form === 'structured' ? body : JSON.stringify(body, null, 2);
+      },
+    } as unknown as ToolDefinition<z.ZodTypeAny, unknown>;
+  }
+
+  for (const [label, name, form] of [
+    ['a connector’s structured result', 'acme__list_files', 'structured'],
+    ['an MCP server’s JSON text', 'srv__list_files', 'text'],
+  ] as const) {
+    it(label, async () => {
+      const tool = pagingTool(name, form);
+      const c = await ctx();
+      const first = await executeTool(tool, {}, c, opts([name]));
+      expect(first.outcome).toBe('success');
+      const seen = JSON.stringify(first);
+      const [row] = await rowsOf(c.jobId);
+      for (const s of CONTINUATION_SAMPLES) {
+        expect(holdsContinuation(seen, s), `${s.what} hidden from the model`).toBe(true);
+        expect(holdsContinuation(row!.toolOutput ?? '', s), `${s.what} not stored`).toBe(true);
+      }
+      // The secrets beside them are still hidden, in both places.
+      expect(seen).not.toContain(registered);
+      expect(seen).not.toContain(shaped);
+      expect(row!.toolOutput).not.toContain(registered);
+      expect(row!.toolOutput).not.toContain(shaped);
+
+      // The token the model read is the one that opens the next page.
+      const read =
+        first.outcome === 'success'
+          ? ((typeof first.output === 'string' ? JSON.parse(first.output) : first.output) as {
+              nextPageToken: string;
+            })
+          : null;
+      const second = await executeTool(tool, { pageToken: read!.nextPageToken }, c, opts([name]));
+      expect(JSON.stringify(second)).toContain('"page');
+      expect(JSON.stringify(second)).not.toContain('unknown page token');
+    });
+  }
 });

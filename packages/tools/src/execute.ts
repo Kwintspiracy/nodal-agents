@@ -16,7 +16,6 @@ import {
   maskToolResult,
   maskToolResultText,
   maskedLinesOf,
-  toolResultKindOf,
   type ToolResultMaskPolicy,
   surfaceForTool,
   REPLACE_SHARED_FILE_SETTING,
@@ -766,9 +765,9 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
   let policyForWrites: Promise<ToolResultMaskPolicy> | null = null;
   const execCtx: ToolContext = {
     ...ctx,
-    maskedLinesOf: async (text, path) => {
+    maskedLinesOf: async (text) => {
       policyForWrites ??= loadToolResultMaskPolicy(ctx.db, ctx);
-      return maskedLinesOf(text, await policyForWrites, toolResultKindOf({ path }));
+      return maskedLinesOf(text, await policyForWrites);
     },
     ...(mutationTargets === null ? {} : { declaredMutationTargets: mutationTargets }),
     ...(sharedFileUnattended ? { sharedOverwriteUnattended: true } : {}),
@@ -923,7 +922,6 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
     const { value: seen, masked: resultMasked } = maskToolResult(
       output,
       await loadToolResultMaskPolicy(ctx.db, ctx),
-      toolResultKindOf(validatedInput),
     );
     const ligneAudit = await _writeToolCall(
       ctx,
@@ -1179,9 +1177,8 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
     if (raisedByExecute) {
       try {
         const policy = await loadToolResultMaskPolicy(ctx.db, ctx);
-        const kind = toolResultKindOf(validatedInput);
-        const maskedMsg = maskToolResultText(errorMsg, policy, kind);
-        const maskedOut = maskToolResult(failedOutput, policy, kind);
+        const maskedMsg = maskToolResultText(errorMsg, policy);
+        const maskedOut = maskToolResult(failedOutput, policy);
         failureMasked = maskedMsg !== errorMsg || maskedOut.masked;
         errorMsg = maskedMsg;
         failedOutput = maskedOut.value;

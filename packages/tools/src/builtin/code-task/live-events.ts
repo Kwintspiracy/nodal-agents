@@ -13,12 +13,7 @@
 
 import { toolCalls } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
-import {
-  maskToolResultText,
-  redactSecrets,
-  toolResultKindOf,
-  type ToolResultMaskPolicy,
-} from '@nodal-agents/shared';
+import { maskToolResultText, redactSecrets, type ToolResultMaskPolicy } from '@nodal-agents/shared';
 import type { ToolCard } from '@nodal-agents/shared';
 
 /**
@@ -187,11 +182,10 @@ export function makeLiveToolRecorder(args: {
         // que tout outil (les valeurs exactes de l espace, puis les formes
         // selon le reglage de l agent), AVANT la coupe : une valeur a cheval
         // sur le plafond ne serait plus reconnue, et son debut resterait lisible.
-        toolOutput: maskToolResultText(
-          parsed.event.output ?? '',
-          args.policy,
-          toolResultKindOf(started.input),
-        ).slice(0, MAX_OUTPUT_CHARS),
+        toolOutput: maskToolResultText(parsed.event.output ?? '', args.policy).slice(
+          0,
+          MAX_OUTPUT_CHARS,
+        ),
         durationMs: Date.now() - started.startedAt,
         toolCallId: parsed.event.id,
       })
