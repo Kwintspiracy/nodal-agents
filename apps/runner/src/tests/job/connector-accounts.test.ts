@@ -15,6 +15,9 @@
 // carries; Gmail's does not, so no Gmail tool is ever executed here (nothing
 // leaves this machine).
 
+// A connector test fakes its provider: reaching the network fails this file
+// (packages/test-kit/src/no-network.ts).
+import '@nodal-agents/test-kit/setup-no-network';
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
 import { MockLanguageModelV3 } from 'ai/test';
 import { generateText } from 'ai';

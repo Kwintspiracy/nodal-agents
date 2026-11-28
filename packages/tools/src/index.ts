@@ -4,6 +4,7 @@
 export type {
   ToolDefinition,
   ConnectorToolDefinition,
+  ConnectorIo,
   ToolContext,
   ToolSpeech,
   ToolProvisioning,

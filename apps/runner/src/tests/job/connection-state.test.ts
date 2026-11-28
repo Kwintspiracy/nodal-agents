@@ -8,6 +8,9 @@
 // every token endpoint go through the global `fetch`. Nothing leaves this
 // machine: a request to any other host fails the test.
 
+// A connector test fakes its provider: reaching the network fails this file
+// (packages/test-kit/src/no-network.ts).
+import '@nodal-agents/test-kit/setup-no-network';
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
 import { MockLanguageModelV3 } from 'ai/test';
 import { generateText } from 'ai';

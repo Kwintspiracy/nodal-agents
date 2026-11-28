@@ -7,7 +7,10 @@
   "types": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./mail-contract-suite": "./src/mail-contract-suite.ts"
+    "./mail-contract-suite": "./src/mail-contract-suite.ts",
+    "./connector-contract-suite": "./src/connector-contract-suite.ts",
+    "./no-network": "./src/no-network.ts",
+    "./setup-no-network": "./src/setup-no-network.ts"
   },
   "scripts": {
     "lint": "eslint src",

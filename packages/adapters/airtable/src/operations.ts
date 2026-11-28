@@ -37,6 +37,8 @@ export const AIRTABLE_OPERATIONS: OperationDescriptor[] = [
     name: 'List records',
     risk: 'read',
     requiresApproval: false,
+    // One page per call, in the connector contract's list shape.
+    returns: 'list',
     scopes: [RECORDS_READ],
     description: 'List records in a table with optional filtering, sorting, and pagination.',
   },

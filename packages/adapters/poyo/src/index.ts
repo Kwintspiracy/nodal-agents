@@ -17,6 +17,8 @@ import { makePoyoGenerateImageTool } from './tools/generate.ts';
  */
 export type PoyoAdapterOptions = {
   accessToken: string;
+  /** The connector contract's transport (the registry gives it). */
+  fetch?: typeof fetch;
 };
 
 /**
@@ -34,7 +36,7 @@ export function createPoyoTools(
     throw new Error('PoyoAdapterOptions: accessToken must be a non-empty string.');
   }
 
-  const client = createPoyoClient(opts.accessToken);
+  const client = createPoyoClient(opts.accessToken, opts.fetch ? { fetchImpl: opts.fetch } : {});
 
   return [makePoyoGenerateImageTool(client)] as unknown as ConnectorToolDefinition<
     z.ZodTypeAny,

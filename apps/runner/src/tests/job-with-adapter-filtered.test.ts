@@ -13,6 +13,9 @@
 //
 // The mocked LLM script only calls the allowed tool so we assert on tool_calls rows.
 
+// A connector test fakes its provider: reaching the network fails this file
+// (packages/test-kit/src/no-network.ts).
+import '@nodal-agents/test-kit/setup-no-network';
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { MockLanguageModelV3 } from 'ai/test';
 import { generateText } from 'ai';
@@ -304,10 +307,9 @@ describe('job-with-adapter-filtered: enabledOperations whitelist', () => {
       },
       {
         toolCalls: [
-          // Drive errors under this harness (googleapis bypasses the fetch spy),
-          // so 'blocked' is the honest terminal; Guard 3b would refuse a 'success'
-          // claim while drive_list_files is unresolved. Wiring test only. A
-          // blocked result carries a reason and finalizes as 'failed'.
+          // Wiring test only: the fetch spy is the Drive the tool reaches (the
+          // connector contract's transport is the process's fetch); the
+          // terminal is kept 'blocked', which finalizes as 'failed'.
           {
             toolCallId: 'tc-rr',
             toolName: 'return_result',

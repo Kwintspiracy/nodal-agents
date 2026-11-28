@@ -8,6 +8,9 @@
 // instantiated from the DB-resolved credential and the tool reached the
 // LLM's whitelist.
 
+// A connector test fakes its provider: reaching the network fails this file
+// (packages/test-kit/src/no-network.ts).
+import '@nodal-agents/test-kit/setup-no-network';
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { MockLanguageModelV3 } from 'ai/test';
 import { generateText } from 'ai';
@@ -292,14 +295,9 @@ describe('job-with-outlook-adapter: Outlook Mail connector fully enabled (enable
       {
         toolCalls: [
           {
-            // The mocked Graph call errors under this harness (the Graph SDK
-            // makes its own network call — no fetch spy wired here — same
-            // pattern as job-with-adapter.test.ts's Drive scenario), so the
-            // honest terminal is 'blocked' — Guard 3b (no-false-success) would
-            // correctly refuse a 'success' claim while outlook_list_messages
-            // is unresolved. This test only verifies wiring (the tool_calls
-            // row). A blocked result must carry a reason; it finalizes as
-            // 'failed' (error='agent_blocked') with the reason surfaced.
+            // This test verifies wiring (the tool_calls row and what Graph
+            // received); the agent's terminal is kept 'blocked', which
+            // finalizes as 'failed' (error='agent_blocked').
             toolCallId: 'tc-rr',
             toolName: 'return_result',
             args: { status: 'blocked', reason: 'Outlook call failed under this harness' },
@@ -308,7 +306,27 @@ describe('job-with-outlook-adapter: Outlook Mail connector fully enabled (enable
       },
     ]);
 
+    // The provider, faked: every connector client sends through the connector
+    // contract's transport, the process's `fetch` in a job. Before the contract,
+    // this call went to the real provider (refused here by the network guard).
+    const providerCalls: Array<{ url: string; authorization: string | null }> = [];
+    const providerFake = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const req = new Request(input as string, init);
+      providerCalls.push({ url: req.url, authorization: req.headers.get('authorization') });
+      return new Response(JSON.stringify({ value: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    });
+
     const result = await executeJob(job.id as JobId, makeDeps(client), testEnv);
+    providerFake.mockRestore();
+    // What the provider received: the call, with the token the resolver gave.
+    const listed = providerCalls.filter((c) =>
+      c.url.startsWith('https://graph.microsoft.com/v1.0/me/messages'),
+    );
+    expect(listed).toHaveLength(1);
+    for (const c of listed) expect(c.authorization).toBe('Bearer test-microsoft-access-token');
     expect(result.status).toBe('failed');
 
     // Primary assertion: tool_calls table must have a row for outlook_list_messages.

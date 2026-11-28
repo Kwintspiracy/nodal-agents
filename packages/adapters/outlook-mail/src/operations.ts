@@ -34,6 +34,8 @@ export const OUTLOOK_MAIL_OPERATIONS: OperationDescriptor[] = [
     name: 'List messages',
     risk: 'read',
     requiresApproval: false,
+    // One page per call, in the connector contract's list shape.
+    returns: 'list',
     scopes: [READ_MAIL],
     description: 'Search and list Outlook emails, optionally scoped to a folder.',
   },

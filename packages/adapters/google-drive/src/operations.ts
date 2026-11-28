@@ -24,6 +24,8 @@ export const DRIVE_OPERATIONS: OperationDescriptor[] = [
     name: 'List files',
     risk: 'read',
     requiresApproval: false,
+    // One page per call, in the connector contract's list shape.
+    returns: 'list',
     scopes: [DRIVE],
     description: 'Search and list files in Google Drive.',
   },

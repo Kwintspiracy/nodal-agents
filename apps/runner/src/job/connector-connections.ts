@@ -22,7 +22,10 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { decrypt } from '@nodal-agents/secrets';
 import {
   callFailure,
+  classifyCallFailure,
   connectionNoteForModel,
+  connectorFailureMessage,
+  ConnectorCallError,
   connectionOfAccess,
   connectorConnection,
   ConnectionUnavailableError,
@@ -149,8 +152,27 @@ function withConnectionState(tool: AnyTool, ctx: LendContext): AnyTool {
         ctx.confirmed.delete(connectionKey(target));
         await record(ctx.db, target, state);
       }
+      // The adapter turned the resolver's failure into its own error: the
+      // contract's class of it is the connection's (the person must
+      // authorise again), not what the adapter's text alone said.
+      const failed =
+        fromResolver && !(err instanceof ConnectionUnavailableError)
+          ? new ConnectorCallError(
+              classifyCallFailure(fromResolver, null),
+              connectorFailureMessage(
+                classifyCallFailure(fromResolver, null).kind,
+                errorText(err),
+                {
+                  retryAfter: fromResolver.connection.retryAfter,
+                  boundMs: null,
+                },
+              ),
+              null,
+              { cause: err },
+            )
+          : err;
       throw withNote(
-        err,
+        failed,
         connectionNoteForModel(
           { label: ctx.label, account: ctx.account, kind: 'connector' },
           state,

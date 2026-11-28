@@ -21,8 +21,8 @@ import type {
   MailAttachmentReport,
   MailSendReport,
 } from '@nodal-agents/shared/mail-contract';
+import { LIST_CURSOR_DESCRIPTION, type ConnectorList } from '@nodal-agents/shared';
 import { mapOutlookError, OutlookAdapterError } from '../errors';
-import { paginateOutlook } from '../helpers/pagination';
 import type { ODataListResponse } from '../helpers/pagination';
 import { extractTextFromBody, capBody } from '../helpers/body';
 import { buildFileAttachments, graphBody, toGraphRecipients } from '../helpers/message';
@@ -84,24 +84,53 @@ const ListMessagesInput = z.object({
     .number()
     .int()
     .min(1)
-    .max(500)
+    .max(100)
     .optional()
-    .describe('Max messages to return (1-500, default 20).'),
+    .describe('Messages per page (1-100, default 20).'),
+  cursor: z.string().optional().describe(LIST_CURSOR_DESCRIPTION),
 });
 
-export type ListMessagesOutput = {
-  total: number;
-  messages: Array<{
-    messageId: string;
-    from: string;
-    subject: string;
-    receivedDateTime: string;
-    bodyPreview: string;
-    isRead: boolean;
-    hasAttachments: boolean;
-    folderId: string;
-  }>;
+export type ListedMessage = {
+  messageId: string;
+  from: string;
+  subject: string;
+  receivedDateTime: string;
+  bodyPreview: string;
+  isRead: boolean;
+  hasAttachments: boolean;
+  folderId: string;
 };
+
+/** One page, in the connector contract's list shape: `next` is Graph's `@odata.nextLink`. */
+export type ListMessagesOutput = ConnectorList<ListedMessage>;
+
+const GRAPH_ORIGIN = 'https://graph.microsoft.com';
+
+/**
+ * The page a cursor names: Graph's `@odata.nextLink`, which carries the
+ * query and its position. Only a Graph URL is followed (the token goes with
+ * the request).
+ */
+function nextLinkOf(cursor: string): string {
+  let url: URL;
+  try {
+    url = new URL(cursor);
+  } catch {
+    throw new OutlookAdapterError(
+      'outlook_validation_error',
+      'cursor is not a value outlook_list_messages returned as next',
+      400,
+    );
+  }
+  if (url.origin !== GRAPH_ORIGIN) {
+    throw new OutlookAdapterError(
+      'outlook_validation_error',
+      'cursor is not a value outlook_list_messages returned as next',
+      400,
+    );
+  }
+  return url.toString();
+}
 
 export function createListMessagesTool(
   client: Client,
@@ -109,31 +138,35 @@ export function createListMessagesTool(
   return {
     name: 'outlook_list_messages',
     description:
-      'List Outlook messages, optionally scoped to a folder and filtered by free-text search or an OData $filter ' +
-      'expression. Returns message IDs, sender, subject, received date and a preview. ' +
-      'Use outlook_get_message for the full body.',
+      'List Outlook messages, one page per call, optionally scoped to a folder and filtered by free-text ' +
+      'search or an OData $filter expression. Returns `items` (message IDs, sender, subject, received ' +
+      'date and a preview) and `next`: pass it back as `cursor` to read the next page (null when there ' +
+      'is none). Use outlook_get_message for the full body.',
     inputSchema: ListMessagesInput,
     async execute(input) {
       try {
-        const maxResults = Math.min(input.max_results ?? 20, 500);
-        const basePath = input.folder
-          ? `/me/mailFolders/${encodeURIComponent(input.folder)}/messages`
-          : '/me/messages';
-
-        const items = await paginateOutlook<Message>(
-          client,
-          async () => {
-            let req = client.api(basePath).select(LIST_SELECT).top(Math.min(maxResults, 100));
-            if (input.query) req = req.search(`"${input.query.replace(/"/g, '\\"')}"`);
-            if (input.filter) req = req.filter(input.filter);
-            return (await req.get()) as ODataListResponse<Message>;
-          },
-          maxResults,
-        );
+        let page: ODataListResponse<Message>;
+        if (input.cursor) {
+          // The next link carries the folder, the search, the filter and the page size.
+          page = (await client.api(nextLinkOf(input.cursor)).get()) as ODataListResponse<Message>;
+        } else {
+          const basePath = input.folder
+            ? `/me/mailFolders/${encodeURIComponent(input.folder)}/messages`
+            : '/me/messages';
+          let req = client
+            .api(basePath)
+            .select(LIST_SELECT)
+            .top(input.max_results ?? 20);
+          if (input.query) req = req.search(`"${input.query.replace(/"/g, '\\"')}"`);
+          if (input.filter) req = req.filter(input.filter);
+          page = (await req.get()) as ODataListResponse<Message>;
+        }
+        const items = page.value ?? [];
 
         return {
-          total: items.length,
-          messages: items.map((m) => ({
+          next: page['@odata.nextLink'] ?? null,
+          truncated: null,
+          items: items.map((m) => ({
             messageId: m.id ?? '',
             from: m.from?.emailAddress?.address ?? '',
             subject: m.subject ?? '',
