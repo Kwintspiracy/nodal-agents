@@ -19,6 +19,7 @@ import {
   OUTBOUND_BRAND_CAST,
   outboundProjectionExits,
   scanForOutboundBypass,
+  scanForGitSpawnOutsideLauncher,
 } from '@nodal-agents/test-kit';
 import { OUTBOUND_TEXT_COLUMNS } from '@nodal-agents/db';
 import { scanForServerUsesOfClientValues } from './scan-server-uses-client-value.ts';
@@ -26,6 +27,13 @@ import { scanForServerUsesOfClientValues } from './scan-server-uses-client-value
 const srcDir = join(fileURLToPath(import.meta.url), '..', '..');
 
 describe('architecture invariants', () => {
+  it('starts git for itself only through the launcher (@nodal-agents/shared/internal-git)', () => {
+    assertNoViolations(
+      'git lancé hors du lanceur',
+      scanForGitSpawnOutsideLauncher({ srcDir: srcDir }),
+    );
+  });
+
   it('no agent or server slug hardcoded in source (invariant #1)', () => {
     assertNoViolations('slugs d\u2019agent', scanForAgentSlugs({ srcDir }));
   });

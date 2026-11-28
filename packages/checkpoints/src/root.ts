@@ -19,8 +19,11 @@ import { nodalHomeEntry } from '@nodal-agents/shared/nodal-home';
  *
  *   ~/.nodalai/checkpoints/
  *     ├── store/         (one bare git object database, shared)
- *     ├── indexes/<key>  (one staging index per workspace)
- *     └── gitconfig      (empty — pins the owner's git config out of the way)
+ *     └── indexes/<key>  (one staging index per workspace)
+ *
+ * (A `gitconfig` file may remain from older versions: unused. The owner's git
+ * configuration is kept out of every internal git by its launcher,
+ * `@nodal-agents/shared/internal-git`.)
  *
  * Machine-scoped, not per entity: the store is content-addressed, so one shared
  * database means a hundred snapshots of a tree cost roughly one copy plus the

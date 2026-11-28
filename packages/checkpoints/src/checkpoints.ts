@@ -30,7 +30,6 @@
 // evidence.
 
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { execFile, spawn } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import {
   link,
@@ -46,12 +45,19 @@ import {
 } from 'node:fs/promises';
 import { constants, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { Transform, Writable, type Readable } from 'node:stream';
+import { Transform, Writable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
-import { promisify } from 'node:util';
 import { createInflate } from 'node:zlib';
 
-import { resolveGitBinary } from '@nodal-agents/shared/git-binary';
+import {
+  GitBinaryMissingError,
+  hostProgramRunner,
+  runInternalGit,
+  spawnInternalGit,
+  type ProgramChild,
+  type ProgramLaunch,
+  type ProgramRunner,
+} from '@nodal-agents/shared/internal-git';
 
 import {
   CheckpointError,
@@ -63,8 +69,6 @@ import {
   type CheckpointFailureCause,
   type CheckpointOperation,
 } from './failure';
-
-const run = promisify(execFile);
 
 // ─── Qui lance git ───────────────────────────────────────────────────────────
 //
@@ -93,66 +97,34 @@ const run = promisify(execFile);
 //     jetable (`importObjects`), et relu son index contre l'arbre photographié
 //     (`adoptScratchIndex`) — par l'ARRIVÉE (`incoming`), que lui seul écrit.
 //
-// La forme des programmes est celle du `ProgramRunner` du bac à sable, par
-// structure : ce paquet n'en dépend pas (voir index.ts). Sans programmes
-// donnés, le git de l'arbre tourne sur l'hôte, par le même chemin.
+// La forme des programmes est celle du lanceur de git de Nodal
+// (`ProgramRunner`, @nodal-agents/shared/internal-git), que le bac à sable
+// fournit aussi : ce paquet ne dépend pas du bac à sable (voir index.ts). Sans
+// programmes donnés, le git de l'arbre tourne sur l'hôte, par le même lanceur.
+// Sur l'hôte comme dans le conteneur, ce qu'un dépôt imbriqué nomme dans sa
+// config fixe (`core.fsmonitor`, les hooks…) n'est pas exécuté : la
+// configuration fixe du lanceur passe par l'environnement, que le git enfant
+// hérite.
 
-/** Ce qu'un lancement de git reçoit. */
-export interface CheckpointProgramOptions {
-  readonly cwd?: string;
-  readonly env?: NodeJS.ProcessEnv;
+/** Ce qu'un lancement de git reçoit (la forme du lanceur, `ProgramLaunch`). */
+export type CheckpointProgramOptions = ProgramLaunch & {
   readonly timeout?: number;
   readonly maxBuffer?: number;
-  readonly writableRoots: readonly string[];
-  readonly readableRoots: readonly string[];
-}
+};
 
 /** Un git lancé en flux. */
-export interface CheckpointProgramChild {
-  readonly stdout: Readable;
-  readonly stderr: Readable;
-  kill(): void;
-  readonly closed: Promise<{ code: number | null }>;
-}
+export type CheckpointProgramChild = ProgramChild;
 
 /** Comment lancer git : `execFile` et `spawn`, sur l'hôte ou dans le bac à sable. */
-export interface CheckpointPrograms {
-  execFile(
-    file: string,
-    args: readonly string[],
-    opts: CheckpointProgramOptions,
-  ): Promise<{ stdout: string; stderr: string }>;
-  spawn(
-    file: string,
-    args: readonly string[],
-    opts: Omit<CheckpointProgramOptions, 'timeout' | 'maxBuffer'>,
-  ): Promise<CheckpointProgramChild>;
-}
+export type CheckpointPrograms = ProgramRunner;
 
-/** Git sur l'hôte : `execFile` / `spawn` de Node, exactement comme avant. */
-const hostGit: CheckpointPrograms = {
-  execFile: (file, args, opts) =>
-    run(file, [...args], {
-      ...(opts.cwd !== undefined ? { cwd: opts.cwd } : {}),
-      ...(opts.timeout !== undefined ? { timeout: opts.timeout } : {}),
-      ...(opts.maxBuffer !== undefined ? { maxBuffer: opts.maxBuffer } : {}),
-      windowsHide: true,
-      env: opts.env,
-    }),
-  spawn: (file, args, opts) =>
-    new Promise((resolve, reject) => {
-      const child = spawn(file, [...args], { windowsHide: true, env: opts.env });
-      const closed = new Promise<{ code: number | null }>((r) =>
-        child.on('close', (code) => r({ code })),
-      );
-      child.once('error', reject);
-      child.once('spawn', () => {
-        child.off('error', reject);
-        child.on('error', () => undefined); // une erreur tardive finit par `close`
-        resolve({ stdout: child.stdout, stderr: child.stderr, kill: () => child.kill(), closed });
-      });
-    }),
-};
+/**
+ * Git sur l'hôte : celui du lanceur de git de Nodal. Tout git d'ici passe par
+ * `runInternalGit` / `spawnInternalGit` (@nodal-agents/shared/internal-git) :
+ * configuration fixe, ni configuration de l'utilisateur ni du système,
+ * environnement nettoyé, sur l'hôte comme dans le bac à sable.
+ */
+const hostGit: CheckpointPrograms = hostProgramRunner;
 
 /** Les programmes de l'opération en cours (posés par l'appel exporté). */
 const programsOfOperation = new AsyncLocalStorage<CheckpointPrograms>();
@@ -544,10 +516,11 @@ async function importObjects(
           );
         }
         try {
-          await run(await gitBinary(), ['verify-pack', `${staged}.idx`], {
+          await runInternalGit(hostGit, ['verify-pack', `${staged}.idx`], {
             timeout: deadline.remaining(),
-            windowsHide: true,
-            env: storeEnv(store),
+            gitEnv: storeEnv(store),
+            writableRoots: [],
+            readableRoots: [],
           });
         } catch (err) {
           throw deadline.explain(err);
@@ -671,9 +644,8 @@ async function treeEntries(
   tree: string,
   deadline: HostDeadline,
 ): Promise<Map<string, string>> {
-  const binaire = await gitBinary();
-  const child = await hostGit.spawn(binaire, ['ls-tree', '-r', '-z', '--full-tree', tree], {
-    env: gitEnv(store, workspace, STORE),
+  const child = await spawnInternalGit(hostGit, ['ls-tree', '-r', '-z', '--full-tree', tree], {
+    gitEnv: gitEnv(store, workspace, STORE),
     writableRoots: [],
     readableRoots: [],
   });
@@ -872,39 +844,10 @@ function isTimeoutError(err: unknown): boolean {
 }
 
 /**
- * Il n'y a pas de git sur le PATH, dit AVANT d'avoir lancé quoi que ce soit.
- *
- * Une erreur à part, et non un `ENOENT` de spawn maquillé : c'est la résolution
- * qui a répondu « aucun », et confondre les deux ferait croire à un lecteur du
- * code qu'un processus a été lancé.
+ * Il n'y a pas de git sur le PATH, dit AVANT d'avoir lancé quoi que ce soit :
+ * `GitBinaryMissingError`, levée par le lanceur (jamais de repli sur le nom
+ * nu, et surtout aucun instantané « réussi » sans filet derrière, invariant #4).
  */
-class GitBinaryMissingError extends Error {
-  constructor() {
-    super(
-      'git is not on PATH: no checkpoint can be taken or read. ' +
-        'Install git, or make it reachable from the process PATH.',
-    );
-    this.name = 'GitBinaryMissingError';
-  }
-}
-
-/**
- * QUEL git est lancé — le chemin ABSOLU du git du système, jamais le nom nu
- * (issue #251).
- *
- * Toutes les commandes d'ici tournent avec `GIT_WORK_TREE` sur le workspace du
- * propriétaire, c'est-à-dire sur un dossier où l'agent écrit : c'est la même
- * famille de risque que le constat d'écritures (#227) et que `apps/web` (#244),
- * donc la même résolution, celle de `@nodal-agents/shared/git-binary`.
- *
- * Pas de git ⇒ ON LÈVE, fort et clair. Aucun repli sur le nom nu, et surtout
- * aucun instantané « réussi » sans filet derrière (invariant #4).
- */
-async function gitBinary(): Promise<string> {
-  const binaire = await resolveGitBinary();
-  if (binaire === null) throw new GitBinaryMissingError();
-  return binaire;
-}
 
 /**
  * `git` introuvable — soit la résolution l'a dit avant de lancer, soit un
@@ -1092,10 +1035,14 @@ function workspaceKey(workspace: string): string {
   return createHash('sha256').update(norm).digest('hex').slice(0, 16);
 }
 
-/** L'environnement d'un git qui ne lit QUE le magasin : pas d'arbre de travail. */
-function storeEnv(store: string): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = {
-    ...process.env,
+/**
+ * Ce que ce paquet dit à un git qui ne lit QUE le magasin : où est le magasin,
+ * et qui signe. Tout le reste (configuration fixe, aucune configuration de
+ * l'utilisateur ni du système, environnement nettoyé, ni gc ni maintenance
+ * automatiques) est posé par le lanceur, pour tout git de Nodal.
+ */
+function storeEnv(store: string): Record<string, string> {
+  return {
     GIT_DIR: join(store, 'store'),
     // A checkpoint is machinery, not authorship. Identity is fixed so it can
     // never depend on — or leak — the owner's git config.
@@ -1103,22 +1050,7 @@ function storeEnv(store: string): NodeJS.ProcessEnv {
     GIT_AUTHOR_EMAIL: 'checkpoints@nodal.local',
     GIT_COMMITTER_NAME: 'Nodal checkpoints',
     GIT_COMMITTER_EMAIL: 'checkpoints@nodal.local',
-    // The owner's global config must not change what we store or how.
-    GIT_CONFIG_GLOBAL: join(store, 'gitconfig'),
-    GIT_CONFIG_SYSTEM: join(store, 'gitconfig'),
-    // Aucune maintenance automatique : elle réécrirait le magasin depuis un git
-    // qui n'a pas à l'écrire (et échouerait, en lecture seule, dans le conteneur).
-    GIT_CONFIG_COUNT: '2',
-    GIT_CONFIG_KEY_0: 'gc.auto',
-    GIT_CONFIG_VALUE_0: '0',
-    GIT_CONFIG_KEY_1: 'maintenance.auto',
-    GIT_CONFIG_VALUE_1: 'false',
   };
-  delete env['GIT_WORK_TREE'];
-  delete env['GIT_INDEX_FILE'];
-  delete env['GIT_OBJECT_DIRECTORY'];
-  delete env['GIT_ALTERNATE_OBJECT_DIRECTORIES'];
-  return env;
 }
 
 /**
@@ -1131,7 +1063,7 @@ function gitEnv(
   workspace: string,
   where: Where,
   indexFile?: string,
-): NodeJS.ProcessEnv {
+): Record<string, string> {
   if (where.kind === 'store') return storeEnv(store);
   return {
     ...storeEnv(store),
@@ -1156,23 +1088,19 @@ function runGit(
     indexFile?: string;
     timeout: number;
     maxBuffer?: number;
-    extraEnv?: Readonly<Record<string, string>>;
   },
 ): Promise<{ stdout: string; stderr: string }> {
-  return gitBinary().then((binaire) => {
-    const env = { ...gitEnv(store, workspace, where, opts.indexFile), ...opts.extraEnv };
-    const common = {
-      timeout: opts.timeout,
-      ...(opts.maxBuffer !== undefined ? { maxBuffer: opts.maxBuffer } : {}),
-      env,
-    };
-    return where.kind === 'store'
-      ? hostGit.execFile(binaire, args, { ...common, writableRoots: [], readableRoots: [] })
-      : programs().execFile(binaire, args, {
-          ...common,
-          ...worktreeRoots(store, workspace, where.scratch),
-        });
-  });
+  const common = {
+    timeout: opts.timeout,
+    ...(opts.maxBuffer !== undefined ? { maxBuffer: opts.maxBuffer } : {}),
+    gitEnv: gitEnv(store, workspace, where, opts.indexFile),
+  };
+  return where.kind === 'store'
+    ? runInternalGit(hostGit, args, { ...common, writableRoots: [], readableRoots: [] })
+    : runInternalGit(programs(), args, {
+        ...common,
+        ...worktreeRoots(store, workspace, where.scratch),
+      });
 }
 
 async function git(
@@ -1243,18 +1171,16 @@ async function gitRawCapped(
   maxBytes: number,
   where: Where,
 ): Promise<{ text: string; truncated: boolean }> {
-  // Résolu AVANT d'ouvrir la promesse : `spawn` ne sait pas attendre, et un
-  // `git` nu laisserait le système chercher le programme (#251).
-  const binaire = await gitBinary();
-  // Rejette si git ne peut pas démarrer (l'erreur du système, ou celle du bac
-  // à sable) — l'équivalent de l'événement `error` d'avant. Le magasin seul :
-  // sur l'hôte ; l'arbre : avec les programmes de l'opération.
+  // Rejette si git ne peut pas démarrer (pas de git sur le PATH, l'erreur du
+  // système, ou celle du bac à sable) — l'équivalent de l'événement `error`
+  // d'avant. Le magasin seul : sur l'hôte ; l'arbre : avec les programmes de
+  // l'opération.
   const env = gitEnv(store, workspace, where);
   const child =
     where.kind === 'store'
-      ? await hostGit.spawn(binaire, args, { env, writableRoots: [], readableRoots: [] })
-      : await programs().spawn(binaire, args, {
-          env,
+      ? await spawnInternalGit(hostGit, args, { gitEnv: env, writableRoots: [], readableRoots: [] })
+      : await spawnInternalGit(programs(), args, {
+          gitEnv: env,
           ...worktreeRoots(store, workspace, where.scratch),
         });
   const chunks: Buffer[] = [];
@@ -1294,15 +1220,15 @@ async function gitRawCapped(
 export async function ensureStore(store: string): Promise<void> {
   const gitDir = join(store, 'store');
   await mkdir(join(store, 'indexes'), { recursive: true });
-  await writeFile(join(store, 'gitconfig'), '', { flag: 'a' });
   if (!existsSync(join(gitDir, 'HEAD'))) {
     await mkdir(gitDir, { recursive: true });
     // LA CONSTANTE, pas la borne surchargeable : créer un dépôt nu vide ne
     // dépend d'aucun arbre, donc rien ne justifie qu'une borne serrée posée
     // pour un gros dossier empêche le magasin d'exister (#262, passe 2).
-    await run(await gitBinary(), ['init', '--bare', '--quiet', gitDir], {
+    await runInternalGit(hostGit, ['init', '--bare', '--quiet', gitDir], {
       timeout: GIT_TIMEOUT_MS,
-      windowsHide: true,
+      writableRoots: [],
+      readableRoots: [],
     });
     // Excludes live in the store, not in the user's workspace: a checkpoint
     // must never add a file to a project it is protecting.
@@ -1542,7 +1468,6 @@ export async function statusAgainstFrozenIndex(
         indexFile,
         timeout: storeTimeoutMs(),
         maxBuffer: FROZEN_STATUS_MAX_BUFFER,
-        extraEnv: { GIT_OPTIONAL_LOCKS: '0' },
       }),
     );
     return { kind: 'status', stdout };

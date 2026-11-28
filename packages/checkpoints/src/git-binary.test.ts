@@ -280,10 +280,12 @@ describe('le git du magasin de checkpoints @cap:verifier-un-livrable/moteur', ()
     expect(await lancementsDe(lire)).toBe(3);
 
     // Les trois lancements — les deux `ls-tree` et le `--numstat` — partent par
-    // le chemin résolu.
+    // le chemin résolu, chacun précédé de la lecture des clés que le dépôt
+    // déclare (le lanceur, `@nodal-agents/shared/internal-git`), et le diff
+    // de la liste des dépôts imbriqués qu'il visitera : sept.
     const chemin = await cheminResolu();
     const { execFile } = await executablesDe(lire);
-    expect(execFile).toHaveLength(3);
+    expect(execFile).toHaveLength(7);
     exigerLancesParLeChemin(execFile, chemin, 'gitRaw()');
 
     exigerGitMissing(await refusAuRang(3, lire));

@@ -14,7 +14,7 @@
 // palier base-container, ces suites s'y sautent.
 //
 // La liste est celle que le PRODUIT transmet aux commandes (l'allowlist du
-// produit, `safeEnvAllowlistSnapshot()` de packages/tools/src/builtin/child-env.ts),
+// produit, `safeEnvAllowlistSnapshot()` de packages/shared/src/child-env.ts),
 // moins ce que turbo laisse déjà passer (`TURBO_WINDOWS_DEFAULTS`, mesuré) et moins
 // les noms POSIX : un test qui prouve ce que voit une commande doit le voir lui-même.
 // `packages/tools/src/tests/windows-env-derivation.test.ts` DÉRIVE cet ensemble de

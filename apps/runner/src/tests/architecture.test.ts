@@ -34,6 +34,7 @@ import {
   scanForToolResultBypass,
   stripComments,
   type OutboundExit,
+  scanForGitSpawnOutsideLauncher,
 } from '@nodal-agents/test-kit';
 import { join } from 'node:path';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
@@ -528,5 +529,12 @@ describe('architecture — un résultat d’outil ne sort que par la frontière 
       ],
     });
     if (v.length > 0) expect.fail(formatViolations('Résultat d’outil hors de la frontière', v));
+  });
+});
+
+describe('architecture — git n’est lancé que par le lanceur de Nodal', () => {
+  it('starts git for itself only through the launcher (@nodal-agents/shared/internal-git)', () => {
+    const v = scanForGitSpawnOutsideLauncher({ srcDir: SRC_DIR });
+    if (v.length > 0) expect.fail(formatViolations('git lancé hors du lanceur', v));
   });
 });

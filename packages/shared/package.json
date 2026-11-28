@@ -19,7 +19,9 @@
     "./node-version": "./src/node-version.ts",
     "./schedule-change-cases": "./src/tests/schedule-change-cases.ts",
     "./mail-contract": "./src/mail-contract.ts",
-    "./version-compare": "./src/version-compare.ts"
+    "./version-compare": "./src/version-compare.ts",
+    "./child-env": "./src/child-env.ts",
+    "./internal-git": "./src/internal-git.ts"
   },
   "scripts": {
     "lint": "eslint src",

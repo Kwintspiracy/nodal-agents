@@ -21,6 +21,7 @@ import {
   scanForStateFileBypass,
   OUTBOUND_BRAND_CAST,
   scanForOutboundBypass,
+  scanForGitSpawnOutsideLauncher,
 } from '@nodal-agents/test-kit';
 
 const srcDir = join(fileURLToPath(import.meta.url), '..', '..');
@@ -89,6 +90,23 @@ describe('architecture invariants', () => {
       }),
     );
     assertNoViolations('fichier d’état écrit hors de state-files.ts', violations);
+  });
+
+  it('hosts the ONE launcher of git — no git started for Nodal itself anywhere else in apps/ or packages/', () => {
+    // Repo-wide, like the two rules above: a new package would bring its own
+    // architecture test only if someone thought of it. The developer tools
+    // are not Nodal starting git for itself: the scanners' own walker (it asks
+    // git which files are source), the benchmark's commit stamp, the quality
+    // portal's collector.
+    const repo = join(srcDir, '..', '..', '..');
+    const violations = ['apps', 'packages'].flatMap((root) =>
+      scanForGitSpawnOutsideLauncher({
+        srcDir: join(repo, root),
+        skipDirs: ['tests', '__tests__', 'test-kit', 'bench', 'qa'],
+        skipFiles: ['packages/shared/src/internal-git.ts', 'packages/shared/src/git-binary.ts'],
+      }),
+    );
+    assertNoViolations('git lancé hors du lanceur', violations);
   });
 
   it('hosts the ONE path identity rule — no second copy even inside this package', () => {
