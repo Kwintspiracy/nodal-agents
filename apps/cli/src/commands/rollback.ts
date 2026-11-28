@@ -162,7 +162,7 @@ export async function runRollback(opts: RollbackOptions = {}): Promise<void> {
         ),
       );
     }
-    if (after.unknown.length > 0 || after.pending.length > 0) {
+    if (after.ahead.length > 0 || after.pending.length > 0) {
       const wanted = restored?.lastOpenedBy ?? null;
       console.log(
         chalk.yellow(

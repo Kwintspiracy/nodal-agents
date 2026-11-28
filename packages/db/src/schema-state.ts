@@ -8,10 +8,19 @@
 //     what Drizzle's migrator will apply (it only looks at the newest row).
 //   - GAPS: journal entries OLDER than the newest one applied that the history
 //     does not hold. The migrator skips them for good (#298).
-//   - UNKNOWN: history rows no journal entry of this program claims. The
-//     database was migrated by a program that knows migrations this one does
-//     not: this program is OLDER than the database, and running on it would
-//     fail later, query by query, on a schema it does not know (ACC-10).
+//   - AHEAD: history rows LATER than the newest entry of this program's
+//     journal. The database was migrated by a program that knows migrations
+//     this one does not: this program is OLDER than the database, and running
+//     on it would fail later, query by query, on a schema it does not know
+//     (ACC-10). That, and only that, is "newer than the program".
+//   - UNCLAIMED: history rows no journal entry claims, NOT later than the
+//     journal's newest entry. They are what a development branch leaves once
+//     its migration is renumbered or dropped before release. The database is
+//     not newer; the migrator ignores them (it compares only against the newest
+//     row) and so does the gap check. They are reported, never acted on.
+//
+// Two lists, never one: a reader that treated an unclaimed row as "ahead"
+// refused to start installs that were not newer than the program.
 //
 // WHO OPENED IT LAST. Each start that migrated (or found nothing to migrate)
 // records its version in `app_settings` under `schema_opened_by`, so that an
@@ -54,10 +63,14 @@ export interface SchemaState {
   readonly applied: readonly number[] | null;
   /** The newest applied migration, and its tag when this journal knows it. */
   readonly lastApplied: { readonly when: number; readonly tag: string | null } | null;
+  /** The newest applied migration this journal claims (what a copy is named after). */
+  readonly lastClaimed: { readonly when: number; readonly tag: string } | null;
   readonly pending: readonly JournalEntry[];
   readonly gaps: readonly MigrationGap[];
-  /** Applied `created_at` values no entry of this journal has, oldest first. */
-  readonly unknown: readonly number[];
+  /** Applied `created_at` values LATER than the journal's newest entry, oldest first. */
+  readonly ahead: readonly number[];
+  /** Applied `created_at` values no entry claims, not later than the newest one, oldest first. */
+  readonly unclaimed: readonly number[];
 }
 
 /**
@@ -69,22 +82,42 @@ export function schemaStateOf(
   applied: readonly number[] | null,
 ): SchemaState {
   if (applied === null || applied.length === 0) {
-    return { journal, applied, lastApplied: null, pending: journal, gaps: [], unknown: [] };
+    return {
+      journal,
+      applied,
+      lastApplied: null,
+      lastClaimed: null,
+      pending: journal,
+      gaps: [],
+      ahead: [],
+      unclaimed: [],
+    };
   }
   const newest = Math.max(...applied);
+  const journalNewest =
+    journal.length > 0 ? Math.max(...journal.map((e) => Number(e.when))) : -Infinity;
   const known = new Set(journal.map((e) => Number(e.when)));
-  const unknown = [...new Set(applied.filter((w) => !known.has(w)))].sort((a, b) => a - b);
+  const appliedSet = new Set(applied.map((w) => Number(w)));
+  const notInJournal = [...new Set(applied.filter((w) => !known.has(w)))].sort((a, b) => a - b);
+  const lastClaimed = journal
+    .filter((e) => appliedSet.has(Number(e.when)))
+    .reduce<JournalEntry | null>(
+      (best, e) => (best === null || e.when > best.when ? e : best),
+      null,
+    );
   return {
     journal,
     applied,
     lastApplied: { when: newest, tag: journal.find((e) => e.when === newest)?.tag ?? null },
+    lastClaimed: lastClaimed === null ? null : { when: lastClaimed.when, tag: lastClaimed.tag },
     pending: journal.filter((e) => e.when > newest),
     // Only BELOW the newest applied: an entry above it is pending, not a gap.
     gaps: gapsBetween(
       journal.filter((e) => e.when < newest),
       applied,
     ),
-    unknown,
+    ahead: notInJournal.filter((w) => w > journalNewest),
+    unclaimed: notInJournal.filter((w) => w <= journalNewest),
   };
 }
 
@@ -155,8 +188,8 @@ export async function recordOpenedBy(
 export class DatabaseNewerThanProgramError extends Error {
   readonly code = 'DATABASE_NEWER_THAN_PROGRAM';
   constructor(
-    /** Applied `created_at` values this program's journal does not have. */
-    readonly unknown: readonly number[],
+    /** Applied `created_at` values later than the newest entry of this program's journal. */
+    readonly ahead: readonly number[],
     /** Who last opened the database, when recorded. */
     readonly openedBy: OpenedByRecord,
     /** The newest migration this program knows. */
@@ -169,9 +202,9 @@ export class DatabaseNewerThanProgramError extends Error {
           ? 'a newer version (its record in app_settings is unreadable)'
           : `version ${openedBy.version}`;
     super(
-      `DATABASE_NEWER_THAN_PROGRAM: the database holds ${unknown.length} migration` +
-        `${unknown.length === 1 ? '' : 's'} this program's journal does not have ` +
-        `(newest applied at ${new Date(Math.max(...unknown)).toISOString()}); ` +
+      `DATABASE_NEWER_THAN_PROGRAM: the database holds ${ahead.length} migration` +
+        `${ahead.length === 1 ? '' : 's'} later than the newest one this program's journal has ` +
+        `(newest applied at ${new Date(Math.max(...ahead)).toISOString()}); ` +
         `it was last opened by ${who}.`,
     );
     this.name = 'DatabaseNewerThanProgramError';
@@ -180,7 +213,8 @@ export class DatabaseNewerThanProgramError extends Error {
 
 /**
  * Throw `DatabaseNewerThanProgramError` when the database holds a migration
- * this program does not know. For a program that opens the database without
+ * later than the newest one this program knows (rows that are merely
+ * unclaimed do not count: see the header). For a program that opens the database without
  * migrating it (the MCP server); `migrateDatabase` makes the same check first.
  */
 export async function assertProgramKnowsDatabase(
@@ -188,9 +222,9 @@ export async function assertProgramKnowsDatabase(
   opts: RunMigrationsOptions = {},
 ): Promise<SchemaState> {
   const state = await readSchemaState(connectionString, opts);
-  if (state.unknown.length > 0) {
+  if (state.ahead.length > 0) {
     throw new DatabaseNewerThanProgramError(
-      state.unknown,
+      state.ahead,
       await readOpenedBy(connectionString),
       state.journal.at(-1)?.tag ?? null,
     );

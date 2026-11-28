@@ -9,8 +9,12 @@
 // In order, on every start:
 //
 //   1. Read the schema against this program's journal (schema-state.ts).
-//   2. A migration in the history that the journal does not have: the database
-//      is newer than this program. Refused, before anything is written.
+//   2. A migration in the history LATER than the newest one of the journal:
+//      the database is newer than this program. Refused, before anything is
+//      written. A history row no journal entry claims but that is not later
+//      (a development branch's migration, renumbered or dropped since) is not
+//      "newer": the start goes on and the row is returned in `unclaimed`, for
+//      the caller to say (invariant #4); nothing rewrites it.
 //   3. A migration the migrator skipped (#298) and no repair asked: refused,
 //      before anything is written (nothing would fix it on the way).
 //   4. Something is about to change the schema (a pending migration, or a
@@ -70,6 +74,11 @@ export interface MigrateDatabaseResult {
   readonly applied: readonly string[];
   /** Tags the repair applied. */
   readonly repaired: readonly string[];
+  /**
+   * History rows no journal entry claims, older than the journal's newest
+   * entry: ignored, as the migrator ignores them. The caller says so.
+   */
+  readonly unclaimed: readonly number[];
 }
 
 /** Migrations the journal announces and the database never got. */
@@ -116,7 +125,7 @@ export class MigrationFailedError extends Error {
 }
 
 function newestTag(state: SchemaState): string | null {
-  return state.lastApplied?.tag ?? null;
+  return state.lastClaimed?.tag ?? null;
 }
 
 export async function migrateDatabase(
@@ -133,9 +142,9 @@ export async function migrateDatabase(
   opts.onStep?.('Reading the database schema…');
   const before = await readSchemaState(connectionString, migrateOpts);
   const openedBy = await readOpenedBy(connectionString);
-  if (before.unknown.length > 0) {
+  if (before.ahead.length > 0) {
     throw new DatabaseNewerThanProgramError(
-      before.unknown,
+      before.ahead,
       openedBy,
       before.journal.at(-1)?.tag ?? null,
     );
@@ -207,5 +216,6 @@ export async function migrateDatabase(
     pruned,
     applied: before.pending.map((e) => e.tag),
     repaired: repaired.map((g) => g.tag),
+    unclaimed: after.unclaimed,
   };
 }
