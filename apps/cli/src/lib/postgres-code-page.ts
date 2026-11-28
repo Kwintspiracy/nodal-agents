@@ -40,7 +40,7 @@
 // a single file is created (`path-handoff.ts`). Never a best-fit folder.
 
 import { execFile } from 'node:child_process';
-import { existsSync, readFileSync, renameSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, renameSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { randomBytes } from 'node:crypto';
@@ -113,21 +113,30 @@ export async function receivesUnicodeExactly(
 }
 
 /**
- * Put the UTF-8 manifest beside `binary`. Returns null on success, or why it
- * could not. Rewritten only when its text differs; the exe's time stamp is then
- * moved so Windows stops serving the activation context it cached without it.
+ * Put the UTF-8 manifest beside `binary`, and make sure Windows reads it.
+ * Returns null on success, or why it could not.
+ *
+ * Two facts on disk, checked on every call rather than remembered: the
+ * manifest holds our text (rewritten when it does not), and the exe is NEWER
+ * than its manifest. The second is what refreshes the activation context
+ * Windows cached without the manifest; it is a state, not a step taken right
+ * after a write, because a manifest put there without that step (a process
+ * killed between the two, another tool, an earlier run) would otherwise leave
+ * the cache stale for good — which is how the mutation of this line was found.
  */
 export function ensureUtf8Manifest(binary: string): string | null {
   const manifest = `${binary}.manifest`;
   try {
-    if (existsSync(manifest) && readFileSync(manifest, 'utf8') === UTF8_CODE_PAGE_MANIFEST) {
-      return null;
+    if (!existsSync(manifest) || readFileSync(manifest, 'utf8') !== UTF8_CODE_PAGE_MANIFEST) {
+      const tmp = `${manifest}.nodalai.tmp`;
+      writeFileSync(tmp, UTF8_CODE_PAGE_MANIFEST, 'utf8');
+      renameSync(tmp, manifest);
     }
-    const tmp = `${manifest}.nodalai.tmp`;
-    writeFileSync(tmp, UTF8_CODE_PAGE_MANIFEST, 'utf8');
-    renameSync(tmp, manifest);
-    const now = new Date();
-    utimesSync(binary, now, now);
+    const manifestTime = statSync(manifest).mtimeMs;
+    if (statSync(binary).mtimeMs <= manifestTime) {
+      const after = new Date(Math.max(Date.now(), manifestTime + 1000));
+      utimesSync(binary, after, after);
+    }
     return null;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

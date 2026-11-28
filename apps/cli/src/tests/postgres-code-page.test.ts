@@ -8,7 +8,7 @@
 // cluster but can run these three programs.
 
 import { describe, expect, it } from 'vitest';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -80,6 +80,29 @@ describe('the reader the PostgreSQL programs are @cap:installer-et-demarrer/mote
     );
     expect(reader.encoding).toBe('ascii');
     expect(reader.why).toMatch(/^pg_ctl\.exe still reads paths in this machine's ANSI code page/);
+  });
+
+  it('a manifest already right but newer than its exe: the exe is moved after it, once', () => {
+    // The state a run killed between the write and the touch leaves, or another
+    // tool: Windows keeps serving the context it cached without the manifest
+    // until the exe changes, so this state must be repaired, not trusted.
+    const dir = mkdtempSync(join(tmpdir(), 'nodal-manifest-'));
+    try {
+      const exe = join(dir, 'pg_ctl.exe');
+      writeFileSync(exe, 'not a real program');
+      writeFileSync(`${exe}.manifest`, UTF8_CODE_PAGE_MANIFEST, 'utf8');
+      const old = new Date(Date.now() - 3_600_000);
+      utimesSync(exe, old, old);
+      expect(ensureUtf8Manifest(exe)).toBeNull();
+      const exeTime = statSync(exe).mtimeMs;
+      expect(exeTime).toBeGreaterThan(statSync(`${exe}.manifest`).mtimeMs);
+      // Already in order: left alone.
+      expect(ensureUtf8Manifest(exe)).toBeNull();
+      expect(statSync(exe).mtimeMs).toBe(exeTime);
+      expect(readFileSync(exe, 'utf8')).toBe('not a real program');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('a manifest that cannot be written says where', () => {
