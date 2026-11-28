@@ -7,7 +7,7 @@
 // definitions, run for real in a temporary workspace.
 
 import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
@@ -44,7 +44,9 @@ beforeAll(async () => {
 });
 
 beforeEach(async () => {
-  racine = await mkdtemp(join(tmpdir(), 'nodal-outcome-'));
+  // The real path: on Windows `tmpdir()` can be an 8.3 short name, and the seam keys
+  // a file by the path it resolves.
+  racine = await realpath(await mkdtemp(join(tmpdir(), 'nodal-outcome-')));
 });
 
 afterEach(async () => {
