@@ -95,7 +95,12 @@ describe('migration 0173_job_holder_liveness @cap:parler-a-un-agent/moteur', () 
     const mine = entries.find((e) => e.tag === '0173_job_holder_liveness');
     expect(mine?.idx).toBe(173);
     // `migrate()` applies only entries whose `when` is past the last applied
-    // one: this entry must come last.
-    expect(Math.max(...entries.map((e) => e.when))).toBe(mine?.when);
+    // one: this entry must come after every migration numbered before it, and
+    // before every one numbered after it (a later migration may follow it in
+    // the journal; `pnpm migrations:check` holds the order against releases).
+    const before = entries.filter((e) => e.idx < 173).map((e) => e.when);
+    const after = entries.filter((e) => e.idx > 173).map((e) => e.when);
+    expect(Math.max(...before)).toBeLessThan(mine!.when);
+    for (const w of after) expect(w).toBeGreaterThan(mine!.when);
   });
 });
