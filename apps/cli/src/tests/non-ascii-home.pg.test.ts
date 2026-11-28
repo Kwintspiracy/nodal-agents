@@ -46,6 +46,15 @@ const { resolvePgCtl, startEmbeddedPostgres } = await import('../lib/postgres.ts
 const { findFreePort } = await import('../lib/ports.ts');
 const { PathNotReadableError } = await import('../lib/path-handoff.ts');
 
+// Can this machine start a cluster AT ALL? Asked the way every real-cluster
+// file of this package asks it: `embedded-postgres-available.ts` starts one in
+// a plain temporary folder (and says so out loud when it cannot). Its cluster
+// is stopped at once: this file needs the answer, not the cluster. A machine
+// that starts the plain one and not ours is a red test, never a skip.
+const { embeddedPostgres } = await import('./embedded-postgres-available.ts');
+if (embeddedPostgres.handle) await embeddedPostgres.handle.stop();
+rmSync(embeddedPostgres.root, { recursive: true, force: true });
+
 const PASSWORD = 'nodalai-home-names-test';
 const port = await findFreePort(25540);
 const pgCtl = await resolvePgCtl();
@@ -65,41 +74,45 @@ describe('the embedded database in a home named with any character @cap:installe
     expect(postgresLogDirFor(PG_DATA_DIR).startsWith(join(home, 'logs', 'postgres'))).toBe(true);
   });
 
-  it('starts there, logs there, answers a query, and creates nothing anywhere else', async () => {
-    const entry = registerTestCluster({ dataDir: PG_DATA_DIR, port, pgCtl });
-    try {
-      const handle = await withPostgresClusterStart('cli/non-ascii-home', () =>
-        // Every path left to its default: exactly the start `up` makes.
-        startEmbeddedPostgres(undefined, port, PASSWORD),
-      );
+  it.skipIf(!embeddedPostgres.available)(
+    'starts there, logs there, answers a query, and creates nothing anywhere else',
+    async () => {
+      const entry = registerTestCluster({ dataDir: PG_DATA_DIR, port, pgCtl });
       try {
-        const { db, close } = createClient(handle.url, { max: 1 });
+        const handle = await withPostgresClusterStart('cli/non-ascii-home', () =>
+          // Every path left to its default: exactly the start `up` makes.
+          startEmbeddedPostgres(undefined, port, PASSWORD),
+        );
         try {
-          const rows = (await db.execute(
-            sql`select current_setting('data_directory') as d`,
-          )) as unknown as Array<{ d: string }>;
-          // The server names the folder it runs in: the exact home, byte for byte.
-          expect(toSlashes(String(rows[0]?.d))).toBe(toSlashes(PG_DATA_DIR));
+          const { db, close } = createClient(handle.url, { max: 1 });
+          try {
+            const rows = (await db.execute(
+              sql`select current_setting('data_directory') as d`,
+            )) as unknown as Array<{ d: string }>;
+            // The server names the folder it runs in: the exact home, byte for byte.
+            expect(toSlashes(String(rows[0]?.d))).toBe(toSlashes(PG_DATA_DIR));
+          } finally {
+            await close();
+          }
+          // The cluster is where it was asked to be…
+          expect(existsSync(join(PG_DATA_DIR, 'PG_VERSION'))).toBe(true);
+          // …its log file is in that home, and it is the server's own log…
+          const logDir = postgresLogDirFor(PG_DATA_DIR);
+          const logs = readdirSync(logDir).filter((n) => n.endsWith('.log'));
+          expect(logs.length).toBeGreaterThan(0);
+          const text = logs.map((n) => readFileSync(join(logDir, n), 'utf8')).join('');
+          expect(text).toMatch(/database system is ready to accept connections/);
+          // …and no best-fit spelling of the home was created beside it.
+          expect(readdirSync(root)).toEqual([HOME_NAME]);
         } finally {
-          await close();
+          await handle.stop();
         }
-        // The cluster is where it was asked to be…
-        expect(existsSync(join(PG_DATA_DIR, 'PG_VERSION'))).toBe(true);
-        // …its log file is in that home, and it is the server's own log…
-        const logDir = postgresLogDirFor(PG_DATA_DIR);
-        const logs = readdirSync(logDir).filter((n) => n.endsWith('.log'));
-        expect(logs.length).toBeGreaterThan(0);
-        const text = logs.map((n) => readFileSync(join(logDir, n), 'utf8')).join('');
-        expect(text).toMatch(/database system is ready to accept connections/);
-        // …and no best-fit spelling of the home was created beside it.
-        expect(readdirSync(root)).toEqual([HOME_NAME]);
       } finally {
-        await handle.stop();
+        unregisterTestCluster(entry);
       }
-    } finally {
-      unregisterTestCluster(entry);
-    }
-  }, 180_000);
+    },
+    180_000,
+  );
 });
 
 describe('a PostgreSQL that cannot be given the path is refused by name @cap:installer-et-demarrer/moteur', () => {
