@@ -37,7 +37,7 @@ import { join } from 'node:path';
 import { applyPostgresLoggingConfig, tempConfPath } from '../lib/pg-logging.ts';
 import type { PathReader } from '../lib/path-handoff.ts';
 
-const UTF8_READER: PathReader = { program: 'PostgreSQL', encoding: 'utf-8' };
+const UTF8_READER: PathReader = { program: 'PostgreSQL', codePage: 65001 };
 
 const mockWrite = vi.mocked(writeFileSync);
 const mockRename = vi.mocked(renameSync);

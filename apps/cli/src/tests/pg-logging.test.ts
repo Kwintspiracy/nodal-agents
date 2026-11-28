@@ -23,7 +23,7 @@ import {
 } from '../lib/pg-logging.ts';
 import type { PathReader } from '../lib/path-handoff.ts';
 
-const UTF8_READER: PathReader = { program: 'PostgreSQL', encoding: 'utf-8' };
+const UTF8_READER: PathReader = { program: 'PostgreSQL', codePage: 65001 };
 
 const dirs: string[] = [];
 function tempDir(): string {

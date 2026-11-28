@@ -26,12 +26,14 @@ import {
 } from '../lib/path-handoff.ts';
 import { childProcessEnv } from '../lib/env.ts';
 
-const UTF8: PathReader = { program: 'a UTF-8 program', encoding: 'utf-8' };
-const ASCII: PathReader = {
-  program: 'an old program',
-  encoding: 'ascii',
-  why: 'its code page could not be set',
+const UTF8: PathReader = { program: 'a UTF-8 program', codePage: 65001 };
+const WESTERN: PathReader = {
+  program: 'a code page program',
+  codePage: 1252,
+  remedy: 'Move it.',
 };
+/** A code page Nodal has no table for: ASCII is the part every page shares. */
+const UNKNOWN_PAGE: PathReader = { program: 'an EBCDIC-era program', codePage: 37 };
 
 /** Letters from four scripts, an emoji outside the BMP, and the shells' special characters. */
 const NAME = "home A é Ω 李 😀 'q' 100% & !^ (x)";
@@ -50,20 +52,25 @@ describe('a path for a reader that decodes bytes @cap:installer-et-demarrer/mote
     );
   });
 
-  it('an ASCII-only reader refuses the path by name, with the character and the reason', () => {
+  it('a code page reader takes what the page holds and refuses the rest by name, with its remedy', () => {
+    expect(() => checkPathsFor(WESTERN, [join(root, 'Zoë')])).not.toThrow();
     const path = join(root, 'Zoë 😀');
-    expect(() => checkPathsFor(ASCII, [join(root, 'plain'), path])).toThrow(
+    expect(() => checkPathsFor(WESTERN, [join(root, 'plain'), path])).toThrow(
       new PathNotReadableError(
-        'an old program',
+        'a code page program',
         path,
-        'this program only reads ASCII paths here, and the path holds "ë" ' +
-          '(its code page could not be set)',
+        'it holds "😀", which code page 1252 cannot carry. Move it.',
       ),
     );
     // The whole character, never half of a surrogate pair.
-    expect(() => checkPathsFor(ASCII, [join(root, 'x 😀')])).toThrow('holds "😀"');
-    // ASCII, with every shell character, is something every reader takes.
-    expect(() => checkPathsFor(ASCII, [join(root, "a 'q' 100% & !^ (x)")])).not.toThrow();
+    expect(() => checkPathsFor(WESTERN, [join(root, 'x 😀')])).toThrow('holds "😀"');
+  });
+
+  it('a code page with no table: ASCII only, said as such', () => {
+    expect(() => checkPathsFor(UNKNOWN_PAGE, [join(root, "a 'q' 100% & !^ (x)")])).not.toThrow();
+    expect(() => checkPathsFor(UNKNOWN_PAGE, [join(root, 'Zoë')])).toThrow(
+      /holds "ë", and Nodal cannot encode for code page 37, so only ASCII is exact/,
+    );
   });
 
   it('a character no encoding carries is refused even by a UTF-8 reader', () => {

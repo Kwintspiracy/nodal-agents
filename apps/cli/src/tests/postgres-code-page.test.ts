@@ -1,136 +1,146 @@
-// postgres-code-page.test.ts — the encoding the embedded PostgreSQL programs
-// read paths in, decided by what they ACTUALLY receive (#1231).
+// postgres-code-page.test.ts — the code page the embedded PostgreSQL programs
+// read paths in, and what Nodal writes for them in it (#1231).
 //
-// The rule (`resolvePostgresPathReader`) with the machine injected, on every
-// system; then, on Windows, the real thing on the real binaries: the UTF-8
-// manifest is beside each of them and each echoes back a path with "é Ω 😀"
-// exactly. That case runs on the Windows CI, whose runner cannot start a
-// cluster but can run these three programs.
+// The rule on every system, with the code page injected: what is written in
+// postgresql.auto.conf is the path's bytes in that page; a character the page
+// does not hold is refused by name, never spelled another way ("Ω" is not "O");
+// a UTF-8 page takes every character. Then, on Windows, the real reading of
+// the system's code page — this runs on the Windows CI too.
 
-import { describe, expect, it } from 'vitest';
-import { mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
+import { afterEach, describe, expect, it } from 'vitest';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  POSTGRES_PROGRAMS,
-  UTF8_CODE_PAGE_MANIFEST,
-  ensureUtf8Manifest,
-  receivesUnicodeExactly,
+  ANSI_CODE_PAGE_KEY,
+  WINDOWS_CODE_PAGE_REMEDY,
+  parseAnsiCodePage,
+  postgresReaderFor,
+  readWindowsAnsiCodePage,
   resolvePostgresPathReader,
-  type CodePageEffects,
-  type PostgresBinaryPaths,
 } from '../lib/postgres-code-page.ts';
-import { postgresBinaryPaths } from '../lib/postgres.ts';
+import { applyPostgresLoggingConfig } from '../lib/pg-logging.ts';
+import { PathNotReadableError, decodeFromReader, encodePathFor } from '../lib/path-handoff.ts';
 
-const FAKE_BINARIES: PostgresBinaryPaths = {
-  initdb: 'X:\\pg\\bin\\initdb.exe',
-  postgres: 'X:\\pg\\bin\\postgres.exe',
-  pg_ctl: 'X:\\pg\\bin\\pg_ctl.exe',
-};
+const dirs: string[] = [];
+function tempDir(): string {
+  const d = mkdtempSync(join(tmpdir(), 'nodal-codepage-'));
+  dirs.push(d);
+  return d;
+}
+afterEach(() => {
+  for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
+});
 
-function machine(over: Partial<CodePageEffects>): CodePageEffects {
-  return {
-    platform: 'win32',
-    ensureManifest: () => null,
-    receivesUnicode: async () => true,
-    ...over,
-  };
+/** The bytes of `log_directory = '…'` as they are on disk. */
+function logDirectoryLine(dataDir: string): Buffer {
+  const bytes = readFileSync(join(dataDir, 'postgresql.auto.conf'));
+  const start = bytes.indexOf(Buffer.from("log_directory = '"));
+  const end = bytes.indexOf(0x0a, start);
+  return bytes.subarray(start, end);
 }
 
-describe('the reader the PostgreSQL programs are @cap:installer-et-demarrer/moteur', () => {
-  it('outside Windows: UTF-8, and nothing is written beside the binaries', async () => {
+describe('the code page the PostgreSQL programs read paths in @cap:installer-et-demarrer/moteur', () => {
+  it('outside Windows: UTF-8, without asking Windows anything', () => {
     for (const platform of ['linux', 'darwin'] as const) {
-      const reader = await resolvePostgresPathReader(
-        FAKE_BINARIES,
-        machine({
-          platform,
-          ensureManifest: () => {
-            throw new Error('a manifest is a Windows thing');
-          },
-        }),
-      );
-      expect(reader).toEqual({ program: 'PostgreSQL', encoding: 'utf-8' });
+      const reader = resolvePostgresPathReader(platform, () => {
+        throw new Error('no registry here');
+      });
+      expect(reader).toEqual({ program: 'PostgreSQL', codePage: 65001 });
     }
   });
 
-  it('Windows, manifest in place and every program reading UTF-8: UTF-8', async () => {
-    const reader = await resolvePostgresPathReader(FAKE_BINARIES, machine({}));
-    expect(reader).toEqual({ program: 'PostgreSQL', encoding: 'utf-8' });
-  });
-
-  it('Windows, a manifest that cannot be written: ASCII only, saying which and why', async () => {
-    const reader = await resolvePostgresPathReader(
-      FAKE_BINARIES,
-      machine({
-        ensureManifest: (binary) =>
-          binary.endsWith('postgres.exe') ? 'the folder is read-only (EACCES)' : null,
-      }),
-    );
-    expect(reader).toEqual({
+  it('on Windows: the code page Windows keeps, with the way out named', () => {
+    expect(resolvePostgresPathReader('win32', () => 932)).toEqual({
       program: 'PostgreSQL',
-      encoding: 'ascii',
-      why: 'the folder is read-only (EACCES)',
+      codePage: 932,
+      remedy: WINDOWS_CODE_PAGE_REMEDY,
+    });
+    // A system already set to UTF-8 needs no way out.
+    expect(resolvePostgresPathReader('win32', () => 65001)).toEqual({
+      program: 'PostgreSQL',
+      codePage: 65001,
     });
   });
 
-  it('Windows, one program still reading the ANSI code page: ASCII only, naming it', async () => {
-    const reader = await resolvePostgresPathReader(
-      FAKE_BINARIES,
-      machine({ receivesUnicode: async (program) => program !== 'pg_ctl' }),
-    );
-    expect(reader.encoding).toBe('ascii');
-    expect(reader.why).toMatch(/^pg_ctl\.exe still reads paths in this machine's ANSI code page/);
+  it('reads the value `reg query` prints, and only that', () => {
+    expect(
+      parseAnsiCodePage(`\r\n${ANSI_CODE_PAGE_KEY}\r\n    ACP    REG_SZ    1252\r\n\r\n`),
+    ).toBe(1252);
+    expect(
+      parseAnsiCodePage('ERROR: The system was unable to find the specified registry key'),
+    ).toBe(null);
+  });
+});
+
+describe('postgresql.auto.conf, in the reader’s code page @cap:installer-et-demarrer/moteur', () => {
+  it('code page 1252: "é" is the one byte E9, as the server reads it', () => {
+    const dataDir = tempDir();
+    const logDir = join(tempDir(), 'home A é', 'logs');
+    applyPostgresLoggingConfig(dataDir, logDir, postgresReaderFor(1252));
+    const line = logDirectoryLine(dataDir);
+    expect(line.includes(Buffer.from([0x20, 0x41, 0x20, 0xe9, 0x2f]))).toBe(true); // " A é/"
+    expect(line.includes(Buffer.from('é', 'utf8'))).toBe(false);
   });
 
-  it('a manifest already right but newer than its exe: the exe is moved after it, once', () => {
-    // The state a run killed between the write and the touch leaves, or another
-    // tool: Windows keeps serving the context it cached without the manifest
-    // until the exe changes, so this state must be repaired, not trusted.
-    const dir = mkdtempSync(join(tmpdir(), 'nodal-manifest-'));
-    try {
-      const exe = join(dir, 'pg_ctl.exe');
-      writeFileSync(exe, 'not a real program');
-      writeFileSync(`${exe}.manifest`, UTF8_CODE_PAGE_MANIFEST, 'utf8');
-      const old = new Date(Date.now() - 3_600_000);
-      utimesSync(exe, old, old);
-      expect(ensureUtf8Manifest(exe)).toBeNull();
-      const exeTime = statSync(exe).mtimeMs;
-      expect(exeTime).toBeGreaterThan(statSync(`${exe}.manifest`).mtimeMs);
-      // Already in order: left alone.
-      expect(ensureUtf8Manifest(exe)).toBeNull();
-      expect(statSync(exe).mtimeMs).toBe(exeTime);
-      expect(readFileSync(exe, 'utf8')).toBe('not a real program');
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
+  it('code page 932: the second byte of "表" is a backslash, and it is doubled so the server keeps it', () => {
+    const dataDir = tempDir();
+    const logDir = join(tempDir(), '表');
+    applyPostgresLoggingConfig(dataDir, logDir, postgresReaderFor(932));
+    // 表 is 95 5C in code page 932; the configuration lexer would eat a lone 5C.
+    expect(logDirectoryLine(dataDir).includes(Buffer.from([0x95, 0x5c, 0x5c]))).toBe(true);
+  });
+
+  it('a UTF-8 system code page takes every character, exactly', () => {
+    const dataDir = tempDir();
+    const logDir = join(tempDir(), 'home Ω 李 😀 é');
+    applyPostgresLoggingConfig(dataDir, logDir, postgresReaderFor(65001));
+    expect(
+      logDirectoryLine(dataDir).includes(Buffer.from('home Ω 李 😀 é'.replace(/\\/g, '/'), 'utf8')),
+    ).toBe(true);
+  });
+
+  it('a character the page does not hold: refused by name, and the log folder is not created', () => {
+    const dataDir = tempDir();
+    const logDir = join(tempDir(), 'home Ω', 'logs');
+    expect(() => applyPostgresLoggingConfig(dataDir, logDir, postgresReaderFor(1252))).toThrow(
+      PathNotReadableError,
+    );
+    expect(() => applyPostgresLoggingConfig(dataDir, logDir, postgresReaderFor(1252))).toThrow(
+      /it holds "Ω", which code page 1252 cannot carry/,
+    );
+    expect(() => readFileSync(join(dataDir, 'postgresql.auto.conf'))).toThrow(/ENOENT/);
+  });
+
+  it('no best fit: "Ω", "ﬁ" or "①" are never written as "O", "fi" or "1"', () => {
+    const reader = postgresReaderFor(1252);
+    for (const ch of ['Ω', 'ﬁ', '①', 'ł', '😀']) {
+      expect(() => encodePathFor(reader, `C:\\home ${ch}`)).toThrow(`it holds "${ch}"`);
     }
   });
 
-  it('a manifest that cannot be written says where', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'nodal-manifest-'));
-    try {
-      const reason = ensureUtf8Manifest(join(dir, 'missing folder', 'postgres.exe'));
-      expect(reason).toMatch(
-        /^the UTF-8 code page manifest could not be written beside postgres\.exe \(/,
-      );
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
+  it('what the server writes back in its code page is read back as the same path', () => {
+    for (const [codePage, path] of [
+      [1252, 'C:/Users/Zoë/pg-data'],
+      [932, 'C:/ユーザー/表/pg-data'],
+      [1251, 'C:/Пользователи/pg-data'],
+      [65001, 'C:/home 😀/pg-data'],
+    ] as const) {
+      const reader = postgresReaderFor(codePage);
+      expect(decodeFromReader(reader, encodePathFor(reader, path))).toBe(path);
     }
   });
 });
 
 describe.skipIf(process.platform !== 'win32')(
-  'the real PostgreSQL programs of this install, on Windows @cap:installer-et-demarrer/moteur',
+  'this Windows machine’s code page @cap:installer-et-demarrer/moteur',
   () => {
-    it('each has the UTF-8 manifest beside it and receives "é Ω 😀" exactly', async () => {
-      const binaries = await postgresBinaryPaths();
-      for (const name of POSTGRES_PROGRAMS) {
-        expect(ensureUtf8Manifest(binaries[name])).toBeNull();
-        expect(readFileSync(`${binaries[name]}.manifest`, 'utf8')).toBe(UTF8_CODE_PAGE_MANIFEST);
-        expect({ name, exact: await receivesUnicodeExactly(name, binaries[name]) }).toEqual({
-          name,
-          exact: true,
-        });
-      }
-    }, 60_000);
+    it('is read from where Windows keeps it, and is one Nodal encodes for', () => {
+      const codePage = readWindowsAnsiCodePage();
+      expect(Number.isInteger(codePage)).toBe(true);
+      // ASCII is exact in every page; a page with a table also round-trips its own letters.
+      const reader = postgresReaderFor(codePage);
+      expect(decodeFromReader(reader, encodePathFor(reader, 'C:\\a b'))).toBe('C:\\a b');
+    });
   },
 );

@@ -14,10 +14,10 @@ import {
   type DetachedSpawnArm,
 } from './embedded-postgres-module.ts';
 import { applyPostgresLoggingConfig, postgresLogDirFor } from './pg-logging.ts';
-import { checkPathsFor, type PathReader } from './path-handoff.ts';
+import { checkPathsFor, decodeFromReader, type PathReader } from './path-handoff.ts';
 import {
   POSTGRES_PROGRAMS,
-  resolvePostgresPathReader,
+  postgresPathReader,
   type PostgresBinaryPaths,
 } from './postgres-code-page.ts';
 import {
@@ -86,8 +86,13 @@ export function readPostmasterPid(dataDir: string = PG_DATA_DIR): number | null 
 export function readPostmasterClaim(dataDir: string = PG_DATA_DIR): LockfileClaim | null {
   const pidFile = join(dataDir, 'postmaster.pid');
   if (!existsSync(pidFile)) return null;
+  // Written by the postmaster, line 2 in the code page it reads paths in
+  // (#1231): decoded as UTF-8, "é" in code page 1252 named another folder, and
+  // our own cluster was taken for a foreign one. Resolved OUTSIDE the catch: a
+  // code page Windows will not tell is said, not turned into "no lockfile".
+  const reader = postgresPathReader();
   try {
-    const lines = readFileSync(pidFile, 'utf-8').split('\n');
+    const lines = decodeFromReader(reader, readFileSync(pidFile)).split('\n');
     const pid = Number.parseInt(lines[0]?.trim() ?? '', 10);
     if (!Number.isInteger(pid) || pid <= 0) return null;
     const recorded = lines[1]?.trim();
@@ -959,7 +964,7 @@ export async function startEmbeddedPostgres(
   // get back exactly is refused by name: a best-fit spelling would have put
   // the cluster in ANOTHER folder and reported success.
   const binaries = await postgresBinaryPaths();
-  const reader = options.pathReader ?? (await resolvePostgresPathReader(binaries));
+  const reader = options.pathReader ?? postgresPathReader();
   checkPathsFor(reader, [
     resolve(dataDir),
     resolve(logDirectory),
