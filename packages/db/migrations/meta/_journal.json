@@ -1184,6 +1184,13 @@
       "when": 1786437900000,
       "tag": "0173_job_holder_liveness",
       "breakpoints": true
+    },
+    {
+      "idx": 174,
+      "version": "7",
+      "when": 1786800000000,
+      "tag": "0174_skill_installed_files",
+      "breakpoints": true
     }
   ]
 }

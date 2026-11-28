@@ -1400,6 +1400,7 @@ describe('installCommunitySkill — a skill installed from a catalog card', () =
             source: before.source!,
             defaultContent: before.defaultContent,
             installedScripts: before.installedScripts,
+            installedFiles: before.installedFiles,
           },
           skillStoreDir: store,
         });

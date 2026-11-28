@@ -155,6 +155,7 @@ export const SKILL_POLICY = {
   isCommunity: 'copy',
   source: 'copy',
   installedScripts: 'copy',
+  installedFiles: 'copy',
   updateAvailable: 'copy',
   updateDetail: 'copy',
   lastUpdateCheckAt: 'copy',

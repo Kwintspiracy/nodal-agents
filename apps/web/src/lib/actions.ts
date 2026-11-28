@@ -9347,7 +9347,16 @@ export async function createSkillAction(raw: unknown): Promise<ActionResult<{ id
   }
 }
 
-export async function deleteSkillAction(id: string): Promise<ActionResult<void>> {
+/**
+ * Delete a skill. A community skill owns a folder in the skill store: it is
+ * removed through the runner's one removal (uninstallCommunitySkillAction),
+ * row and folder together, with the person's choice for their own files.
+ * Any other skill is only a row.
+ */
+export async function deleteSkillAction(
+  id: string,
+  localFiles?: SkillRemovalChoice,
+): Promise<ActionResult<void>> {
   try {
     const session = await getSession();
     if (!z.string().guid().safeParse(id).success) {
@@ -9355,10 +9364,14 @@ export async function deleteSkillAction(id: string): Promise<ActionResult<void>>
     }
     const db = getDb();
     const [existing] = await db
-      .select({ id: agentSkills.id })
+      .select({ id: agentSkills.id, slug: agentSkills.slug, isCommunity: agentSkills.isCommunity })
       .from(agentSkills)
       .where(and(eq(agentSkills.id, id), eq(agentSkills.entityId, session.entityId)));
     if (!existing) return fail('not_found', 'Skill not found');
+    if (existing.isCommunity) {
+      const r = await uninstallCommunitySkillAction(existing.slug, localFiles);
+      return r.ok ? ok(undefined) : r;
+    }
     // The schema has ON DELETE CASCADE on agent_skill_assignments, so
     // assignments are cleared automatically.
     await db.delete(agentSkills).where(eq(agentSkills.id, id));
@@ -9374,15 +9387,56 @@ const InstallCommunitySkillSchema = z.object({
   source: z.string().min(1).max(2048),
 });
 
-export type CommunitySkillInstallResult = {
-  slug: string;
-  name: string;
-  description: string;
-  source: string;
-  installedScripts: InstalledScript[];
-  fileCount: number;
-  reinstalled: boolean;
+/** What happens to the person's own files when a community skill is removed. */
+export type SkillRemovalChoice = 'keep' | 'delete';
+
+export type SkillRemovalPreview = {
+  /** The person's files in the skill folder: added here, or shipped and changed here. */
+  localFiles: SkillFileChange[];
+  /** False for a skill installed before file tracking: every file is listed. */
+  originKnown: boolean;
 };
+
+export type CommunitySkillInstallResult =
+  | {
+      status: 'installed';
+      slug: string;
+      name: string;
+      description: string;
+      source: string;
+      installedScripts: InstalledScript[];
+      fileCount: number;
+    }
+  /**
+   * The store already holds files for this skill (left by an earlier
+   * removal): nothing was written. The person reviews them (same plan as an
+   * update) and installs again with the pin and their choices.
+   */
+  | {
+      status: 'review';
+      slug: string;
+      name: string;
+      description: string;
+      source: string;
+      installedScripts: InstalledScript[];
+      files: SkillFileChange[];
+      filesState: 'clean' | 'update' | 'conflict' | 'local-only';
+      upstreamFilesHash: string;
+    }
+  /**
+   * The same source is already installed: nothing was written. Installing it
+   * again is an update, through the same review (SkillUpdateAction).
+   */
+  | {
+      status: 'already_installed';
+      slug: string;
+      name: string;
+      description: string;
+      source: string;
+      updateAvailable: boolean;
+      updateDetail: SkillUpdateDetail | null;
+      hasScripts: boolean;
+    };
 
 /**
  * Install a community skill (open Agent Skills / SKILL.md format) from a GitHub
@@ -9392,6 +9446,10 @@ export type CommunitySkillInstallResult = {
  */
 export async function installCommunitySkillAction(
   source: string,
+  review?: {
+    expectedFilesHash: string;
+    conflictChoices: Record<string, SkillConflictChoice>;
+  },
 ): Promise<ActionResult<CommunitySkillInstallResult>> {
   try {
     const session = await getSession();
@@ -9411,7 +9469,16 @@ export async function installCommunitySkillAction(
           'Content-Type': 'application/json',
           Authorization: `Bearer ${env.WORKER_SECRET}`,
         },
-        body: JSON.stringify({ source: parsed.data.source, entityId: session.entityId }),
+        body: JSON.stringify({
+          source: parsed.data.source,
+          entityId: session.entityId,
+          ...(review === undefined
+            ? {}
+            : {
+                expectedFilesHash: review.expectedFilesHash,
+                conflictChoices: review.conflictChoices,
+              }),
+        }),
       });
     } catch (fetchErr) {
       console.error('[installCommunitySkillAction] fetch failed:', fetchErr);
@@ -9432,10 +9499,56 @@ export async function installCommunitySkillAction(
 }
 
 /**
- * Uninstall a community skill by slug via the runner's POST
- * /api/skills/uninstall, then revalidate the skills route.
+ * The person's files in a community skill's folder, before removing it
+ * (runner POST /api/skills/preview-uninstall, read-only).
  */
-export async function uninstallCommunitySkillAction(slug: string): Promise<ActionResult<void>> {
+export async function previewSkillRemovalAction(
+  slug: string,
+): Promise<ActionResult<SkillRemovalPreview>> {
+  try {
+    const session = await getSession();
+    if (!z.string().min(1).safeParse(slug).success) {
+      return fail('validation_failed', 'Invalid skill slug');
+    }
+    if (!env.WORKER_SECRET) {
+      console.error('[previewSkillRemovalAction] WORKER_SECRET missing');
+      return fail('config_error', 'Runner secret not configured');
+    }
+    let res: Response;
+    try {
+      res = await fetch(`${env.RUNNER_URL}/api/skills/preview-uninstall`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${env.WORKER_SECRET}`,
+        },
+        body: JSON.stringify({ slug, entityId: session.entityId }),
+      });
+    } catch (fetchErr) {
+      console.error('[previewSkillRemovalAction] fetch failed:', fetchErr);
+      return fail('network_error', 'Could not reach the runner — is it running?');
+    }
+    const body = (await res.json()) as
+      | ({ ok: true } & SkillRemovalPreview)
+      | { ok: false; error: string; message: string };
+    if (!body.ok) return fail(body.error, body.message);
+    return ok({ localFiles: body.localFiles, originKnown: body.originKnown });
+  } catch (err) {
+    console.error('[previewSkillRemovalAction]', err);
+    return fail('unexpected_error', 'An unexpected error occurred');
+  }
+}
+
+/**
+ * Uninstall a community skill by slug via the runner's POST
+ * /api/skills/uninstall — row and folder together — then revalidate the
+ * skills route. `localFiles` is the person's choice for their own files
+ * (previewSkillRemovalAction); the runner refuses without it when there are any.
+ */
+export async function uninstallCommunitySkillAction(
+  slug: string,
+  localFiles?: SkillRemovalChoice,
+): Promise<ActionResult<void>> {
   try {
     const session = await getSession();
     if (!z.string().min(1).safeParse(slug).success) {
@@ -9453,7 +9566,11 @@ export async function uninstallCommunitySkillAction(slug: string): Promise<Actio
           'Content-Type': 'application/json',
           Authorization: `Bearer ${env.WORKER_SECRET}`,
         },
-        body: JSON.stringify({ slug, entityId: session.entityId }),
+        body: JSON.stringify({
+          slug,
+          entityId: session.entityId,
+          ...(localFiles === undefined ? {} : { localFiles }),
+        }),
       });
     } catch (fetchErr) {
       console.error('[uninstallCommunitySkillAction] fetch failed:', fetchErr);
@@ -9477,7 +9594,28 @@ export type CommunitySkillUpdateResult = {
   /** Number of agent×skill assignments whose scripts_authorized was reset to
    *  false as a side effect of this update (0 when scripts didn't change). */
   scriptsAuthorizationRevoked: number;
+  /** The previous folder of the skill, when it could not be removed after the
+   *  update (a process still held it). The update itself is complete. */
+  leftoverDir: string | null;
 };
+
+/** Why a file is a conflict (runner skills/manifest.ts, FileConflictReason). */
+export type SkillFileConflictReason =
+  | 'both-changed'
+  | 'deleted-locally-changed-upstream'
+  | 'edited-locally-removed-upstream'
+  | 'added-on-both-sides'
+  | 'unknown-origin';
+
+/** What an update does with one file of the skill folder (runner FileChange). */
+export type SkillFileChange =
+  | {
+      path: string;
+      kind: 'added' | 'changed' | 'removed' | 'kept-local-change' | 'kept-local-addition';
+    }
+  | { path: string; kind: 'conflict'; reason: SkillFileConflictReason };
+
+export type SkillConflictChoice = 'keep-local' | 'take-upstream';
 
 /**
  * Re-fetch a community skill from its recorded source and apply the diff
@@ -9492,7 +9630,13 @@ export type CommunitySkillUpdatePreview = {
   contentChanged: boolean;
   scriptsChanged: boolean;
   scriptNames: string[];
+  /** Scripts the update brings that the current authorization never covered. */
+  scriptsToAuthorize: string[];
   upstreamContentHash: string;
+  /** Every file whose fate is not "identical everywhere", sorted by path. */
+  files: SkillFileChange[];
+  filesState: 'clean' | 'update' | 'conflict' | 'local-only';
+  upstreamFilesHash: string;
   contentOverridden: boolean;
 };
 
@@ -9538,7 +9682,11 @@ export async function previewCommunitySkillUpdateAction(
       contentChanged: body.contentChanged,
       scriptsChanged: body.scriptsChanged,
       scriptNames: body.scriptNames,
+      scriptsToAuthorize: body.scriptsToAuthorize,
       upstreamContentHash: body.upstreamContentHash,
+      files: body.files,
+      filesState: body.filesState,
+      upstreamFilesHash: body.upstreamFilesHash,
       contentOverridden: body.contentOverridden,
     });
   } catch (err) {
@@ -9547,9 +9695,18 @@ export async function previewCommunitySkillUpdateAction(
   }
 }
 
+/**
+ * `files` pins the apply to the files the owner reviewed (`expectedFilesHash`
+ * from the preview) and carries their choice for each conflicting file. The
+ * runner refuses, writing nothing, when a conflict has no choice.
+ */
 export async function updateCommunitySkillAction(
   slug: string,
   expectedContentHash?: string,
+  files?: {
+    expectedFilesHash: string;
+    conflictChoices: Record<string, SkillConflictChoice>;
+  },
 ): Promise<ActionResult<CommunitySkillUpdateResult>> {
   try {
     const session = await getSession();
@@ -9572,6 +9729,12 @@ export async function updateCommunitySkillAction(
           slug,
           entityId: session.entityId,
           ...(expectedContentHash === undefined ? {} : { expectedContentHash }),
+          ...(files === undefined
+            ? {}
+            : {
+                expectedFilesHash: files.expectedFilesHash,
+                conflictChoices: files.conflictChoices,
+              }),
         }),
       });
     } catch (fetchErr) {
@@ -9584,6 +9747,7 @@ export async function updateCommunitySkillAction(
           contentChanged: boolean;
           scriptsChanged: boolean;
           scriptsAuthorizationRevoked: number;
+          leftoverDir: string | null;
         }
       | { ok: false; error: string; message: string };
     if (!body.ok) {
@@ -9594,6 +9758,7 @@ export async function updateCommunitySkillAction(
       contentChanged: body.contentChanged,
       scriptsChanged: body.scriptsChanged,
       scriptsAuthorizationRevoked: body.scriptsAuthorizationRevoked,
+      leftoverDir: body.leftoverDir,
     });
   } catch (err) {
     console.error('[updateCommunitySkillAction]', err);

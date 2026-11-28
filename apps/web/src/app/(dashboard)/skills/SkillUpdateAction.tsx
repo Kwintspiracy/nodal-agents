@@ -2,7 +2,11 @@
 
 import { useState, useTransition } from 'react';
 import { toast } from 'sonner';
-import type { SkillUpdateDetail, CommunitySkillUpdatePreview } from '@/lib/actions.ts';
+import type {
+  SkillUpdateDetail,
+  CommunitySkillUpdatePreview,
+  SkillConflictChoice,
+} from '@/lib/actions.ts';
 import {
   updateCommunitySkillAction,
   acknowledgeSkillUpdateAction,
@@ -10,6 +14,16 @@ import {
 } from '@/lib/actions.ts';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
 import { diffLines, diffStats, collapseUnchanged } from '@/lib/line-diff.ts';
+import SkillFilesReview, { allConflictsChosen } from './SkillFilesReview.tsx';
+
+/**
+ * True when the last check found a file changed both locally and upstream —
+ * any file of the skill folder (filesState), or, on a row checked before the
+ * file manifest, a script (scriptsState).
+ */
+export function hasFileConflict(detail: SkillUpdateDetail | null): boolean {
+  return detail?.filesState === 'conflict' || detail?.scriptsState === 'conflict';
+}
 
 /**
  * The sentence above the diff. Says what will happen, and warns about the two
@@ -21,12 +35,11 @@ import { diffLines, diffStats, collapseUnchanged } from '@/lib/line-diff.ts';
  * and can discover a script change the last background check didn't see.
  */
 function describeChanges(detail: SkillUpdateDetail | null, hasScripts: boolean): string {
-  // Three-way conflict: the local script files were edited AND upstream moved.
-  // Applying replaces the local edits with upstream files. Say it plainly.
-  const conflict =
-    detail?.scriptsState === 'conflict'
-      ? ' Your locally edited scripts will be replaced. Use "Keep your version" to keep them instead.'
-      : '';
+  // Three-way conflict: files edited here AND changed upstream. Nothing is
+  // replaced without a choice per file, made below. Say it plainly.
+  const conflict = hasFileConflict(detail)
+    ? ' Some files were changed both here and in the new version: choose for each one below, or use "Keep your version" to keep all of yours.'
+    : '';
   const warning = hasScripts
     ? " Script changes revoke this skill's run authorization for every agent until you re-approve it."
     : '';
@@ -91,6 +104,12 @@ function UpdateDiff({ preview }: { preview: CommunitySkillUpdatePreview }) {
           read them in the skill store before re-authorizing.
         </p>
       )}
+      {preview.scriptsToAuthorize.length > 0 && (
+        <p className="text-body-12 text-warn">
+          Not authorized yet: {preview.scriptsToAuthorize.join(', ')}. Updating revokes script
+          authorization; review these before allowing scripts again.
+        </p>
+      )}
     </div>
   );
 }
@@ -120,6 +139,7 @@ export default function SkillUpdateAction({
 }: Props) {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [preview, setPreview] = useState<CommunitySkillUpdatePreview | null>(null);
+  const [choices, setChoices] = useState<Record<string, SkillConflictChoice>>({});
   const [loadingPreview, setLoadingPreview] = useState(false);
   const [isPending, startTransition] = useTransition();
 
@@ -137,6 +157,7 @@ export default function SkillUpdateAction({
         return;
       }
       setPreview(r.data);
+      setChoices({});
       setConfirmOpen(true);
     });
   }
@@ -144,11 +165,15 @@ export default function SkillUpdateAction({
   function performUpdate() {
     setConfirmOpen(false);
     const hash = preview?.upstreamContentHash;
+    const files = preview
+      ? { expectedFilesHash: preview.upstreamFilesHash, conflictChoices: choices }
+      : undefined;
     startTransition(async () => {
-      // The hash pins this apply to the text just shown: the runner
-      // re-downloads, and refuses if upstream moved in between.
-      const r = await updateCommunitySkillAction(slug, hash);
+      // The hashes pin this apply to the text and files just shown: the
+      // runner re-downloads, and refuses if upstream moved in between.
+      const r = await updateCommunitySkillAction(slug, hash, files);
       setPreview(null);
+      setChoices({});
       if (!r.ok) {
         toast.error(r.message);
         return;
@@ -161,6 +186,11 @@ export default function SkillUpdateAction({
       } else {
         toast.success(`"${name}" updated.`);
       }
+      if (r.data.leftoverDir) {
+        toast.warning(
+          `The previous folder of "${name}" could not be removed and is still at ${r.data.leftoverDir}.`,
+        );
+      }
     });
   }
 
@@ -172,12 +202,25 @@ export default function SkillUpdateAction({
         title={`Update skill "${name}"?`}
         message={describeChanges(updateDetail, hasScripts)}
         confirmLabel="Install this version"
-        destructive={updateDetail?.scriptsState === 'conflict'}
-        extra={preview ? <UpdateDiff preview={preview} /> : null}
+        destructive={Object.values(choices).includes('take-upstream')}
+        confirmDisabled={preview !== null && !allConflictsChosen(preview.files, choices)}
+        extra={
+          preview ? (
+            <div className="space-y-4">
+              <UpdateDiff preview={preview} />
+              <SkillFilesReview
+                files={preview.files}
+                choices={choices}
+                onChoose={(path, c) => setChoices((prev) => ({ ...prev, [path]: c }))}
+              />
+            </div>
+          ) : null
+        }
         onConfirm={performUpdate}
         onCancel={() => {
           setConfirmOpen(false);
           setPreview(null);
+          setChoices({});
         }}
       />
     </>
@@ -185,10 +228,10 @@ export default function SkillUpdateAction({
 }
 
 /**
- * « Keep your version » — resolves a script conflict WITHOUT touching local
- * files: the runner re-baselines the origin hashes to the current upstream,
- * the update flag clears, script authorizations stay. Only rendered by hosts
- * when updateDetail.scriptsState === 'conflict'. Same render-prop shape as
+ * « Keep your version » — resolves a file conflict WITHOUT touching local
+ * files: the runner re-baselines the file manifest and script hashes to the
+ * current upstream, the update flag clears, script authorizations stay. Only
+ * rendered by hosts when hasFileConflict(updateDetail). Same render-prop shape as
  * SkillUpdateAction so hosts compose their own button.
  */
 export function SkillKeepLocalAction({
@@ -212,9 +255,9 @@ export function SkillKeepLocalAction({
         return;
       }
       if (r.data.contentChanged) {
-        toast.success(`"${name}": your scripts are kept. A content update is still available.`);
+        toast.success(`"${name}": your files are kept. A content update is still available.`);
       } else {
-        toast.success(`"${name}": your scripts are kept.`);
+        toast.success(`"${name}": your files are kept.`);
       }
     });
   }
@@ -225,7 +268,7 @@ export function SkillKeepLocalAction({
       <ConfirmDialog
         open={confirmOpen}
         title={`Keep your version of "${name}"?`}
-        message="Keeps your edited scripts exactly as they are and clears the update flag. It comes back only if upstream changes again. Script authorizations are untouched."
+        message="Keeps every file of this skill exactly as it is here and clears the update flag. It comes back only if upstream changes again. Script authorizations are untouched."
         confirmLabel="Keep mine"
         destructive={false}
         onConfirm={performKeep}

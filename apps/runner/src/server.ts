@@ -64,6 +64,7 @@ import {
   uninstallSkillRoute,
   updateSkillRoute,
   previewSkillUpdateRoute,
+  previewUninstallSkillRoute,
   acknowledgeSkillUpdateRoute,
 } from './routes/skills.ts';
 import {
@@ -375,6 +376,7 @@ export function createApp(
   app.post('/api/skills/uninstall', (c) => uninstallSkillRoute(c, deps, runnerEnv));
   app.post('/api/skills/update', (c) => updateSkillRoute(c, deps, runnerEnv));
   app.post('/api/skills/preview-update', (c) => previewSkillUpdateRoute(c, deps, runnerEnv));
+  app.post('/api/skills/preview-uninstall', (c) => previewUninstallSkillRoute(c, deps, runnerEnv));
   app.post('/api/skills/acknowledge-update', (c) =>
     acknowledgeSkillUpdateRoute(c, deps, runnerEnv),
   );
