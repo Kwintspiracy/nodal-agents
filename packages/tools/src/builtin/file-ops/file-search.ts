@@ -11,6 +11,7 @@ import { join, relative } from 'node:path';
 import { z } from 'zod';
 import type { ToolDefinition } from '../../types';
 import { failureText, searchCard } from '../../presenters';
+import { decodeText } from './text-file';
 import {
   assertWorkspacesConfigured,
   resolveAndCheckPath,
@@ -60,7 +61,17 @@ export type FileSearchMatch =
   | { kind: 'file'; path: string }
   | { kind: 'content'; path: string; line: number; snippet: string };
 export type FileSearchOutput =
-  | { ok: true; matches: FileSearchMatch[]; truncated: boolean }
+  | {
+      ok: true;
+      matches: FileSearchMatch[];
+      truncated: boolean;
+      /**
+       * Les fichiers dont le contenu n'a pas été fouillé parce que leur
+       * encodage n'a pas pu être établi (la couche texte). Absent quand il n'y
+       * en a aucun.
+       */
+      not_searched?: string[];
+    }
   | { ok: false; reason: string };
 
 const SKIP_DIRS = new Set(['.git', 'node_modules', '.next', 'dist', '.turbo', '.cache']);
@@ -93,7 +104,9 @@ export const fileSearchTool: ToolDefinition<typeof FileSearchInputSchema, FileSe
     '`target:"content"` (default) scans file contents and returns line-level matches. Use ' +
     '`file_glob` to restrict content scans (e.g. "*.md"). For multi-workspace agents, prefix ' +
     '`path` with a workspace label to search only that workspace (e.g. "notes/subdir"), or ' +
-    'omit to search all workspaces. Skips .git/node_modules/dist by default.',
+    'omit to search all workspaces. Skips .git/node_modules/dist by default. Contents are read ' +
+    'in the encoding of each file; files that are not text are skipped, and text files whose ' +
+    'encoding cannot be determined are listed in `not_searched`.',
   inputSchema: FileSearchInputSchema,
   riskLevel: 'read',
   egress: 'none',
@@ -152,6 +165,7 @@ export const fileSearchTool: ToolDefinition<typeof FileSearchInputSchema, FileSe
         }
       }
 
+      const notSearched: string[] = [];
       const walk = async (dir: string, workspaceRoot: string): Promise<void> => {
         if (matches.length >= input.max_results) {
           truncated = true;
@@ -183,16 +197,25 @@ export const fileSearchTool: ToolDefinition<typeof FileSearchInputSchema, FileSe
           if (globRe && !globRe.test(dirent.name) && !globRe.test(rel)) continue;
           const info = await stat(full);
           if (info.size > MAX_SEARCH_FILE_BYTES) continue;
-          let body: string;
+          let lu: Buffer;
           try {
-            const lu = await readFile(full);
-            // Chaque fichier dont le contenu est fouillé est LU : rapporté au seam
-            // (tool_call_reads), comme toute lecture d'un outil.
-            ctx.reportReadContent?.(full, createHash('sha256').update(lu).digest('hex'));
-            body = lu.toString('utf8');
+            lu = await readFile(full);
           } catch {
-            continue; // binary or unreadable — skip
+            continue; // unreadable — skip
           }
+          // Chaque fichier dont le contenu est fouillé est LU : rapporté au seam
+          // (tool_call_reads), comme toute lecture d'un outil.
+          ctx.reportReadContent?.(full, createHash('sha256').update(lu).digest('hex'));
+          // La couche texte (`text-file.ts`) : le texte dans l'encodage du
+          // fichier. Ce qui n'est pas du texte n'est pas fouillé ; un texte dont
+          // l'encodage ne s'établit pas est NOMMÉ dans le résultat, jamais
+          // fouillé comme de l'UTF-8 ni passé sous silence.
+          const decoded = decodeText(lu);
+          if (!decoded.ok) {
+            if (decoded.kind !== 'binary') notSearched.push(rel);
+            continue;
+          }
+          const body = decoded.text;
           const lines = body.split('\n');
           for (let i = 0; i < lines.length; i++) {
             if (matches.length >= input.max_results) {
@@ -217,7 +240,12 @@ export const fileSearchTool: ToolDefinition<typeof FileSearchInputSchema, FileSe
         await walk(startDir, rootForRelative);
       }
 
-      return { ok: true, matches, truncated };
+      return {
+        ok: true,
+        matches,
+        truncated,
+        ...(notSearched.length > 0 ? { not_searched: notSearched } : {}),
+      };
     } catch (err) {
       if (err instanceof WorkspaceError) return { ok: false, reason: err.message };
       const code = (err as NodeJS.ErrnoException).code;

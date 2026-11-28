@@ -11,7 +11,14 @@ import {
   MAX_READ_FILE_BYTES,
   WorkspaceError,
 } from './workspace';
-import { readLinesWindowed, ReadLinesCapExceededError } from './read-lines';
+import { readLinesWindowed, ReadLinesCapExceededError, ReadLinesNotTextError } from './read-lines';
+import {
+  decodeText,
+  encodingLabel,
+  establishEncoding,
+  FORM_SAMPLE_BYTES,
+  notTextReason,
+} from './text-file';
 import { MODEL_REQUEST_MAX_IMAGES } from '@nodal-agents/shared';
 import {
   MAX_MODEL_IMAGE_BYTES,
@@ -45,6 +52,13 @@ export const FileReadInputSchema = z.object({
     .max(2000)
     .optional()
     .describe('Max number of lines to return. Default 500.'),
+  encoding: z
+    .string()
+    .optional()
+    .describe(
+      'Only when a call said the encoding could not be determined: the encoding of the file ' +
+        '(e.g. "windows-1252", "shift_jis"). Otherwise it is detected.',
+    ),
   pages: z
     .string()
     .regex(/^\s*\d+\s*(-\s*\d+\s*)?$/, 'one page ("3") or a range ("21-40")')
@@ -64,6 +78,8 @@ export type FileReadOutput =
       start_line: number;
       end_line: number;
       truncated: boolean;
+      /** L'encodage du fichier, « +bom » quand il porte une BOM (la couche texte). */
+      encoding: string;
     }
   /**
    * An image file, handed to the model with this result (`ctx.attachForModel`):
@@ -90,11 +106,11 @@ export type FileReadOutput =
 /** The first bytes of a file, enough for `sniffAttachmentMediaType`. */
 const SNIFF_BYTES = 16;
 
-async function readHead(path: string): Promise<Uint8Array> {
+async function readHead(path: string, size: number = SNIFF_BYTES): Promise<Uint8Array> {
   const handle = await open(path, 'r');
   try {
-    const buf = Buffer.alloc(SNIFF_BYTES);
-    const { bytesRead } = await handle.read(buf, 0, SNIFF_BYTES, 0);
+    const buf = Buffer.alloc(size);
+    const { bytesRead } = await handle.read(buf, 0, size, 0);
     return buf.subarray(0, bytesRead);
   } finally {
     await handle.close();
@@ -275,7 +291,7 @@ export const fileReadTool: ToolDefinition<typeof FileReadInputSchema, FileReadOu
     'Read file contents, a section at a time for large files. Files over 50 MiB cannot be read with this tool.',
   description:
     'Read the contents of a file in the agent workspace. Returns lines with start_line / ' +
-    'end_line markers. Use `offset` and `limit` to paginate large files. Files above ~1 MiB ' +
+    'end_line markers, decoded from the encoding of the file (`encoding` says which). Use `offset` and `limit` to paginate large files. Files above ~1 MiB ' +
     'MUST be paginated — request smaller chunks. Files above 50 MiB are refused outright, ' +
     'even with offset/limit — use `file_search` to locate content, or split the file. ' +
     'An image file (PNG, JPEG, GIF, WebP, up to 1 MiB) is returned as the image itself when ' +
@@ -367,12 +383,24 @@ export const fileReadTool: ToolDefinition<typeof FileReadInputSchema, FileReadOu
         // maxBytes is a TOCTOU defense: the file could grow past the stat()
         // check above between here and stream completion (concurrent writer
         // on a shared workspace) — readLinesWindowed aborts if that happens.
+        // L'encodage s'établit sur le début du fichier (la couche texte) ; le
+        // flux est décodé dans celui-là, et lève sur la première séquence qui
+        // n'en est pas.
+        const head = await readHead(path, FORM_SAMPLE_BYTES);
+        const est = establishEncoding(head, false, input.encoding);
+        if (!est.ok) {
+          return {
+            ok: false,
+            reason: await notTextReason(input.path, head, est, 'Nothing was read.', info.size),
+          };
+        }
         const { windowLines, totalLines, sha256 } = await readLinesWindowed(
           path,
           startIdx,
           startIdx + limit,
           undefined,
           MAX_READ_FILE_BYTES,
+          { encoding: est.encoding, bomLength: est.bomLength },
         );
         // Les octets LUS (tout le flux), rapportés au seam (tool_call_reads).
         ctx.reportReadContent?.(path, sha256);
@@ -384,6 +412,7 @@ export const fileReadTool: ToolDefinition<typeof FileReadInputSchema, FileReadOu
           start_line: startIdx + 1,
           end_line: endIdx,
           truncated: endIdx < totalLines,
+          encoding: encodingLabel(est.encoding, est.bomLength > 0),
         };
       }
 
@@ -392,10 +421,18 @@ export const fileReadTool: ToolDefinition<typeof FileReadInputSchema, FileReadOu
       if (attachmentType === PDF_MEDIA_TYPE) return await pdfResult(input, path, bytes, ctx);
       if (attachmentType !== null) return imageResult(input, path, bytes, attachmentType, ctx);
       if (input.pages !== undefined) return pagesNotForThisFile(input, 'not a PDF');
-      // Les octets LUS, rapportés au seam (tool_call_reads) ; puis décodés comme avant.
+      // La couche texte (`text-file.ts`) : le texte du fichier dans SON
+      // encodage, sa BOM retirée — ou le refus, qui dit ce qu'est le fichier.
+      const decoded = decodeText(bytes, input.encoding);
+      if (!decoded.ok) {
+        return {
+          ok: false,
+          reason: await notTextReason(input.path, bytes, decoded, 'Nothing was read.'),
+        };
+      }
+      // Les octets LUS, rapportés au seam (tool_call_reads).
       ctx.reportReadContent?.(path, createHash('sha256').update(bytes).digest('hex'));
-      const raw = bytes.toString('utf8');
-      const allLines = raw.split('\n');
+      const allLines = decoded.text.split('\n');
       const endIdx = Math.min(allLines.length, startIdx + limit);
       const selectedContent = allLines.slice(startIdx, endIdx).join('\n');
       return {
@@ -405,10 +442,17 @@ export const fileReadTool: ToolDefinition<typeof FileReadInputSchema, FileReadOu
         start_line: startIdx + 1,
         end_line: endIdx,
         truncated: endIdx < allLines.length,
+        encoding: encodingLabel(decoded.form.encoding, decoded.form.bom),
       };
     } catch (err) {
       if (err instanceof WorkspaceError) return { ok: false, reason: err.message };
       if (err instanceof ReadLinesCapExceededError) return { ok: false, reason: err.message };
+      if (err instanceof ReadLinesNotTextError) {
+        return {
+          ok: false,
+          reason: `"${input.path}" cannot be read as text: ${err.detail}. Nothing was read.`,
+        };
+      }
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
         return { ok: false, reason: `File not found: "${input.path}".` };
       }
