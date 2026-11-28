@@ -44,8 +44,16 @@ export interface SpawnTurnOptions<TResult> {
   abortSignal?: AbortSignal;
   /**
    * Garde anti-boucle (invariant #8) : au-delà de ce nombre d'appels d'outils
-   * dans un tour, la CLI est tuée. Le compteur du loop Nodal ne voit pas la
-   * boucle INTERNE d'une CLI ; c'est son équivalent à cette couture.
+   * dans UNE RÉPONSE du modèle, la CLI est tuée. Le compteur du loop Nodal ne
+   * voit pas la boucle INTERNE d'une CLI ; c'est son équivalent à cette couture.
+   *
+   * L'unité est celle que le nom de la limite dit (`maxToolCallsPerTurn` : les
+   * appels d'une réponse), jamais la session entière. Une session de CLI est
+   * toute la boucle d'une demande : compter ses appels sur toute sa vie tuait
+   * au 51e appel un travail que la boucle de Nodal mène sur cinquante réponses.
+   * Le parseur dit à quelle réponse appartient chaque appel (`gate.admit`) ;
+   * un flux qui ne le dit pas n'est pas compté du tout (voir `ToolCallGate`),
+   * et c'est la limite de temps du run qui le borne.
    *
    * Ce qu'il garantit, et ce qu'il ne garantit pas (revue Codex de #568). La
    * boucle Nodal refuse un tour trop gros ENTIER, avant d'en exécuter un seul
@@ -91,6 +99,8 @@ export interface SpawnTurnOptions<TResult> {
     stderr: string;
     /** La valeur du plafond quand le garde a tiré, sinon undefined. */
     toolCapExceeded?: number;
+    /** Les appels comptés dans la réponse qui a dépassé le plafond. */
+    toolCapCalls?: number;
   }) => TResult;
 }
 
@@ -105,8 +115,17 @@ export interface SpawnTurnOptions<TResult> {
  * texte, fin de tour) n'est plus lu.
  */
 export interface ToolCallGate {
-  /** Un appel que la ligne ouvre : vrai s'il tient dans le budget. */
-  admit(): boolean;
+  /**
+   * Un appel que la ligne ouvre, dans la réponse du modèle que `response`
+   * nomme : vrai s'il tient dans le budget de cette réponse.
+   *
+   * `null` : le flux ne dit pas où une réponse finit (Codex : `codex exec
+   * --json` n'émet que des items et une fin de tour qui clôt TOUTE la
+   * session). L'appel est alors admis sans être compté : le compter sur la
+   * session serait revenir à l'unité fausse, et deviner une frontière serait
+   * un repli silencieux (invariant #4).
+   */
+  admit(response: string | null): boolean;
   /** Le budget a tiré sur une ligne précédente. */
   readonly capped: boolean;
 }
@@ -152,7 +171,9 @@ export async function spawnCliTurn<TResult>(opts: SpawnTurnOptions<TResult>): Pr
     let stderr = '';
     let timedOut = false;
     let settled = false;
-    let toolCalls = 0;
+    // Les appels de chaque réponse du modèle, par son identité dans le flux.
+    const callsPerResponse = new Map<string, number>();
+    let overCapCalls: number | undefined;
     let toolCapExceeded: number | undefined;
     let graceTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -166,9 +187,13 @@ export async function spawnCliTurn<TResult>(opts: SpawnTurnOptions<TResult>): Pr
     // paquet, ce qui arrive pendant le taskkill) passent encore par le
     // parseur, qui n'en remet que les résultats des appels admis.
     const gate: ToolCallGate = {
-      admit: () => {
-        toolCalls += 1;
-        return opts.maxToolCalls === undefined || toolCalls <= opts.maxToolCalls;
+      admit: (response) => {
+        if (opts.maxToolCalls === undefined || response === null) return true;
+        const calls = (callsPerResponse.get(response) ?? 0) + 1;
+        callsPerResponse.set(response, calls);
+        if (calls <= opts.maxToolCalls) return true;
+        overCapCalls = Math.max(overCapCalls ?? 0, calls);
+        return false;
       },
       get capped() {
         return toolCapExceeded !== undefined;
@@ -184,7 +209,7 @@ export async function spawnCliTurn<TResult>(opts: SpawnTurnOptions<TResult>): Pr
       if (
         toolCapExceeded === undefined &&
         opts.maxToolCalls !== undefined &&
-        toolCalls > opts.maxToolCalls
+        overCapCalls !== undefined
       ) {
         toolCapExceeded = opts.maxToolCalls;
         killTree();
@@ -222,7 +247,9 @@ export async function spawnCliTurn<TResult>(opts: SpawnTurnOptions<TResult>): Pr
           timedOut,
           durationMs: Date.now() - startedAt,
           stderr,
-          ...(toolCapExceeded !== undefined ? { toolCapExceeded } : {}),
+          ...(toolCapExceeded !== undefined
+            ? { toolCapExceeded, toolCapCalls: overCapCalls ?? toolCapExceeded + 1 }
+            : {}),
         }),
       );
     };

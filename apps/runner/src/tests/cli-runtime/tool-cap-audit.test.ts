@@ -100,7 +100,12 @@ afterEach(async () => {
 const open = (id: string) =>
   JSON.stringify({
     type: 'assistant',
-    message: { role: 'assistant', content: [{ type: 'tool_use', id, name: 'Bash', input: {} }] },
+    // Tous les appels dans UNE réponse du modèle : c'est l'unité du plafond.
+    message: {
+      id: 'msg_one',
+      role: 'assistant',
+      content: [{ type: 'tool_use', id, name: 'Bash', input: {} }],
+    },
   });
 const result = (id: string, content: string) =>
   JSON.stringify({

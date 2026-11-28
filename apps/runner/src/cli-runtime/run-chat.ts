@@ -42,11 +42,10 @@ import {
   type CliTurnResult,
 } from './provider.ts';
 import { buildCliRuntimeJobContext } from './run-job.ts';
+import { cliSessionTimeLimitMs, readRunTimeCeilingMs } from '../job/run-budget.ts';
 import { getDeploymentContext } from '../job/deployment.ts';
 import { loadConversationContext } from '../job/conversation-id.ts';
 import type { CliRuntimeAgentRow } from './run-job.ts';
-
-const RUNTIME_CHAT_TIMEOUT_MS = 600_000;
 
 export async function runCliRuntimeChatTurn(args: {
   db: AnyDrizzleDb;
@@ -280,7 +279,9 @@ export async function runCliRuntimeChatTurn(args: {
           model: defaults.model,
           effort: defaults.effort,
           ...(resumeSessionId ? { resumeSessionId } : {}),
-          timeoutMs: RUNTIME_CHAT_TIMEOUT_MS,
+          // La même limite de temps qu'une session lancée par un job : celle
+          // du run, réglée par l'espace (cliSessionTimeLimitMs).
+          timeoutMs: cliSessionTimeLimitMs(await readRunTimeCeilingMs(db, entityId)),
           processScope,
           ...(brake.signal ? { abortSignal: brake.signal } : {}),
           // Same anti-loop cap as the job path (invariant #8).
