@@ -10,6 +10,8 @@
 // ici au lieu de se relire dans deux copies.
 
 import { describe, it, expect } from 'vitest';
+import { FAKE_PREFIX, fakeAssignment, fakeBearer, fakeSecret } from '@nodal-agents/test-kit';
+import { registeredSecrets } from '@nodal-agents/shared';
 import { buildCliAuditRow, MAX_AUDIT_OUTPUT_CHARS } from '../../cli-runtime/audit.ts';
 
 const BASE = {
@@ -19,6 +21,8 @@ const BASE = {
   toolCallId: 'item_0',
   startedAt: 1_000,
   now: 1_250,
+  // An agent with the shapes on and no registered value: what these cases check.
+  policy: { registry: registeredSecrets([]), shapes: true },
 };
 
 describe('buildCliAuditRow', () => {
@@ -51,6 +55,43 @@ describe('buildCliAuditRow', () => {
   it('borne la sortie — l’audit dit ce qui s’est passé, il n’archive pas le dépôt', () => {
     const row = buildCliAuditRow({ ...BASE, toolOutput: 'x'.repeat(MAX_AUDIT_OUTPUT_CHARS * 3) });
     expect(row.toolOutput.length).toBeLessThanOrEqual(MAX_AUDIT_OUTPUT_CHARS);
+  });
+
+  it('masque une clé à cheval sur le plafond : rien de sa tête ne reste lisible', () => {
+    // Masquer APRÈS la coupe laisserait les premiers signes d'une clé, devenus
+    // trop courts pour être reconnus. Ils sont l'essentiel de la clé.
+    const faux = fakeSecret('anthropic', 'B'.repeat(48));
+    const avant = `${'x'.repeat(MAX_AUDIT_OUTPUT_CHARS - 21)} `;
+    const row = buildCliAuditRow({ ...BASE, toolOutput: `${avant}${faux} et la suite` });
+    expect(row.toolOutput.length).toBeLessThanOrEqual(MAX_AUDIT_OUTPUT_CHARS);
+    expect(row.toolOutput.startsWith(avant)).toBe(true);
+    expect(row.toolOutput).not.toContain(FAKE_PREFIX.anthropic);
+    expect(row.toolOutput).not.toContain('BBBB');
+  });
+
+  it('masque un jeton dans le TEXTE LIBRE de l’entrée : une commande, un contenu de fichier', () => {
+    // L'entrée d'une CLI n'est pas faite de champs nommés : `command`,
+    // `content` et `new_string` ne s'annoncent pas comme des secrets.
+    const jeton = fakeSecret('github', 'C'.repeat(36));
+    const cle = fakeSecret('openaiProject', 'D'.repeat(48));
+    const commande = buildCliAuditRow({
+      ...BASE,
+      toolName: 'Bash',
+      toolInput: {
+        command: `curl -H 'Authorization: ${fakeBearer(jeton)}' https://api.example.com`,
+      },
+    });
+    const ecriture = buildCliAuditRow({
+      ...BASE,
+      toolName: 'Write',
+      toolInput: { file_path: '.env', content: `${fakeAssignment('OPENAI_API_KEY', cle)}\n` },
+    });
+    expect(JSON.stringify(commande.toolInput)).not.toContain(jeton);
+    expect((commande.toolInput as { command: string }).command).toContain(
+      'https://api.example.com',
+    );
+    expect(JSON.stringify(ecriture.toolInput)).not.toContain(cle);
+    expect((ecriture.toolInput as { file_path: string }).file_path).toBe('.env');
   });
 
   it('préfixe le nom pour qu’un Read interne ne passe pas pour un builtin Nodal', () => {

@@ -8,8 +8,16 @@
 // Et LE flux d'un abonnement (`subscriptionStream`) : comment un flux qui
 // écoute une source en mémoire se finit, écrit une fois pour toutes ses routes.
 
-/** Un événement SSE prêt à être écrit sur le fil : `event:`, `data:`, ligne vide. */
-export function sseEvent(event: string, data: unknown): string {
+import type { Outbound } from '@nodal-agents/shared';
+
+/**
+ * Un événement SSE prêt à être écrit sur le fil : `event:`, `data:`, ligne vide.
+ *
+ * `data` est une valeur SORTANTE (`Outbound`, packages/shared/src/outbound.ts) :
+ * tout flux du runner est masqué événement par événement, là où il s'écrit.
+ * Le type le garantit : une donnée brute ne compile pas.
+ */
+export function sseEvent(event: string, data: Outbound<unknown>): string {
   return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
 }
 

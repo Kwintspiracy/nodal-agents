@@ -47,9 +47,12 @@ export const TEST_JOB_ID = '00000000-0000-0000-0000-0000000000j1'.replace('j', '
 // ─── ToolContext ──────────────────────────────────────────────────────────────
 
 /**
- * A `db` stub that satisfies the approval gate's two DB needs: reading the
- * run's earlier REJECTED requests, newest first (#492: none, here) and inserting an
- * `approval_requests` row and returning its id.
+ * A `db` stub that satisfies the approval gate's DB needs: reading the run's
+ * earlier REJECTED requests, newest first (#492: none, here), inserting an
+ * `approval_requests` row and returning its id, and, once a tool ran, the
+ * agent's masking setting for its result (`loadToolResultMaskPolicy`): the
+ * column's default, on, for an agent nobody changed. The workspace holds no
+ * stored secret here.
  *
  * Deliberately NOT a full mock. A test that needs real rows should use a real
  * database (`spinUpTestDb`); a test about GATE LOGIC should not be able to pass
@@ -57,11 +60,15 @@ export const TEST_JOB_ID = '00000000-0000-0000-0000-0000000000j1'.replace('j', '
  */
 export function aStubDb(overrides?: { approvalRowId?: string }) {
   const id = overrides?.approvalRowId ?? 'approval-row-1';
+  const noRows = () => Object.assign(Promise.resolve([]), { orderBy: async () => [] });
   return {
-    select: () => ({
+    select: (fields?: Record<string, unknown>) => ({
       // A read answers no rows, ordered or not (#492 orders the refusals).
       from: () => ({
-        where: () => Object.assign(Promise.resolve([]), { orderBy: async () => [] }),
+        where: () =>
+          fields !== undefined && 'maskSecretShapes' in fields
+            ? { limit: async () => [{ maskSecretShapes: true }] }
+            : noRows(),
       }),
     }),
     insert: () => ({

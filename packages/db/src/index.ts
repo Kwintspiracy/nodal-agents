@@ -15,6 +15,7 @@ export {
 } from './queries/credentials.ts';
 export type { DecryptedCredential, OauthPayload, Db } from './queries/credentials.ts';
 export { assertMasterKeyRestorable } from './queries/master-key-guard.ts';
+export { loadToolResultMaskPolicy, loadWorkspaceSecretValues } from './queries/tool-result-mask.ts';
 export type { AssertMasterKeyRestorableOptions } from './queries/master-key-guard.ts';
 export { designateChat, resolveScheduleNotifyChat } from './queries/designated-chat.ts';
 export type { DesignatedChat } from './queries/designated-chat.ts';
@@ -272,3 +273,4 @@ export {
   min,
   getTableColumns,
 } from 'drizzle-orm';
+export * from './outbound-columns.ts';

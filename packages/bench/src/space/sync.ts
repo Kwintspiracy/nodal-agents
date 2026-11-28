@@ -134,6 +134,9 @@ export const AGENT_POLICY = {
   cliPermissions: 'copy',
   commandAllowlist: 'copy',
   mayChangeTeam: 'copy',
+  // 0175 : ce que ses outils rendent est masqué avant le modèle, un réglage de
+  // l'agent : le banc mesure l'agent tel qu'il est réglé.
+  maskSecretShapes: 'copy',
   position: 'copy',
   createdAt: 'own',
   updatedAt: 'own',

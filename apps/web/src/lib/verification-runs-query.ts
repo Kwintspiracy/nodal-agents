@@ -26,7 +26,7 @@
 // jamais perdue.
 
 import 'server-only';
-import { agentJobs, agents, eq, verificationRuns } from '@nodal-agents/db';
+import { agentJobs, agents, eq, verificationRuns, outboundColumn } from '@nodal-agents/db';
 import type { getDb } from './server.ts';
 
 type Db = ReturnType<typeof getDb>;
@@ -43,7 +43,7 @@ export function selectVerificationRuns(db: Db) {
       canonicalKey: verificationRuns.canonicalKey,
       sequenceId: verificationRuns.sequenceId,
       commandRank: verificationRuns.commandRank,
-      command: verificationRuns.command,
+      command: outboundColumn(verificationRuns.command),
       exitCode: verificationRuns.exitCode,
       outcomeKind: verificationRuns.outcomeKind,
       durationMs: verificationRuns.durationMs,

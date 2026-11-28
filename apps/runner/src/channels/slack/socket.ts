@@ -41,6 +41,7 @@ import {
 } from '../../approvals/elicitation-channel.ts';
 import { SLACK_AUTH_CALLBACK_PREFIX } from './auth-callback.ts';
 import type { SlackInboundMessage, SlackInteractionAck } from './types.ts';
+import { outboundText, outboundValue } from '@nodal-agents/shared';
 
 export interface SlackSocketOpts {
   agentId: string;
@@ -362,10 +363,11 @@ export function startSlackSocket(opts: SlackSocketOpts): SlackSocketHandle {
       await client.chat
         .postMessage({
           channel: pending.requesterConversationId,
-          text:
+          text: outboundText(
             'Demande enregistrée. Ce bot n’a pas encore de propriétaire : ouvrez son tableau ' +
-            'de bord, onglet Channels de l’agent, et autorisez cette conversation pour en ' +
-            'prendre le contrôle.',
+              'de bord, onglet Channels de l’agent, et autorisez cette conversation pour en ' +
+              'prendre le contrôle.',
+          ),
         })
         .catch(() => {});
       return;
@@ -376,8 +378,8 @@ export function startSlackSocket(opts: SlackSocketOpts): SlackSocketHandle {
       : 'souhaite parler à ce bot';
     await client.chat.postMessage({
       channel: pending.ownerConversationId,
-      text: `👤 ${pending.requesterName} ${target}. Autoriser ?`,
-      blocks: [
+      text: outboundText(`👤 ${pending.requesterName} ${target}. Autoriser ?`),
+      blocks: outboundValue([
         {
           type: 'section',
           text: { type: 'mrkdwn', text: `👤 *${pending.requesterName}* ${target}. Autoriser ?` },
@@ -399,15 +401,16 @@ export function startSlackSocket(opts: SlackSocketOpts): SlackSocketHandle {
             },
           ],
         },
-      ],
+      ]),
     });
 
     await client.chat
       .postMessage({
         channel: pending.requesterConversationId,
-        text:
+        text: outboundText(
           'Votre demande a été transmise au propriétaire du bot pour autorisation. ' +
-          'Vous pourrez écrire dès qu’elle est acceptée.',
+            'Vous pourrez écrire dès qu’elle est acceptée.',
+        ),
       })
       .catch(() => {});
   }
@@ -423,13 +426,13 @@ export function startSlackSocket(opts: SlackSocketOpts): SlackSocketHandle {
     const slackAck: SlackInteractionAck = {
       async ephemeralReply(text: string): Promise<void> {
         await client.chat
-          .postEphemeral({ channel: channelId, user: b.user.id, text })
+          .postEphemeral({ channel: channelId, user: b.user.id, text: outboundText(text) })
           .catch(() => {});
       },
       async resolveCard(text: string): Promise<void> {
         if (!messageTs) return;
         await client.chat
-          .update({ channel: channelId, ts: messageTs, text, blocks: [] })
+          .update({ channel: channelId, ts: messageTs, text: outboundText(text), blocks: [] })
           .catch(() => {});
       },
     };

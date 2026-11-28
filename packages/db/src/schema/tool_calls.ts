@@ -57,6 +57,11 @@ export const toolCalls = pgTable(
     // descend jamais sous `write`. Seul le relevé d'un échange passé le lit
     // (ce qu'il cite). NULL : pas d'indice, ou une ligne d'avant 0166.
     readOnlyHint: boolean('read_only_hint'),
+    // 0175 : le masque des résultats d'outil a caché quelque chose dans CE
+    // résultat. Ce que la ligne range est ce que le modèle a lu, et ce n'était
+    // pas tout ce que l'outil avait lu : une lecture masquée n'est pas une vue
+    // des octets du fichier.
+    resultMasked: boolean('result_masked').notNull().default(false),
     // 0133 (#443) : cette ligne enregistre-t-elle une exécution qui a
     // COMMENCÉ ? true = marque d'intention ou exécution faite ; false = appel
     // refusé par la porte, jamais lancé ; NULL = ligne antérieure ou `cli:*`.

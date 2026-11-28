@@ -25,6 +25,7 @@ import {
   heldBy,
   workspaceSandboxReader,
   type WorkspaceScope,
+  loadToolResultMaskPolicy,
 } from '@nodal-agents/db';
 import {
   buildSystemPrompt,
@@ -600,6 +601,13 @@ export async function runCliRuntimeJob(args: {
   // d'audit (voir takeCliTurnCheckpoints).
   const cliTurn = await resolveCliTurn(db, jobId);
   const pending = new Map<string, { name: string; input: unknown; startedAt: number }>();
+  // La politique de masque de l'agent pour ce que ses outils rendent, lue une
+  // fois pour le tour : chaque ligne `cli:*` passe par la même frontière que
+  // `executeTool`. Illisible, le tour ne part pas (invariant #4).
+  const maskPolicy = await loadToolResultMaskPolicy(db, {
+    entityId: job.entityId ?? '',
+    agentId: agentRow.id,
+  });
   // Les écritures d'audit ENCORE EN VOL à la fin du tour (revue Codex, passe
   // 33) : chaque insertion part sans être attendue — l'audit ne doit jamais
   // ralentir la CLI — mais `harnessEdits` les LIT juste après `binding.run`.
@@ -636,6 +644,7 @@ export async function runCliRuntimeJob(args: {
             toolCallId: evt.toolUseId,
             startedAt: started.startedAt,
             now: Date.now(),
+            policy: maskPolicy,
           }),
         })
         .catch((err: unknown) => {

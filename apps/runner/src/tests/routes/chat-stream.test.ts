@@ -28,6 +28,8 @@ import { conversations, chatMessages } from '@nodal-agents/db';
 import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
 import { createEmbeddingClient } from '@nodal-agents/llm';
 import type { AuthProvider, AuthSession } from '@nodal-agents/auth';
+import { REDACTED_TEXT } from '@nodal-agents/shared';
+import { fakeSecret } from '@nodal-agents/test-kit';
 import { createApp } from '../../server.ts';
 import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';
@@ -139,6 +141,11 @@ const FIRST_CHUNKS = ['A reply ', 'in three ', 'pieces.'];
 const FIRST_REPLY = FIRST_CHUNKS.join('');
 const SECOND_CHUNKS = ['And ', 'then this.'];
 const SECOND_REPLY = SECOND_CHUNKS.join('');
+/** Celle dont la réponse cite une clé, coupée entre deux fragments. */
+const KEYED = 'fifth question: which key did you use?';
+const KEY = fakeSecret('github', 'Ab3Cd5Ef7Gh9Ij1Kl3Mn5Op7Qr9St1Uv3Wx5Yz');
+const KEYED_CHUNKS = ['I used ', KEY.slice(0, 9), KEY.slice(9), ' to push.'];
+const KEYED_REPLY = KEYED_CHUNKS.join('');
 
 /** Ce que `generateText` rend : le recheck d'escalade, et la relance sans
  *  outils. Rien de tout cela ne passe par le flux. */
@@ -156,6 +163,7 @@ function chunksFor(messages: ModelMessage[]): string[] {
   const asked = last ? flattenText([last]) : '';
   if (asked.includes(FIRST)) return FIRST_CHUNKS;
   if (asked.includes(SECOND)) return SECOND_CHUNKS;
+  if (asked.includes(KEYED)) return KEYED_CHUNKS;
   // Un flux qui s'ouvre, se ferme, et n'a rien dit.
   if (asked.includes(SILENT)) return [];
   return ['other'];
@@ -463,6 +471,33 @@ describe('POST /api/chat/stream — la réponse mot à mot @cap:parler-a-un-agen
       `assistant:${FIRST_REPLY}`,
       `user:${SECOND}`,
       `assistant:${SECOND_REPLY}`,
+    ]);
+  });
+
+  it('une clé dans la réponse sort masquée des fragments ET de `done.reply` ; la base garde le texte', async () => {
+    // Ce que lit un appareil appairé (`nodal-device`, `send()`) : `done.reply`.
+    const [conv] = await db
+      .insert(conversations)
+      .values({ entityId: seed.entityId, agentId: seed.agentId, title: 'Keyed reply' })
+      .returning();
+    if (!conv) throw new Error('conversation insert failed');
+
+    const collected = await collect(await post(KEYED, conv.id));
+
+    const masked = `I used ${REDACTED_TEXT} to push.`;
+    expect(collected.errors).toEqual([]);
+    expect(collected.deltas.join('')).toBe(masked);
+    expect(collected.done?.reply).toBe(masked);
+    expect(JSON.stringify(collected)).not.toContain(KEY.slice(4));
+
+    const rows = await db
+      .select({ role: chatMessages.role, content: chatMessages.content })
+      .from(chatMessages)
+      .where(eq(chatMessages.conversationId, conv.id))
+      .orderBy(asc(chatMessages.createdAt), asc(chatMessages.id));
+    expect(rows.map((r) => `${r.role}:${r.content}`)).toEqual([
+      `user:${KEYED}`,
+      `assistant:${KEYED_REPLY}`,
     ]);
   });
 

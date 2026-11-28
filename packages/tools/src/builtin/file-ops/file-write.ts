@@ -1,8 +1,10 @@
 // file-ops/file-write.ts — atomic write (tempfile + rename) within workspace
 
-import { mkdir } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { writeFileAtomically } from './atomic-write';
+import { refusePlaceholderWrite } from './mask-guard';
+import { holdsMaskPlaceholder } from '@nodal-agents/shared';
 import { z } from 'zod';
 import type { ToolDefinition } from '../../types';
 import { failureText, writtenFile } from '../../presenters';
@@ -148,6 +150,21 @@ export const fileWriteTool: ToolDefinition<typeof FileWriteInputSchema, FileWrit
       // See isProtectedWorkflowTemplate (workspace.ts) for the rationale.
       if (await isProtectedWorkflowTemplate(ctx, path)) {
         return { ok: false, reason: WORKFLOW_TEMPLATE_PROTECTED_MESSAGE };
+      }
+      // A masked read is never written back (mask-guard.ts).
+      if (holdsMaskPlaceholder(input.content)) {
+        const current = await readFile(path, 'utf8').catch((err: NodeJS.ErrnoException) => {
+          if (err.code === 'ENOENT') return null;
+          throw err;
+        });
+        const refused = await refusePlaceholderWrite(ctx, {
+          path,
+          shownPath: input.path,
+          before: current ?? '',
+          after: input.content,
+          current,
+        });
+        if (refused !== null) return { ok: false, reason: refused };
       }
       const dir = dirname(path);
       if (input.create_dirs) {
