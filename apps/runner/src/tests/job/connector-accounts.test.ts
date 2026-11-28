@@ -39,6 +39,7 @@ import {
   credentials,
   agentConnectorAssignments,
   toolCalls,
+  readConnectionState,
 } from '@nodal-agents/db';
 import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
 import { getOAuthProvider } from '@nodal-agents/shared';
@@ -409,6 +410,56 @@ describe('several accounts of one service on one agent @cap:assigner-outils/mote
       }
     }, 60_000);
   }
+
+  it('one failed call on one of two accounts: the error the model reads, the state written and the account are that call’s', async () => {
+    // The wrapper order of a connector tool, inner to outer: the adapter's
+    // tool held to the connector contract (#1237, the registry), the
+    // connection state of its account (#1228, one per account), the tool of
+    // one name over the accounts (#1224). One call, refused by the provider
+    // for one account, shows all three on that account and nowhere else.
+    const ids = await give([
+      { kind: 'key', slug: 'airtable', name: 'Work', key: 'pat-work' },
+      { kind: 'key', slug: 'airtable', name: 'Personal', key: 'pat-personal' },
+    ]);
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const auth = new Headers(init?.headers).get('authorization');
+      void input;
+      return auth === 'Bearer pat-personal'
+        ? new Response(JSON.stringify({ error: { type: 'AUTHENTICATION_REQUIRED' } }), {
+            status: 401,
+            headers: { 'Content-Type': 'application/json' },
+          })
+        : new Response(JSON.stringify({ bases: [] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+    });
+    const { id, requests } = await runJob([
+      [{ toolName: 'airtable_list_bases', args: { account: 'Personal' } }],
+      [finish],
+    ]);
+
+    const toolError = requests[1]!.prompt;
+    const said = toolError.slice(toolError.lastIndexOf('airtable_list_bases'));
+    // The contract's error: its kind first.
+    expect(said).toContain('reauth_required:');
+    // The account the call ran on, named by the state wrapper.
+    expect(said).toContain('Personal is attached but disconnected');
+    expect(said).not.toContain('Work is attached');
+    // The state is written on that account's connector only.
+    const personal = await readConnectionState(db, { kind: 'connector', id: ids.get('Personal')! });
+    const work = await readConnectionState(db, { kind: 'connector', id: ids.get('Work')! });
+    expect(personal.state).toBe('needs_reauth');
+    expect(work.state).toBe('working');
+    expect(work.cause).toBe('not_checked');
+    // The row records the call on that account, failed.
+    const [row] = await db
+      .select({ input: toolCalls.toolInput, outcome: toolCalls.outcome })
+      .from(toolCalls)
+      .where(and(eq(toolCalls.jobId, id), eq(toolCalls.toolName, 'airtable_list_bases')));
+    expect((row!.input as { account: string }).account).toBe('Personal');
+    expect(row!.outcome).toBe('failed');
+  }, 60_000);
 
   it('one account only: the tool is what it was, no account argument, and the call runs with its credential', async () => {
     await give([{ kind: 'key', slug: 'airtable', name: 'Only', key: 'pat-only' }]);
