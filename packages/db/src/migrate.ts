@@ -211,6 +211,28 @@ function readJournal(folder: string): JournalEntry[] {
   return brut.entries ?? [];
 }
 
+/**
+ * The applied `created_at` values no journal entry claims, in two lists that
+ * must never be read as one, oldest first:
+ *   - `ahead`: LATER than the journal's newest entry: the database was migrated
+ *     by a newer program (the only case that makes it "newer");
+ *   - `unclaimed`: not later: what a development branch leaves once its
+ *     migration is renumbered or dropped. The migrator and the gap check
+ *     ignore them; so does everything that reads this.
+ * PURE: the one rule, read by the schema state and by a restore's journal.
+ */
+export function historyNotInJournal(
+  journal: readonly { when: number }[],
+  applied: readonly number[],
+): { ahead: number[]; unclaimed: number[] } {
+  const known = new Set(journal.map((e) => Number(e.when)));
+  const newest = journal.length > 0 ? Math.max(...journal.map((e) => Number(e.when))) : -Infinity;
+  const notIn = [...new Set(applied.map((w) => Number(w)).filter((w) => !known.has(w)))].sort(
+    (a, b) => a - b,
+  );
+  return { ahead: notIn.filter((w) => w > newest), unclaimed: notIn.filter((w) => w <= newest) };
+}
+
 /** Le journal du programme, celui que `runMigrations` appliquerait avec ces options. */
 export function readProgramJournal(opts: RunMigrationsOptions = {}): JournalEntry[] {
   return readJournal(effectiveMigrationsFolder(opts));

@@ -35,6 +35,7 @@ import postgres from 'postgres';
 import {
   appliedMigrationTimes,
   gapsBetween,
+  historyNotInJournal,
   readProgramJournal,
   type JournalEntry,
   type MigrationGap,
@@ -94,11 +95,8 @@ export function schemaStateOf(
     };
   }
   const newest = Math.max(...applied);
-  const journalNewest =
-    journal.length > 0 ? Math.max(...journal.map((e) => Number(e.when))) : -Infinity;
-  const known = new Set(journal.map((e) => Number(e.when)));
   const appliedSet = new Set(applied.map((w) => Number(w)));
-  const notInJournal = [...new Set(applied.filter((w) => !known.has(w)))].sort((a, b) => a - b);
+  const { ahead, unclaimed } = historyNotInJournal(journal, applied);
   const lastClaimed = journal
     .filter((e) => appliedSet.has(Number(e.when)))
     .reduce<JournalEntry | null>(
@@ -116,8 +114,8 @@ export function schemaStateOf(
       journal.filter((e) => e.when < newest),
       applied,
     ),
-    ahead: notInJournal.filter((w) => w > journalNewest),
-    unclaimed: notInJournal.filter((w) => w <= journalNewest),
+    ahead,
+    unclaimed,
   };
 }
 
