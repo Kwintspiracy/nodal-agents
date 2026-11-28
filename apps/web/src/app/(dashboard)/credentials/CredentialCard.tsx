@@ -1,3 +1,5 @@
+import type { ConnectionState } from '@nodal-agents/shared';
+
 export type CredentialEntry = {
   id: string;
   name: string;
@@ -8,4 +10,6 @@ export type CredentialEntry = {
   inUseBy: { connectorSlug: string; connectorId: string }[];
   /** Non-null when the at-rest payload could not be decrypted. */
   decryptError: string | null;
+  /** The credential's connection state, as the engine keeps it. */
+  connection: ConnectionState;
 };

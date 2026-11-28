@@ -1,7 +1,7 @@
 // @nodal-agents/adapter-outlook-mail — public API
 // Single factory: createOutlookMailTools(opts) → ConnectorToolDefinition[]
 
-import type { ConnectorToolDefinition } from '@nodal-agents/tools';
+import type { ConnectorIo, ConnectorToolDefinition } from '@nodal-agents/tools';
 import type { z } from 'zod';
 import { createOutlookClient } from './client';
 
@@ -32,7 +32,7 @@ import { createListFoldersTool } from './tools/folders';
 // Attachments (1)
 import { createGetAttachmentTool } from './tools/attachments';
 
-export type OutlookMailAdapterOptions =
+export type OutlookMailAdapterOptions = (
   | {
       /**
        * Static OAuth2 access token, captured once for the tools' lifetime.
@@ -49,7 +49,11 @@ export type OutlookMailAdapterOptions =
        * the DB instead of capturing one token for the tools' lifetime.
        */
       getAccessToken: () => Promise<string>;
-    };
+    }
+) & {
+  /** The connector contract's transport, which the provider's SDK uses (ConnectorIo). */
+  fetch?: ConnectorIo['fetch'];
+};
 
 /**
  * Create all 15 Outlook Mail tools using the provided Microsoft Graph access token.
@@ -69,7 +73,7 @@ export function createOutlookMailTools(
 ): ConnectorToolDefinition<z.ZodTypeAny, unknown>[] {
   const getAccessToken =
     'getAccessToken' in opts ? opts.getAccessToken : async () => opts.accessToken;
-  const client = createOutlookClient(getAccessToken);
+  const client = createOutlookClient(getAccessToken, opts.fetch);
 
   return [
     // Read tools (5)

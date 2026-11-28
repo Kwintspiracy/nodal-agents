@@ -20,9 +20,20 @@ import 'server-only';
 import { revalidatePath } from 'next/cache';
 import { eq } from '@nodal-agents/db';
 import { credentials, connectors } from '@nodal-agents/db';
-import { decryptCredentialForDisplay, refreshAndPersistCredential } from '@nodal-agents/db';
+import {
+  decryptCredentialForDisplay,
+  readConnectionStates,
+  refreshAndPersistCredential,
+} from '@nodal-agents/db';
 import { z } from 'zod';
 import type { CredentialType } from '@nodal-agents/shared';
+import {
+  ConnectionUnavailableError,
+  NOT_CHECKED,
+  connectionKey,
+  type ConnectionState,
+} from '@nodal-agents/shared';
+import { connectionReason } from './connection-status.ts';
 import { getDb, getAuthProvider } from './server.ts';
 import { requireAuth } from '@nodal-agents/auth';
 import { headers } from 'next/headers';
@@ -77,6 +88,12 @@ export type CredentialListItem = {
    * surface only when the runner tries to use the credential.
    */
   decryptError: string | null;
+  /**
+   * The credential's connection state: what the last refresh or call learnt
+   * (connection_states), or `broken` when this installation cannot decrypt
+   * it. The same state a job reads before giving its connectors.
+   */
+  connection: ConnectionState;
 };
 
 /**
@@ -96,6 +113,10 @@ export async function listCredentialsAction(
       .where(eq(credentials.ownerUserId, session.userId));
 
     const filtered = filterType !== undefined ? rows.filter((r) => r.type === filterType) : rows;
+    const stored = await readConnectionStates(
+      db,
+      filtered.map((r) => ({ kind: 'credential' as const, id: r.id })),
+    );
 
     const items: CredentialListItem[] = await Promise.all(
       filtered.map(async (row) => {
@@ -140,6 +161,16 @@ export async function listCredentialsAction(
           createdAt: row.createdAt,
           updatedAt: row.updatedAt,
           decryptError,
+          connection:
+            decryptError !== null
+              ? {
+                  state: 'broken',
+                  cause: 'undecryptable',
+                  detail: null,
+                  observedAt: null,
+                  retryAfter: null,
+                }
+              : (stored.get(connectionKey({ kind: 'credential', id: row.id })) ?? NOT_CHECKED),
         };
       }),
     );
@@ -255,16 +286,21 @@ export async function refreshCredentialAction(
 
     const { expiresAt } = await refreshAndPersistCredential(db, id);
     revalidatePath('/credentials');
+    revalidatePath('/connectors');
     return ok({ expiresAt });
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
     console.error('[refreshCredentialAction]', err);
-    if (message.includes('does not support token refresh')) {
-      return fail('oauth_no_refresh', 'This provider does not support token refresh');
+    // The refresh records what the provider answered as the credential's
+    // state and throws it typed: the person reads the state's words, never
+    // the provider's raw body (B50-16). The screens re-read the state.
+    if (err instanceof ConnectionUnavailableError) {
+      revalidatePath('/credentials');
+      revalidatePath('/connectors');
+      return fail(
+        `connection_${err.connection.state}`,
+        connectionReason(err.connection) ?? 'Token refresh failed.',
+      );
     }
-    if (message.includes('missing refreshToken')) {
-      return fail('missing_refresh_token', 'Credential is missing refresh token');
-    }
-    return fail('refresh_failed', `Token refresh failed: ${message}`);
+    return fail('refresh_failed', 'Token refresh failed. See the server log for the cause.');
   }
 }

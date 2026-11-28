@@ -32,6 +32,7 @@ import {
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { credentials, getDecryptedCredentialById } from '@nodal-agents/db';
+import { ConnectionUnavailableError } from '@nodal-agents/shared';
 import { eq } from '@nodal-agents/db';
 
 // ─── Module-level mock setup ──────────────────────────────────────────────────
@@ -252,7 +253,7 @@ describe('getDecryptedCredentialById', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('returns the stale payload (does not throw) when auto-refresh fails', async () => {
+  it('a refused refresh throws its state, never hands on the stale token as if it worked', async () => {
     const { persistCredentialFromOauthFlow } = await import('../credentials-internal.ts');
 
     const { id } = await persistCredentialFromOauthFlow({
@@ -276,15 +277,18 @@ describe('getDecryptedCredentialById', () => {
     vi.stubGlobal('fetch', fetchMock);
     const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
-    const decrypted = await getDecryptedCredential(id);
+    const err = await getDecryptedCredential(id).catch((e: unknown) => e);
 
     vi.unstubAllGlobals();
     consoleSpy.mockRestore();
 
-    // Caller still gets the credential (no throw, no null) — caller's API call
-    // will likely 401 and surface the re-auth need.
-    expect(decrypted).not.toBeNull();
-    expect(decrypted?.payload.accessToken).toBe('stale-token-stays');
+    // The caller learns the state (the person must authorise again), which is
+    // also what the credential's row now says.
+    expect(err).toBeInstanceOf(ConnectionUnavailableError);
+    expect((err as ConnectionUnavailableError).connection).toMatchObject({
+      state: 'needs_reauth',
+      cause: 'grant_refused',
+    });
   });
 });
 
@@ -476,7 +480,7 @@ describe('refreshCredentialAccessToken', () => {
     });
 
     await expect(refreshCredentialAccessToken(id)).rejects.toThrow(
-      'does not support token refresh',
+      'connection_needs_reauth: no_refresh',
     );
   });
 
@@ -499,7 +503,9 @@ describe('refreshCredentialAccessToken', () => {
     );
     vi.stubGlobal('fetch', fetchMock);
 
-    await expect(refreshCredentialAccessToken(id)).rejects.toThrow('token endpoint returned 400');
+    await expect(refreshCredentialAccessToken(id)).rejects.toThrow(
+      'connection_needs_reauth: grant_refused (400 invalid_grant)',
+    );
 
     vi.unstubAllGlobals();
   });

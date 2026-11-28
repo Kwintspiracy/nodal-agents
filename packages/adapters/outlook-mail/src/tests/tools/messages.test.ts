@@ -6,8 +6,6 @@ import {
   createListMessagesTool,
   createGetMessageTool,
   createSendEmailTool,
-  createReplyMessageTool,
-  createForwardMessageTool,
   createDeleteMessageTool,
   createUpdateMessageTool,
   createMoveMessageTool,
@@ -36,10 +34,35 @@ describe('outlook_list_messages', () => {
     const result = await tool.execute({}, {} as never);
 
     expect(api).toHaveBeenCalledWith('/me/messages');
-    expect(result.total).toBe(1);
-    expect(result.messages[0]?.messageId).toBe('m-1');
-    expect(result.messages[0]?.from).toBe('alice@example.com');
-    expect(result.messages[0]?.subject).toBe('Hi');
+    expect(result.next).toBeNull();
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0]?.messageId).toBe('m-1');
+    expect(result.items[0]?.from).toBe('alice@example.com');
+    expect(result.items[0]?.subject).toBe('Hi');
+  });
+
+  it("hands Graph's nextLink back as next, and follows it when given as cursor", async () => {
+    const link = 'https://graph.microsoft.com/v1.0/me/messages?$top=20&$skip=20';
+    const first = makeMockRequest();
+    first.get.mockResolvedValueOnce({ value: [], '@odata.nextLink': link });
+    const second = makeMockRequest();
+    second.get.mockResolvedValueOnce({ value: [] });
+    const { client, api } = makeMockClient({ '/me/messages': first, [link]: second });
+
+    const tool = createListMessagesTool(client);
+    const page1 = await tool.execute({}, {} as never);
+    expect(page1.next).toBe(link);
+    const page2 = await tool.execute({ cursor: link }, {} as never);
+    expect(api).toHaveBeenLastCalledWith(link);
+    expect(page2.next).toBeNull();
+  });
+
+  it('refuses a cursor that is not a Graph URL (the token would go with it)', async () => {
+    const { client } = makeMockClient({});
+    const tool = createListMessagesTool(client);
+    await expect(
+      tool.execute({ cursor: 'https://elsewhere.example/steal' }, {} as never),
+    ).rejects.toMatchObject({ code: 'outlook_validation_error', status: 400 });
   });
 
   it('scopes to a folder path when folder is provided', async () => {
@@ -51,7 +74,7 @@ describe('outlook_list_messages', () => {
     const result = await tool.execute({ folder: 'inbox' }, {} as never);
 
     expect(api).toHaveBeenCalledWith('/me/mailFolders/inbox/messages');
-    expect(result.total).toBe(0);
+    expect(result.items).toHaveLength(0);
   });
 
   it('applies $search when query is provided', async () => {
@@ -251,54 +274,9 @@ describe('outlook_send_email', () => {
   });
 });
 
-describe('outlook_reply_message', () => {
-  it('posts to /reply by default', async () => {
-    const req = makeMockRequest();
-    req.post.mockResolvedValueOnce(undefined);
-    const { client } = makeMockClient({ '/me/messages/m-1/reply': req });
-
-    const tool = createReplyMessageTool(client);
-    const result = await tool.execute({ message_id: 'm-1', comment: 'Thanks!' }, {} as never);
-
-    expect(result).toEqual({ sent: true, replyAll: false });
-    expect(req.post).toHaveBeenCalledWith({ comment: 'Thanks!' });
-  });
-
-  it('posts to /replyAll when reply_all is true', async () => {
-    const req = makeMockRequest();
-    req.post.mockResolvedValueOnce(undefined);
-    const { client, api } = makeMockClient({ '/me/messages/m-1/replyAll': req });
-
-    const tool = createReplyMessageTool(client);
-    const result = await tool.execute(
-      { message_id: 'm-1', comment: 'Thanks all!', reply_all: true },
-      {} as never,
-    );
-
-    expect(api).toHaveBeenCalledWith('/me/messages/m-1/replyAll');
-    expect(result.replyAll).toBe(true);
-  });
-});
-
-describe('outlook_forward_message', () => {
-  it('posts recipients and comment to /forward', async () => {
-    const req = makeMockRequest();
-    req.post.mockResolvedValueOnce(undefined);
-    const { client } = makeMockClient({ '/me/messages/m-1/forward': req });
-
-    const tool = createForwardMessageTool(client);
-    const result = await tool.execute(
-      { message_id: 'm-1', to: 'x@example.com', comment: 'FYI' },
-      {} as never,
-    );
-
-    expect(result.sent).toBe(true);
-    expect(req.post).toHaveBeenCalledWith({
-      comment: 'FYI',
-      toRecipients: [{ emailAddress: { address: 'x@example.com' } }],
-    });
-  });
-});
+// outlook_reply_message and outlook_forward_message are proved by the mail
+// contract's conformance suite (../mail-contract.test.ts), on the requests
+// Graph would receive.
 
 describe('outlook_delete_message', () => {
   it('moves the message to deleteditems and returns the new id', async () => {

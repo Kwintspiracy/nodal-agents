@@ -9,7 +9,7 @@ import {
   chunkRichText,
   buildNotionProperty,
 } from '../helpers/property-coerce';
-import { paginateAll } from '../helpers/pagination';
+import { LIST_CURSOR_DESCRIPTION, type ConnectorList } from '@nodal-agents/shared';
 
 // ── notion_query_database ─────────────────────────────────────────────────────
 
@@ -28,59 +28,40 @@ const QueryDatabaseInput = z.object({
     .max(100)
     .optional()
     .default(50)
-    .describe('Rows per request (1–100, default 50).'),
-  max_rows: z
-    .number()
-    .int()
-    .min(1)
-    .max(1000)
-    .optional()
-    .default(500)
-    .describe('Total rows to collect across pagination (default 500, max 1000).'),
+    .describe('Rows per page (1–100, default 50).'),
+  cursor: z.string().optional().describe(LIST_CURSOR_DESCRIPTION),
 });
 
 type QueryRow = { id: string; url: string } & Record<string, string>;
 
-export type QueryDatabaseOutput = {
-  total: number;
-  has_more: boolean;
-  rows: QueryRow[];
-};
+export type QueryDatabaseOutput = ConnectorList<QueryRow>;
 
+/**
+ * One page of a database query per call, in the connector contract's list
+ * shape: `next` is Notion's own `next_cursor`, null once `has_more` is false.
+ */
 export function createQueryDatabaseTool(
   client: Client,
 ): ConnectorToolDefinition<typeof QueryDatabaseInput, QueryDatabaseOutput> {
   return {
     name: 'notion_query_database',
     description:
-      'Query a Notion database with optional filters. Without a filter, returns all entries. Returns rows with their properties.',
+      'Query a Notion database with optional filters, one page of rows per call. Without a filter, ' +
+      'reads every entry page by page. Returns `items` (rows with their properties) and `next`: ' +
+      'pass it back as `cursor` to read the next page (null when there is none).',
     inputSchema: QueryDatabaseInput,
     async execute(input) {
       try {
-        let hitMax = false;
-        const rows = await paginateAll(
-          async (cursor, pageSize) => {
-            const body: Parameters<typeof client.databases.query>[0] = {
-              database_id: input.database_id,
-              page_size: pageSize,
-            };
-            if (input.filter)
-              body.filter = input.filter as Parameters<typeof client.databases.query>[0]['filter'];
-            if (cursor) body.start_cursor = cursor;
-            const res = await client.databases.query(body);
-            return {
-              results: res.results,
-              has_more: res.has_more,
-              next_cursor: res.next_cursor,
-            };
-          },
-          input.page_size,
-          input.max_rows,
-        );
+        const body: Parameters<typeof client.databases.query>[0] = {
+          database_id: input.database_id,
+          page_size: input.page_size,
+        };
+        if (input.filter)
+          body.filter = input.filter as Parameters<typeof client.databases.query>[0]['filter'];
+        if (input.cursor) body.start_cursor = input.cursor;
+        const res = await client.databases.query(body);
 
-        if (rows.length >= input.max_rows) hitMax = true;
-
-        const output: QueryRow[] = rows.map((row) => {
+        const items: QueryRow[] = res.results.map((row) => {
           const entry: QueryRow = {
             id: row.id,
             url: 'url' in row ? String(row.url) : '',
@@ -96,7 +77,7 @@ export function createQueryDatabaseTool(
           return entry;
         });
 
-        return { total: output.length, has_more: hitMax, rows: output };
+        return { items, next: res.has_more ? res.next_cursor : null, truncated: null };
       } catch (err) {
         throw mapNotionError(err);
       }

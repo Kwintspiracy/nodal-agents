@@ -1,7 +1,7 @@
 // @nodal-agents/adapter-google-calendar — public API
 // Single factory: createGoogleCalendarTools(opts) → ConnectorToolDefinition[]
 
-import type { ConnectorToolDefinition } from '@nodal-agents/tools';
+import type { ConnectorIo, ConnectorToolDefinition } from '@nodal-agents/tools';
 import type { z } from 'zod';
 import { createGoogleCalendarClient } from './client';
 
@@ -17,7 +17,7 @@ import {
 // Calendars + free/busy (2)
 import { createListCalendarsTool, createFindFreeSlotsTool } from './tools/calendars';
 
-export type GoogleCalendarAdapterOptions =
+export type GoogleCalendarAdapterOptions = (
   | {
       /**
        * Static OAuth2 access token, captured once for the tools' lifetime.
@@ -35,7 +35,11 @@ export type GoogleCalendarAdapterOptions =
        * tools' lifetime.
        */
       getAccessToken: () => Promise<string>;
-    };
+    }
+) & {
+  /** The connector contract's transport, which the provider's SDK uses (ConnectorIo). */
+  fetch?: ConnectorIo['fetch'];
+};
 
 /**
  * Create all 7 Google Calendar tools using the provided OAuth access token.
@@ -53,7 +57,7 @@ export function createGoogleCalendarTools(
 ): ConnectorToolDefinition<z.ZodTypeAny, unknown>[] {
   const getAccessToken =
     'getAccessToken' in opts ? opts.getAccessToken : async () => opts.accessToken;
-  const calendar = createGoogleCalendarClient(getAccessToken);
+  const calendar = createGoogleCalendarClient(getAccessToken, opts.fetch);
 
   return [
     // Read tools (4)

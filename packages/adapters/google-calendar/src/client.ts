@@ -33,11 +33,20 @@ const DEFAULT_TIMEOUT_MS = 30_000;
  */
 export function createGoogleCalendarClient(
   getAccessToken: () => Promise<string>,
+  fetchImplementation?: typeof fetch,
 ): calendar_v3.Calendar {
   const auth = new google.auth.OAuth2();
   auth.refreshHandler = async () => ({
     access_token: await getAccessToken(),
     expiry_date: Date.now() - 1,
   });
-  return google.calendar({ version: 'v3', auth, timeout: DEFAULT_TIMEOUT_MS });
+  // `fetchImplementation`: the connector contract's transport (the registry
+  // gives it), through which every request carries the job's stop and the
+  // call's bound, and the provider's error answer is kept for the error.
+  return google.calendar({
+    version: 'v3',
+    auth,
+    timeout: DEFAULT_TIMEOUT_MS,
+    ...(fetchImplementation ? { fetchImplementation } : {}),
+  });
 }

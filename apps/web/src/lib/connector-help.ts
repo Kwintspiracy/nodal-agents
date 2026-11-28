@@ -66,7 +66,8 @@ export const OAUTH_GUIDES: Record<
       },
       {
         number: 3,
-        text: 'In the left menu, go to APIs & Services → OAuth consent screen. Choose User Type: External, fill in the app name, then add your own email as a Test user.',
+        text: 'In the left menu, go to APIs & Services → OAuth consent screen. Choose User Type: External and fill in the app name. Then, under Audience, click Publish app so the publishing status reads In production.',
+        hint: 'Left in Testing, Google ends every authorisation seven days after consent and your agents stop working. When you connect, Google warns that the app is not verified: it is your own app, continue past the warning (Google lets 100 accounts in all authorise an unverified app).',
       },
       {
         number: 4,
@@ -157,7 +158,7 @@ export const OAUTH_GUIDES: Record<
       },
       {
         number: 4,
-        text: 'In the Scopes section, check the four scopes: data.records:read, data.records:write, schema.bases:read, schema.bases:write — then save / update the integration so the scopes are persisted.',
+        text: 'In the Scopes section, check the three scopes: data.records:read, data.records:write, schema.bases:read — then save / update the integration so the scopes are persisted.',
         hint: 'If the scopes are not saved, Airtable returns "invalid_scope" during the OAuth flow.',
       },
       {
@@ -171,6 +172,7 @@ export const OAUTH_GUIDES: Record<
       {
         number: 7,
         text: 'Paste them into the fields below.',
+        hint: 'An Airtable authorisation that no agent uses for 60 days ends: reconnect it then.',
       },
     ],
     format: 'Client ID is a UUID. Secret is longer.',
@@ -202,6 +204,7 @@ export const OAUTH_GUIDES: Record<
       {
         number: 5,
         text: 'Go to Certificates & secrets → Client secrets → New client secret. Give it a description and expiry, then click Add.',
+        hint: 'The expiry ends every connection made with this secret (Microsoft allows 24 months at most). Note the date: before it, create a new secret and a new credential with it.',
       },
       {
         number: 6,
@@ -210,7 +213,7 @@ export const OAUTH_GUIDES: Record<
       },
       {
         number: 7,
-        text: 'Go to API permissions → Add a permission → Microsoft Graph → Delegated permissions, then add: Mail.ReadWrite, Mail.Send, MailboxSettings.Read, offline_access.',
+        text: 'Go to API permissions → Add a permission → Microsoft Graph → Delegated permissions, then add: Mail.ReadWrite, Mail.Send, offline_access.',
       },
       {
         number: 8,
@@ -219,6 +222,7 @@ export const OAUTH_GUIDES: Record<
       {
         number: 9,
         text: 'Paste the Application (client) ID and the client secret Value into the fields below.',
+        hint: 'A Microsoft authorisation that no agent uses for 90 days ends: reconnect it then.',
       },
     ],
     format: 'Application (client) ID is a UUID. Secret value is a short random string, not a UUID.',

@@ -83,7 +83,10 @@ describe('architecture invariants', () => {
     // this one is about what MUST be — invariant #7, official SDKs only.
     const source = readSource({ srcDir });
     expect(source).toContain("from 'googleapis'");
-    expect(source).not.toContain('https://www.googleapis.com');
+    // An API endpoint URL is the mark of a hand-rolled call. OAuth scope
+    // identifiers share the host (`https://www.googleapis.com/auth/...`): the
+    // operations declare the rights they need with them, which is no call.
+    expect(source).not.toMatch(/https:\/\/www\.googleapis\.com(?!\/auth\/)/);
     expect(source).not.toContain('https://oauth2.googleapis.com');
   });
 

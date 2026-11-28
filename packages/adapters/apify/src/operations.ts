@@ -19,6 +19,8 @@ export const APIFY_OPERATIONS: OperationDescriptor[] = [
     name: 'Run actor',
     risk: 'destructive',
     requiresApproval: true,
+    // The run may be waited on for up to an hour (waitSecs, at most 3600 s).
+    timeBoundMs: 3_660_000,
     description:
       'Start an Apify actor run and wait for it to finish. Consumes Apify platform credits.',
   },
@@ -29,6 +31,8 @@ export const APIFY_OPERATIONS: OperationDescriptor[] = [
     name: 'Web browse',
     risk: 'read',
     requiresApproval: false,
+    // The browser actor's run is waited on for up to 120 s.
+    timeBoundMs: 150_000,
     description:
       'Scrape a web page or run a web search and get the content back in one synchronous call (no polling). Consumes a small amount of Apify credits.',
   },

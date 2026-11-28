@@ -31,11 +31,22 @@ const DEFAULT_TIMEOUT_MS = 30_000;
  * credential was revoked), the tool throws
  * DriveAdapterError({ code: 'drive_unauthorized' }).
  */
-export function createDriveClient(getAccessToken: () => Promise<string>): drive_v3.Drive {
+export function createDriveClient(
+  getAccessToken: () => Promise<string>,
+  fetchImplementation?: typeof fetch,
+): drive_v3.Drive {
   const auth = new google.auth.OAuth2();
   auth.refreshHandler = async () => ({
     access_token: await getAccessToken(),
     expiry_date: Date.now() - 1,
   });
-  return google.drive({ version: 'v3', auth, timeout: DEFAULT_TIMEOUT_MS });
+  // `fetchImplementation`: the connector contract's transport (the registry
+  // gives it), through which every request carries the job's stop and the
+  // call's bound, and the provider's error answer is kept for the error.
+  return google.drive({
+    version: 'v3',
+    auth,
+    timeout: DEFAULT_TIMEOUT_MS,
+    ...(fetchImplementation ? { fetchImplementation } : {}),
+  });
 }

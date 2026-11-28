@@ -10,6 +10,7 @@ import DiscordChannelCard from '../channels/DiscordChannelCard.tsx';
 import SlackChannelCard from '../channels/SlackChannelCard.tsx';
 import WhatsAppChannelCard from '../channels/WhatsAppChannelCard.tsx';
 import Banner from '@/components/ui/Banner';
+import type { ConnectionState } from '@nodal-agents/shared';
 
 /**
  * ChannelsTabContent — the Channels tab panel on the agent composer.
@@ -34,6 +35,7 @@ export default function ChannelsTabContent({
   slackCfg,
   slackAllowedConversations,
   whatsappStatus,
+  whatsappLink,
   whatsappAllowedConversations,
 }: {
   agentId: string;
@@ -49,6 +51,7 @@ export default function ChannelsTabContent({
   slackCfg: SlackConfigRow | null;
   slackAllowedConversations: ChannelAllowedConversationView[];
   whatsappStatus: 'connected' | 'disconnected';
+  whatsappLink: ConnectionState;
   whatsappAllowedConversations: ChannelAllowedConversationView[];
 }) {
   if (error || !telegramCfg || !discordCfg || !slackCfg) {
@@ -69,6 +72,7 @@ export default function ChannelsTabContent({
           agentId={agentId}
           agentSlug={agentSlug}
           status={whatsappStatus}
+          link={whatsappLink}
           allowedConversations={whatsappAllowedConversations}
         />
       </div>

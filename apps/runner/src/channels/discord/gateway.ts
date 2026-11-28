@@ -24,7 +24,9 @@
 
 import {
   Client,
+  DiscordjsErrorCodes,
   Events,
+  GatewayCloseCodes,
   GatewayIntentBits,
   Partials,
   ChannelType,
@@ -48,6 +50,7 @@ import { handleElicitationReply } from '../../approvals/elicitation-channel.ts';
 import { makeDiscordInteractionAck } from './interaction-ack.ts';
 import { DISCORD_AUTH_CALLBACK_PREFIX } from './auth-callback.ts';
 import { stopReaction } from '../turn.ts';
+import { recordChannelLink, type ChannelLinkSignal } from '../link-state.ts';
 import type { DiscordInboundMessage } from './types.ts';
 
 export interface DiscordGatewayOpts {
@@ -115,6 +118,46 @@ function isSendable(channel: unknown): channel is SendableChannels {
   );
 }
 
+/**
+ * The link signal of a gateway close that discord.js will not retry
+ * (`Events.ShardDisconnect`, emitted only for its UNRECOVERABLE_CLOSE_CODES,
+ * WebSocketManager.js). The codes are Discord's gateway close codes
+ * (discord.com/developers/docs/topics/opcodes-and-status-codes): 4004
+ * "Authentication failed" is the token refused; 4014 "Disallowed intent(s)"
+ * is a privileged intent the bot was not granted in the developer portal;
+ * the others (invalid intents, shard, sharding, API version) are the bot's
+ * configuration. Any other code is the link lost for now.
+ */
+export function discordCloseSignal(code: number): ChannelLinkSignal {
+  const detail = `gateway close ${code} (${GatewayCloseCodes[code] ?? 'unknown'})`;
+  switch (code) {
+    case GatewayCloseCodes.AuthenticationFailed:
+      return { link: 'refused', detail };
+    case GatewayCloseCodes.DisallowedIntents:
+      return { link: 'missing_right', detail };
+    case GatewayCloseCodes.InvalidIntents:
+    case GatewayCloseCodes.InvalidShard:
+    case GatewayCloseCodes.ShardingRequired:
+    case GatewayCloseCodes.InvalidAPIVersion:
+      return { link: 'misconfigured', detail };
+    default:
+      return { link: 'lost', detail };
+  }
+}
+
+/**
+ * The link signal of a failed `client.login()`: discord.js rejects a token the
+ * API refuses with `DiscordjsErrorCodes.TokenInvalid`; anything else (a
+ * network failure) is the link lost for now, retried by the manager.
+ */
+export function discordLoginSignal(err: unknown): ChannelLinkSignal {
+  const detail = err instanceof Error ? err.message : String(err);
+  const code = (err as { code?: unknown } | null)?.code;
+  return code === DiscordjsErrorCodes.TokenInvalid
+    ? { link: 'refused', detail }
+    : { link: 'lost', detail };
+}
+
 export function startDiscordGateway(opts: DiscordGatewayOpts): DiscordGatewayHandle {
   const { agentId, agentEntityId, botToken, deps, env } = opts;
 
@@ -128,9 +171,22 @@ export function startDiscordGateway(opts: DiscordGatewayOpts): DiscordGatewayHan
     partials: [Partials.Channel],
   });
 
+  // The link's state, where discord.js reports it: ready and resumed are up,
+  // reconnecting is lost for now, a close it will not retry says why.
+  const link = (signal: ChannelLinkSignal): void => {
+    void recordChannelLink(deps.db, agentId, 'discord', signal);
+  };
+
   client.on(Events.ClientReady, (c) => {
     console.warn(`[discord-gateway agent=${agentId}] logged in as ${c.user.tag}`);
+    link({ link: 'up' });
   });
+
+  client.on(Events.ShardResume, () => link({ link: 'up' }));
+  client.on(Events.ShardReconnecting, () => link({ link: 'lost', detail: 'gateway reconnecting' }));
+  client.on(Events.ShardDisconnect, (event: { code: number }) =>
+    link(discordCloseSignal(event.code)),
+  );
 
   client.on(Events.Error, (err) => {
     console.error(`[discord-gateway agent=${agentId}] client error: ${err.message}`);
@@ -348,6 +404,7 @@ export function startDiscordGateway(opts: DiscordGatewayOpts): DiscordGatewayHan
   }
 
   void client.login(botToken).catch((err) => {
+    link(discordLoginSignal(err));
     console.warn(
       `[discord-gateway agent=${agentId}] login failed (invalid token?): ${
         err instanceof Error ? err.message : String(err)

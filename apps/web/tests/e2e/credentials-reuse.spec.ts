@@ -1,13 +1,21 @@
 /**
  * An owner reuses one Google credential for a second connector instead of pasting it again.
  *
- * Playwright e2e — Credential reuse across multiple connectors (Brique 34 v3).
+ * Playwright e2e — Credential reuse across multiple connectors (Brique 34 v3),
+ * with the rights each connector needs.
  *
  * Scenario:
- *   1. Create a Google credential via the Google Drive wizard
- *   2. The credential appears in the Google Drive dropdown after the flow
- *   3. Connect Gmail using the SAME credential (dropdown select → Save, no re-OAuth)
- *   4. Both connectors show CONNECTED with the same credential
+ *   1. Create a Google credential via the Google Drive wizard: Google is asked
+ *      for Drive's rights (the connector being connected), nothing else
+ *   2. The credential appears in the Gmail dropdown, but it holds no Gmail
+ *      right: the form says so and offers "Add access" instead of "Connect"
+ *   3. "Add access" asks Google for Gmail's rights ON TOP of Drive's, on the
+ *      SAME credential (no client id / secret pasted again)
+ *   4. Both connectors show CONNECTED with the same credential, which now holds
+ *      both connectors' rights
+ *
+ * No real Google call: the token exchange uses the callback's "mock-" code
+ * (opt-in flag of the e2e server), which grants exactly what was asked.
  *
  * Requires a running Nodal-Agents stack. Skipped automatically if unreachable.
  */
@@ -27,6 +35,9 @@ import {
   resolveActingUser,
 } from './helpers.ts';
 
+const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive';
+const GMAIL_READONLY = 'https://www.googleapis.com/auth/gmail.readonly';
+
 test.beforeAll(async () => {
   await requireLiveStack();
   // Clean up any credentials from previous runs so the Drive card renders the wizard button
@@ -40,8 +51,8 @@ test.afterAll(async () => {
   await dropE2ECredentials('google-oauth');
 });
 
-test.describe('Credential reuse — Drive + Gmail share one Google credential', () => {
-  test('connect Drive via wizard → reuse credential for Gmail via dropdown', async ({
+test.describe('Credential reuse — Drive + Gmail share one Google credential @cap:connecter-un-service/ecran', () => {
+  test('connect Drive via wizard → add Gmail access to the same credential → both connected', async ({
     page,
     context,
   }) => {
@@ -113,6 +124,7 @@ test.describe('Credential reuse — Drive + Gmail share one Google credential', 
     // ── 4. Intercept /start → capture state ──────────────────────────────
     let capturedRedirectUri = '';
     let capturedState = '';
+    let capturedScopes: string[] = [];
 
     await context.route('**/api/oauth/google-oauth/start', async (route) => {
       const response = await route.fetch({ maxRedirects: 0 });
@@ -122,6 +134,7 @@ test.describe('Credential reuse — Drive + Gmail share one Google credential', 
         const url = new URL(location);
         capturedRedirectUri = url.searchParams.get('redirect_uri') ?? '';
         capturedState = url.searchParams.get('state') ?? '';
+        capturedScopes = (url.searchParams.get('scope') ?? '').split(' ').filter(Boolean);
 
         const setCookie = response.headers()['set-cookie'] ?? '';
         await route.fulfill({
@@ -140,6 +153,9 @@ test.describe('Credential reuse — Drive + Gmail share one Google credential', 
     // On attend la valeur capturée, pas deux secondes de montre.
     await expect.poll(() => capturedRedirectUri, { timeout: 15_000 }).toBeTruthy();
     expect(capturedState).toBeTruthy();
+    // La carte Drive demande les droits de Drive, et pas ceux de Gmail.
+    expect(capturedScopes).toContain(DRIVE_SCOPE);
+    expect(capturedScopes).not.toContain(GMAIL_READONLY);
 
     // ── 5. Complete Drive callback ────────────────────────────────────────
     const callbackUrl = `${capturedRedirectUri}?code=mock-reuse-code&state=${encodeURIComponent(capturedState)}`;
@@ -153,12 +169,12 @@ test.describe('Credential reuse — Drive + Gmail share one Google credential', 
       installedConnectorRow(page, 'Google Drive').first().getByText('Connected'),
     ).toBeVisible({ timeout: 10_000 });
 
-    // ── 6. Connecter Gmail avec l'identifiant DÉJÀ créé ──────────────
+    // ── 6. Gmail sur l'identifiant DÉJÀ créé : il n'a aucun droit Gmail ────
     //
-    // C'est tout l'objet du parcours : un identifiant Google compatible
-    // existant, la carte n'ouvre plus l'assistant mais la modale avec le menu
-    // « Use existing credential » (ConnectorAddForm, branche oauth2 avec
-    // identifiants).
+    // Un identifiant Google compatible existe : la carte ouvre la modale
+    // « Use existing credential » (ConnectorAddForm). Mais cet identifiant n'a
+    // reçu que les droits de Drive : la modale le dit, et propose « Add access »
+    // à la place de « Connect » — le branchement serait refusé.
     await openConnectorLibrary(page);
     const gmailCard = connectorCard(page, 'Gmail');
     await expect(gmailCard).toBeVisible({ timeout: 10_000 });
@@ -175,7 +191,22 @@ test.describe('Credential reuse — Drive + Gmail share one Google credential', 
       ),
     ).toBe(true);
 
-    await gmailDialog.getByRole('button', { name: /^connect$/i }).click();
+    await expect(gmailDialog.getByText(/has no access to Gmail yet/i)).toBeVisible();
+    await expect(gmailDialog.getByText(GMAIL_READONLY)).toBeVisible();
+    await expect(gmailDialog.getByRole('button', { name: /^connect$/i })).toHaveCount(0);
+
+    // ── 6b. « Add access » : Gmail EN PLUS de Drive, sur le même identifiant ──
+    capturedRedirectUri = '';
+    capturedState = '';
+    capturedScopes = [];
+    await gmailDialog.getByRole('button', { name: /^add access$/i }).click();
+    await expect.poll(() => capturedState, { timeout: 15_000 }).toBeTruthy();
+    expect(capturedScopes).toContain(GMAIL_READONLY);
+    expect(capturedScopes).toContain(DRIVE_SCOPE);
+
+    const addAccessCallback = `${capturedRedirectUri}?code=mock-reuse-add-access&state=${encodeURIComponent(capturedState)}`;
+    await page.goto(addAccessCallback);
+    await page.waitForURL(/\/connectors/, { timeout: 15_000 });
     await expect(page.getByText('Gmail connected')).toBeVisible({ timeout: 10_000 });
 
     // ── 7. Les DEUX connecteurs partagent le même identifiant ──────────
@@ -212,12 +243,18 @@ test.describe('Credential reuse — Drive + Gmail share one Google credential', 
       expect(gmail?.credentialId, 'Gmail sans identifiant en base').toBeTruthy();
       expect(gmail!.credentialId).toBe(drive!.credentialId);
 
-      // Et cet identifiant unique est bien celui que l'assistant a créé.
+      // Et cet identifiant unique est bien celui que l'assistant a créé, qui
+      // porte maintenant les droits des DEUX connecteurs.
       const [cred] = await db
         .select({ type: credentials.type })
         .from(credentials)
         .where(eq(credentials.id, drive!.credentialId!));
       expect(cred?.type).toBe('google-oauth');
+      const { decryptCredentialForDisplay } = await import('@nodal-agents/db');
+      const decrypted = await decryptCredentialForDisplay(db, drive!.credentialId!);
+      const granted = decrypted!.payload.scopes.split(' ');
+      expect(granted).toContain(DRIVE_SCOPE);
+      expect(granted).toContain(GMAIL_READONLY);
     } finally {
       await close();
     }
