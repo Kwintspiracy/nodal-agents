@@ -302,6 +302,24 @@ function accountTool(name: string, lenders: readonly Lender[]): AnyTool {
   return {
     ...base,
     inputSchema: schema.extend({ [ACCOUNT_KEY]: field }),
+    // The outcome a tool declares reads ITS output (#1184): here, the result
+    // of the account's own tool, which the account tool wraps with the
+    // account's name. Routed to that account's tool, never read on the wrapper.
+    ...(base.outcomeOf !== undefined
+      ? {
+          outcomeOf: (output: unknown) => {
+            const { account, result } = output as AccountResult;
+            const declare = byName.get(account)?.tool.outcomeOf;
+            if (declare === undefined) {
+              throw new Error(
+                `account_tool_outcome_unroutable: "${name}" returned for the account ` +
+                  `"${account}", whose tool declares no outcome.`,
+              );
+            }
+            return declare(result);
+          },
+        }
+      : {}),
     execute: async (input, ctx) => {
       const { [ACCOUNT_KEY]: account, ...rest } = input as Record<string, unknown>;
       const lender = typeof account === 'string' ? byName.get(account) : undefined;

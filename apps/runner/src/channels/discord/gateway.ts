@@ -52,6 +52,7 @@ import { DISCORD_AUTH_CALLBACK_PREFIX } from './auth-callback.ts';
 import { stopReaction } from '../turn.ts';
 import { recordChannelLink, type ChannelLinkSignal } from '../link-state.ts';
 import type { DiscordInboundMessage } from './types.ts';
+import { outboundText } from '@nodal-agents/shared';
 
 export interface DiscordGatewayOpts {
   agentId: string;
@@ -340,10 +341,11 @@ export function startDiscordGateway(opts: DiscordGatewayOpts): DiscordGatewayHan
       if (isSendable(claimant)) {
         await claimant
           .send({
-            content:
+            content: outboundText(
               'Demande enregistrée. Ce bot n’a pas encore de propriétaire : ' +
-              'ouvrez son tableau de bord, onglet Channels de l’agent, et autorisez cette ' +
-              'conversation pour en prendre le contrôle.',
+                'ouvrez son tableau de bord, onglet Channels de l’agent, et autorisez cette ' +
+                'conversation pour en prendre le contrôle.',
+            ),
           })
           .catch(() => {});
       }
@@ -368,7 +370,7 @@ export function startDiscordGateway(opts: DiscordGatewayOpts): DiscordGatewayHan
         .setStyle(ButtonStyle.Danger),
     );
     await ownerChannel.send({
-      content: `👤 ${pending.requesterName} ${target}. Autoriser ?`,
+      content: outboundText(`👤 ${pending.requesterName} ${target}. Autoriser ?`),
       components: [row],
     });
 
@@ -378,9 +380,10 @@ export function startDiscordGateway(opts: DiscordGatewayOpts): DiscordGatewayHan
     if (isSendable(requesterChannel)) {
       await requesterChannel
         .send({
-          content:
+          content: outboundText(
             'Votre demande a été transmise au propriétaire du bot pour autorisation. ' +
-            'Vous pourrez écrire dès qu’elle est acceptée.',
+              'Vous pourrez écrire dès qu’elle est acceptée.',
+          ),
         })
         .catch(() => {});
     }

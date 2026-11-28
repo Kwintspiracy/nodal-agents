@@ -705,7 +705,7 @@ export function scanForModuleReferences(opts: {
  * comment is only taken when what precedes it is not a quote or a colon
  * (`'http://…'`).
  */
-function stripComments(source: string): string {
+export function stripComments(source: string): string {
   return source
     .replace(/\/\*[\s\S]*?\*\//g, (block) => block.replace(/[^\n]/g, ' '))
     .replace(/(^|[^:'"`\\])\/\/[^\n]*/g, '$1');

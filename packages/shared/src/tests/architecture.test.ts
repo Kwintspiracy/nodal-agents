@@ -19,6 +19,8 @@ import {
   scanForNodalHomeCopies,
   scanForOutcomeGuesses,
   scanForStateFileBypass,
+  OUTBOUND_BRAND_CAST,
+  scanForOutboundBypass,
 } from '@nodal-agents/test-kit';
 
 const srcDir = join(fileURLToPath(import.meta.url), '..', '..');
@@ -100,5 +102,14 @@ describe('architecture invariants', () => {
 describe('architecture — the outcome of a call is read on its row (#1184)', () => {
   it('no production file decides a call’s outcome from its output', () => {
     assertNoViolations('outcome guessed from a tool output', scanForOutcomeGuesses({ srcDir }));
+  });
+});
+
+describe('the outbound seam is the only one that says a value went through it', () => {
+  it('no cast to `Outbound` outside outbound.ts', () => {
+    assertNoViolations(
+      'valeur dite sortie sans être passée par la couture',
+      scanForOutboundBypass({ srcDir, skipFiles: ['src/outbound.ts'] }, [OUTBOUND_BRAND_CAST]),
+    );
   });
 });

@@ -1,6 +1,6 @@
 // file-ops/file-write.ts — atomic write (tempfile + rename) within workspace
 
-import { mkdir } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { writeFileAtomically } from './atomic-write';
 import {
@@ -14,6 +14,8 @@ import {
   readExistingFile,
   type TextForm,
 } from './text-file';
+import { refusePlaceholderWrite } from './mask-guard';
+import { holdsMaskPlaceholder } from '@nodal-agents/shared';
 import { z } from 'zod';
 import type { ToolDefinition } from '../../types';
 import { failureText, writtenFile } from '../../presenters';
@@ -169,6 +171,21 @@ export const fileWriteTool: ToolDefinition<typeof FileWriteInputSchema, FileWrit
       if (await isProtectedWorkflowTemplate(ctx, path)) {
         return { ok: false, reason: WORKFLOW_TEMPLATE_PROTECTED_MESSAGE };
       }
+      // A masked read is never written back (mask-guard.ts).
+      if (holdsMaskPlaceholder(input.content)) {
+        const current = await readFile(path, 'utf8').catch((err: NodeJS.ErrnoException) => {
+          if (err.code === 'ENOENT') return null;
+          throw err;
+        });
+        const refused = await refusePlaceholderWrite(ctx, {
+          path,
+          shownPath: input.path,
+          before: current ?? '',
+          after: input.content,
+          current,
+        });
+        if (refused !== null) return { ok: false, reason: refused };
+      }
       const dir = dirname(path);
       if (input.create_dirs) {
         await mkdir(dir, { recursive: true });
@@ -193,7 +210,7 @@ export const fileWriteTool: ToolDefinition<typeof FileWriteInputSchema, FileWrit
         form = declared === null ? NEW_FILE_FORM : formForEncoding(declared, null);
       } else {
         ctx.reportReadContent?.(path, existing.sha256);
-        const stale = await changedSinceSeen(ctx, path, existing.sha256, input.path);
+        const stale = await changedSinceSeen(ctx, path, existing.sha256, input.path, 'whole');
         if (stale !== null) return { ok: false, reason: stale };
         const complete = existing.size <= existing.head.length;
         let found = formOfHead(existing.head, complete);

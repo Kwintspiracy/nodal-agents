@@ -58,6 +58,8 @@ import {
   // supprimée arrivent ensemble, ou rien n'arrive.
   withTransaction,
   workspaceSandboxReader,
+  outboundColumn,
+  outboundSql,
 } from '@nodal-agents/db';
 import {
   keepsTurnsInChat,
@@ -615,7 +617,7 @@ export async function getProjectActivityAction(
         conversationId: agentJobs.conversationId,
         channel: agentJobs.channel,
         status: agentJobs.status,
-        task: agentJobs.task,
+        task: outboundColumn(agentJobs.task),
         createdAt: agentJobs.createdAt,
         agentName: agents.name,
         agentAvatarUrl: agents.avatarUrl,
@@ -662,7 +664,7 @@ export async function getProjectActivityAction(
       .select({
         id: conversations.id,
         channel: conversations.channel,
-        title: conversations.title,
+        title: outboundColumn(conversations.title),
         updatedAt: conversations.updatedAt,
         agentName: agents.name,
         agentAvatarUrl: agents.avatarUrl,
@@ -698,9 +700,11 @@ export async function getProjectActivityAction(
             db
               .select({
                 conversationId: chatMessages.conversationId,
-                lastReply: sql<
-                  string | null
-                >`(array_agg(${chatMessages.content} ORDER BY ${chatMessages.createdAt} DESC) FILTER (WHERE ${chatMessages.role} = 'assistant'))[1]`,
+                lastReply: outboundSql(
+                  sql<
+                    string | null
+                  >`(array_agg(${chatMessages.content} ORDER BY ${chatMessages.createdAt} DESC) FILTER (WHERE ${chatMessages.role} = 'assistant'))[1]`,
+                ),
               })
               .from(chatMessages)
               .where(inArray(chatMessages.conversationId, convIds))
@@ -708,9 +712,11 @@ export async function getProjectActivityAction(
             db
               .select({
                 conversationId: agentJobs.conversationId,
-                lastReply: sql<
-                  string | null
-                >`(array_agg(${agentJobs.result} ORDER BY ${agentJobs.createdAt} DESC) FILTER (WHERE ${agentJobs.result} IS NOT NULL))[1]`,
+                lastReply: outboundSql(
+                  sql<
+                    string | null
+                  >`(array_agg(${agentJobs.result} ORDER BY ${agentJobs.createdAt} DESC) FILTER (WHERE ${agentJobs.result} IS NOT NULL))[1]`,
+                ),
               })
               .from(agentJobs)
               .where(
@@ -1964,7 +1970,7 @@ async function loadProjectCore(
       .select({
         id: conversations.id,
         channel: conversations.channel,
-        title: conversations.title,
+        title: outboundColumn(conversations.title),
         updatedAt: conversations.updatedAt,
         currentProjectId: conversations.currentProjectId,
         agentName: agents.name,

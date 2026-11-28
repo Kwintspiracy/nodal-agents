@@ -17,7 +17,7 @@ import { conversations } from '@nodal-agents/db';
 import { z } from 'zod';
 import { getDb, requireUserWithEntity } from '@/lib/server.ts';
 import { env } from '@/lib/env.ts';
-import { createStreamRedactor } from '@nodal-agents/shared';
+import { createOutboundStream } from '@nodal-agents/shared';
 import { readSseMessages, sseEvent } from '@/lib/sse.ts';
 
 export const dynamic = 'force-dynamic';
@@ -93,7 +93,7 @@ export async function POST(req: Request): Promise<Response> {
   const encoder = new TextEncoder();
   const relayed = new ReadableStream<Uint8Array>({
     async start(controller) {
-      const redactor = createStreamRedactor();
+      const redactor = createOutboundStream();
       const write = (event: string, data: unknown): void => {
         controller.enqueue(encoder.encode(sseEvent(event, data)));
       };

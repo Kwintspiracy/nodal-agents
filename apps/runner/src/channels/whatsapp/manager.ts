@@ -53,6 +53,7 @@ import {
 } from '../../lib/repeat-log.ts';
 import { handleWhatsAppMessage, triggerJobWorker, type WhatsAppHandleResult } from './handler.ts';
 import { recordChannelLink, type ChannelLinkSignal } from '../link-state.ts';
+import { outboundText } from '@nodal-agents/shared';
 
 export interface WhatsAppManagerOpts {
   env: RunnerEnv;
@@ -377,23 +378,25 @@ export function startWhatsAppManager(
     if (pending.ownerConversationId === null) {
       await entry.handle
         .send(pending.requesterConversationId, {
-          text:
+          text: outboundText(
             'Demande enregistrée. Ce numéro WhatsApp n’a pas encore de propriétaire : ouvrez ' +
-            'le tableau de bord, onglet Channels de l’agent, et autorisez cette conversation ' +
-            'pour en prendre le contrôle.',
+              'le tableau de bord, onglet Channels de l’agent, et autorisez cette conversation ' +
+              'pour en prendre le contrôle.',
+          ),
         })
         .catch(() => {});
       return;
     }
 
     await entry.handle.send(pending.ownerConversationId, {
-      text: ownerAccessRequestText(pending),
+      text: outboundText(ownerAccessRequestText(pending)),
     });
     await entry.handle
       .send(pending.requesterConversationId, {
-        text:
+        text: outboundText(
           'Votre demande a été transmise au propriétaire de ce numéro WhatsApp pour autorisation. ' +
-          'Vous pourrez écrire dès qu’elle est acceptée.',
+            'Vous pourrez écrire dès qu’elle est acceptée.',
+        ),
       })
       .catch(() => {});
   }

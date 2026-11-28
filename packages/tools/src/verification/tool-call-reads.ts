@@ -98,10 +98,26 @@ export async function lastContentSeenByJob(
   jobId: string,
   absPath: string,
 ): Promise<string | null> {
+  return (await lastViewByJob(db, jobId, absPath))?.sha256 ?? null;
+}
+
+/**
+ * The last view this job had of `absPath` (see `lastContentSeenByJob`), and
+ * whether it was a read whose result the boundary masked
+ * (`tool_calls.result_masked`, 0175): the model then saw the file with values
+ * hidden from it, never its whole content. A write's view is what it wrote,
+ * never masked.
+ */
+export async function lastViewByJob(
+  db: AnyDrizzleDb,
+  jobId: string,
+  absPath: string,
+): Promise<{ sha256: string; masked: boolean } | null> {
   const path = await cheminConstate(absPath);
   const rows = await db
     .select({
       readSha: toolCallReads.sha256,
+      resultMasked: toolCalls.resultMasked,
       writeId: toolCallWrites.id,
       writeSha: toolCallWrites.afterSha256,
       writeSource: toolCallWrites.afterSource,
@@ -124,10 +140,12 @@ export async function lastContentSeenByJob(
     .orderBy(desc(toolCalls.seq));
   for (const r of rows) {
     if (r.writeId !== null) {
-      if (r.writeSource === 'written' && r.writeSha !== null) return r.writeSha;
+      if (r.writeSource === 'written' && r.writeSha !== null) {
+        return { sha256: r.writeSha, masked: false };
+      }
       continue;
     }
-    if (r.readSha !== null) return r.readSha;
+    if (r.readSha !== null) return { sha256: r.readSha, masked: r.resultMasked };
   }
   return null;
 }

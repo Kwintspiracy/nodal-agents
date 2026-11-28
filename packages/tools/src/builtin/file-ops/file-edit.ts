@@ -12,6 +12,7 @@ import { readFile } from 'node:fs/promises';
 import { writeFileAtomically } from './atomic-write';
 import { changedSinceSeen, decodeText, notTextReason } from './text-file';
 import { spliceEdit } from './text-edit';
+import { refusePlaceholderWrite, refuseQuotedPlaceholder } from './mask-guard';
 import { z } from 'zod';
 import type { ToolDefinition } from '../../types';
 import { detailOf, failureText, writtenFile } from '../../presenters';
@@ -150,7 +151,7 @@ export const fileEditTool: ToolDefinition<typeof FileEditInputSchema, FileEditOu
       const sha256 = createHash('sha256').update(lu).digest('hex');
       // Les octets LUS, rapportés au seam (tool_call_reads).
       ctx.reportReadContent?.(path, sha256);
-      const stale = await changedSinceSeen(ctx, path, sha256, input.path);
+      const stale = await changedSinceSeen(ctx, path, sha256, input.path, 'part');
       if (stale !== null) return { ok: false, reason: stale };
       // La couche texte : le fichier comme texte, et la forme dans laquelle il
       // est écrit — ou le refus, et pourquoi (`text-file.ts`).
@@ -161,6 +162,24 @@ export const fileEditTool: ToolDefinition<typeof FileEditInputSchema, FileEditOu
           reason: await notTextReason(input.path, lu, decoded, 'Nothing was written.'),
         };
       }
+      // A masked read is never written back (mask-guard.ts): a quote of a line
+      // the agent saw masked, or a replacement that adds the mark, is refused
+      // with the hidden lines named, before the quoted text is searched for.
+      const placeholder =
+        (await refuseQuotedPlaceholder(ctx, {
+          path,
+          shownPath: input.path,
+          quoted: input.old_string,
+          current: decoded.text,
+        })) ??
+        (await refusePlaceholderWrite(ctx, {
+          path,
+          shownPath: input.path,
+          before: input.old_string,
+          after: input.new_string,
+          current: decoded.text,
+        }));
+      if (placeholder !== null) return { ok: false, reason: placeholder };
       const spliced = spliceEdit(lu, decoded.text, decoded.form, input);
       if (!spliced.ok) {
         if (spliced.why === 'unrepresentable') {

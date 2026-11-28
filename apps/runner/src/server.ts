@@ -8,6 +8,8 @@ import { writeAutonomyRowsAtBoot } from '@nodal-agents/orchestration';
 import { pathToFileURL } from 'url';
 import { parseEnv } from './env.ts';
 import { openNodalHome } from '@nodal-agents/shared/nodal-instances';
+import { registerInstallSecretValues } from '@nodal-agents/shared';
+import { runnerInstallSecretValues } from './install-secrets.ts';
 import { createRunnerDeps } from './deps.ts';
 import { healthRoute } from './routes/health.ts';
 import { agentRoute, triggerWorker } from './routes/agent.ts';
@@ -51,6 +53,7 @@ import {
   renameDeviceRoute,
 } from './routes/device-pairing.ts';
 import { bindDeviceSink } from '@nodal-agents/delivery';
+import { outboundResponses } from './routes/outbound-responses.ts';
 import { transitionListener } from './events/publish.ts';
 import { voiceReplyRoute } from './routes/voice-reply.ts';
 import { speakFinishedJob } from './chat/job-reply-voice.ts';
@@ -132,6 +135,10 @@ export function createApp(
   whatsappManager: WhatsAppManagerHandle | null = null,
 ): Hono {
   const app = new Hono();
+
+  // Every answer leaves through the outbound seam (routes/outbound-responses.ts):
+  // first, so that it wraps every other middleware and every route.
+  app.use('*', outboundResponses);
 
   // #944 — ce que les portes annoncent (un job fini, une demande tranchée ou
   // expirée), une fois commis, devient le flux de `GET /api/events`. Un job
@@ -306,6 +313,9 @@ async function main(): Promise<void> {
   // sandbox): declare this instance to the others, then create it. A runner
   // started without `up` is declared all the same (#787, review pass 2).
   openNodalHome();
+  // The install's own secrets join every workspace's registry of exact values
+  // (the tool-result boundary): registered before any job can run.
+  registerInstallSecretValues(runnerInstallSecretValues(runnerEnv));
   const deps = await createRunnerDeps(runnerEnv);
   // Avant tout ce qui peut prendre un job (#1204) : cette instance s'annonce
   // et bat. Une prise inscrit son identité, et un job n'est vivant que tant que

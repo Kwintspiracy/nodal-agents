@@ -25,6 +25,7 @@ import {
   relative,
 } from 'node:path';
 import { z } from 'zod';
+import { holdsMaskPlaceholder } from '@nodal-agents/shared';
 import type { ToolContext, ToolDefinition } from '../../types';
 import { failureText, filesCard, readCard, writtenFile } from '../../presenters';
 import { windowsPathViolation, MAX_READ_FILE_BYTES } from '../file-ops/workspace';
@@ -46,6 +47,7 @@ import {
   readFileHead,
 } from '../file-ops/text-file';
 import { outcomeOfOkFlag } from '../../outcome';
+import { refusePlaceholderWrite } from '../file-ops/mask-guard';
 
 /** Max bytes returned by a single skill_file_read call (same cap as file_read). */
 const MAX_READ_BYTES = 1024 * 1024;
@@ -546,6 +548,19 @@ export const skillFileWriteTool: ToolDefinition<
         overwritten = true;
       } catch (err) {
         if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+      }
+
+      // A masked read is never written back (file-ops/mask-guard.ts).
+      if (holdsMaskPlaceholder(input.content)) {
+        const current = overwritten ? await readFile(target, 'utf8') : null;
+        const refused = await refusePlaceholderWrite(ctx, {
+          path: target,
+          shownPath: input.path,
+          before: current ?? '',
+          after: input.content,
+          current,
+        });
+        if (refused !== null) return { ok: false, reason: refused };
       }
 
       // Parent dirs are created within the boundary (dirname of an in-boundary

@@ -16,8 +16,10 @@ import type {
   ApprovalRule,
 } from '../types';
 import type { TestDb } from '@nodal-agents/db/test-utils';
+import { fakeBearer, fakeSecret } from '@nodal-agents/test-kit';
 import {
   DEFAULT_SHELL_POLICY,
+  REDACTED_TEXT,
   REPLACE_SHARED_FILE_SETTING,
   type AutonomyLevel,
 } from '@nodal-agents/shared';
@@ -1231,8 +1233,30 @@ describe('executeTool — secret redaction (NOUVEAU-1)', () => {
     const calls = await db.select().from(toolCalls).where(eq(toolCalls.jobId, seed.jobId));
     const row = calls.find((c) => (c.toolInput as { name?: string })?.name === marker);
     expect(row).toBeDefined();
-    expect((row!.toolInput as { apiKey?: string }).apiKey).toBe('***');
+    expect((row!.toolInput as { apiKey?: string }).apiKey).toBe(REDACTED_TEXT);
     expect(JSON.stringify(row!.toolInput)).not.toContain(secret);
+  });
+
+  it('masks a credential inside a free-text argument of the audit row, by its shape', async () => {
+    const marker = `conn-shape-${Date.now()}`;
+    const token = fakeSecret('github', 'J'.repeat(36));
+    await executeTool(
+      secretTool,
+      {
+        name: marker,
+        apiKey: 'k',
+        purpose: `curl -H "Authorization: ${fakeBearer(token)}" https://x`,
+      },
+      makeCtx(),
+      makeOpts(),
+    );
+    const calls = await db.select().from(toolCalls).where(eq(toolCalls.jobId, seed.jobId));
+    const row = calls.find((c) => (c.toolInput as { name?: string })?.name === marker);
+    expect(row).toBeDefined();
+    expect(JSON.stringify(row!.toolInput)).not.toContain(token);
+    expect((row!.toolInput as { purpose: string }).purpose).toBe(
+      `curl -H "Authorization: Bearer ${REDACTED_TEXT}" https://x`,
+    );
   });
 
   it('keeps the REAL input in the pending approval_requests row (runner re-reads it to re-run)', async () => {

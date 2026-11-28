@@ -369,7 +369,7 @@ describe('getSpaceConversationAction', () => {
   });
 
   it('une demande qui contient un secret garde sa frontière : la tâche est rédigée comme les messages', async () => {
-    // Passe 18 : les messages passent par redactTranscriptForDisplay, la tâche
+    // Passe 18 : les messages passent par redactSecrets, la tâche
     // comparée doit passer par la même — sinon la frontière tombe à 0 et
     // l'historique redevient « ce job ».
     const secret = 'sk-ant-api03-ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'; // secrets:allow (fixture : clé factice pour éprouver la rédaction)
@@ -400,7 +400,7 @@ describe('getSpaceConversationAction', () => {
     expect(r.data.feed.items.map((i) => i.kind)).toEqual(['history', 'request', 'turn']);
     const request = r.data.feed.items[1];
     expect(request?.kind === 'request' && request.text).not.toContain(secret);
-    expect(request?.kind === 'request' && request.text).toContain('[secret masqué]');
+    expect(request?.kind === 'request' && request.text).toContain('[secret hidden]');
     // L'en-tête de la page non plus ne montre pas le secret.
     expect(r.data.job.task).not.toContain(secret);
     expect(r.data.feed.items.some((i) => i.kind === 'note')).toBe(false);
@@ -552,7 +552,7 @@ describe('getSpaceConversationAction', () => {
     expect(lue?.kind === 'tool' && lue.presented).toEqual({
       card: 'read',
       path: '/srv/app/.env',
-      excerpt: 'ANTHROPIC_API_KEY=[secret masqué] (sk-)\nPORT=3000',
+      excerpt: 'ANTHROPIC_API_KEY=[secret hidden]\nPORT=3000',
       chars: 64,
       truncated: false,
     });
@@ -561,14 +561,12 @@ describe('getSpaceConversationAction', () => {
     const ecrite = parCall.get('c_write');
     expect(ecrite?.kind === 'tool' && ecrite.presented).toEqual({
       card: 'files',
-      files: [
-        { path: '/srv/app/sauvegarde-[secret masqué] (sk-).env', action: 'written', bytes: 64 },
-      ],
+      files: [{ path: '/srv/app/sauvegarde-[secret hidden].env', action: 'written', bytes: 64 }],
       total: 1,
       truncated: false,
     });
     // Et la vue brute, masquée elle aussi — les deux disent la même chose.
-    expect(lue?.kind === 'tool' && lue.outputText).toBe('ANTHROPIC_API_KEY=[secret masqué] (sk-)');
+    expect(lue?.kind === 'tool' && lue.outputText).toBe('ANTHROPIC_API_KEY=[secret hidden]');
     // Nulle part dans ce que l'écran reçoit.
     expect(JSON.stringify(r.data.feed)).not.toContain(secret);
 
@@ -784,7 +782,7 @@ Deux majeurs fermés. La clé ${secret} traînait dans un log.`;
     // montre, au lieu de le laisser recopié dans la réponse (18/09).
     expect(r.data.verdicts[0]?.report).toContain('Deux majeurs fermés.');
     expect(r.data.verdicts[0]?.report).not.toContain(secret);
-    expect(r.data.verdicts[0]?.report).toContain('[secret masqué]');
+    expect(r.data.verdicts[0]?.report).toContain('[secret hidden]');
   });
 
   it('#288 : la vue transporte le résultat livré, tel que la ligne le porte', async () => {

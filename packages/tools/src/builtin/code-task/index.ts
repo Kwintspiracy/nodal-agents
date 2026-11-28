@@ -30,6 +30,7 @@ import { buildChildEnv } from '../child-env';
 import { jobProcessScope } from '@nodal-agents/sandbox';
 import { resolveCliPath, runCli } from './process';
 import { makeLiveToolRecorder, makeEssentialCapture } from './live-events';
+import { loadToolResultMaskPolicy } from '@nodal-agents/db';
 import {
   buildProviderArgs,
   parseProviderOutput,
@@ -435,6 +436,9 @@ export const codeTaskTool: ToolDefinition<typeof codeTaskSchema, CodeTaskOutput>
         entityId: ctx.entityId ?? null,
         jobId: ctx.jobId,
         provider: input.provider,
+        // Read before the run: a policy that cannot be read stops the call
+        // before the CLI starts (invariant #4).
+        policy: await loadToolResultMaskPolicy(ctx.db, ctx),
       });
       // Et, au passage, on retient les lignes dont l analyse FINALE a besoin —
       // sans quoi elle depend d un tampon plafonne qui coupe la fin, la ou vit

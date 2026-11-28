@@ -35,6 +35,7 @@ import {
   isNotNull,
   ne,
   sql,
+  outboundColumn,
 } from '@nodal-agents/db';
 import { readsOfUser, unreadColumn } from './unread.ts';
 import type { getDb } from './server.ts';
@@ -126,7 +127,7 @@ export function folderConversationsQuery(db: Db, entityId: string, userId: strin
   return db
     .select({
       id: conversations.id,
-      title: conversations.title,
+      title: outboundColumn(conversations.title),
       channel: conversations.channel,
       unread: unreadColumn,
     })

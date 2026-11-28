@@ -21,6 +21,7 @@ export {
   readConnectionState,
 } from './queries/connection-states.ts';
 export { assertMasterKeyRestorable, MASTER_KEY_CHECK_SETTING } from './queries/master-key-guard.ts';
+export { loadToolResultMaskPolicy, loadWorkspaceSecretValues } from './queries/tool-result-mask.ts';
 export type { AssertMasterKeyRestorableOptions } from './queries/master-key-guard.ts';
 export { designateChat, resolveScheduleNotifyChat } from './queries/designated-chat.ts';
 export type { DesignatedChat } from './queries/designated-chat.ts';
@@ -284,3 +285,4 @@ export {
   min,
   getTableColumns,
 } from 'drizzle-orm';
+export * from './outbound-columns.ts';

@@ -17,7 +17,13 @@ import { spinUpTestDb, seedMinimal } from './helpers.ts';
 import type { TestDb } from './helpers.ts';
 import { credentials, connectionStates } from '../schema/index.ts';
 import { getDecryptedCredentialById, refreshAndPersistCredential } from '../queries/credentials.ts';
-import { readConnectionState } from '../queries/connection-states.ts';
+import {
+  readConnectionState,
+  readConnectionStates,
+  recordConnectionState,
+} from '../queries/connection-states.ts';
+import { REDACTED_TEXT, connectionKey } from '@nodal-agents/shared';
+import { fakeSecret } from '@nodal-agents/test-kit';
 
 let db: TestDb;
 let pg: PGlite;
@@ -307,4 +313,31 @@ describe('a rotated refresh token is never lost', () => {
     expect(result!.payload.accessToken).toBe('unrotated-access');
     expect((await storedPayload(id))['refreshToken']).toBe('old-refresh');
   });
+});
+
+describe('what a provider said of a connection leaves through the outbound seam @cap:connecter-un-service/moteur', () => {
+  const KEY = fakeSecret('github', 'Ab3Cd5Ef7Gh9Ij1Kl3Mn5Op7Qr9St1Uv3Wx5Yz');
+
+  it.each(['connector', 'mcp_server', 'channel'] as const)(
+    'a %s whose failure detail holds a credential is read with it masked, the rest of the words kept',
+    async (kind) => {
+      const ref = { kind, id: `${kind}-${randomBytes(4).toString('hex')}` };
+      await recordConnectionState(db, ref, {
+        state: 'needs_reauth',
+        cause: 'grant_refused',
+        detail: `HTTP 401: token ${KEY} is not valid for this resource`,
+        observedAt: new Date(),
+        retryAfter: null,
+      });
+      const read = (await readConnectionStates(db, [ref])).get(connectionKey(ref));
+      expect(read?.detail).toBe(`HTTP 401: token ${REDACTED_TEXT} is not valid for this resource`);
+      expect((await readConnectionState(db, ref)).detail).not.toContain(KEY);
+      // The row keeps what was learnt: only what leaves is masked.
+      const [row] = await db
+        .select({ detail: connectionStates.detail })
+        .from(connectionStates)
+        .where(eq(connectionStates.sourceId, ref.id));
+      expect(row?.detail).toContain(KEY);
+    },
+  );
 });

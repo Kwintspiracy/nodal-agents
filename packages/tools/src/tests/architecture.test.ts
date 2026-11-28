@@ -16,6 +16,7 @@ import {
   scanForUserFacingStrings,
   scanForProjectKeyCopies,
   scanForMutatingSpawnOutsideIntent,
+  scanForToolResultBypass,
   formatViolations,
   scanForOutcomeGuesses,
   assertNoViolations,
@@ -88,5 +89,25 @@ describe('architecture — the outcome of a call is read on its row (#1184)', ()
       'outcome guessed from a tool output',
       scanForOutcomeGuesses({ srcDir: SRC_DIR }),
     );
+  });
+});
+
+describe('architecture — un résultat d’outil ne sort que par la frontière (executeTool) @cap:connecter-un-service/moteur', () => {
+  it('src/ ne lance aucun outil hors d’executeTool et n’écrit aucune ligne tool_calls hors de la frontière', () => {
+    // La frontière elle-même (`execute.ts`) lance l'outil et écrit sa ligne.
+    const v = scanForToolResultBypass({
+      srcDir: SRC_DIR,
+      skipFiles: ['src/execute.ts', '.test.ts'],
+      exemptRuns: [
+        {
+          // The tool of one name held through several accounts (#1224) runs
+          // the chosen account's own tool INSIDE its execute: what it returns
+          // is the account tool's result, masked by the seam like any tool's.
+          line: 'result: await lender.tool.execute(',
+          reason: 'inside the account tool, whose result goes through the seam',
+        },
+      ],
+    });
+    if (v.length > 0) expect.fail(formatViolations('Résultat d’outil hors de la frontière', v));
   });
 });

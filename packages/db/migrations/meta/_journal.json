@@ -1188,8 +1188,15 @@
     {
       "idx": 174,
       "version": "7",
-      "when": 1786800000000,
+      "when": 1786438000000,
       "tag": "0174_skill_installed_files",
+      "breakpoints": true
+    },
+    {
+      "idx": 175,
+      "version": "7",
+      "when": 1786438100000,
+      "tag": "0175_tool_result_mask",
       "breakpoints": true
     }
   ]

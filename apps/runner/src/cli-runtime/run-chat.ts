@@ -14,6 +14,7 @@ import {
   eq,
   workspaceSandboxReader,
   type AnyDrizzleDb,
+  loadToolResultMaskPolicy,
 } from '@nodal-agents/db';
 import { randomUUID } from 'node:crypto';
 import {
@@ -117,6 +118,8 @@ export async function runCliRuntimeChatTurn(args: {
   const defaults = agentRow.cliDefaults?.[binding.provider] ?? {};
 
   const pending = new Map<string, { name: string; input: unknown; startedAt: number }>();
+  // La même frontière que le chemin job (audit.ts), lue une fois pour le tour.
+  const maskPolicy = await loadToolResultMaskPolicy(db, { entityId, agentId: agentRow.id });
   // Le texte que le runtime a DÉJÀ dit, message par message. Claude ne rend sa
   // réponse finale que dans l'événement `result` ; un Stop qui tue le processus
   // avant lui ne laisserait rien, alors que la personne a vu ce texte s'écrire
@@ -144,6 +147,7 @@ export async function runCliRuntimeChatTurn(args: {
         isError: evt.isError === true,
         startedAt: started.startedAt,
         now: Date.now(),
+        policy: maskPolicy,
       });
       if (EDIT_TOOLS.includes(row.toolName) && scannedEditPath(row) !== null) wroteFiles = true;
       void db

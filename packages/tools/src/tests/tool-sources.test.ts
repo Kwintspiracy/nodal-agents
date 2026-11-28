@@ -309,3 +309,46 @@ describe('lendConnectorTools: several accounts of one service @cap:assigner-outi
     ).toThrow(/declares `preflight`/);
   });
 });
+
+describe('the account tool declares the outcome of the account it ran on @cap:assigner-outils/moteur', () => {
+  // A connector tool that refuses when told to, and declares it (#1184).
+  const refusing = (acc: string): AnyTool =>
+    op('apify_run_actor', acc, {
+      execute: async (input: { to: string }) =>
+        input.to === 'refuse'
+          ? { ok: false, reason: `refused on ${acc}` }
+          : { ok: true, ranOn: acc },
+      outcomeOf: (output: unknown) =>
+        (output as { ok?: boolean }).ok === false ? 'failed' : 'done',
+    } as Partial<AnyTool>);
+
+  it('the outcome is read on the result of the account’s own tool, on each account', async () => {
+    const [tool] = oneTargetPerName(
+      lendConnectorTools([
+        { connector: account('Work', 'apify'), tools: [refusing('Work')] },
+        { connector: account('Personal', 'apify'), tools: [refusing('Personal')] },
+      ]),
+    );
+    expect(tool!.outcomeOf).toBeDefined();
+    for (const acc of ['Work', 'Personal']) {
+      const refused = await tool!.execute(
+        tool!.inputSchema.parse({ to: 'refuse', account: acc }),
+        ctx,
+      );
+      expect(refused).toEqual({ account: acc, result: { ok: false, reason: `refused on ${acc}` } });
+      expect(tool!.outcomeOf!(refused)).toBe('failed');
+      const ran = await tool!.execute(tool!.inputSchema.parse({ to: 'x', account: acc }), ctx);
+      expect(tool!.outcomeOf!(ran)).toBe('done');
+    }
+  });
+
+  it('a tool that declares no outcome gives the account tool none: a returned result is done', () => {
+    const [tool] = oneTargetPerName(
+      lendConnectorTools([
+        lending(account('Work', 'gmail'), ['gmail_list']),
+        lending(account('Personal', 'gmail'), ['gmail_list']),
+      ]),
+    );
+    expect(tool!.outcomeOf).toBeUndefined();
+  });
+});

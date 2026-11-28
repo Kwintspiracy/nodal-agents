@@ -7,7 +7,7 @@
 // des actions, et celui-ci sert aussi une route.
 
 import 'server-only';
-import { eq, and, inArray, agentJobs, toolCalls } from '@nodal-agents/db';
+import { eq, and, inArray, agentJobs, toolCalls, outboundColumn } from '@nodal-agents/db';
 import type { getDb } from './server.ts';
 import { collectDescendants } from './job-feed.ts';
 import { redactAuditRow } from './redact-presented.ts';
@@ -45,10 +45,10 @@ export async function loadRunAuditRows(
   const rows = await db
     .select({
       toolName: toolCalls.toolName,
-      toolInput: toolCalls.toolInput,
-      toolOutput: toolCalls.toolOutput,
+      toolInput: outboundColumn(toolCalls.toolInput),
+      toolOutput: outboundColumn(toolCalls.toolOutput),
       outcome: toolCalls.outcome,
-      presented: toolCalls.presented,
+      presented: outboundColumn(toolCalls.presented),
     })
     .from(toolCalls)
     .where(and(eq(toolCalls.entityId, entityId), inArray(toolCalls.jobId, jobIds)))

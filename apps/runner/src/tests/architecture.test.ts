@@ -29,11 +29,48 @@ import {
   formatViolations,
   scanForOutcomeGuesses,
   assertNoViolations,
+  OUTBOUND_BRAND_CAST,
+  scanForOutboundBypass,
+  scanForToolResultBypass,
+  stripComments,
+  type OutboundExit,
 } from '@nodal-agents/test-kit';
 import { join } from 'node:path';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 
 const SRC_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+
+// ─── Ce qui sort du runner passe par la couture de sortie ───────────────────
+//
+// Une réponse HTTP : `outboundResponses`, posé sur l'application avant tout le
+// reste. Un événement de flux : `sseEvent`, qui ne prend qu'une valeur sortante
+// (le compilateur le tient). Un SDK de plateforme atteint directement (les
+// sessions Discord, Slack, WhatsApp du runner) : ce scanner.
+
+/** Un SDK de messagerie atteint directement : son texte passe par la couture. */
+const RUNNER_SDK_SENDS: readonly OutboundExit[] = [
+  {
+    rule: 'sdk-send-beside-seam',
+    call: /\bchat\s*\.\s*(?:postMessage|postEphemeral|update|scheduleMessage)\s*\(/,
+    fields: ['text'],
+  },
+  {
+    rule: 'sdk-send-beside-seam',
+    call: /\binteraction\s*\.\s*(?:reply|followUp|update|editReply)\s*\(/,
+    fields: ['content'],
+  },
+];
+
+/** Dans les sessions de canal, tout `.send(` d'un client de plateforme. */
+const CHANNEL_SESSION_SENDS: readonly OutboundExit[] = [
+  { rule: 'sdk-send-beside-seam', call: /\.\s*send\s*\(/, fields: ['text', 'content', 'caption'] },
+];
+
+/** Une trame de flux écrite à la main, hors de `sseEvent`. */
+const HAND_WRITTEN_SSE_FRAME: OutboundExit = {
+  rule: 'sse-frame-beside-sse-event',
+  pattern: /['"`]data: /,
+};
 
 describe('invariant 1 — aucune métadonnée d’agent en dur', () => {
   it('src/ ne contient aucun slug d’agent connu', () => {
@@ -430,5 +467,66 @@ describe('architecture — the outcome of a call is read on its row (#1184)', ()
       'outcome guessed from a tool output',
       scanForOutcomeGuesses({ srcDir: SRC_DIR }),
     );
+  });
+});
+
+describe('architecture — ce qui sort du runner passe par la couture de sortie @cap:parler-a-un-agent/moteur', () => {
+  it('un SDK de messagerie atteint directement porte son texte par la couture', () => {
+    const violations = [
+      ...scanForOutboundBypass({ srcDir: SRC_DIR }, RUNNER_SDK_SENDS),
+      ...scanForOutboundBypass({ srcDir: join(SRC_DIR, 'channels') }, CHANNEL_SESSION_SENDS),
+    ];
+    if (violations.length > 0) {
+      expect.fail(
+        formatViolations('Texte posté sur une plateforme à côté de la couture', violations),
+      );
+    }
+  });
+
+  it('une trame de flux ne s’écrit que par `sseEvent`, et rien ne se dit sorti sans y être passé', () => {
+    const violations = scanForOutboundBypass({ srcDir: SRC_DIR, skipFiles: ['routes/sse.ts'] }, [
+      HAND_WRITTEN_SSE_FRAME,
+      OUTBOUND_BRAND_CAST,
+    ]);
+    if (violations.length > 0) {
+      expect.fail(formatViolations('Flux écrit à côté de la couture', violations));
+    }
+  });
+
+  it('l’application répond par `outboundResponses`, posé avant toute autre porte', () => {
+    const src = stripComments(readFileSync(join(SRC_DIR, 'server.ts'), 'utf-8'));
+    const created = src.indexOf('new Hono()');
+    const seam = src.indexOf("app.use('*', outboundResponses)");
+    const firstOther = src
+      .slice(created)
+      .search(/\bapp\s*\.\s*(?:use|get|post|put|patch|delete|all|route|on)\s*\(/);
+    expect(created).toBeGreaterThan(-1);
+    expect(seam).toBeGreaterThan(created);
+    expect(created + firstOther).toBe(seam);
+    // Une seule application dans le runner : une seconde n'aurait pas la couture.
+    expect(src.match(/new Hono\(/g)).toHaveLength(1);
+    expect(
+      scanForOutboundBypass({ srcDir: SRC_DIR, skipFiles: ['src/server.ts'] }, [
+        { rule: 'second-app', pattern: /\bnew\s+Hono\s*[(<]/ },
+      ]),
+    ).toEqual([]);
+  });
+});
+
+describe('architecture — un résultat d’outil ne sort que par la frontière (executeTool) @cap:connecter-un-service/moteur', () => {
+  it('src/ ne lance aucun outil hors d’executeTool et n’écrit aucune ligne tool_calls hors de la frontière', () => {
+    const v = scanForToolResultBypass({
+      srcDir: SRC_DIR,
+      exemptRuns: [
+        {
+          // L'outil de recherche d'un connecteur, lancé DANS l'outil
+          // `web_search` (`ctx.searchBackend`) : ce qu'il rend est le résultat
+          // de `web_search`, masqué par la frontière comme celui de tout outil.
+          line: 'searchTool.execute(',
+          reason: 'inside web_search, whose result goes through the seam',
+        },
+      ],
+    });
+    if (v.length > 0) expect.fail(formatViolations('Résultat d’outil hors de la frontière', v));
   });
 });

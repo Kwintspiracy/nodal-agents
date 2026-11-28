@@ -2,7 +2,8 @@
 // `connection_states` (migration 0171). Every place that learns a
 // connection's state writes it through `recordConnectionState`; the
 // dashboard, the job and the tool's error read it through
-// `readConnectionStates`. No row reads as `NOT_CHECKED`.
+// `readConnectionStates`. No row reads as `NOT_CHECKED`. What a provider said
+// (`detail`) is read masked, as every third party's text that leaves.
 
 import { and, eq, or, sql } from 'drizzle-orm';
 import {
@@ -16,6 +17,7 @@ import {
 } from '@nodal-agents/shared';
 import { connectionStates, type ConnectionStateRow } from '../schema/connection-states.ts';
 import type { AnyDrizzleDb } from '../client.ts';
+import { outboundColumns } from '../outbound-columns.ts';
 
 function fromRow(row: ConnectionStateRow): ConnectionState {
   if (!isConnectionState(row.state, row.cause)) {
@@ -87,8 +89,11 @@ export async function readConnectionStates(
 ): Promise<Map<string, ConnectionState>> {
   const out = new Map<string, ConnectionState>();
   if (refs.length === 0) return out;
+  // `detail` is the provider's own words: a third party's text, read through
+  // the outbound seam (#974) by every reader, the screens, the job's context
+  // and the tool's error alike.
   const rows = await db
-    .select()
+    .select(outboundColumns(connectionStates))
     .from(connectionStates)
     .where(
       or(

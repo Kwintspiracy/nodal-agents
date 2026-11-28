@@ -48,7 +48,7 @@ import {
   sniffImageMediaType,
 } from '../../model-images';
 import type { ToolContext } from '../../types';
-import { lastContentSeenByJob } from '../../verification/tool-call-reads';
+import { lastViewByJob } from '../../verification/tool-call-reads';
 
 export type LineEndings = 'lf' | 'crlf' | 'mixed' | 'none';
 
@@ -431,6 +431,15 @@ export async function notTextReason(
  * porte du dossier partagé). Hors job (`jobId` absent), il n'y a pas de vue :
  * rien n'est comparé.
  *
+ * Un remplacement ENTIER (`replacement: 'whole'`, `file_write` sur un fichier
+ * qui existe) demande une vue du contenu entier : une dernière vue qui était
+ * une lecture MASQUÉE (`tool_calls.result_masked`, la frontière des résultats
+ * d'outil) n'en est pas une — le modèle a vu le fichier sans les valeurs qui
+ * lui sont cachées, et le remplacer les effacerait. L'appel est refusé et dit
+ * d'éditer les autres lignes (`file_edit`), qui laissent ces valeurs sur le
+ * disque. Une édition (`'part'`) n'est pas concernée : la garde du masque
+ * (`mask-guard.ts`) refuse déjà de citer ou d'écrire une ligne masquée.
+ *
  * Rend la raison du refus, ou `null` quand l'appel peut continuer.
  */
 export async function changedSinceSeen(
@@ -438,10 +447,19 @@ export async function changedSinceSeen(
   absPath: string,
   currentSha256: string,
   displayPath: string,
+  replacement: 'part' | 'whole',
 ): Promise<string | null> {
   if (!ctx.jobId) return null;
-  const seen = await lastContentSeenByJob(ctx.db, ctx.jobId, absPath);
-  if (seen === null || seen === currentSha256) return null;
+  const view = await lastViewByJob(ctx.db, ctx.jobId, absPath);
+  if (view === null) return null;
+  if (replacement === 'whole' && view.masked) {
+    return (
+      `"${displayPath}" was last read with values hidden from you, so replacing it whole ` +
+      'would erase them. Nothing was written. Change the other lines with file_edit; the ' +
+      'hidden values stay as they are on disk.'
+    );
+  }
+  if (view.sha256 === currentSha256) return null;
   return (
     `"${displayPath}" changed since this job last read or wrote it. Nothing was written. ` +
     'Read it again with file_read, then make the change on what it holds now.'

@@ -24,8 +24,7 @@ import type {
   TurnBlock,
   TurnUsage,
 } from '../conversation-feed.ts';
-import { REDACTED_TEXT } from '@nodal-agents/shared';
-import { redactPresented } from '../redact-presented.ts';
+import { REDACTED_TEXT, redactSecrets } from '@nodal-agents/shared';
 import type { ProductionVerdict } from '../chat-or-work.ts';
 
 const totals = (over: Partial<FeedTotals> = {}): FeedTotals => ({
@@ -1324,7 +1323,7 @@ const ecritureMasquee = (path: string): ThreadAuditRow => {
     toolInput: { path, content: 'x' },
     toolOutput: '{"ok":true}',
     outcome: 'done',
-    presented: redactPresented(carte),
+    presented: redactSecrets(carte),
     rawFilePaths: [path],
   };
 };
@@ -1350,8 +1349,8 @@ describe('récapitulatif de livraison — un chemin masqué n’efface pas un fi
     ]);
     expect(recap.files).toBe(2);
     expect(recap.fileChanges.map((f) => f.path)).toEqual([
-      `cles/${REDACTED_TEXT} (sk-).txt`,
-      `cles/${REDACTED_TEXT} (sk-).txt`,
+      `cles/${REDACTED_TEXT}.txt`,
+      `cles/${REDACTED_TEXT}.txt`,
     ]);
   });
 
@@ -1372,7 +1371,7 @@ describe('récapitulatif de livraison — un chemin masqué n’efface pas un fi
       ecritureMasquee(`cles/${CLE_A}.txt`),
     ]);
     expect(recap.files).toBe(1);
-    expect(recap.fileChanges.map((f) => f.path)).toEqual([`cles/${REDACTED_TEXT} (sk-).txt`]);
+    expect(recap.fileChanges.map((f) => f.path)).toEqual([`cles/${REDACTED_TEXT}.txt`]);
   });
 
   it('une ligne SANS chemins bruts garde l’ancienne identité : le chemin présenté', () => {

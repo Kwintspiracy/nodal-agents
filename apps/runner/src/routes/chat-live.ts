@@ -15,6 +15,7 @@
 // fait foi (comme pour `/api/chat/stream`, invariant #4).
 
 import type { Context } from 'hono';
+import { outboundFields, outboundValue } from '@nodal-agents/shared';
 import { z } from 'zod';
 import { and, eq, conversations } from '@nodal-agents/db';
 import type { RunnerDeps } from '../deps.ts';
@@ -61,13 +62,13 @@ export async function chatLiveRoute(c: Context, deps: RunnerDeps): Promise<Respo
   const stream = subscriptionStream(c.req.raw, ({ write, end }) => {
     const forward = (evt: LiveTurnEvent): void => {
       if (evt.kind === 'delta') {
-        write(sseEvent('delta', { text: evt.text }));
+        write(sseEvent('delta', outboundFields({ text: evt.text })));
       } else {
-        write(sseEvent('end', {}));
+        write(sseEvent('end', outboundFields({})));
         end();
       }
     };
-    write(sseEvent('start', { text: attached.text, startedAt: attached.startedAt }));
+    write(sseEvent('start', outboundValue({ text: attached.text, startedAt: attached.startedAt })));
     // Ce qui est arrivé entre le branchement et l'ouverture, dans l'ordre.
     for (const evt of pending.splice(0)) forward(evt);
     push = forward;

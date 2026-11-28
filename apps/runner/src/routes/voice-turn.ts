@@ -87,6 +87,7 @@
 // session du tableau de bord.
 
 import type { Context } from 'hono';
+import { outboundValue, type Outbound } from '@nodal-agents/shared';
 import { z } from 'zod';
 import { and, conversations, eq } from '@nodal-agents/db';
 import type { RunnerDeps } from '../deps.ts';
@@ -235,7 +236,7 @@ export async function voiceTurnEndRoute(
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
       let closed = false;
-      const send = (event: string, data: unknown): void => {
+      const send = (event: string, data: Outbound<unknown>): void => {
         if (closed) return;
         try {
           controller.enqueue(encoder.encode(sseEvent(event, data)));
@@ -251,7 +252,10 @@ export async function voiceTurnEndRoute(
           if (heard.outcome === 'nothing_heard') {
             // Le modèle qui n'a rien écrit (#976), pour que l'écran le nomme ;
             // `null` : aucun échantillon, rien n'est parti au fournisseur.
-            send('nothing_heard', { durationMs: heard.durationMs, model: heard.model });
+            send(
+              'nothing_heard',
+              outboundValue({ durationMs: heard.durationMs, model: heard.model }),
+            );
             return;
           }
           await speakVoiceTurn(deps, runnerEnv, u, heard, send, {
@@ -260,7 +264,7 @@ export async function voiceTurnEndRoute(
           });
         } catch (err) {
           console.error('[voiceTurnRoute] turn failed:', err);
-          send('error', { error: 'chat_failed' });
+          send('error', outboundValue({ error: 'chat_failed' }));
         } finally {
           timing.mark('done');
           // `warn` : le canal des lignes de journal du runner (comme

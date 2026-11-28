@@ -43,6 +43,7 @@ import { resolveApprovalDecision } from '../../approvals/resolve.ts';
 import { validateMessageStructure } from '@nodal-agents/llm';
 import { deliverCompletedRoots } from '../../cron/deliver-results.ts';
 import type { JobId } from '@nodal-agents/orchestration';
+import { RESPONDER_USER_ID, seedResponder } from '../approvals/workspace-responder.ts';
 
 // ─── Interceptions ────────────────────────────────────────────────────────────
 
@@ -657,8 +658,14 @@ describe('a delegation held for a person runs once approved, and says no when re
     decision: 'approve' | 'reject',
     notes?: string,
   ) {
+    // A request is settled by a member of its own workspace (#1225).
+    const [request] = await db
+      .select({ entityId: approvalRequests.entityId })
+      .from(approvalRequests)
+      .where(eq(approvalRequests.id, requestId));
+    await seedResponder(db, request!.entityId!);
     const decided = await resolveApprovalDecision(deps(client), testEnv, {
-      answeredBy: { userId: '00000000-0000-4000-8000-0000000000a1' },
+      answeredBy: { userId: RESPONDER_USER_ID },
       approvalRequestId: requestId,
       decision,
       resolvedBy: 'api',

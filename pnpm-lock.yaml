@@ -940,6 +940,9 @@ importers:
       '@nodal-agents/db':
         specifier: workspace:*
         version: link:../db
+      '@nodal-agents/shared':
+        specifier: workspace:*
+        version: link:../shared
       '@slack/types':
         specifier: ^2.22.0
         version: 2.22.0

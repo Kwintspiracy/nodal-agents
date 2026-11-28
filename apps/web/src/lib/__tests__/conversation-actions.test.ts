@@ -1446,15 +1446,13 @@ describe('getConversationThreadAction — les secrets d’une carte (#150)', () 
     expect(encart.verdict.items).toEqual([
       {
         kind: 'file',
-        label: 'cles/[secret masqué] (sk-).txt',
-        path: 'cles/[secret masqué] (sk-).txt',
+        label: 'cles/[secret hidden].txt',
+        path: 'cles/[secret hidden].txt',
       },
     ]);
     // Le récapitulatif nomme le même chemin masqué, et n'en compte qu'un.
     expect(encart.summary.files).toBe(1);
-    expect(encart.summary.fileChanges.map((f) => f.path)).toEqual([
-      'cles/[secret masqué] (sk-).txt',
-    ]);
+    expect(encart.summary.fileChanges.map((f) => f.path)).toEqual(['cles/[secret hidden].txt']);
     expect(JSON.stringify(r.data.feed)).not.toContain(secret);
   });
 
@@ -1627,7 +1625,7 @@ describe('listAllConversationsAction — aucun secret dans la boîte de récepti
     if (!r.ok) throw new Error(`echec inattendu : ${r.code} ${r.message}`);
     const ligne = r.data.find((c) => c.id === fil.id);
     expect(ligne?.title).not.toContain(CLE);
-    expect(ligne?.title).toContain('[secret masqué]');
+    expect(ligne?.title).toContain('[secret hidden]');
     // Le reste de la demande survit : un titre entièrement masqué ne dirait
     // plus de quel fil il s'agit.
     expect(ligne?.title).toContain('Enregistre la clé');

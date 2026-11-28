@@ -134,6 +134,7 @@ import {
 } from './picked-folder-label.ts';
 import FirstTokenWaitField from './FirstTokenWaitField.tsx';
 import AgentBudgetSection from './AgentBudgetSection.tsx';
+import SecretMaskSection from './SecretMaskSection.tsx';
 import { ProviderRow } from './CodeTaskProviderRow.tsx';
 import type { OperationDescriptor } from '@nodal-agents/shared';
 import { READONLY_PRESET_TOOLS } from '@nodal-agents/shared';
@@ -763,6 +764,7 @@ export default function AgentComposer({
             liveModelsLoading={liveModelsLoading}
             runtime={runtime}
             onChangeRuntime={setRuntime}
+            maskSecretShapes={agent.maskSecretShapes}
             cliMode={cliMode}
             onChangeCliMode={setCliMode}
             idleTimeoutSeconds={agent.idleTimeoutSeconds ?? null}
@@ -3054,6 +3056,8 @@ function SettingsTab(props: {
   /** 'nodal' | 'claude-code' (étape E) — lifted to AgentComposer, see its declaration. */
   runtime: string;
   onChangeRuntime: (v: string) => void;
+  /** agents.mask_secret_shapes as loaded; undefined = not read. */
+  maskSecretShapes: boolean | undefined;
   /** CLI posture, lifted so the hero badge and the runtime card never disagree. */
   cliMode: 'read' | 'write';
   onChangeCliMode: (v: 'read' | 'write') => void;
@@ -3111,6 +3115,7 @@ function SettingsTab(props: {
     liveModelsLoading,
     runtime,
     onChangeRuntime,
+    maskSecretShapes,
     cliMode,
     onChangeCliMode,
     idleTimeoutSeconds,
@@ -3745,6 +3750,16 @@ function SettingsTab(props: {
           hint="What this agent may spend, per day and per month. Reached, its runs stop between two turns and keep what they wrote."
         />
         <AgentBudgetSection agentId={agentId} canChange={canChangeRuntime} />
+      </SectionCard>
+
+      {/* 0175 : ce que les outils de l'agent rendent, masqué avant le modèle. */}
+      <SectionCard>
+        <SecretMaskSection
+          agentId={agentId}
+          maskSecretShapes={maskSecretShapes}
+          isCliRuntime={isCliRuntimeValue(runtime)}
+          canChange={canChangeRuntime}
+        />
       </SectionCard>
 
       {/* Knowledge — folder list + file upload. MCP servers live in Connectors tab. */}
