@@ -212,6 +212,7 @@ import { holdJobHeartbeat } from './heartbeat.ts';
 import { NO_CHAT_SENDS, answerOfRun, readRunAnswer } from './final-answer.ts';
 import { lastSuccessfulSendTool, sendsToChat } from './chat-sends.ts';
 import { answerReader } from './answer-delivery.ts';
+import { enterRun } from './liveness.ts';
 import {
   AWAITING_APPROVAL_MARK,
   DEFERRED_MARK,
@@ -1212,14 +1213,33 @@ interface ExecuteJobOpts {
 }
 
 /**
- * Public entry point. Runs the job (runJob), then — for a NON-inline invocation
+ * Public entry point. While it runs, this process declares that it is
+ * executing the job (`enterRun`, #1204): from before the claim to after the
+ * parent's resume, no sweeper touches the job, whatever its row's age.
+ */
+export async function executeJob(
+  jobId: JobId,
+  deps: RunnerDeps,
+  runnerEnv?: RunnerEnv,
+  opts?: ExecuteJobOpts,
+): Promise<ExecuteJobResult> {
+  const sortir = enterRun(jobId as string);
+  try {
+    return await executeJobInFlight(jobId, deps, runnerEnv, opts);
+  } finally {
+    sortir();
+  }
+}
+
+/**
+ * Runs the job (runJob), then — for a NON-inline invocation
  * that reached a terminal state — re-triggers a parent suspended in
  * `awaiting_delegation` waiting on this child. This is the nested
  * delegation + approval resume path: a delegated child that suspended for
  * approval, then was resumed via /api/approve → triggerWorker, climbs back to
  * its parent here so the whole chain finishes instead of dying at the parent.
  */
-export async function executeJob(
+async function executeJobInFlight(
   jobId: JobId,
   deps: RunnerDeps,
   runnerEnv?: RunnerEnv,

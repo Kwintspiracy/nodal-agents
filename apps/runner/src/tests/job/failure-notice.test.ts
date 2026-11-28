@@ -13,6 +13,7 @@
 // the text it was given.
 
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
+import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -42,6 +43,7 @@ import { failJob, setJobStatus } from '../../job/state.ts';
 import { failureNoticeKey } from '../../job/failure-notice.ts';
 import { resetOrphanedJobs, failStalePendingJobs } from '../../cron/reset-orphans.ts';
 import { reclaimJobsOfDeadRunners } from '../../cron/reclaim-jobs.ts';
+import { JOB_LIVENESS, createPresence } from '../../job/liveness.ts';
 import { deliverCompletedRoots } from '../../cron/deliver-results.ts';
 import { JobEventBus } from '../../events/job-events.ts';
 import { transitionListener } from '../../events/publish.ts';
@@ -411,6 +413,10 @@ describe('one writer of failed, one notice per failure @cap:parler-par-canal-ext
     const row = await rowOf(job.id);
     expect(row.status).toBe('processing');
     expect(row.result).toBeNull();
+    // The planted row is a state no run produces (a notice for a job not
+    // failed). The sweepers of this file take any `processing` job with no
+    // holder recorded (#1204): end this one so it does not reach them.
+    await db.update(agentJobs).set({ status: 'cancelled' }).where(eq(agentJobs.id, job.id));
   });
 });
 
@@ -630,24 +636,40 @@ describe('a child tells its parent, the parent tells the person @cap:parler-par-
 
 describe('a job the sweepers fail tells its own surface what was observed @cap:parler-par-canal-externe/moteur', () => {
   const stale = () => new Date(Date.now() - 10 * 60_000);
+  // What is stuck is what a sweeper saw unchanged for `stuckRowMs` on its
+  // monotonic clock (#1204): two sweeps of one observer, that far apart.
+  const twice = async <T>(sweep: (p: ReturnType<typeof createPresence>) => Promise<T>) => {
+    const mono = { t: 0 };
+    const presence = createPresence({
+      instanceId: randomUUID(),
+      holds: () => false,
+      monotonicNow: () => mono.t,
+    });
+    await sweep(presence);
+    mono.t += JOB_LIVENESS.stuckRowMs;
+    return sweep(presence);
+  };
 
   it.each(['telegram', 'whatsapp', 'discord'] as const)(
     'reset as orphan from %s: the notice goes to that chat, says the status and the idle time, and names no cause',
     async (channel) => {
-      const job = await headJob(channel, { updatedAt: stale() });
-      await resetOrphanedJobs(db as never, 5);
+      // A parent waiting on a delegation it never recorded: nothing repairs it (#1204).
+      const job = await headJob(channel, { status: 'awaiting_delegation', updatedAt: stale() });
+      await twice((presence) => resetOrphanedJobs(db as never, { presence }));
       const row = await expectOneNotice(job.id, channel, job.chatId!);
       expect(row.error).toBe('orphan_job_reset');
-      expect(row.result).toMatch(/^\[stopped: status processing, not updated for 10m0\ds\]$/);
+      expect(row.result).toMatch(
+        /^\[stopped: status awaiting_delegation, not updated for 10m0\ds\]$/,
+      );
       expect(row.result).not.toMatch(/restart|redémarr|interrompue|service/i);
     },
   );
 
   it('reset as orphan from a device: its stream receives it, no outbox row, nothing on any chat', async () => {
-    const job = await headJob('device', { updatedAt: stale() });
+    const job = await headJob('device', { status: 'awaiting_delegation', updatedAt: stale() });
     bus.seen.length = 0;
     sent.length = 0;
-    await resetOrphanedJobs(db as never, 5);
+    await twice((presence) => resetOrphanedJobs(db as never, { presence }));
     expect(await deliveriesOf(job.id)).toEqual([]);
     expect(sent).toEqual([]);
     const row = await rowOf(job.id);
@@ -661,34 +683,29 @@ describe('a job the sweepers fail tells its own surface what was observed @cap:p
     ]);
   });
 
-  it('a parent whose awaited child was cancelled: the notice says how the child ended', async () => {
-    const parent = await headJob('telegram', { status: 'awaiting_delegation', updatedAt: stale() });
-    const [child] = await db
-      .insert(agentJobs)
-      .values({
-        entityId: seed.entityId,
-        agentId: seed.agentId,
-        channel: 'internal',
-        parentJobId: parent.id,
-        task: 'a delegated step',
-        status: 'cancelled',
-        messages: [],
-      })
-      .returning({ id: agentJobs.id });
-    await db
-      .update(agentJobs)
-      .set({ pendingDelegation: { subJobId: child!.id }, updatedAt: stale() })
-      .where(eq(agentJobs.id, parent.id));
-    await resetOrphanedJobs(db as never, 5);
+  it('a parent whose awaited child no longer exists: the notice says so', async () => {
+    // An ended child gives its parent its result (#1204): what fails is a
+    // parent whose awaited child is gone, and the line says how it was found.
+    const parent = await headJob('telegram', {
+      status: 'awaiting_delegation',
+      pendingDelegation: { subJobId: randomUUID() },
+      updatedAt: stale(),
+    });
+    await twice((presence) => resetOrphanedJobs(db as never, { presence }));
     const row = await expectOneNotice(parent.id, 'telegram', parent.chatId!);
     expect(row.result).toMatch(
-      /^\[stopped: status awaiting_delegation, not updated for 10m0\ds; the delegated job it waited on is cancelled\]$/,
+      /^\[stopped: status awaiting_delegation, not updated for 10m0\ds; the delegated job it waited on no longer exists\]$/,
     );
   });
 
   it('a pending job never started: the notice goes to its chat, with the status and the time', async () => {
-    const job = await headJob('slack', { status: 'pending', updatedAt: stale() });
-    await failStalePendingJobs(db as never, 5 * 60);
+    // Never claimed, requested longer ago than `pendingAbandonMs` (#1204).
+    const job = await headJob('slack', {
+      status: 'pending',
+      createdAt: stale(),
+      updatedAt: stale(),
+    });
+    await failStalePendingJobs(db as never);
     const row = await expectOneNotice(job.id, 'slack', job.chatId!);
     expect(row.error).toBe('stale_pending_abandoned');
     expect(row.result).toMatch(/^\[stopped: status pending, not updated for 10m0\ds\]$/);
@@ -698,7 +715,10 @@ describe('a job the sweepers fail tells its own surface what was observed @cap:p
     const job = await headJob('telegram', { updatedAt: stale() });
     await reclaimJobsOfDeadRunners(db as never);
     const row = await expectOneNotice(job.id, 'telegram', job.chatId!);
-    expect(row.result).toContain('[stopped: status processing, not updated for ');
+    // No holder recorded (a claim made before #1204): the line says what was observed.
+    expect(row.result).toContain(
+      '[stopped: no live runner holds this job — status processing, no holder recorded',
+    );
     expect(row.result).not.toMatch(/restarted/i);
   });
 });

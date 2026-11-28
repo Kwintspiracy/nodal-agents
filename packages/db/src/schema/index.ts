@@ -5,6 +5,7 @@ export * from './users.ts';
 export * from './entities.ts';
 export * from './agents.ts';
 export * from './jobs.ts';
+export * from './runner-instances.ts';
 export * from './tasks.ts';
 export * from './credentials.ts';
 export * from './connectors.ts';

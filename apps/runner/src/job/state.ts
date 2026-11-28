@@ -33,6 +33,7 @@ import {
   noticeNotPreparedLine,
   prepareFailureNotice,
 } from './failure-notice.ts';
+import { runnerInstanceId } from '../runner-identity.ts';
 
 // ─── JobState ─────────────────────────────────────────────────────────────────
 
@@ -157,6 +158,8 @@ export async function claimJob(db: AnyDrizzleDb, jobId: string): Promise<number 
     .set({
       status: 'processing',
       claimGeneration: sql`${agentJobs.claimGeneration} + 1`,
+      // Who holds it (#1204): the job is alive while THIS instance runs.
+      claimedBy: runnerInstanceId,
       updatedAt: new Date(),
     })
     .where(and(eq(agentJobs.id, jobId), eq(agentJobs.status, 'pending')))

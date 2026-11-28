@@ -8,12 +8,13 @@
 // Mutations vérifiées (chacune annulée ensuite), sur `takeLostRun`, la règle
 // des faucheurs :
 //   - la libération retirée → « reclaimed » rouge, le démon survit ;
-//   - la prise sans ses conditions (statut, prise, ancienneté : la libération
+//   - la prise sans ses conditions (statut, prise, détenteur : la libération
 //     par seul identifiant de job) → les quatre cas « came back to life »
 //     rouges, la commande du run revenu meurt ;
 //   - la remise en file AVANT la prise et la libération → « the resumed run's
 //     command … survives » rouge.
 
+import { randomUUID } from 'node:crypto';
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -42,6 +43,8 @@ import {
 } from '@nodal-agents/test-kit';
 import { reclaimJobsOfDeadRunners } from '../../cron/reclaim-jobs.ts';
 import { failStalePendingJobs, resetOrphanedJobs } from '../../cron/reset-orphans.ts';
+import { JOB_LIVENESS, createPresence } from '../../job/liveness.ts';
+import type { Presence } from '../../job/liveness.ts';
 import {
   JOB_PROCESSES_RELEASED,
   releaseIfEnded,
@@ -283,14 +286,12 @@ describe.each(cases)(
     );
 
     it.runIf(enabled)(
-      'reclaimed: the job of a runner that stopped beating is failed, and its daemon dies',
+      'reclaimed: the job of a runner that is gone is failed, and its daemon dies',
       async () => {
+        // Aucun détenteur inscrit : tenu par un processus parti (#1204).
         const id = await job('processing');
         const d = await daemonOf(id);
-        // Plus aucun battement depuis 10 minutes, vu de « maintenant ».
-        const result = await reclaimJobsOfDeadRunners(asDb(), {
-          now: new Date(Date.now() + 10 * 60_000),
-        });
+        const result = await reclaimJobsOfDeadRunners(asDb());
         expect(result.reclaimed + result.resumed).toBeGreaterThanOrEqual(1);
         await expectDead(d);
       },
@@ -468,33 +469,47 @@ describe('a reaper whose candidate came back to life releases nothing and writes
     row: { status: string; turn: number };
     /** Ce que le run, vivant, fait de sa ligne entre la lecture et l'écriture. */
     comesBack: Record<string, unknown>;
-    reap: (d: TestDb) => Promise<unknown>;
+    reap: (d: TestDb, presence: Presence) => Promise<unknown>;
+    /**
+     * Le faucheur ne décide qu'à la seconde vue d'une ligne immobile (#1204) :
+     * une première passe, sans geste glissé, la lui montre.
+     */
+    warmUp?: boolean;
   }[] = [
     {
       name: 'reclaimJobsOfDeadRunners, a job it would resume: the run suspends for an approval',
       row: { status: 'processing', turn: 3 },
       comesBack: { status: 'awaiting_approval' },
-      reap: (d) =>
-        reclaimJobsOfDeadRunners(d as unknown as Parameters<typeof reclaimJobsOfDeadRunners>[0]),
+      reap: (d, presence) =>
+        reclaimJobsOfDeadRunners(d as unknown as Parameters<typeof reclaimJobsOfDeadRunners>[0], {
+          presence,
+        }),
     },
     {
       name: 'reclaimJobsOfDeadRunners, a job it would fail: the run self-chains back to pending',
       row: { status: 'processing', turn: 0 },
       comesBack: { status: 'pending' },
-      reap: (d) =>
-        reclaimJobsOfDeadRunners(d as unknown as Parameters<typeof reclaimJobsOfDeadRunners>[0]),
+      reap: (d, presence) =>
+        reclaimJobsOfDeadRunners(d as unknown as Parameters<typeof reclaimJobsOfDeadRunners>[0], {
+          presence,
+        }),
     },
     {
-      name: 'resetOrphanedJobs: the run suspends for an approval',
-      row: { status: 'processing', turn: 0 },
-      comesBack: { status: 'awaiting_approval' },
-      reap: (d) => resetOrphanedJobs(d as unknown as Parameters<typeof resetOrphanedJobs>[0]),
+      name: 'resetOrphanedJobs, a parent it would fail: the parent is resumed',
+      row: { status: 'awaiting_delegation', turn: 0 },
+      comesBack: { status: 'pending' },
+      reap: (d, presence) =>
+        resetOrphanedJobs(d as unknown as Parameters<typeof resetOrphanedJobs>[0], { presence }),
+      warmUp: true,
     },
     {
       name: 'failStalePendingJobs: a worker claims the pending job',
       row: { status: 'pending', turn: 0 },
       comesBack: { status: 'processing', claimGeneration: 7 },
-      reap: (d) => failStalePendingJobs(d as unknown as Parameters<typeof failStalePendingJobs>[0]),
+      reap: (d, presence) =>
+        failStalePendingJobs(d as unknown as Parameters<typeof failStalePendingJobs>[0], {
+          presence,
+        }),
     },
   ];
 
@@ -512,11 +527,22 @@ describe('a reaper whose candidate came back to life releases nothing and writes
           turn: c.row.turn,
           messages: [{ role: 'user', content: 't' }],
           updatedAt: stale(),
+          createdAt: stale(),
         })
         .returning({ id: agentJobs.id });
       const id = row!.id;
       const counter = join(dir, `${id}.count`);
       const pidFile = join(dir, `${id}.pid`);
+      const mono = { t: 0 };
+      const presence = createPresence({
+        instanceId: randomUUID(),
+        holds: () => false,
+        monotonicNow: () => mono.t,
+      });
+      if (c.warmUp) {
+        await c.reap(db, presence);
+        mono.t += JOB_LIVENESS.stuckRowMs;
+      }
       // La commande que le run, vivant, fait tourner.
       const running = await jobProcessScope(id, unconfinedSandbox).startOwned({
         target: { file: process.execPath, args: [join(dir, 'ticker.cjs'), counter, pidFile] },
@@ -538,6 +564,7 @@ describe('a reaper whose candidate came back to life releases nothing and writes
               .set({ ...c.comesBack, updatedAt: stale() })
               .where(eq(agentJobs.id, id));
           }),
+          presence,
         );
         const before = readCounter(counter);
         const rise = await counterRise(counter, before, { watch });

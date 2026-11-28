@@ -1163,6 +1163,13 @@
       "when": 1786437600000,
       "tag": "0170_tool_call_outcome",
       "breakpoints": true
+    },
+    {
+      "idx": 173,
+      "version": "7",
+      "when": 1786437900000,
+      "tag": "0173_job_holder_liveness",
+      "breakpoints": true
     }
   ]
 }

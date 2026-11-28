@@ -72,6 +72,7 @@ import {
 } from './routes/whatsapp-pairing.ts';
 import { startCronTicker } from './cron/ticker.ts';
 import { reclaimJobsOfDeadRunners } from './cron/reclaim-jobs.ts';
+import { startInstancePresence } from './job/liveness.ts';
 import { startTelegramManager } from './telegram/manager.ts';
 import { startDiscordManager } from './channels/discord/manager.ts';
 import { startSlackManager } from './channels/slack/manager.ts';
@@ -453,6 +454,11 @@ async function main(): Promise<void> {
   // started without `up` is declared all the same (#787, review pass 2).
   openNodalHome();
   const deps = await createRunnerDeps(runnerEnv);
+  // Avant tout ce qui peut prendre un job (#1204) : cette instance s'annonce
+  // et bat. Une prise inscrit son identité, et un job n'est vivant que tant que
+  // l'instance qui le tient tourne ; une instance non annoncée ne peut donc
+  // rien prendre sans risque — l'échec est levé, le boot s'arrête.
+  const presence = await startInstancePresence(deps.db);
 
   // One-shot: encrypt any plaintext entity_llm_keys.api_key rows in place
   // (Brique 26). Idempotent — already-encrypted rows are skipped. Must run
@@ -633,6 +639,11 @@ async function main(): Promise<void> {
   const shutdown = async (): Promise<void> => {
     ticker?.stop();
     processSweep.stop();
+    // Un arrêt propre se DIT (#1204) : les jobs que cette instance tient encore
+    // sont repris aussitôt, par la suivante ou par une autre.
+    await presence.stop().catch((e: unknown) => {
+      console.error('[runner] could not record this instance as stopped:', e);
+    });
     // Ce que les commandes des jobs ont laissé tourner ne survit pas au runner.
     await closeAllJobProcessScopes();
     // Ni un navigateur de rendu de pages en cours d'appel (#1082).

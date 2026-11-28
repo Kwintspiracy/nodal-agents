@@ -1,7 +1,7 @@
 // router/resume.ts — inject child result into parent and resume
 // Called when a child job completes (by cron or worker completing a child job).
 
-import { eq, and } from '@nodal-agents/db';
+import { eq, and, sql } from '@nodal-agents/db';
 import { agentJobs } from '@nodal-agents/db';
 import type { JobFailureHint } from '@nodal-agents/shared';
 import { OrchestrationError } from '../errors';
@@ -684,6 +684,19 @@ export async function resumeDelegated(
 
   const toolUseId = pending.toolUseId;
 
+  // The parent must be waiting for THIS child (#1204, FT2-07). A row written
+  // before `subJobId` existed carries none and is accepted as before; any
+  // other mismatch would put this child's result in front of another
+  // delegation's tool call. The same condition guards the write below, so a
+  // parent that moved on to another delegation between this read and that
+  // write is refused too.
+  if (pending.subJobId !== undefined && pending.subJobId !== (childJobId as string)) {
+    throw new OrchestrationError(
+      'parent_waits_for_another_child',
+      `Parent job ${parentJobId} waits for child ${pending.subJobId}, not ${childJobId}`,
+    );
+  }
+
   // toolName is required by AI SDK v4 tool-result format. It was added to
   // pending_delegation by handleDelegation; legacy rows without it are
   // unrecoverable at this layer (we can't reconstruct the assign_<slug> tool
@@ -880,7 +893,13 @@ ${consignes}`,
       updatedAt: new Date(),
     })
     .where(
-      and(eq(agentJobs.id, parentJobId as string), eq(agentJobs.status, 'awaiting_delegation')),
+      and(
+        eq(agentJobs.id, parentJobId as string),
+        eq(agentJobs.status, 'awaiting_delegation'),
+        pending.subJobId !== undefined
+          ? sql`${agentJobs.pendingDelegation}->>'subJobId' = ${childJobId as string}`
+          : undefined,
+      ),
     )
     .returning();
 
@@ -909,6 +928,12 @@ ${consignes}`,
         channel: parent.channel,
         chatId: parent.chatId,
       };
+    }
+    if (current?.status === 'awaiting_delegation') {
+      throw new OrchestrationError(
+        'parent_waits_for_another_child',
+        `Parent job ${parentJobId} moved on to another delegation before child ${childJobId} could resume it`,
+      );
     }
     throw new OrchestrationError('parent_not_found', `Failed to update parent job ${parentJobId}`);
   }

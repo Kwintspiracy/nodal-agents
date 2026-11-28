@@ -2,8 +2,10 @@
 //
 // The sweepers (`reclaim-jobs.ts`, `reset-orphans.ts`) end a job they find
 // nobody is moving. What they know is what the row says: the status it was
-// found in, and how long ago it was last updated; for a job that waited on a
-// delegated one, how that one ended. Never why: a sweeper does not know that
+// found in; for a job taken from its holder, what was observed of that holder
+// (#1204: which runner instance, stopped or silent since when, on the database
+// clock); for a job that waited on a delegated one, how that one ended; for a
+// request, how long ago it was last updated. Never why: a sweeper does not know that
 // the service restarted, that a worker missed a start, or that a runner died.
 // Telling the person a cause it does not know sent them looking for a crash
 // that never happened (#1086, observed 2026-11-14).
@@ -13,6 +15,8 @@
 // the runner does not narrate, it states the facts it holds (invariant #2).
 // It becomes the failed job's result, which `failJob` sends to where the
 // request was made.
+
+import type { Holder } from '../job/liveness.ts';
 
 /** Milliseconds as minutes and seconds, never negative. */
 export function duree(ms: number): string {
@@ -25,8 +29,14 @@ export function duree(ms: number): string {
 export interface SweptJobFacts {
   /** The status the sweeper found the job in. */
   status: string;
-  /** How long the row had gone without an update. */
-  idleMs: number;
+  /**
+   * What was observed of the runner instance that held the job, when the
+   * sweeper took it from that holder (#1204). The line then says no live
+   * runner holds it, and which instance, in which state, since when.
+   */
+  holder?: Holder;
+  /** How long the row had gone without an update, on the database clock. */
+  idleMs?: number;
   /** False when no text of this run could be recovered (#491). */
   textRecovered?: boolean;
   /** How many resumes the job already had, when they are exhausted (#443). */
@@ -42,8 +52,42 @@ export interface SweptJobFacts {
   awaitedJob?: { status: string | null };
 }
 
+/** The first eight characters of an instance identity: enough to recognise it. */
+function court(id: string): string {
+  return id.slice(0, 8);
+}
+
+/** What the sweeper observed of the holder, as typed fields (#1204). */
+function faitDuDetenteur(holder: Holder): string {
+  switch (holder.kind) {
+    case 'self':
+      return 'runner (this one) runs none of it';
+    case 'gone':
+      if (holder.id === null) return 'no holder recorded';
+      switch (holder.how) {
+        case 'stopped':
+          return `runner ${court(holder.id)} stopped at ${holder.stoppedAt?.toISOString() ?? '?'}`;
+        case 'silent':
+          return `runner ${court(holder.id)} last seen at ${holder.lastSeenAt?.toISOString() ?? '?'}`;
+        case 'no_record':
+          return `runner ${court(holder.id)} has no instance record`;
+        case 'none':
+          return 'no holder recorded';
+      }
+      break;
+    case 'alive':
+    case 'undecided':
+      // Never taken: `decideJob` does not return `take_from_holder` for them.
+      return `runner ${court(holder.id)} last seen at ${holder.lastSeenAt.toISOString()}`;
+  }
+  return 'holder unknown';
+}
+
 /** The line the person reads when a sweeper ends their job: the facts, no cause. */
 export function sweptJobStopLine(faits: SweptJobFacts): string {
+  const tenu = faits.holder === undefined ? '' : 'no live runner holds this job — ';
+  const detenteur = faits.holder === undefined ? '' : `, ${faitDuDetenteur(faits.holder)}`;
+  const age = faits.idleMs === undefined ? '' : `, not updated for ${duree(faits.idleMs)}`;
   const attendu =
     faits.awaitedJob === undefined
       ? ''
@@ -63,5 +107,5 @@ export function sweptJobStopLine(faits: SweptJobFacts): string {
       ? `; runtime ${faits.runtimeNotResumable} cannot resume`
       : '';
   const perte = faits.textRecovered === false ? '; no text of this run could be recovered' : '';
-  return `[stopped: status ${faits.status}, not updated for ${duree(faits.idleMs)}${attendu}${reprises}${effets}${runtime}${perte}]`;
+  return `[stopped: ${tenu}status ${faits.status}${detenteur}${age}${attendu}${reprises}${effets}${runtime}${perte}]`;
 }

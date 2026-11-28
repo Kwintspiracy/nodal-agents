@@ -43,8 +43,8 @@ import {
   RESTART_RESUME_LIMIT_CODE,
   RESTART_AFTER_SIDE_EFFECT_CODE,
   RUNTIME_NOT_RESUMABLE_CODE,
-  RUNNER_LIVENESS_WINDOW_MS,
 } from '../../cron/reclaim-jobs.ts';
+import { JOB_LIVENESS } from '../../job/liveness.ts';
 
 const { client } = vi.hoisted(() => ({
   client: { current: null as RunnerDeps['llmClient'] | null },
@@ -270,7 +270,10 @@ describe('un job survit à un redémarrage du runner (#443) @cap:organiser-equip
     // Plus de battement : le runner qui revient voit un job que personne ne tient.
     await db
       .update(agentJobs)
-      .set({ updatedAt: new Date(Date.now() - RUNNER_LIVENESS_WINDOW_MS - 60_000) })
+      .set({
+        updatedAt: new Date(Date.now() - JOB_LIVENESS.silentInstanceMs - 60_000),
+        claimedBy: null,
+      })
       .where(eq(agentJobs.id, jobId));
     const reprise = await reclaimJobsOfDeadRunners(db);
     expect(reprise.resumedJobIds).toContain(jobId);
@@ -323,7 +326,9 @@ describe('un job survit à un redémarrage du runner (#443) @cap:organiser-equip
         turn: 3,
         restartResumes: MAX_RESTART_RESUMES,
         messages: [{ role: 'user', content: TACHE }],
-        updatedAt: new Date(Date.now() - RUNNER_LIVENESS_WINDOW_MS - 60_000),
+        updatedAt: new Date(Date.now() - JOB_LIVENESS.silentInstanceMs - 60_000),
+        // Tenu par un processus parti (#1204).
+        claimedBy: null,
       })
       .returning({ id: agentJobs.id });
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -348,7 +353,9 @@ describe('un job survit à un redémarrage du runner (#443) @cap:organiser-equip
         status: 'processing',
         turn: 0,
         messages: [{ role: 'user', content: TACHE }],
-        updatedAt: new Date(Date.now() - RUNNER_LIVENESS_WINDOW_MS - 60_000),
+        updatedAt: new Date(Date.now() - JOB_LIVENESS.silentInstanceMs - 60_000),
+        // Tenu par un processus parti (#1204).
+        claimedBy: null,
       })
       .returning({ id: agentJobs.id });
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -398,7 +405,10 @@ describe('la reprise ne refait jamais un effet (#443) @cap:organiser-equipe/mote
     expect((await row(jobId)).turn).toBe(4);
     await db
       .update(agentJobs)
-      .set({ updatedAt: new Date(Date.now() - RUNNER_LIVENESS_WINDOW_MS - 60_000) })
+      .set({
+        updatedAt: new Date(Date.now() - JOB_LIVENESS.silentInstanceMs - 60_000),
+        claimedBy: null,
+      })
       .where(eq(agentJobs.id, jobId));
     return {
       jobId,
@@ -535,7 +545,9 @@ describe('la reprise ne refait jamais un effet (#443) @cap:organiser-equipe/mote
         status: 'processing',
         turn: 3,
         messages: [{ role: 'user', content: TACHE }],
-        updatedAt: new Date(Date.now() - RUNNER_LIVENESS_WINDOW_MS - 60_000),
+        updatedAt: new Date(Date.now() - JOB_LIVENESS.silentInstanceMs - 60_000),
+        // Tenu par un processus parti (#1204).
+        claimedBy: null,
       })
       .returning({ id: agentJobs.id });
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -605,7 +617,10 @@ describe('une mort entre l’effet et sa ligne d’audit ne rejoue pas l’effet
       await new Promise((r) => setTimeout(r, 100));
       await db
         .update(agentJobs)
-        .set({ updatedAt: new Date(Date.now() - RUNNER_LIVENESS_WINDOW_MS - 60_000) })
+        .set({
+          updatedAt: new Date(Date.now() - JOB_LIVENESS.silentInstanceMs - 60_000),
+          claimedBy: null,
+        })
         .where(eq(agentJobs.id, jobId));
 
       const reprise = await reclaimJobsOfDeadRunners(db);
@@ -655,7 +670,9 @@ describe('une demande d’approbation en attente empêche la reprise (#443) @cap
         status: 'processing',
         turn: 4,
         messages: [{ role: 'user', content: TACHE }],
-        updatedAt: new Date(Date.now() - RUNNER_LIVENESS_WINDOW_MS - 60_000),
+        updatedAt: new Date(Date.now() - JOB_LIVENESS.silentInstanceMs - 60_000),
+        // Tenu par un processus parti (#1204).
+        claimedBy: null,
       })
       .returning({ id: agentJobs.id });
     await db.insert(approvalRequests).values({
@@ -739,7 +756,9 @@ describe('une marque posée après le point de reprise, quel que soit son tour (
       .update(agentJobs)
       .set({
         status: 'processing',
-        updatedAt: new Date(Date.now() - RUNNER_LIVENESS_WINDOW_MS - 60_000),
+        updatedAt: new Date(Date.now() - JOB_LIVENESS.silentInstanceMs - 60_000),
+        // Tenu par un processus parti (#1204).
+        claimedBy: null,
       })
       .where(eq(agentJobs.id, jobId));
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -822,7 +841,9 @@ describe('un appel refusé par la porte n’est pas un effet (#443) @cap:organis
       .update(agentJobs)
       .set({
         status: 'processing',
-        updatedAt: new Date(Date.now() - RUNNER_LIVENESS_WINDOW_MS - 60_000),
+        updatedAt: new Date(Date.now() - JOB_LIVENESS.silentInstanceMs - 60_000),
+        // Tenu par un processus parti (#1204).
+        claimedBy: null,
       })
       .where(eq(agentJobs.id, jobId));
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -852,7 +873,9 @@ describe('une question d’un serveur en attente n’empêche pas la reprise @ca
         status: 'processing',
         turn: 4,
         messages: [{ role: 'user', content: TACHE }],
-        updatedAt: new Date(Date.now() - RUNNER_LIVENESS_WINDOW_MS - 60_000),
+        updatedAt: new Date(Date.now() - JOB_LIVENESS.silentInstanceMs - 60_000),
+        // Tenu par un processus parti (#1204).
+        claimedBy: null,
       })
       .returning({ id: agentJobs.id });
     const [question] = await db
