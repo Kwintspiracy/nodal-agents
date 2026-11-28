@@ -92,6 +92,7 @@ import {
   AGENT_BUDGET_ALERT_MIN_PCT,
   AGENT_BUDGET_ALERT_MAX_PCT,
   serverTimezone,
+  applyScheduleChange,
   readProofRepairAttempts,
   type DiscoveredCommand,
   type ProjectManifests,
@@ -11129,19 +11130,30 @@ export async function duplicateScheduleAction(id: string): Promise<ActionResult<
   }
 }
 
+// A schedule edit names what it changes; a field it leaves out is KEPT (never
+// defaulted). The same change vocabulary the agent's update_schedule tool uses:
+// the timing is either `cronExpr` (the whole expression, as the form holds it) or
+// `atTimes` / `everyMinutes` / `days`. One function, applyScheduleChange, computes
+// the new schedule for both.
 const UpdateScheduleSchema = z.object({
   id: z.string().guid(),
-  agentId: z.string().guid('Pick an agent'),
-  name: z.string().min(1).max(120),
-  cronExpr: z.string().min(1).max(100),
-  task: z.string().min(1),
-  notifyOnSuccess: z.boolean().optional().default(false),
+  agentId: z.string().guid('Pick an agent').optional(),
+  name: z.string().min(1).max(120).optional(),
+  cronExpr: z.string().min(1).max(100).optional(),
+  atTimes: z.array(z.string()).optional(),
+  everyMinutes: z.number().int().optional(),
+  days: z
+    .union([z.enum(['daily', 'weekdays', 'weekends']), z.array(z.number().int().min(0).max(6))])
+    .optional(),
+  timezone: z.string().min(1).optional(),
+  task: z.string().min(1).optional(),
+  notifyOnSuccess: z.boolean().optional(),
+  // null = auto (a NAMED change); absent = keep what is stored.
   notifyChannel: z
     .enum(NOTIFY_CHANNEL_OPTIONS as [MessagingChannelKind, ...MessagingChannelKind[]])
     .nullable()
-    .optional()
-    .default(null),
-  dailyBudgetUsd: z.number().min(0.5).max(100).optional().default(5),
+    .optional(),
+  dailyBudgetUsd: z.number().min(0.5).max(100).optional(),
 });
 
 export async function updateScheduleAction(raw: unknown): Promise<ActionResult<void>> {
@@ -11152,49 +11164,51 @@ export async function updateScheduleAction(raw: unknown): Promise<ActionResult<v
       return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
     }
     const db = getDb();
+    const { id, ...named } = parsed.data;
 
-    // Verify schedule exists and belongs to this entity
+    // The stored schedule (and that it belongs to this entity).
     const [existing] = await db
-      .select({ id: agentSchedules.id })
+      .select({
+        id: agentSchedules.id,
+        name: agentSchedules.name,
+        agentId: agentSchedules.agentId,
+        task: agentSchedules.task,
+        cronExpr: agentSchedules.cronExpr,
+        timezone: agentSchedules.timezone,
+        notifyOnSuccess: agentSchedules.notifyOnSuccess,
+        notifyChannel: agentSchedules.notifyChannel,
+        dailyBudgetUsd: agentSchedules.dailyBudgetUsd,
+      })
       .from(agentSchedules)
-      .where(
-        and(eq(agentSchedules.id, parsed.data.id), eq(agentSchedules.entityId, session.entityId)),
-      );
+      .where(and(eq(agentSchedules.id, id), eq(agentSchedules.entityId, session.entityId)));
     if (!existing) return fail('not_found', 'Schedule not found');
+    const { id: _id, ...stored } = existing;
+
+    const changed = applyScheduleChange(stored, named);
+    if (!changed.ok) return fail('validation_failed', changed.error);
 
     // Verify the agent belongs to this entity
     const [agent] = await db
       .select({ id: agents.id })
       .from(agents)
-      .where(and(eq(agents.id, parsed.data.agentId), eq(agents.entityId, session.entityId)));
+      .where(and(eq(agents.id, changed.next.agentId), eq(agents.entityId, session.entityId)));
     if (!agent) return fail('not_found', 'Agent not found');
 
-    const notifyChannelError = await assertNotifyChannelActive(
-      db,
-      parsed.data.agentId,
-      parsed.data.notifyChannel,
-    );
-    if (notifyChannelError) return fail('validation_failed', notifyChannelError);
-
-    const nextRun = computeNextRun(parsed.data.cronExpr);
-    if (!nextRun) {
-      return fail('validation_failed', 'Invalid cron expression');
+    // The channel the schedule will have must be live for the agent it will have
+    // (only checked when the edit names one of them).
+    if (named.notifyChannel !== undefined || named.agentId !== undefined) {
+      const notifyChannelError = await assertNotifyChannelActive(
+        db,
+        changed.next.agentId,
+        changed.next.notifyChannel as MessagingChannelKind | null,
+      );
+      if (notifyChannelError) return fail('validation_failed', notifyChannelError);
     }
 
     await db
       .update(agentSchedules)
-      .set({
-        agentId: parsed.data.agentId,
-        name: parsed.data.name,
-        cronExpr: parsed.data.cronExpr,
-        task: parsed.data.task,
-        nextRun,
-        notifyOnSuccess: parsed.data.notifyOnSuccess,
-        notifyChannel: parsed.data.notifyChannel,
-        dailyBudgetUsd: parsed.data.dailyBudgetUsd,
-        updatedAt: new Date(),
-      })
-      .where(eq(agentSchedules.id, parsed.data.id));
+      .set({ ...changed.patch, updatedAt: new Date() })
+      .where(eq(agentSchedules.id, id));
 
     revalidatePath('/automations');
     return ok(undefined);
