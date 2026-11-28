@@ -32,6 +32,12 @@
  * to 2000 chars) — click it to expand/collapse the full text in place. Every
  * cell in the row carries align-top so a tall expanded row doesn't re-center
  * the other columns.
+ *
+ * Every change made here states the version the page showed (#1144): if the
+ * fact changed since (an automatic pass, another tab), the action is refused
+ * and a toast says to reload. When a fact's last change was made by an
+ * automatic pass or an agent, its row says so and offers to put the previous
+ * text back (ConfirmDialog showing that text).
  */
 
 import { useState, useMemo, useEffect, useTransition } from 'react';
@@ -60,7 +66,12 @@ import Table, {
   CellText,
 } from '@/components/ui/Table';
 import ConfirmDialog from '@/components/ConfirmDialog';
-import { Archive, ArrowCounterClockwise, Trash } from '@phosphor-icons/react';
+import {
+  Archive,
+  ArrowCounterClockwise,
+  ClockCounterClockwise,
+  Trash,
+} from '@phosphor-icons/react';
 import NewMemoryModal from './NewMemoryModal';
 import {
   archiveMemoryAction,
@@ -68,7 +79,9 @@ import {
   deleteMemoryAction,
   updateMemoryImportanceAction,
   unpinMemoryImportanceAction,
+  restoreMemoryVersionAction,
   searchMemoriesAction,
+  type MemoryLastChange,
   type MemoryListRow,
 } from '@/lib/actions';
 import { relativeTime } from '@/lib/format-time';
@@ -181,16 +194,44 @@ function isRecent(ts: string | Date | null | undefined): boolean {
   return Date.now() - d.getTime() < 2 * 60 * 1000;
 }
 
+/** Who made a change, in the words of the row. */
+function changedByLabel(c: MemoryLastChange): string {
+  if (c.changedBy === 'curator') return 'the weekly memory pass';
+  if (c.changedBy === 'lifecycle') return 'automatic archiving';
+  return c.agentName ?? 'an agent';
+}
+
 // ─── Row actions ──────────────────────────────────────────────────────────────
 
-function RowActions({ id, archived }: { id: string; archived: boolean }) {
+function RowActions({
+  id,
+  archived,
+  version,
+  lastChange,
+}: {
+  id: string;
+  archived: boolean;
+  version: number;
+  lastChange: MemoryLastChange | null;
+}) {
   const [isPending, startTransition] = useTransition();
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [revertOpen, setRevertOpen] = useState(false);
+
+  function performRevert() {
+    if (!lastChange) return;
+    setRevertOpen(false);
+    startTransition(async () => {
+      const r = await restoreMemoryVersionAction(id, lastChange.versionId, version);
+      if (!r.ok) toast.error(r.message);
+      else toast.success('Previous text restored');
+    });
+  }
 
   function handleArchive() {
     startTransition(async () => {
       const action = archived ? unarchiveMemoryAction : archiveMemoryAction;
-      const r = await action(id);
+      const r = await action(id, version);
       if (!r.ok) toast.error(r.message);
       else toast.success(archived ? 'Memory restored' : 'Memory archived');
     });
@@ -208,6 +249,15 @@ function RowActions({ id, archived }: { id: string; archived: boolean }) {
   return (
     <>
       <CellActions>
+        {lastChange && (
+          <RowActionButton
+            square
+            icon={<ClockCounterClockwise size={16} />}
+            title={`Restore the text before ${changedByLabel(lastChange)} changed it`}
+            disabled={isPending}
+            onClick={() => setRevertOpen(true)}
+          />
+        )}
         <RowActionButton
           square
           icon={
@@ -234,6 +284,16 @@ function RowActions({ id, archived }: { id: string; archived: boolean }) {
         onConfirm={performDelete}
         onCancel={() => setConfirmOpen(false)}
       />
+      {lastChange && (
+        <ConfirmDialog
+          open={revertOpen}
+          title="Restore the previous text?"
+          message={lastChange.previousFact}
+          confirmLabel="Restore"
+          onConfirm={performRevert}
+          onCancel={() => setRevertOpen(false)}
+        />
+      )}
     </>
   );
 }
@@ -252,17 +312,19 @@ function ImportanceStars({
   id,
   importance,
   locked,
+  version,
 }: {
   id: string;
   importance: number;
   locked: boolean;
+  version: number;
 }) {
   const [isPending, startTransition] = useTransition();
 
   function handleClick(value: number) {
     if (isPending || value === importance) return;
     startTransition(async () => {
-      const r = await updateMemoryImportanceAction(id, value);
+      const r = await updateMemoryImportanceAction(id, value, version);
       if (!r.ok) toast.error(r.message);
       else toast.success(`Importance pinned to ${value}`);
     });
@@ -271,7 +333,7 @@ function ImportanceStars({
   function handleUnpin() {
     if (isPending) return;
     startTransition(async () => {
-      const r = await unpinMemoryImportanceAction(id);
+      const r = await unpinMemoryImportanceAction(id, version);
       if (!r.ok) toast.error(r.message);
       else toast.success('Importance unpinned — the curator can adjust it again');
     });
@@ -522,6 +584,7 @@ export default function MemoriesClient({ initialItems, agents, totalCount }: Pro
                             <span suppressHydrationWarning>
                               {m.created_at ? new Date(m.created_at).toLocaleString() : 'none'}
                               {(m.access_count ?? 0) > 0 ? ` · accessed ${m.access_count}×` : ''}
+                              {m.lastChange ? ` · changed by ${changedByLabel(m.lastChange)}` : ''}
                             </span>
                           }
                         >
@@ -551,6 +614,7 @@ export default function MemoriesClient({ initialItems, agents, totalCount }: Pro
                         id={m.id}
                         importance={m.importance}
                         locked={m.importance_locked}
+                        version={m.version}
                       />
                     </Td>
 
@@ -564,7 +628,12 @@ export default function MemoriesClient({ initialItems, agents, totalCount }: Pro
 
                     {/* Actions */}
                     <Td top align="right">
-                      <RowActions id={m.id} archived={m.archived ?? false} />
+                      <RowActions
+                        id={m.id}
+                        archived={m.archived ?? false}
+                        version={m.version}
+                        lastChange={m.lastChange}
+                      />
                     </Td>
                   </Tr>
                 );

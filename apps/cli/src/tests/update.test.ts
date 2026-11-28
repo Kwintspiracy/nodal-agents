@@ -21,10 +21,17 @@ vi.mock('../commands/down.ts', () => ({
   runDown: vi.fn(),
 }));
 
-vi.mock('../lib/version.ts', () => ({
-  getInstalledVersion: vi.fn(),
-  getLatestVersion: vi.fn(),
-}));
+// The two READS are faked (no npm, no network); the comparison is the REAL
+// one, the single rule the command must decide with.
+vi.mock('../lib/version.ts', async (importActual) => {
+  const actual = await importActual<typeof import('../lib/version.ts')>();
+  return {
+    getInstalledVersion: vi.fn(),
+    getLatestVersion: vi.fn(),
+    compareVersions: actual.compareVersions,
+    isNewerVersion: actual.isNewerVersion,
+  };
+});
 
 // ── Imports (after mocks) ─────────────────────────────────────────────────────
 
@@ -114,7 +121,7 @@ describe('runUpdate — version-equal path', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('runUpdate — update path', () => {
-  it('calls down → npm install -g nodal-agents@latest → detached up, in that order', async () => {
+  it('calls down → npm install -g nodal-agents@<that version> → detached up, in that order', async () => {
     mockGetInstalled.mockReturnValue('0.2.0');
     mockGetLatest.mockResolvedValue('0.3.0');
 
@@ -158,10 +165,11 @@ describe('runUpdate — update path', () => {
       (c) =>
         c[0] === 'npm' &&
         Array.isArray(c[1]) &&
-        (c[1] as string[]).join(' ') === 'install -g nodal-agents@latest',
+        (c[1] as string[]).join(' ') === 'install -g nodal-agents@0.3.0',
     );
     expect(installCall).toBeDefined();
-    expect(installCall![1]).toEqual(['install', '-g', 'nodal-agents@latest']);
+    // The EXACT version the decision was made on, not the moving `latest` tag.
+    expect(installCall![1]).toEqual(['install', '-g', 'nodal-agents@0.3.0']);
   });
 });
 
@@ -236,5 +244,82 @@ describe('runUpdate — --no-restart flag', () => {
       (c) => c[0] === 'npm' && Array.isArray(c[1]) && (c[1] as string[]).includes('install'),
     );
     expect(installCall).toBeDefined();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Run `runUpdate` with these two versions; what it printed, installed, stopped and exited with. */
+async function decide(installed: string, latest: string) {
+  mockGetInstalled.mockReturnValue(installed);
+  mockGetLatest.mockResolvedValue(latest);
+  const exitCodes: number[] = [];
+  const exitSpy = vi.spyOn(process, 'exit').mockImplementation((code) => {
+    exitCodes.push(typeof code === 'number' ? code : 0);
+    throw new Error(`process.exit(${code})`);
+  });
+  const { lines, restore } = captureConsole();
+  try {
+    await runUpdate({ noRestart: true }).catch((err: unknown) => {
+      if (!(err instanceof Error) || !/process\.exit/.test(err.message)) throw err;
+    });
+  } finally {
+    exitSpy.mockRestore();
+    restore();
+  }
+  const installs = mockExeca.mock.calls
+    .filter((c) => c[0] === 'npm' && Array.isArray(c[1]) && (c[1] as string[]).includes('install'))
+    .map((c) => (c[1] as string[]).join(' '));
+  return {
+    output: lines.join('\n'),
+    installs,
+    stopped: mockRunDown.mock.calls.length > 0,
+    exitCodes,
+  };
+}
+
+describe('runUpdate — one comparison rule decides @cap:installer-et-demarrer/moteur', () => {
+  it('registry OLDER than the install (a lagging mirror): nothing stopped, nothing installed, said', async () => {
+    const r = await decide('0.9.11', '0.9.10');
+    expect(r.installs).toEqual([]);
+    expect(r.stopped).toBe(false);
+    expect(r.exitCodes).toEqual([]);
+    expect(r.output).toContain(
+      "The registry's latest version (0.9.10) is older than the installed one (0.9.11)",
+    );
+  });
+
+  it('the SAME version: nothing installed', async () => {
+    const r = await decide('0.9.11', '0.9.11');
+    expect(r.installs).toEqual([]);
+    expect(r.stopped).toBe(false);
+    expect(r.output).toContain('Already on the latest version (0.9.11)');
+  });
+
+  it('a NEWER version: stops, then installs exactly that version', async () => {
+    const r = await decide('0.9.10', '0.9.11');
+    expect(r.stopped).toBe(true);
+    expect(r.installs).toEqual(['install -g nodal-agents@0.9.11']);
+    expect(r.output).toContain('Updating 0.9.10 → 0.9.11');
+  });
+
+  it('an installed PRE-RELEASE and its release on the registry: the release is newer, installed', async () => {
+    const r = await decide('0.9.12-beta.1', '0.9.12');
+    expect(r.installs).toEqual(['install -g nodal-agents@0.9.12']);
+  });
+
+  it('an installed release and an older pre-release-free registry triple: not installed', async () => {
+    // `0.9.12-beta.1` installed, registry still on 0.9.11: the beta is newer.
+    const r = await decide('0.9.12-beta.1', '0.9.11');
+    expect(r.installs).toEqual([]);
+    expect(r.stopped).toBe(false);
+  });
+
+  it('a registry answer that is not a version: refused loud (exit 1), nothing installed', async () => {
+    const r = await decide('0.9.11', 'npm WARN config');
+    expect(r.installs).toEqual([]);
+    expect(r.stopped).toBe(false);
+    expect(r.exitCodes).toEqual([1]);
+    expect(r.output).toContain("Cannot compare the registry's version (npm WARN config)");
   });
 });

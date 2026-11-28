@@ -16,6 +16,9 @@ import FieldLabel from '@/components/ui/FieldLabel';
 import { ModalFooter } from '@/components/ui/Modal.tsx';
 import ScopeDisclosure from '@/components/ScopeDisclosure.tsx';
 import type { CompatibleCredential } from './ConnectorForm.tsx';
+import { bindingRefusal } from '@nodal-agents/shared';
+import Banner from '@/components/ui/Banner.tsx';
+import ReauthoriseButton from './ReauthoriseButton.tsx';
 
 interface Props {
   catalogItem: ConnectorCatalogItem;
@@ -142,6 +145,14 @@ export default function ConnectorAddForm({
 
   // ── oauth2 branch: has existing compatible credentials ──────────────────────
   if (isOAuth && compatibleCredentials.length > 0) {
+    // What the chosen credential grants THIS connector — the rule the binding
+    // action and a job's tool list apply. None of it: binding is refused, the
+    // one way forward is to add access. Part of it: it binds, and what is
+    // missing is said.
+    const selected = compatibleCredentials.find((c) => c.id === selectedCredentialId) ?? null;
+    const access = selected?.access ?? null;
+    const refusal = access ? bindingRefusal(access) : null;
+    const partial = access?.kind === 'needs_access' && !refusal ? access : null;
     return (
       <div className="space-y-3">
         <ScopeDisclosure disclosure={catalogItem.scopeDisclosure} />
@@ -159,6 +170,21 @@ export default function ConnectorAddForm({
             ))}
           </Select>
         </div>
+        {refusal && (
+          <Banner
+            variant="warn"
+            title={`This credential has no access to ${catalogItem.label} yet`}
+          >
+            Missing: <span className="font-mono">{refusal.missingScopes.join(', ')}</span>. Add
+            access to ask the provider for it, on the same account.
+          </Banner>
+        )}
+        {partial && (
+          <p className="text-xs text-warn">
+            {partial.missingOperations.length} operations stay unavailable until access is added.
+            Missing: <span className="font-mono">{partial.missingScopes.join(', ')}</span>
+          </p>
+        )}
         <ModalFooter className="-mx-6 -mb-6 mt-2 rounded-b-xl">
           {onCancel && (
             <PrimaryButton variant="neutral" type="button" onClick={onCancel}>
@@ -168,13 +194,24 @@ export default function ConnectorAddForm({
           <PrimaryButton variant="neutral" onClick={() => onCreateNew?.()}>
             or create new
           </PrimaryButton>
-          <PrimaryButton
-            variant="ink"
-            onClick={() => selectedCredentialId && performOAuthAssign(selectedCredentialId)}
-            disabled={isPending || !selectedCredentialId}
-          >
-            {isPending ? 'Connecting…' : 'Connect'}
-          </PrimaryButton>
+          {refusal && selected ? (
+            <ReauthoriseButton
+              label="Add access"
+              size="md"
+              credentialType={selected.type}
+              connector={catalogItem.slug}
+              credentialId={selected.id}
+              returnTo={`/connectors?connectorSlug=${catalogItem.slug}`}
+            />
+          ) : (
+            <PrimaryButton
+              variant="ink"
+              onClick={() => selectedCredentialId && performOAuthAssign(selectedCredentialId)}
+              disabled={isPending || !selectedCredentialId}
+            >
+              {isPending ? 'Connecting…' : 'Connect'}
+            </PrimaryButton>
+          )}
         </ModalFooter>
       </div>
     );

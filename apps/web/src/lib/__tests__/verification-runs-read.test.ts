@@ -233,6 +233,7 @@ describe('getCodingProcessDetailAction — verification (T24)', () => {
       toolCallId: 'call-secret-t24',
       toolInput: { command: 'printenv', note: { why: `clé ${jeton}` } },
       toolOutput: `ANTHROPIC_API_KEY=${jeton}\n`,
+      outcome: 'done',
       turn: 1,
     });
     const { getCodingProcessDetailAction } = await actions();
@@ -273,6 +274,7 @@ describe('getCodingProcessDetailAction — verification (T24)', () => {
         content: `export const key = '${jeton}';\n`,
       },
       toolOutput: '{"ok":true}',
+      outcome: 'done',
       turn: 2,
     });
 

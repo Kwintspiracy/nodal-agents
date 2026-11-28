@@ -80,6 +80,7 @@ const FIRST = {
   source: 'openrouter',
   model: 'google/gemini-3.8-flash-tts',
   voice: 'Kore',
+  transcriptionSource: 'openrouter',
   transcriptionModel: 'x-ai/grok-stt-1.0',
 };
 
@@ -102,6 +103,9 @@ let answers: {
   state: () => Response;
   put: (body: unknown) => Response;
   sample: (body: unknown) => Response;
+  /** #1048 — the state of a part, and the models of a server. */
+  check: (body: unknown) => Response;
+  models: (body: unknown) => Response;
 };
 let audio: ReturnType<typeof installFakeAudio>;
 let container: HTMLDivElement;
@@ -114,6 +118,19 @@ beforeEach(() => {
     state: () =>
       Response.json({ setting: FIRST, sources: [OPENROUTER, GOOGLE], transcription: EAR }),
     put: (body) => Response.json(body),
+    check: (body) => {
+      const part = (body as { part: string }).part;
+      return Response.json({
+        part,
+        state: 'answers',
+        model: part === 'listening' ? 'x-ai/grok-stt-1.0' : 'google/gemini-3.8-flash-tts',
+        latencyMs: 620,
+        ...(part === 'listening' ? { heard: 'OK.' } : {}),
+        checkedAt: '2026-11-11T10:42:00.000Z',
+      });
+    },
+    models: () =>
+      Response.json({ state: 'listed', models: [], listedAt: '2026-11-11T10:42:00.000Z' }),
     sample: () =>
       new Response(
         sseBody([
@@ -152,6 +169,8 @@ beforeEach(() => {
       if (url === '/api/voice/setting' && method === 'GET') return answers.state();
       if (url === '/api/voice/setting' && method === 'PUT') return answers.put(body);
       if (url === '/api/voice/sample') return answers.sample(body);
+      if (url === '/api/voice/check') return answers.check(body);
+      if (url === '/api/voice/server/models') return answers.models(body);
       throw new Error(`unexpected ${method} ${url}`);
     }),
   );
@@ -246,6 +265,7 @@ describe('the Voice section @cap:parler-a-un-agent/ecran', () => {
             source: 'openrouter',
             model: 'x-ai/grok-voice-tts-1.0',
             voice: 'leo',
+            transcriptionSource: 'openrouter',
             transcriptionModel: 'x-ai/grok-stt-1.0',
           },
         },
@@ -522,6 +542,400 @@ describe('the Voice section — the transcription model (#976) @cap:parler-a-un-
     await act(async () => {});
     expect(q('voice-save-error')!.textContent).toBe(
       'This model did not write down what the voice said, so it was not saved: deepgram/nova-3 wrote nothing for the voice saying "OK."',
+    );
+  });
+});
+
+// ─── #1048 — the six states of the approved mockup ──────────────────────────
+//
+// Each part has its source; "Local server" is a server the person runs, at
+// the address they type. The state under each part is the runner's trial
+// (`/api/voice/check`); the models of a server are read at its address
+// (`/api/voice/server/models`). Typing waits for a pause before the server is
+// asked: the tests wait for it, for real.
+
+/** A local time of 2026-11-11, as an ISO string: the screen shows the local clock. */
+const at = (h: number, m: number): string => new Date(2026, 10, 11, h, m).toISOString();
+
+async function pause(ms = 500) {
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, ms));
+  });
+  await act(async () => {});
+}
+
+async function type(testId: string, value: string) {
+  const el = q<HTMLInputElement>(testId)!;
+  const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+  await act(async () => {
+    setValue.call(el, value);
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+}
+
+const text = (testId: string): string | null => q(testId)?.textContent ?? null;
+const checksSent = () => seen.filter((x) => x.url === '/api/voice/check').map((x) => x.body);
+const modelsAsked = () =>
+  seen.filter((x) => x.url === '/api/voice/server/models').map((x) => x.body);
+
+const WHISPER = 'openai/whisper-large-v3-turbo';
+const GOOGLE_SAVED = {
+  source: 'google',
+  model: 'gemini-3.8-flash-tts',
+  voice: 'Kore',
+  transcriptionSource: 'openrouter',
+  transcriptionModel: 'x-ai/grok-stt-1.0',
+};
+
+describe('the Voice section — each part has its source, and a server the person runs (#1048) @cap:parler-a-un-agent/ecran', () => {
+  // State 1 of the mockup.
+  it('1 · each part shows its source and, always, whether it answers', async () => {
+    answers.state = () =>
+      Response.json({ setting: GOOGLE_SAVED, sources: [OPENROUTER, GOOGLE], transcription: EAR });
+    answers.check = (body) => {
+      const part = (body as { part: string }).part;
+      return Response.json(
+        part === 'listening'
+          ? {
+              part,
+              state: 'answers',
+              model: 'x-ai/grok-stt-1.0',
+              latencyMs: 620,
+              heard: 'OK.',
+              checkedAt: at(10, 42),
+            }
+          : {
+              part,
+              state: 'answers',
+              model: 'gemini-3.8-flash-tts',
+              latencyMs: 900,
+              checkedAt: at(10, 42),
+            },
+      );
+    };
+    await render();
+    await pause(50);
+    expect(q('voice-source-google')!.getAttribute('aria-pressed')).toBe('true');
+    expect(q('voice-ear-source-openrouter')!.getAttribute('aria-pressed')).toBe('true');
+    expect(q('voice-ear-source-openai-compatible')!.textContent).toBe('Local server');
+    expect(q('voice-source-openai-compatible')!.textContent).toBe('Local server');
+    // The saved parts are checked as they are stored: the request names only the part.
+    expect(checksSent()).toEqual([{ part: 'speaking' }, { part: 'listening' }]);
+    expect(text('voice-listening-status')).toBe(
+      'Answers. x-ai/grok-stt-1.0 wrote back the sample “OK.” in 0.62 s. Checked at 10:42.Check again',
+    );
+    expect(text('voice-speaking-status')).toBe(
+      'Answers. gemini-3.8-flash-tts spoke the sample. Checked at 10:42.Check again',
+    );
+    // Check again tries for real (`fresh`).
+    await click(q('voice-listening-check-again'));
+    expect(checksSent().at(-1)).toEqual({ part: 'listening', fresh: true });
+  });
+
+  // State 2. Mutation verified: the listening part of the check request
+  // dropped (the stored ear checked instead of the one on screen) → red.
+  it('2 · listening on a local server that answers: its models, the trial on the address typed, and Save sends it', async () => {
+    answers.state = () =>
+      Response.json({ setting: GOOGLE_SAVED, sources: [OPENROUTER, GOOGLE], transcription: EAR });
+    answers.models = () =>
+      Response.json({ state: 'listed', models: [{ id: WHISPER }], listedAt: at(10, 43) });
+    answers.check = (body) => {
+      const b = body as { part: string; listening?: unknown };
+      return Response.json(
+        b.part === 'listening' && b.listening
+          ? {
+              part: 'listening',
+              state: 'answers',
+              model: WHISPER,
+              latencyMs: 210,
+              heard: 'OK.',
+              checkedAt: at(10, 43),
+            }
+          : { part: b.part, state: 'answers', model: 'm', latencyMs: 1, checkedAt: at(10, 40) },
+      );
+    };
+    await render();
+    await click(q('voice-ear-source-openai-compatible'));
+    expect(text('voice-transcription-hint')).toBe(
+      'A transcription server you run yourself, on this computer or your network. Nodal sends it the audio at the standard address, /audio/transcriptions. Nodal does not start or stop it.',
+    );
+    expect(q<HTMLInputElement>('voice-transcription-key')!.placeholder).toBe(
+      'Only if your server asks for one',
+    );
+    await type('voice-transcription-address', 'http://127.0.0.1:8786/v1/');
+    await pause();
+    expect(modelsAsked()).toEqual([
+      { part: 'listening', server: { address: 'http://127.0.0.1:8786/v1', key: 'none' } },
+    ]);
+    expect(optionTexts('voice-transcription')).toEqual(['Choose a model', WHISPER]);
+    expect(text('voice-transcription-listed')).toBe(
+      'Models listed by the server at 127.0.0.1:8786, read just now.',
+    );
+    expect(text('voice-listening-status')).toBe(
+      'Not checked yet. Choose a model to try the sample “OK.” on it.',
+    );
+    await choose('voice-transcription', WHISPER);
+    await pause();
+    expect(checksSent().at(-1)).toEqual({
+      part: 'listening',
+      listening: {
+        transcriptionSource: 'openai-compatible',
+        transcriptionModel: WHISPER,
+        transcriptionServer: { address: 'http://127.0.0.1:8786/v1', key: 'none' },
+      },
+    });
+    expect(text('voice-listening-status')).toBe(
+      `Answers. ${WHISPER} wrote back the sample “OK.” in 0.21 s. Checked at 10:43.Check again`,
+    );
+    expect(text('voice-unsaved')).toBe(
+      'Unsaved change: listening moves from OpenRouter to the local server.',
+    );
+    await act(async () => {
+      q<HTMLFormElement>('voice-section')!.requestSubmit();
+    });
+    await act(async () => {});
+    expect(seen.filter((x) => x.method === 'PUT').map((x) => x.body)).toEqual([
+      {
+        setting: {
+          source: 'google',
+          model: 'gemini-3.8-flash-tts',
+          voice: 'Kore',
+          transcriptionSource: 'openai-compatible',
+          transcriptionModel: WHISPER,
+          transcriptionServer: { address: 'http://127.0.0.1:8786/v1', key: 'none' },
+        },
+      },
+    ]);
+  });
+
+  // State 3.
+  it('3 · the local server does not answer: the saved model, the reason with its address, and that Nodal will not switch', async () => {
+    answers.state = () =>
+      Response.json({
+        setting: {
+          ...GOOGLE_SAVED,
+          transcriptionSource: 'openai-compatible',
+          transcriptionModel: WHISPER,
+          transcriptionServer: { address: 'http://127.0.0.1:8786/v1', hasKey: false },
+        },
+        sources: [OPENROUTER, GOOGLE],
+        transcription: EAR,
+      });
+    answers.models = () =>
+      Response.json({
+        state: 'unavailable',
+        code: 'speech_unreachable',
+        detail: 'http://127.0.0.1:8786/v1/models: list models: no answer (ECONNREFUSED)',
+      });
+    answers.check = (body) => {
+      const part = (body as { part: string }).part;
+      return Response.json(
+        part === 'listening'
+          ? {
+              part,
+              state: 'not_answering',
+              code: 'speech_unreachable',
+              detail: 'http://127.0.0.1:8786/v1/models: list models: no answer (ECONNREFUSED)',
+              model: WHISPER,
+              checkedAt: at(10, 51),
+            }
+          : {
+              part,
+              state: 'answers',
+              model: 'gemini-3.8-flash-tts',
+              latencyMs: 1,
+              checkedAt: at(10, 51),
+            },
+      );
+    };
+    await render();
+    await pause();
+    expect(q<HTMLSelectElement>('voice-transcription')!.value).toBe(WHISPER);
+    expect(text('voice-transcription-listed')).toBe(
+      'The saved model. The server could not list its models: it does not answer.',
+    );
+    expect(text('voice-listening-status')).toBe(
+      'Not answering. Nothing listens at 127.0.0.1:8786 (connection refused). Checked at 10:51.' +
+        'Start your transcription server, then check again. Until it answers, what you say to Nodal gets this same error back. Nodal does not switch to OpenRouter on its own.' +
+        'Check again',
+    );
+    expect(q('voice-listening-status')!.getAttribute('role')).toBe('alert');
+  });
+
+  // State 4.
+  it('4 · a server that lists no models: the name is typed, and nothing is tried before it is', async () => {
+    answers.state = () =>
+      Response.json({ setting: GOOGLE_SAVED, sources: [OPENROUTER, GOOGLE], transcription: EAR });
+    answers.models = () => Response.json({ state: 'listed', models: [], listedAt: at(11, 0) });
+    await render();
+    await click(q('voice-ear-source-openai-compatible'));
+    await type('voice-transcription-address', 'http://192.168.1.20:9000/v1');
+    await pause();
+    expect(q('voice-transcription')).toBeNull();
+    expect(q<HTMLInputElement>('voice-transcription-typed')!.placeholder).toBe(
+      'The model name your server expects',
+    );
+    expect(text('voice-transcription-listed')).toBe(
+      'The server at 192.168.1.20:9000 answers, but lists no models at /models. Type the name it expects; Nodal checks it on the sample when you save.',
+    );
+    expect(text('voice-listening-status')).toBe(
+      'Not checked yet. Choose a model to try the sample “OK.” on it.',
+    );
+    expect(checksSent().filter((b) => (b as { listening?: unknown }).listening)).toEqual([]);
+    expect(text('voice-unsaved')).toBe(
+      'Unsaved change: listening moves from OpenRouter to the server at 192.168.1.20:9000.',
+    );
+    await type('voice-transcription-typed', 'my-whisper');
+    await pause();
+    expect(checksSent().at(-1)).toMatchObject({
+      part: 'listening',
+      listening: { transcriptionModel: 'my-whisper' },
+    });
+  });
+
+  // State 5. Mutation verified: `heard` not read from the refusal → red.
+  it('5 · Save refused: the sample came back as other words, quoted, and nothing changed', async () => {
+    answers.state = () =>
+      Response.json({ setting: GOOGLE_SAVED, sources: [OPENROUTER, GOOGLE], transcription: EAR });
+    answers.models = () =>
+      Response.json({
+        state: 'listed',
+        models: [{ id: WHISPER }, { id: 'openai/whisper-tiny' }],
+        listedAt: at(10, 44),
+      });
+    answers.put = () =>
+      Response.json(
+        {
+          error: 'transcription_not_faithful',
+          source: 'openai-compatible',
+          detail: 'openai/whisper-tiny wrote "Thank you." for the voice saying "OK."',
+          heard: 'Thank you.',
+        },
+        { status: 409 },
+      );
+    await render();
+    await click(q('voice-ear-source-openai-compatible'));
+    await type('voice-transcription-address', 'http://127.0.0.1:8786/v1');
+    await pause();
+    await choose('voice-transcription', 'openai/whisper-tiny');
+    await act(async () => {
+      q<HTMLFormElement>('voice-section')!.requestSubmit();
+    });
+    await act(async () => {});
+    expect(text('voice-save-error')).toBe(
+      'Not saved. The sample “OK.”, spoken by your voice, came back from openai/whisper-tiny as “Thank you.”',
+    );
+    expect(text('voice-save-error-help')).toBe(
+      'A model that does not write back a known sample would get what you say wrong too. Choose another model, then save again. Nothing changed: listening stays on OpenRouter.',
+    );
+    // Still unsaved: the form stays.
+    expect(container.textContent).toContain('Save');
+  });
+
+  // State 6. Mutation verified: the sample sent without the server (the
+  // `speechServer` of the input dropped) → red.
+  it('6 · speaking on a local server: its models, a typed voice, a sample through it, and its state', async () => {
+    answers.state = () =>
+      Response.json({ setting: GOOGLE_SAVED, sources: [OPENROUTER, GOOGLE], transcription: EAR });
+    answers.models = () =>
+      Response.json({
+        state: 'listed',
+        models: [{ id: 'qwen3-tts-12hz-1.7b-customvoice' }],
+        listedAt: at(10, 58),
+      });
+    answers.check = (body) => {
+      const b = body as { part: string };
+      return Response.json(
+        b.part === 'speaking'
+          ? {
+              part: 'speaking',
+              state: 'answers',
+              model: 'qwen3-tts-12hz-1.7b-customvoice',
+              latencyMs: 300,
+              checkedAt: at(10, 58),
+            }
+          : {
+              part: 'listening',
+              state: 'answers',
+              model: 'x-ai/grok-stt-1.0',
+              latencyMs: 210,
+              heard: 'OK.',
+              checkedAt: at(10, 58),
+            },
+      );
+    };
+    await render();
+    await click(q('voice-source-openai-compatible'));
+    expect(text('voice-speech-hint')).toBe(
+      'A speech server you run yourself. Nodal sends it the reply at the standard address, /audio/speech. Nodal does not start or stop it.',
+    );
+    await type('voice-speech-address', 'http://127.0.0.1:8880/v1');
+    await type('voice-speech-key', 'sk-voice');
+    await pause();
+    expect(modelsAsked().at(-1)).toEqual({
+      part: 'speaking',
+      server: { address: 'http://127.0.0.1:8880/v1', key: { value: 'sk-voice' } },
+    });
+    expect(text('voice-listed')).toBe(
+      "Models listed by the server at 127.0.0.1:8880. Servers do not list their voices in a standard way: type the name your server's documentation gives.",
+    );
+    await choose('voice-model', 'qwen3-tts-12hz-1.7b-customvoice');
+    await type('voice-voice-typed', 'Vivian');
+    await pause();
+    expect(text('voice-speaking-status')).toBe(
+      'Answers. qwen3-tts-12hz-1.7b-customvoice spoke the sample. Checked at 10:58.Check again',
+    );
+    await click(q('voice-sample'));
+    expect(seen.find((x) => x.url === '/api/voice/sample')!.body).toEqual({
+      text: 'Hello, this is how I sound when I answer you.',
+      setting: {
+        source: 'openai-compatible',
+        model: 'qwen3-tts-12hz-1.7b-customvoice',
+        voice: 'Vivian',
+        speechServer: { address: 'http://127.0.0.1:8880/v1', key: { value: 'sk-voice' } },
+      },
+    });
+    // The ear's trial is said by the voice on screen, now that it is complete.
+    expect(
+      checksSent().some(
+        (b) =>
+          (b as { part: string }).part === 'listening' &&
+          (b as { speaking?: { source: string } }).speaking?.source === 'openai-compatible',
+      ),
+    ).toBe(true);
+  });
+
+  it('a saved key is never shown: the field says one is kept, and an untouched field keeps it at the same address only', async () => {
+    answers.state = () =>
+      Response.json({
+        setting: {
+          ...GOOGLE_SAVED,
+          transcriptionSource: 'openai-compatible',
+          transcriptionModel: WHISPER,
+          transcriptionServer: { address: 'http://127.0.0.1:8786/v1', hasKey: true },
+        },
+        sources: [OPENROUTER, GOOGLE],
+        transcription: EAR,
+      });
+    answers.models = () =>
+      Response.json({ state: 'listed', models: [{ id: WHISPER }], listedAt: at(10, 0) });
+    await render();
+    await pause();
+    const key = q<HTMLInputElement>('voice-transcription-key')!;
+    expect(key.value).toBe('');
+    expect(key.placeholder).toBe('A key is saved. Type a new one to replace it');
+    expect(modelsAsked()[0]).toEqual({
+      part: 'listening',
+      server: { address: 'http://127.0.0.1:8786/v1', key: 'keep' },
+    });
+    await type('voice-transcription-address', 'http://127.0.0.1:9999/v1');
+    await pause();
+    expect(modelsAsked().at(-1)).toEqual({
+      part: 'listening',
+      server: { address: 'http://127.0.0.1:9999/v1', key: 'none' },
+    });
+    expect(q<HTMLInputElement>('voice-transcription-key')!.placeholder).toBe(
+      'Only if your server asks for one',
     );
   });
 });

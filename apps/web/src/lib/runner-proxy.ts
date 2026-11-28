@@ -14,6 +14,7 @@
 // Ce qu'elle ne fait pas : décider. Un code d'erreur du runner n'est ni
 // traduit ni avalé ; c'est l'écran qui le dit, comme le dirait un module.
 
+import { hasRequestBody } from '@nodal-agents/auth';
 import { requireUserWithEntity } from '@/lib/server.ts';
 import { env } from '@/lib/env.ts';
 
@@ -77,8 +78,13 @@ export async function proxyToRunner(
   if (opts.body) {
     headers['Content-Type'] = 'application/json';
     body = JSON.stringify(await opts.body(session));
-  } else if (opts.method !== 'GET' && req.body) {
-    headers['Content-Type'] = req.headers.get('content-type') ?? 'application/octet-stream';
+  } else if (opts.method !== 'GET' && req.body && hasRequestBody(req.headers)) {
+    // Le corps reçu passe avec le type que le navigateur a déclaré, jamais un
+    // type inventé : le runner n'accepte un corps que du type que sa route
+    // prend, et un corps sans type y est refusé (415). Une requête sans corps
+    // (la fin d'un tour, une annulation) part sans corps.
+    const type = req.headers.get('content-type');
+    if (type !== null) headers['Content-Type'] = type;
     body = req.body;
     init.duplex = 'half';
   }

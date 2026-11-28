@@ -160,6 +160,9 @@ const testEnv: RunnerEnv = {
   NODALAI_APPROVAL_GRACE_MS: 0,
 };
 
+/** What the dashboard's server side sends with every runner call: the install's secret. */
+const DASHBOARD_PROOF = { Authorization: `Bearer ${testEnv.WORKER_SECRET}` };
+
 let db: TestDb;
 let seed: Awaited<ReturnType<typeof seedMinimal>>;
 /** Un second espace, sur la même base : il ne doit rien entendre du premier. */
@@ -238,7 +241,8 @@ interface Listener {
 async function listen(
   app: ReturnType<typeof createApp>,
   query: Record<string, string>,
-  headers: Record<string, string> = {},
+  // Unless a test names its caller, the dashboard's server side, with the install's secret.
+  headers: Record<string, string> = DASHBOARD_PROOF,
 ): Promise<Listener> {
   const ctl = new AbortController();
   opened.push(ctl);
@@ -340,7 +344,7 @@ describe('le flux poussé des événements de job (#944) @cap:suivre-execution/m
     const answered = await app.fetch(
       new Request('http://localhost/api/approve', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...DASHBOARD_PROOF },
         body: JSON.stringify({
           approvalRequestId: row!.id,
           decision: 'approve',
@@ -621,7 +625,7 @@ describe('le flux poussé des événements de job (#944) @cap:suivre-execution/m
     const back = await listen(
       app,
       { entityId: seed.entityId, conversationId: conv },
-      { 'Last-Event-ID': lastSeen },
+      { 'Last-Event-ID': lastSeen, ...DASHBOARD_PROOF },
     );
     await waitFor(() => back.events.some((e) => e.event === 'ready'));
     expect(back.events.map((e) => e.event)).toEqual(['job.failed', 'ready']);
@@ -639,7 +643,7 @@ describe('le flux poussé des événements de job (#944) @cap:suivre-execution/m
     const stale = await listen(
       app,
       { entityId: seed.entityId, conversationId: conv },
-      { 'Last-Event-ID': 'deadbeef0000:3' },
+      { 'Last-Event-ID': 'deadbeef0000:3', ...DASHBOARD_PROOF },
     );
     expect(stale.events).toEqual([
       expect.objectContaining({
@@ -659,7 +663,14 @@ describe('le flux poussé des événements de job (#944) @cap:suivre-execution/m
     await failJob(db as never, job, 'no_progress_detected');
     await settle();
     expect(intruder.jobEvents()).toEqual([]);
-    const back = await listen(app, { entityId: other.entityId }, { 'Last-Event-ID': cursor });
+    const back = await listen(
+      app,
+      { entityId: other.entityId },
+      {
+        'Last-Event-ID': cursor,
+        ...DASHBOARD_PROOF,
+      },
+    );
     await waitFor(() => back.events.some((e) => e.event === 'ready'));
     expect(back.events.map((e) => e.event)).toEqual(['ready']);
     // Et une conversation d'un autre espace ne s'écoute pas.
@@ -675,9 +686,9 @@ describe('GET /api/events — la garde (#944) @cap:se-connecter/moteur', () => {
       ...testEnv,
       AUTH_MODE: 'local-auth',
     });
-    const anonymous = await listen(app, { entityId: seed.entityId });
+    const anonymous = await listen(app, { entityId: seed.entityId }, {});
     expect(anonymous.res.status).toBe(401);
-    expect(await anonymous.res.json()).toEqual({ error: 'AUTH_REQUIRED' });
+    expect(await anonymous.res.json()).toEqual({ error: 'proof_required' });
     const trusted = await listen(
       app,
       { entityId: seed.entityId },
@@ -697,7 +708,7 @@ describe('GET /api/events — la garde (#944) @cap:se-connecter/moteur', () => {
       }),
       { ...testEnv, AUTH_MODE: 'bearer-token', BEARER_TOKEN: 'token' },
     );
-    expect((await listen(app, { entityId: seed.entityId })).res.status).toBe(401);
+    expect((await listen(app, { entityId: seed.entityId }, {})).res.status).toBe(401);
     const foreign = await listen(
       app,
       { entityId: seed.entityId },

@@ -33,8 +33,12 @@ const PrintRecordSchema = z.object({
   id: z.string().min(1),
   receivedAt: z.string(),
   receivedAtMs: z.number(),
-  /** `pending` : la demande attend ; `replaced` : une demande plus récente l'a remplacée (jamais confirmée). */
-  status: z.enum(['pending', 'replaced']),
+  /**
+   * `pending` : la demande attend le propriétaire ; `replaced` : une demande plus
+   * récente l'a remplacée (jamais confirmée) ; `submitted` : une imprimante qui
+   * imprime (`printMs`) l'a reçue comme un travail, qui avance seul (`jobState`).
+   */
+  status: z.enum(['pending', 'replaced', 'submitted']),
   replacedBy: z.string().nullable(),
   source: z.discriminatedUnion('kind', [
     z.object({ kind: z.literal('file'), path: z.string() }),
@@ -48,6 +52,12 @@ const PrintRecordSchema = z.object({
   images: z.array(z.object({ origin: z.string() })).nullable(),
   /** Les arguments de l'appel, tels que le serveur les a reçus. */
   arguments: z.record(z.string(), z.unknown()),
+  /**
+   * La durée d'impression d'un travail soumis (#1071) ; null : une demande qui
+   * attend le propriétaire et n'imprime jamais. Absent des enregistrements
+   * écrits avant ce champ : null.
+   */
+  printMs: z.number().positive().nullable().default(null),
 });
 
 export type PrintRecord = z.infer<typeof PrintRecordSchema>;
@@ -91,6 +101,8 @@ export interface NewRecord {
   readonly pagesBasis: PrintRecord['pagesBasis'];
   readonly images: PrintRecord['images'];
   readonly arguments: Record<string, unknown>;
+  /** Une imprimante qui imprime : la durée du travail. Absent ou null : la demande attend. */
+  readonly printMs?: number | null;
 }
 
 function writeJsonAtomically(path: string, value: unknown): void {
@@ -107,7 +119,7 @@ export function writeRecord(dir: string, n: NewRecord, nowMs: number = Date.now(
     id,
     receivedAt: new Date(nowMs).toISOString(),
     receivedAtMs: nowMs,
-    status: 'pending',
+    status: n.printMs != null ? 'submitted' : 'pending',
     replacedBy: null,
     source: n.source,
     bytes: { size: n.bytes.length, sha256: sha256Hex(n.bytes) },
@@ -115,6 +127,7 @@ export function writeRecord(dir: string, n: NewRecord, nowMs: number = Date.now(
     pagesBasis: n.pagesBasis,
     images: n.images,
     arguments: n.arguments,
+    printMs: n.printMs ?? null,
   };
   writeFileSync(bytesPath(dir, id), n.bytes);
   writeJsonAtomically(jsonPath(dir, id), record);
@@ -158,6 +171,25 @@ export function readRecord(dir: string, id: string): RecordLookup {
       reason: `${id}.bytes does not match the size and sha-256 its record declares`,
     };
   return { kind: 'found', read: { record: parsed, bytes } };
+}
+
+/** L'état d'un travail soumis à un instant : le temps seul le fait avancer, rien ne le pilote. */
+export type JobState = 'accepted' | 'printing' | 'completed';
+
+/**
+ * Où en est le travail `record` à `nowMs` (#1071) : accepté le premier quart de
+ * sa durée, en impression jusqu'à sa fin, terminé ensuite, toutes ses pages
+ * sorties. Null pour une demande qui n'est pas un travail (elle attend, ou a été
+ * remplacée). Pur : le serveur et le juge le calculent pareil, au même instant.
+ */
+export function jobState(
+  record: PrintRecord,
+  nowMs: number,
+): { readonly state: JobState; readonly pagesOut: number | null } | null {
+  if (record.status !== 'submitted' || record.printMs === null) return null;
+  const elapsed = nowMs - record.receivedAtMs;
+  if (elapsed >= record.printMs) return { state: 'completed', pagesOut: record.pages };
+  return { state: elapsed < record.printMs / 4 ? 'accepted' : 'printing', pagesOut: 0 };
 }
 
 /** Marque la demande `id` remplacée par `by`. Rend false quand elle n'existe pas ou n'attend plus. */

@@ -63,6 +63,16 @@ afterEach(() => {
 });
 
 describe('Run budget, à l’écran @cap:suivre-execution/ecran', () => {
+  it('dit sous le réglage la borne qu’une session Claude Code ou Codex garde sans limite de temps', async () => {
+    const { CLI_SESSION_HOURS_WITHOUT_TIME_LIMIT } = await import('@nodal-agents/shared');
+    await render({ maxRunCostUsd: 2, maxRunHours: 0, isOwner: true });
+    const help = container.querySelector('[data-testid="run-budget-help"]')!.textContent ?? '';
+    // Le nombre que le runner applique (cliSessionTimeLimitMs), pas une copie.
+    expect(help).toContain(
+      `a Claude Code or Codex session still stops after ${CLI_SESSION_HOURS_WITHOUT_TIME_LIMIT} h`,
+    );
+  });
+
   it('dit ce que font les plafonds enregistrés, et « aucun » pour zéro', async () => {
     await render({ maxRunCostUsd: 2, maxRunHours: 0, isOwner: true });
     expect(sentence()).toBe(

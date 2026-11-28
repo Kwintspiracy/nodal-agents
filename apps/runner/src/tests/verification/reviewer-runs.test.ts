@@ -31,6 +31,7 @@ import {
 import { REDACTED_TEXT } from '@nodal-agents/shared';
 import {
   anchorJobId,
+  MAX_TAIL_CHARS,
   recordReviewerVerificationRuns,
   reviewerVerificationRecord,
   reviewCanonicalKey,
@@ -134,6 +135,7 @@ async function recordCommand(
     toolName: 'run_command',
     toolInput: { command },
     toolOutput: JSON.stringify(output),
+    outcome: 'done',
     durationMs,
     turn: 1,
   });
@@ -232,6 +234,7 @@ describe('recordReviewerVerificationRuns @cap:verifier-un-livrable/moteur', () =
       toolName: 'run_command',
       toolInput: { command: 'rm -rf /' },
       toolOutput: JSON.stringify({ outcome: 'blocked', error: 'command_not_allowed' }),
+      outcome: 'refused',
       turn: 1,
     });
     // Et une lecture de fichier, qui n'est pas une vérification.
@@ -241,6 +244,7 @@ describe('recordReviewerVerificationRuns @cap:verifier-un-livrable/moteur', () =
       toolName: 'file_read',
       toolInput: { path: 'app.js' },
       toolOutput: JSON.stringify({ content: 'const a = 1;' }),
+      outcome: 'done',
       turn: 1,
     });
 
@@ -257,6 +261,19 @@ describe('recordReviewerVerificationRuns @cap:verifier-un-livrable/moteur', () =
     const rows = await rowsFor(s.parentJobId);
     expect(rows[0]!.stdoutTail).toContain(REDACTED_TEXT);
     expect(rows[0]!.stdoutTail).not.toContain(JETON);
+  });
+
+  it('masque AVANT de garder la fin : une clé à cheval sur la coupe ne laisse pas sa fin lisible', async () => {
+    const s = await seed();
+    // La fin gardée commence 20 signes avant la fin de la clé : couper d'abord
+    // laisserait ces 20 signes, trop courts pour être reconnus.
+    const apres = ` ${'y'.repeat(MAX_TAIL_CHARS - 21)}`;
+    await recordCommand(s, 'node scripts/check.js', shellOutput({ stdout: `${JETON}${apres}` }));
+
+    await recordReviewerVerificationRuns(db, s.reviewerJobId);
+    const tail = (await rowsFor(s.parentJobId))[0]!.stdoutTail ?? '';
+    expect(tail.endsWith(apres)).toBe(true);
+    expect(tail).not.toContain(JETON.slice(-20));
   });
 
   it('un second verdict ne double pas la trace — la dernière lecture remplace la première', async () => {

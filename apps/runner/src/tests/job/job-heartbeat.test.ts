@@ -30,6 +30,7 @@ import { join } from 'node:path';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import {
+  and,
   eq,
   inArray,
   agentJobs,
@@ -50,9 +51,38 @@ import type { RunnerDeps } from '../../deps.ts';
 import { executeJob } from '../../job/execute.ts';
 import type { ExecuteJobResult } from '../../job/execute.ts';
 import { holdJobHeartbeat, heldJobIds, RUNNER_HEARTBEAT_MS } from '../../job/heartbeat.ts';
-import { reclaimJobsOfDeadRunners, RUNNER_LIVENESS_WINDOW_MS } from '../../cron/reclaim-jobs.ts';
-import { resetOrphanedJobs } from '../../cron/reset-orphans.ts';
+import { reclaimJobsOfDeadRunners } from '../../cron/reclaim-jobs.ts';
+import {
+  failStalePendingJobs,
+  findPendingJobsToRecover,
+  resetOrphanedJobs,
+} from '../../cron/reset-orphans.ts';
 import { claimJob } from '../../job/state.ts';
+import { JOB_LIVENESS, createPresence, isRunInFlight } from '../../job/liveness.ts';
+import { runnerInstanceId } from '../../runner-identity.ts';
+
+/** La fenêtre de silence d'une instance : deux battements et une marge. */
+const RUNNER_LIVENESS_WINDOW_MS = JOB_LIVENESS.silentInstanceMs;
+
+/**
+ * La présence de CE processus, son horloge monotone remplacée par l'horloge
+ * simulée du test : « vu inchangé assez longtemps » avance avec les minuteurs.
+ */
+function presenceSimulee() {
+  return createPresence({
+    instanceId: runnerInstanceId,
+    holds: isRunInFlight,
+    monotonicNow: () => Date.now(),
+  });
+}
+
+/** Deux passages du faucheur, séparés de quoi juger une ligne immobile. */
+async function faucherDeuxFois() {
+  const presence = presenceSimulee();
+  await reclaimJobsOfDeadRunners(db, { presence });
+  await vi.advanceTimersByTimeAsync(JOB_LIVENESS.stuckRowMs);
+  return reclaimJobsOfDeadRunners(db, { presence });
+}
 
 const { client, preparation, tourCli } = vi.hoisted(() => ({
   client: { current: null as RunnerDeps['llmClient'] | null },
@@ -121,6 +151,16 @@ vi.mock('../../cli-runtime/provider.ts', async (importOriginal) => {
 
 /** Un appel d'outil de 59 s : sous le battement d'une seconde. */
 const APPEL_MS = RUNNER_HEARTBEAT_MS - 1_000;
+/** Les codes qu'un faucheur, et lui seul, écrit sur un job qu'il échoue. */
+const CODES_DE_FAUCHEUR = [
+  'runner_restarted',
+  'restart_resume_limit',
+  'restart_after_side_effect',
+  'runtime_not_resumable',
+  'orphan_job_reset',
+  'stale_pending_abandoned',
+];
+
 /** Le pas de l'horloge simulée, et du passage des faucheurs. */
 const PAS_MS = 10_000;
 
@@ -153,7 +193,7 @@ type Tour =
   | 'fin';
 
 /** Un modèle scripté, tour par tour ; `'fin'` rend `return_result`. */
-function modele(tours: Tour[]): RunnerDeps['llmClient'] {
+function modele(tours: Tour[], vus?: unknown[]): RunnerDeps['llmClient'] {
   let i = 0;
   const usage = {
     inputTokens: { total: 10, noCache: 10, cacheRead: undefined, cacheWrite: undefined },
@@ -162,7 +202,9 @@ function modele(tours: Tour[]): RunnerDeps['llmClient'] {
   const mock = new MockLanguageModelV3({
     provider: 'mock',
     modelId: 'mock',
-    doGenerate: async () => {
+    doGenerate: async (options) => {
+      // Ce que le modèle a reçu, pour les cas qui le lisent (#1204).
+      vus?.push(options.prompt);
       const tour = tours[i] ?? 'fin';
       i += 1;
       if (tour === 'fin') {
@@ -288,6 +330,8 @@ async function tourneSousLesFaucheurs(
   run: Promise<ExecuteJobResult>,
   surveilles: () => Promise<string[]>,
   maxReelMs = 50_000,
+  /** Un saut de l'horloge murale, appliqué au troisième pas (#1204). */
+  sautMs = 0,
 ): Promise<Passage> {
   let issue: ExecuteJobResult | undefined;
   let erreur: unknown;
@@ -309,10 +353,21 @@ async function tourneSousLesFaucheurs(
   let fauches = 0;
   const repris: string[] = [];
   let plusVieux = 0;
+  let pas = 0;
+  let saute = 0;
+  // L'horloge « monotone » des faucheurs est ici l'horloge simulée : une ligne
+  // qu'aucun run de ce processus ne tient serait jugée immobile en quelques
+  // pas. Seul le registre des runs en cours (`enterRun`) protège le job.
+  const presence = presenceSimulee();
   try {
     while (!fini && performance.now() - debutReel < maxReelMs) {
       await laisserLaBaseRepondre();
       await vi.advanceTimersByTimeAsync(PAS_MS);
+      pas += 1;
+      if (sautMs !== 0 && pas === 3) {
+        vi.setSystemTime(Date.now() + sautMs);
+        saute = sautMs;
+      }
       const ids = await surveilles();
       if (ids.length > 0) {
         const lignes = await db
@@ -321,13 +376,25 @@ async function tourneSousLesFaucheurs(
           .where(inArray(agentJobs.id, ids));
         for (const l of lignes) {
           if (l.status !== 'processing' || !l.updatedAt) continue;
-          plusVieux = Math.max(plusVieux, Date.now() - l.updatedAt.getTime());
+          plusVieux = Math.max(plusVieux, Date.now() - saute - l.updatedAt.getTime());
         }
       }
-      const r = await reclaimJobsOfDeadRunners(db);
-      fauches += r.reclaimed;
-      repris.push(...r.resumedJobIds);
-      fauches += await resetOrphanedJobs(db);
+      // Tous les faucheurs d'un tick. Ce qui compte, c'est ce qu'ils font aux
+      // lignes SURVEILLÉES : d'autres lignes de ce fichier, laissées sans
+      // détenteur par les cas précédents, sont reprises à bon droit.
+      const r = await reclaimJobsOfDeadRunners(db, { presence });
+      await resetOrphanedJobs(db, { presence });
+      await failStalePendingJobs(db, { presence });
+      const relances = await findPendingJobsToRecover(db, { presence });
+      const vues = new Set(ids);
+      repris.push(...[...r.resumedJobIds, ...relances].filter((id) => vues.has(id)));
+      if (ids.length > 0) {
+        const fauchees = await db
+          .select({ id: agentJobs.id })
+          .from(agentJobs)
+          .where(and(inArray(agentJobs.id, ids), inArray(agentJobs.error, CODES_DE_FAUCHEUR)));
+        fauches = Math.max(fauches, fauchees.length);
+      }
     }
   } finally {
     avertir.mockRestore();
@@ -335,7 +402,7 @@ async function tourneSousLesFaucheurs(
   }
   if (erreur) throw erreur;
   if (!issue) throw new Error(`run still going after ${String(maxReelMs)} ms of real time`);
-  return { issue, fauches, repris, plusVieux, dureeMs: Date.now() - debut };
+  return { issue, fauches, repris, plusVieux, dureeMs: Date.now() - saute - debut };
 }
 
 async function statut(jobId: string) {
@@ -500,7 +567,7 @@ describe('le battement est rendu quand le run rend la main (#565) @cap:organiser
       .from(agentJobs)
       .where(eq(agentJobs.id, jobId));
     const avertir = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const r = await reclaimJobsOfDeadRunners(db).finally(() => avertir.mockRestore());
+    const r = await faucherDeuxFois().finally(() => avertir.mockRestore());
     return {
       touche: apres!.updatedAt!.getTime() !== avant!.updatedAt!.getTime(),
       fauche: r.reclaimed + r.resumedJobIds.filter((id) => id === jobId).length,
@@ -678,7 +745,7 @@ describe('le battement d’un job, de la prise au lâcher (#565) @cap:organiser-
       }
       expect(await age(jobId)).toBeGreaterThan(RUNNER_LIVENESS_WINDOW_MS);
       const avertir = vi.spyOn(console, 'warn').mockImplementation(() => {});
-      const r = await reclaimJobsOfDeadRunners(db).finally(() => avertir.mockRestore());
+      const r = await faucherDeuxFois().finally(() => avertir.mockRestore());
       expect(r.reclaimed).toBe(1);
       expect(await statut(jobId)).toEqual({ status: 'failed', error: 'runner_restarted' });
     } finally {
@@ -726,5 +793,185 @@ describe('le battement d’un job, de la prise au lâcher (#565) @cap:organiser-
     expect(await age(annule)).toBeGreaterThanOrEqual(3 * RUNNER_HEARTBEAT_MS);
     lacheS();
     lacheA();
+  });
+});
+
+// #1204 — un job est vivant tant que l'instance qui le tient tourne. Avant,
+// le faucheur comparait `updated_at` à l'horloge murale : quand elle sautait
+// (un portable qui dort, un recalage NTP), il reprenait les jobs que CE
+// processus exécutait, et tuait leurs commandes.
+describe('l’horloge murale saute pendant que ce processus exécute le job (#1204) @cap:parler-a-un-agent/moteur', () => {
+  const DEUX_HEURES = 2 * 3_600_000;
+
+  it('deux heures en avant pendant une chaîne d’outils : ni repris ni échoué, il finit', async () => {
+    const jobId = await nouveauJob(seed.agentId);
+    const run = executeJob(jobId as JobId, deps(modele([chaine('saut', 3), 'fin'])));
+
+    const p = await tourneSousLesFaucheurs(run, async () => [jobId], 50_000, DEUX_HEURES);
+
+    expect({ fauches: p.fauches, repris: p.repris }).toEqual({ fauches: 0, repris: [] });
+    expect(p.issue.status).toBe('completed');
+    expect(await statut(jobId)).toEqual({ status: 'completed', error: null });
+    const [l] = await db
+      .select({ claimedBy: agentJobs.claimedBy, observe: agentJobs.sweeperObserved })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, jobId));
+    expect(l).toEqual({ claimedBy: runnerInstanceId, observe: null });
+  });
+
+  it('un job du runtime CLI, le même saut pendant son tour : il finit', async () => {
+    tourCli.ms = 5 * 60_000;
+    const dossier = mkdtempSync(join(tmpdir(), 'hb-cli-saut-'));
+    const [cli] = await db
+      .insert(agents)
+      .values({
+        entityId: seed.entityId,
+        name: 'CLI saut',
+        slug: `cli-saut-${String(Date.now())}`,
+        personality: 'cli',
+        llmKeyId: seed.llmKeyId,
+        role: 'agent',
+        systemAgent: true,
+        runtime: 'claude-code',
+        cliPermissions: { mode: 'read' },
+      })
+      .returning({ id: agents.id });
+    await db
+      .insert(agentWorkspaces)
+      .values({ agentId: cli!.id, label: 'Travail', path: dossier, position: 0 });
+
+    const jobId = await nouveauJob(cli!.id);
+    const run = executeJob(jobId as JobId, deps(modele([])));
+
+    const p = await tourneSousLesFaucheurs(run, async () => [jobId], 50_000, DEUX_HEURES);
+
+    expect({ fauches: p.fauches, repris: p.repris }).toEqual({ fauches: 0, repris: [] });
+    expect(await statut(jobId)).toEqual({ status: 'completed', error: null });
+  });
+});
+
+// #1204, B31-16 — un parent dont l'enfant a fini, mais dont le réveil s'est
+// perdu, était échoué « le service a redémarré » au bout de cinq minutes, le
+// résultat de l'enfant resté inutilisé en base. Il le reçoit maintenant, par la
+// fonction du chemin normal, repart et finit.
+describe('le faucheur donne au parent le résultat de son enfant fini (#1204) @cap:organiser-equipe/moteur', () => {
+  it('l’enfant a fini, le réveil du parent s’est perdu : le parent reçoit le résultat, repart et finit', async () => {
+    const ts = String(Date.now());
+    const [parent] = await db
+      .insert(agents)
+      .values({
+        entityId: seed.entityId,
+        name: 'Parent réveil',
+        slug: `parent-reveil-${ts}`,
+        personality: 'orchestrateur',
+        llmKeyId: seed.llmKeyId,
+        role: 'orchestrator',
+        orchestratorMode: 'router',
+        systemAgent: true,
+      })
+      .returning({ id: agents.id });
+    const [enfant] = await db
+      .insert(agents)
+      .values({
+        entityId: seed.entityId,
+        name: 'Enfant réveil',
+        slug: `enfant-reveil-${ts}`,
+        personality: 'travailleur',
+        llmKeyId: seed.llmKeyId,
+        role: 'agent',
+        systemAgent: true,
+      })
+      .returning({ id: agents.id, slug: agents.slug });
+    await db.insert(agentAssignments).values({
+      orchestratorId: parent!.id,
+      subAgentId: enfant!.id,
+      entityId: seed.entityId,
+    });
+    const assign = `assign_${enfant!.slug.replace(/-/g, '_')}`;
+
+    // Le parent a délégué, sa pile s'est dépliée ; l'enfant a fini ; le
+    // réveil du parent n'a jamais eu lieu.
+    const [p] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: parent!.id,
+        channel: 'api',
+        task: 'fais faire le rapport',
+        status: 'awaiting_delegation',
+        claimGeneration: 1,
+        claimedBy: runnerInstanceId,
+        messages: [
+          { role: 'user', content: 'fais faire le rapport' },
+          {
+            role: 'assistant',
+            content: [
+              {
+                type: 'tool-call',
+                toolCallId: 'deleg-reveil',
+                toolName: assign,
+                input: { task: 'écris le rapport' },
+              },
+            ],
+          },
+        ],
+      })
+      .returning({ id: agentJobs.id });
+    const parentJobId = p!.id;
+    const [c] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: enfant!.id,
+        channel: 'internal',
+        task: 'écris le rapport',
+        status: 'completed',
+        claimGeneration: 1,
+        claimedBy: runnerInstanceId,
+        parentJobId,
+        result: 'Rapport de l’enfant : trois points à corriger.',
+        messages: [],
+      })
+      .returning({ id: agentJobs.id });
+    await db
+      .update(agentJobs)
+      .set({
+        pendingDelegation: {
+          type: 'single',
+          toolUseId: 'deleg-reveil',
+          toolName: assign,
+          subJobId: c!.id,
+        },
+      })
+      .where(eq(agentJobs.id, parentJobId));
+
+    const presence = presenceSimulee();
+    const avertir = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    let aRelancer: string[];
+    try {
+      await resetOrphanedJobs(db, { presence });
+      await vi.advanceTimersByTimeAsync(JOB_LIVENESS.stuckRowMs);
+      await resetOrphanedJobs(db, { presence });
+      expect(await statut(parentJobId)).toEqual({ status: 'pending', error: null });
+
+      // La reprise des `pending` du cron le relance, comme tout réveil perdu.
+      await findPendingJobsToRecover(db, { presence });
+      await vi.advanceTimersByTimeAsync(JOB_LIVENESS.stuckRowMs);
+      aRelancer = await findPendingJobsToRecover(db, { presence });
+    } finally {
+      avertir.mockRestore();
+    }
+    expect(aRelancer).toEqual([parentJobId]);
+
+    const vus: unknown[] = [];
+    const run = executeJob(parentJobId as JobId, deps(modele(['fin'], vus)));
+    const passage = await tourneSousLesFaucheurs(run, async () => [parentJobId]);
+
+    expect(passage.issue.status).toBe('completed');
+    expect(await statut(parentJobId)).toEqual({ status: 'completed', error: null });
+    // Ce que le modèle du parent a LU : le résultat de son enfant, en face de
+    // son appel d'outil.
+    expect(JSON.stringify(vus[0])).toContain('Rapport de l’enfant : trois points à corriger.');
+    expect(JSON.stringify(vus[0])).toContain('deleg-reveil');
   });
 });

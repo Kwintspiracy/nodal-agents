@@ -17,7 +17,11 @@
 
 import { useState, useTransition } from 'react';
 import { toast } from 'sonner';
-import { RUN_COST_MAX_USD, RUN_HOURS_MAX } from '@nodal-agents/shared';
+import {
+  CLI_SESSION_HOURS_WITHOUT_TIME_LIMIT,
+  RUN_COST_MAX_USD,
+  RUN_HOURS_MAX,
+} from '@nodal-agents/shared';
 import { setRunBudgetAction, type RunBudgetView } from '@/lib/actions.ts';
 import { MonoMicroTag } from '@/components/ui/MonoMicroTag';
 import PrimaryButton from '@/components/ui/PrimaryButton';
@@ -95,8 +99,10 @@ export default function RunBudgetSection({ initial }: { initial: RunBudgetView }
           data-testid="run-budget-hours"
         />
       </div>
-      <p className="mt-2 text-body-12 text-ink-4">
+      <p className="mt-2 text-body-12 text-ink-4" data-testid="run-budget-help">
         0 means no ceiling. Waiting for an approval or for another agent does not count as work.
+        With no time limit, a Claude Code or Codex session still stops after{' '}
+        {CLI_SESSION_HOURS_WITHOUT_TIME_LIMIT} h, since Nodal cannot count its turns while it runs.
       </p>
 
       <div className="mt-3">

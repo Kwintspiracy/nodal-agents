@@ -56,6 +56,7 @@ const FIRST = {
   source: 'openrouter',
   model: 'google/gemini-3.8-flash-tts',
   voice: 'Kore',
+  transcriptionSource: 'openrouter',
   transcriptionModel: 'x-ai/grok-stt-1.0',
 } as const;
 
@@ -120,6 +121,7 @@ describe('resolveVoice @cap:parler-a-un-agent/moteur', () => {
       source: 'openrouter',
       model: 'x-ai/grok-voice-tts-1.0',
       voice: 'leo',
+      transcriptionSource: 'openrouter',
       transcriptionModel: 'x-ai/grok-stt-1.0',
     });
     const grok = await resolveVoice(db as never, seed.entityId);
@@ -140,6 +142,7 @@ describe('resolveVoice @cap:parler-a-un-agent/moteur', () => {
       source: 'google',
       model: 'gemini-3.8-flash-tts',
       voice: 'Puck',
+      transcriptionSource: 'openrouter',
       transcriptionModel: 'x-ai/grok-stt-1.0',
     });
     const google = await resolveVoice(db as never, seed.entityId);
@@ -158,6 +161,7 @@ describe('resolveVoice @cap:parler-a-un-agent/moteur', () => {
       source: 'google',
       model: 'gemini-3.8-flash-tts',
       voice: 'Kore',
+      transcriptionSource: 'openrouter',
       transcriptionModel: 'x-ai/grok-stt-1.0',
     });
     expect(await resolveVoice(db as never, seed.entityId)).toEqual({

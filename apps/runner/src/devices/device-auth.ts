@@ -13,7 +13,8 @@
 //                                     owner's routes, the pairing routes, all
 //
 //   no device token                   passes, to the guard the route has:
-//                                     `requireRunnerAuth` (server.ts), or on a
+//                                     the caller the admission proved
+//                                     (lib/admission.ts), or on a
 //                                     device's own routes `authorizeDevice`
 //                                     (devices/device-guard.ts), which wants
 //                                     a device key and nothing else — the
@@ -47,24 +48,46 @@ function bearerOf(c: Context): string | null {
   return auth.startsWith('Bearer ') ? auth.slice(7).trim() : null;
 }
 
+/** What the request's bearer says about a device: none, refused, or that device. */
+export type DeviceBearer =
+  | { kind: 'none' }
+  | {
+      kind: 'refused';
+      status: 401 | 403;
+      error: 'device_token_invalid' | 'device_token_not_accepted';
+    }
+  | { kind: 'device'; device: { id: string; entityId: string } };
+
+/**
+ * Read the device key a request carries, and verify it: the one check of a
+ * device key, used by the gate below and by the request admission
+ * (lib/admission.ts), for which a verified key is a proof. Read-only.
+ */
+export async function verifyDeviceBearer(
+  deps: Pick<RunnerDeps, 'db'>,
+  c: Context,
+): Promise<DeviceBearer> {
+  const bearer = bearerOf(c);
+  if (bearer === null || !bearer.startsWith(DEVICE_TOKEN_PREFIX)) return { kind: 'none' };
+  if (!isDeviceTokenRoute(c.req.method, c.req.path)) {
+    return { kind: 'refused', status: 403, error: 'device_token_not_accepted' };
+  }
+  const device = DEVICE_TOKEN_RE.test(bearer)
+    ? await findDeviceByTokenHash(deps.db, hashDeviceSecret(bearer))
+    : null;
+  if (!device) return { kind: 'refused', status: 401, error: 'device_token_invalid' };
+  return { kind: 'device', device: { id: device.id, entityId: device.entityId } };
+}
+
 export function createDeviceGate(deps: Pick<RunnerDeps, 'db'>) {
   return async function deviceGate(c: Context, next: Next): Promise<Response | void> {
-    const method = c.req.method;
-    const path = c.req.path;
-    const bearer = bearerOf(c);
-
-    if (bearer === null || !bearer.startsWith(DEVICE_TOKEN_PREFIX)) {
+    const verdict = await verifyDeviceBearer(deps, c);
+    if (verdict.kind === 'none') {
       await next();
       return;
     }
-
-    if (!isDeviceTokenRoute(method, path)) {
-      return c.json({ error: 'device_token_not_accepted' }, 403);
-    }
-    const device = DEVICE_TOKEN_RE.test(bearer)
-      ? await findDeviceByTokenHash(deps.db, hashDeviceSecret(bearer))
-      : null;
-    if (!device) return c.json({ error: 'device_token_invalid' }, 401);
+    if (verdict.kind === 'refused') return c.json({ error: verdict.error }, verdict.status);
+    const device = verdict.device;
 
     c.set('callerDevice', { id: device.id, entityId: device.entityId });
     c.set('callerTrusted', false);

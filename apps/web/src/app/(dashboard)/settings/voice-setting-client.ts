@@ -9,16 +9,25 @@
 // jamais un écran à moitié rempli (invariant #4).
 
 import {
+  VoiceCheckSchema,
+  VoiceServerModelsSchema,
+  VoiceSettingViewSchema,
   VoiceStateSchema,
-  type SpeakingVoice,
-  type VoiceSetting,
+  type ListeningEarInput,
+  type SpeakingVoiceInput,
+  type VoiceCheck,
+  type VoicePart,
+  type VoiceServerInput,
+  type VoiceServerModels,
+  type VoiceSettingInput,
+  type VoiceSettingView,
   type VoiceState,
 } from '@nodal-agents/shared';
 import { readSseMessages } from '@/lib/sse.ts';
 import { readSpokenEvent, type SpokenChunk } from '../chat/voice-playback.ts';
 
 /** Un refus du runner, tel qu'il l'a codé. */
-export type VoiceRefusal = { error: string; source?: string; detail?: string };
+export type VoiceRefusal = { error: string; source?: string; detail?: string; heard?: string };
 
 export type VoiceResult<T> = { ok: true; data: T } | { ok: false; refusal: VoiceRefusal };
 
@@ -28,6 +37,7 @@ async function refusalOf(res: Response): Promise<VoiceRefusal> {
     error: typeof body?.['error'] === 'string' ? body['error'] : `http_${String(res.status)}`,
     ...(typeof body?.['source'] === 'string' ? { source: body['source'] } : {}),
     ...(typeof body?.['detail'] === 'string' ? { detail: body['detail'] } : {}),
+    ...(typeof body?.['heard'] === 'string' ? { heard: body['heard'] } : {}),
   };
 }
 
@@ -46,7 +56,10 @@ export async function readVoiceState(): Promise<VoiceResult<VoiceState>> {
   return { ok: true, data: parsed.data };
 }
 
-export async function saveVoiceSetting(setting: VoiceSetting): Promise<VoiceResult<VoiceSetting>> {
+/** Save: the runner answers the setting as it stored it, read as a client reads it (a key is only `hasKey`). */
+export async function saveVoiceSetting(
+  setting: VoiceSettingInput,
+): Promise<VoiceResult<VoiceSettingView>> {
   let res: Response;
   try {
     res = await fetch('/api/voice/setting', {
@@ -58,7 +71,53 @@ export async function saveVoiceSetting(setting: VoiceSetting): Promise<VoiceResu
     return unreachable;
   }
   if (!res.ok) return { ok: false, refusal: await refusalOf(res) };
-  return { ok: true, data: setting };
+  const parsed = VoiceSettingViewSchema.safeParse(
+    ((await res.json().catch(() => null)) as { setting?: unknown } | null)?.setting,
+  );
+  if (!parsed.success) return { ok: false, refusal: { error: 'runner_contract' } };
+  return { ok: true, data: parsed.data };
+}
+
+async function postJson<T>(
+  url: string,
+  body: unknown,
+  schema: { safeParse: (v: unknown) => { success: true; data: T } | { success: false } },
+): Promise<VoiceResult<T>> {
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  } catch {
+    return unreachable;
+  }
+  if (!res.ok) return { ok: false, refusal: await refusalOf(res) };
+  const parsed = schema.safeParse(await res.json().catch(() => null));
+  if (!parsed.success) return { ok: false, refusal: { error: 'runner_contract' } };
+  return { ok: true, data: parsed.data };
+}
+
+/**
+ * The state of one part (#1048): the trial a save runs, for the part stored
+ * (omitted) or as the screen shows it. `fresh`: try again ("Check again").
+ */
+export function checkVoicePart(opts: {
+  part: VoicePart;
+  speaking?: SpeakingVoiceInput;
+  listening?: ListeningEarInput;
+  fresh?: boolean;
+}): Promise<VoiceResult<VoiceCheck>> {
+  return postJson('/api/voice/check', opts, VoiceCheckSchema);
+}
+
+/** The models a server of the person's lists at the address the screen shows (#1048). */
+export function listServerModels(
+  part: VoicePart,
+  server: VoiceServerInput,
+): Promise<VoiceResult<VoiceServerModels>> {
+  return postJson('/api/voice/server/models', { part, server }, VoiceServerModelsSchema);
 }
 
 /** Ce que l'essai a rendu : la voix qui a parlé, et son échec s'il y en a eu un. */
@@ -76,7 +135,7 @@ export type SampleDone = {
 export async function playVoiceSample(opts: {
   text: string;
   /** La voix seule : l'essai parle, il n'écoute pas (#976). */
-  setting?: SpeakingVoice;
+  setting?: SpeakingVoiceInput;
   signal: AbortSignal;
   onAudio: (chunk: SpokenChunk) => void;
   /** Une phrase est finie (`audio_end`), complète ou non : une voix compressée se joue alors. */

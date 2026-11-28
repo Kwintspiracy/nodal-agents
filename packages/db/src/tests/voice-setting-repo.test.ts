@@ -47,7 +47,7 @@ describe('the workspace voice setting @cap:parler-a-un-agent/moteur', () => {
       {
         key: 'voice',
         value:
-          '{"source":"openrouter","model":"google/gemini-3.8-flash-tts","voice":"Kore","transcriptionModel":"x-ai/grok-stt-1.0"}',
+          '{"source":"openrouter","model":"google/gemini-3.8-flash-tts","voice":"Kore","transcriptionSource":"openrouter","transcriptionModel":"x-ai/grok-stt-1.0"}',
       },
     ]);
     expect(await readVoiceSetting(db, entityId)).toEqual({
@@ -56,6 +56,7 @@ describe('the workspace voice setting @cap:parler-a-un-agent/moteur', () => {
         source: 'openrouter',
         model: 'google/gemini-3.8-flash-tts',
         voice: 'Kore',
+        transcriptionSource: 'openrouter',
         transcriptionModel: 'x-ai/grok-stt-1.0',
       },
     });
@@ -68,6 +69,7 @@ describe('the workspace voice setting @cap:parler-a-un-agent/moteur', () => {
       source: 'openrouter',
       model: 'x-ai/grok-voice-tts-1.0',
       voice: 'leo',
+      transcriptionSource: 'openrouter',
       transcriptionModel: 'x-ai/grok-stt-1.0',
     });
     expect(await readVoiceSetting(db, a)).toEqual({
@@ -76,6 +78,7 @@ describe('the workspace voice setting @cap:parler-a-un-agent/moteur', () => {
         source: 'openrouter',
         model: 'x-ai/grok-voice-tts-1.0',
         voice: 'leo',
+        transcriptionSource: 'openrouter',
         transcriptionModel: 'x-ai/grok-stt-1.0',
       },
     });
@@ -85,6 +88,7 @@ describe('the workspace voice setting @cap:parler-a-un-agent/moteur', () => {
         source: 'openrouter',
         model: 'google/gemini-3.8-flash-tts',
         voice: 'Kore',
+        transcriptionSource: 'openrouter',
         transcriptionModel: 'x-ai/grok-stt-1.0',
       },
     });
@@ -120,6 +124,7 @@ describe('the workspace voice setting @cap:parler-a-un-agent/moteur', () => {
         source: 'openrouter',
         model: '',
         voice: 'leo',
+        transcriptionSource: 'openrouter',
         transcriptionModel: 'x-ai/grok-stt-1.0',
       }),
     ).rejects.toThrow();
@@ -127,5 +132,54 @@ describe('the workspace voice setting @cap:parler-a-un-agent/moteur', () => {
       ok: true,
       setting: { model: 'google/gemini-3.8-flash-tts' },
     });
+  });
+
+  // #1048: a part served by a server the user runs carries its address and,
+  // when there is one, its key AT REST (the enc:v1: blob), never in clear.
+  it('reads back a server part with its key at rest, and refuses a key in clear', async () => {
+    const entityId = await newWorkspace('voice-server');
+    const atRest = 'enc:v1:aXY=:dGFn:Y3Q=';
+    await writeVoiceSetting(db, entityId, {
+      source: 'openai-compatible',
+      model: 'kokoro',
+      voice: 'af_heart',
+      speechServer: { address: 'http://127.0.0.1:8880/v1/' },
+      transcriptionSource: 'openai-compatible',
+      transcriptionModel: 'openai/whisper-large-v3-turbo',
+      transcriptionServer: { address: 'http://127.0.0.1:8786/v1', key: atRest },
+    });
+    expect(await readVoiceSetting(db, entityId)).toEqual({
+      ok: true,
+      setting: {
+        source: 'openai-compatible',
+        model: 'kokoro',
+        voice: 'af_heart',
+        // One form enters the database: the trailing slash is gone.
+        speechServer: { address: 'http://127.0.0.1:8880/v1' },
+        transcriptionSource: 'openai-compatible',
+        transcriptionModel: 'openai/whisper-large-v3-turbo',
+        transcriptionServer: { address: 'http://127.0.0.1:8786/v1', key: atRest },
+      },
+    });
+    await expect(
+      writeVoiceSetting(db, entityId, {
+        source: 'openrouter',
+        model: 'm',
+        voice: 'v',
+        transcriptionSource: 'openai-compatible',
+        transcriptionModel: 'w',
+        transcriptionServer: { address: 'http://127.0.0.1:8786/v1', key: 'sk-in-clear' },
+      }),
+    ).rejects.toThrow();
+    // A server part with no address, or an address for a keyed source, is not a setting.
+    await expect(
+      writeVoiceSetting(db, entityId, {
+        source: 'openai-compatible',
+        model: 'm',
+        voice: 'v',
+        transcriptionSource: 'openrouter',
+        transcriptionModel: 'w',
+      }),
+    ).rejects.toThrow(/speechServer/);
   });
 });

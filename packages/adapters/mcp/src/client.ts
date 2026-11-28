@@ -351,7 +351,14 @@ export function explainClosed(client: Client, error: unknown): unknown {
   if (!(error instanceof McpError) || error.code !== ErrorCode.ConnectionClosed) return error;
   const reason = closeReasons.get(client)?.();
   if (!reason) return error;
-  return new McpError(ErrorCode.ConnectionClosed, `Connection closed: ${reason.message}`);
+  // The reason's own code travels as the error's data, so the connection's
+  // state can be read from it (`mcpConnectionFailure`), not from its words.
+  const reasonCode = (reason as { code?: unknown }).code;
+  return new McpError(
+    ErrorCode.ConnectionClosed,
+    `Connection closed: ${reason.message}`,
+    typeof reasonCode === 'string' ? { reason: reasonCode } : undefined,
+  );
 }
 
 /**

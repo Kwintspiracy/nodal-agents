@@ -17,7 +17,8 @@
 //        review) but update_available/update_detail are left untouched
 //   applySkillUpdate:
 //     7. rewrites default_content + content (not overridden) + store-dir files
-//     8. preserves content when content_overridden=true, still rewrites default_content
+//     8. an edited skill (content_overridden=true): badge raised, the confirmed
+//        update replaces the edit and clears both flags
 //     9. scripts changed → revokes scripts_authorized on real assignment rows
 //     10. refuses a non-community skill / a missing skill
 //     11. C1 (Opus review): a DB transaction failure leaves the store-dir
@@ -110,6 +111,7 @@ describe('update-flow', () => {
           source: row.source!,
           defaultContent: row.defaultContent,
           installedScripts: row.installedScripts,
+          installedFiles: row.installedFiles,
         },
         skillStoreDir: store,
       });
@@ -119,6 +121,7 @@ describe('update-flow', () => {
         contentChanged: false,
         scriptsChanged: false,
         scriptsState: 'clean',
+        filesState: 'clean',
       });
 
       const [after] = await db.select().from(agentSkills).where(eq(agentSkills.id, row.id));
@@ -153,6 +156,7 @@ describe('update-flow', () => {
           source: row.source!,
           defaultContent: row.defaultContent,
           installedScripts: row.installedScripts,
+          installedFiles: row.installedFiles,
         },
         skillStoreDir: store,
       });
@@ -162,6 +166,7 @@ describe('update-flow', () => {
         contentChanged: true,
         scriptsChanged: false,
         scriptsState: 'clean',
+        filesState: 'update',
       });
 
       const [after] = await db.select().from(agentSkills).where(eq(agentSkills.id, row.id));
@@ -200,6 +205,7 @@ describe('update-flow', () => {
           source: row.source!,
           defaultContent: row.defaultContent,
           installedScripts: row.installedScripts,
+          installedFiles: row.installedFiles,
         },
         skillStoreDir: store,
       });
@@ -209,6 +215,7 @@ describe('update-flow', () => {
         contentChanged: false,
         scriptsChanged: true,
         scriptsState: 'update',
+        filesState: 'update',
       });
 
       const [after] = await db.select().from(agentSkills).where(eq(agentSkills.id, row.id));
@@ -254,6 +261,7 @@ describe('update-flow', () => {
           source: row.source!,
           defaultContent: row.defaultContent,
           installedScripts: row.installedScripts,
+          installedFiles: row.installedFiles,
         },
         skillStoreDir: store,
       });
@@ -263,6 +271,7 @@ describe('update-flow', () => {
         contentChanged: false,
         scriptsChanged: false,
         scriptsState: 'local-only',
+        filesState: 'local-only',
       });
       const [after] = await db.select().from(agentSkills).where(eq(agentSkills.id, row.id));
       // No badge: there is nothing new upstream to install.
@@ -302,6 +311,7 @@ describe('update-flow', () => {
           source: row.source!,
           defaultContent: row.defaultContent,
           installedScripts: row.installedScripts,
+          installedFiles: row.installedFiles,
         },
         skillStoreDir: store,
       });
@@ -311,6 +321,7 @@ describe('update-flow', () => {
         contentChanged: false,
         scriptsChanged: true,
         scriptsState: 'conflict',
+        filesState: 'conflict',
       });
       const [after] = await db.select().from(agentSkills).where(eq(agentSkills.id, row.id));
       expect(after!.updateAvailable).toBe(true);
@@ -367,6 +378,7 @@ describe('update-flow', () => {
           source: row.source!,
           defaultContent: acked!.defaultContent,
           installedScripts: acked!.installedScripts,
+          installedFiles: acked!.installedFiles,
         },
         skillStoreDir: store,
       });
@@ -375,6 +387,7 @@ describe('update-flow', () => {
         contentChanged: false,
         scriptsChanged: false,
         scriptsState: 'local-only',
+        filesState: 'local-only',
       });
 
       // Upstream moves AGAIN after the ack → conflict returns. No silent burial.
@@ -390,6 +403,7 @@ describe('update-flow', () => {
           source: row.source!,
           defaultContent: acked!.defaultContent,
           installedScripts: acked!.installedScripts,
+          installedFiles: acked!.installedFiles,
         },
         skillStoreDir: store,
       });
@@ -398,6 +412,7 @@ describe('update-flow', () => {
         contentChanged: false,
         scriptsChanged: true,
         scriptsState: 'conflict',
+        filesState: 'conflict',
       });
     });
 
@@ -425,6 +440,7 @@ describe('update-flow', () => {
           source: row.source!,
           defaultContent: row.defaultContent,
           installedScripts: row.installedScripts,
+          installedFiles: row.installedFiles,
         },
         skillStoreDir: store,
       });
@@ -469,6 +485,7 @@ describe('update-flow', () => {
           source: row.source!,
           defaultContent: row.defaultContent,
           installedScripts: row.installedScripts,
+          installedFiles: row.installedFiles,
         },
         skillStoreDir: store,
       });
@@ -509,6 +526,7 @@ describe('update-flow', () => {
           source: row.source!,
           defaultContent: row.defaultContent,
           installedScripts: row.installedScripts,
+          installedFiles: row.installedFiles,
         },
         skillStoreDir: store,
       });
@@ -557,6 +575,7 @@ describe('update-flow', () => {
             source: row.source!,
             defaultContent: row.defaultContent,
             installedScripts: row.installedScripts,
+            installedFiles: row.installedFiles,
           },
           skillStoreDir: store,
         });
@@ -644,6 +663,7 @@ describe('update-flow', () => {
         contentChanged: true,
         scriptsChanged: false,
         scriptsState: 'clean',
+        filesState: 'update',
         checkedAt: expect.any(String),
       });
     });
@@ -785,6 +805,8 @@ v2`,
         contentChanged: true,
         scriptsChanged: false,
         scriptsAuthorizationRevoked: 0,
+        files: [{ path: 'SKILL.md', kind: 'changed' }],
+        leftoverDir: null,
       });
 
       const [after] = await db.select().from(agentSkills).where(eq(agentSkills.slug, slug));
@@ -933,12 +955,26 @@ v2`,
       expect(after!.defaultContent).toContain('v2');
     });
 
-    it('preserves owner-overridden content, but still rewrites default_content', async () => {
+    it('an EDITED skill: the badge is raised, and the confirmed update replaces the edit and clears both flags', async () => {
+      // Keeping the owner's text used to leave them on it for good: the apply
+      // cleared the badge and moved only default_content, so every later
+      // improvement was skipped without a word. The dashboard now warns that
+      // updating replaces their changes; once they confirm, they get the
+      // version they reviewed, through the same check → preview → hash path.
       const { db } = await spinUpTestDb();
       const seed = await seedMinimal(db);
       const slug = `apply-overridden-${Date.now()}`;
 
-      mockClawhubSkill(slug, [['SKILL.md', `---\nname: ${slug}\ndescription: d\n---\nHello v1`]]);
+      mockClawhubSkill(slug, [
+        [
+          'SKILL.md',
+          `---
+name: ${slug}
+description: d
+---
+Hello v1`,
+        ],
+      ]);
       await installCommunitySkill({
         db: db as never,
         source: `https://clawhub.ai/pub/${slug}`,
@@ -949,21 +985,59 @@ v2`,
         .update(agentSkills)
         .set({ content: 'MY CUSTOM EDIT', contentOverridden: true })
         .where(eq(agentSkills.slug, slug));
+      const [row] = await db.select().from(agentSkills).where(eq(agentSkills.slug, slug));
+      if (!row) throw new Error('fixture not installed');
 
-      mockClawhubSkill(slug, [['SKILL.md', `---\nname: ${slug}\ndescription: d\n---\nHello v3`]]);
-      const result = await applySkillUpdate({
+      mockClawhubSkill(slug, [
+        [
+          'SKILL.md',
+          `---
+name: ${slug}
+description: d
+---
+Hello v3`,
+        ],
+      ]);
+      await checkSkillUpdate({
+        db: db as never,
+        skill: {
+          id: row.id,
+          slug: row.slug,
+          source: row.source!,
+          defaultContent: row.defaultContent,
+          installedScripts: row.installedScripts,
+          installedFiles: row.installedFiles,
+        },
+        skillStoreDir: store,
+      });
+      const [flagged] = await db.select().from(agentSkills).where(eq(agentSkills.id, row.id));
+      expect(flagged!.updateAvailable, 'an edited skill must still be told about v3').toBe(true);
+      expect(flagged!.content).toBe('MY CUSTOM EDIT');
+
+      const preview = await previewSkillUpdate({
         db: db as never,
         slug,
         skillStoreDir: store,
         entityId: seed.entityId,
       });
+      expect(preview.contentOverridden).toBe(true);
 
+      const result = await applySkillUpdate({
+        db: db as never,
+        slug,
+        skillStoreDir: store,
+        entityId: seed.entityId,
+        expectedContentHash: preview.upstreamContentHash,
+      });
       expect(result.contentChanged).toBe(true);
 
-      const [after] = await db.select().from(agentSkills).where(eq(agentSkills.slug, slug));
-      expect(after!.defaultContent).toContain('Hello v3');
-      expect(after!.content).toBe('MY CUSTOM EDIT');
-      expect(after!.contentOverridden).toBe(true);
+      const [after] = await db.select().from(agentSkills).where(eq(agentSkills.id, row.id));
+      expect(after!.content).toBe(preview.upstreamContent);
+      expect(after!.content).toContain('Hello v3');
+      expect(after!.defaultContent).toBe(preview.upstreamContent);
+      expect(after!.contentOverridden).toBe(false);
+      expect(after!.updateAvailable).toBe(false);
+      expect(after!.updateDetail).toBeNull();
     });
 
     it('revokes scripts_authorized on real assignment rows when scripts changed', async () => {

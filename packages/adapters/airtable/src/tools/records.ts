@@ -2,6 +2,7 @@
 
 import { z } from 'zod';
 import type { ConnectorToolDefinition } from '@nodal-agents/tools';
+import { LIST_CURSOR_DESCRIPTION, type ConnectorList } from '@nodal-agents/shared';
 import type { AirtableClient } from '../client.ts';
 import { wrapAirtableError } from '../errors.ts';
 
@@ -30,7 +31,7 @@ const ListRecordsInput = z.object({
     .optional()
     .default(100)
     .describe('Number of records per page (1–100, default 100).'),
-  offset: z.string().optional().describe('Pagination offset token from a previous response.'),
+  cursor: z.string().optional().describe(LIST_CURSOR_DESCRIPTION),
   fields: z
     .array(z.string())
     .optional()
@@ -51,10 +52,8 @@ export type AirtableRecord = {
   createdTime: string;
 };
 
-export type ListRecordsOutput = {
-  records: AirtableRecord[];
-  offset: string | undefined;
-};
+/** One page of records, in the connector contract's list shape: `next` is Airtable's `offset`. */
+export type ListRecordsOutput = ConnectorList<AirtableRecord>;
 
 export function makeAirtableListRecordsTool(
   client: AirtableClient,
@@ -62,7 +61,8 @@ export function makeAirtableListRecordsTool(
   return {
     name: 'airtable_list_records',
     description:
-      'List records in an Airtable table. Supports filtering by formula, sorting, field selection, and pagination via offset token.',
+      'List records in an Airtable table, one page per call. Supports filtering by formula, sorting and field selection. ' +
+      'Returns `items` and `next`: pass it back as `cursor` to read the next page (null when there is none).',
     inputSchema: ListRecordsInput,
     async execute(input) {
       try {
@@ -70,7 +70,7 @@ export function makeAirtableListRecordsTool(
           pageSize: input.pageSize ?? 100,
         };
         if (input.view) params['view'] = input.view;
-        if (input.offset) params['offset'] = input.offset;
+        if (input.cursor) params['offset'] = input.cursor;
         if (input.filterByFormula) params['filterByFormula'] = input.filterByFormula;
         if (input.fields && input.fields.length > 0) {
           // Airtable expects repeated: fields[]=Name&fields[]=Status
@@ -96,12 +96,13 @@ export function makeAirtableListRecordsTool(
         };
 
         return {
-          records: (data.records ?? []).map((r) => ({
+          items: (data.records ?? []).map((r) => ({
             id: r.id,
             fields: r.fields ?? {},
             createdTime: r.createdTime,
           })),
-          offset: data.offset,
+          next: data.offset ?? null,
+          truncated: null,
         };
       } catch (err) {
         throw wrapAirtableError(err);

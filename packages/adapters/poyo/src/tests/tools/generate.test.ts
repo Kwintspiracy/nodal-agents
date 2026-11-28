@@ -103,3 +103,17 @@ describe('makePoyoGenerateImageTool', () => {
     expect(status).toHaveBeenCalledTimes(2);
   });
 });
+
+// #1184 — a generation still running when the poll ends is neither done nor
+// failed: it may yet be made, and a second call pays again.
+describe('poyo_generate_image declares what it returned @cap:connecter-un-service/moteur', () => {
+  it('still running is unknown; finished is done', () => {
+    const tool = makePoyoGenerateImageTool({} as never);
+    expect(tool.outcomeOf!({ taskId: 't', status: 'running', images: [], model: 'm' })).toBe(
+      'unknown',
+    );
+    expect(tool.outcomeOf!({ taskId: 't', status: 'finished', images: ['u'], model: 'm' })).toBe(
+      'done',
+    );
+  });
+});

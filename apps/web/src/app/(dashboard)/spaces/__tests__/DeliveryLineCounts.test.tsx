@@ -24,6 +24,7 @@ const edition = (path: string, oldText: string, newText: string): AuditRowForCha
   toolName: 'file_edit',
   toolInput: { path, old_string: oldText, new_string: newText },
   toolOutput: '{"ok":true}',
+  outcome: 'done',
   presented: { card: 'files', total: 1, truncated: false, files: [{ path, action: 'modified' }] },
 });
 
@@ -31,6 +32,7 @@ const ecriture = (path: string, content: string): AuditRowForChanges => ({
   toolName: 'file_write',
   toolInput: { path, content },
   toolOutput: '{"ok":true}',
+  outcome: 'done',
   presented: { card: 'files', total: 1, truncated: false, files: [{ path, action: 'created' }] },
 });
 

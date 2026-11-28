@@ -1,4 +1,5 @@
 import type { ChannelAllowedConversationView } from '@/lib/actions.ts';
+import type { ConnectionState } from '@nodal-agents/shared';
 import Banner from '@/components/ui/Banner.tsx';
 import WhatsAppConfigForm from './WhatsAppConfigForm.tsx';
 import ChannelAllowlist from './ChannelAllowlist.tsx';
@@ -15,11 +16,14 @@ export default function WhatsAppChannelCard({
   agentId,
   agentSlug,
   status,
+  link,
   allowedConversations,
 }: {
   agentId: string;
   agentSlug: string;
   status: 'connected' | 'disconnected';
+  /** What the runner last learnt about the link (connection_states). */
+  link: ConnectionState;
   allowedConversations: ChannelAllowedConversationView[];
 }) {
   return (
@@ -45,7 +49,7 @@ export default function WhatsAppChannelCard({
         Small risk of account restriction — prefer a dedicated number, not your main one.
       </Banner>
 
-      <WhatsAppConfigForm agentId={agentId} initialStatus={status} />
+      <WhatsAppConfigForm agentId={agentId} initialStatus={status} link={link} />
 
       {status === 'connected' && (
         <ChannelAllowlist agentId={agentId} chats={allowedConversations} />

@@ -23,7 +23,7 @@ import {
   type StaticShellCategory,
 } from './catastrophic-command';
 import type { ShellGateReason } from './shell-checklist';
-import { redactSecretsInText } from './redact-transcript';
+import { redactSecretsInText } from './redact-secrets';
 
 /**
  * What each kind of action the checklist reads DOES, for the card (Reviewer A,

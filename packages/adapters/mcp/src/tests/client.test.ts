@@ -184,7 +184,7 @@ describe('connectMcp', () => {
   // The stdio transport is mocked above so the test never actually
   // spawns a subprocess. audit#2 C-1: un serveur MCP tiers (npx/uvx) est un
   // binaire arbitraire — il ne doit recevoir QUE l'env scrubbé (allowlist
-  // buildChildEnv, cf. packages/tools/src/builtin/child-env.ts) plus les
+  // buildChildEnv, cf. packages/shared/src/child-env.ts) plus les
   // variables explicites du connecteur (opts.env), jamais le process.env
   // complet du runner.
 

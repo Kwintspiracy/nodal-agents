@@ -104,6 +104,10 @@ export async function approveRoute(
   if (!result.ok) {
     if (result.code === 'approval_not_found') return c.json({ error: 'approval_not_found' }, 404);
     if (result.code === 'job_not_found') return c.json({ error: 'job_not_found' }, 404);
+    // Celui qui répond n'est pas de l'espace de la demande : refusé, rien n'est écrit.
+    if (result.code === 'responder_not_member') {
+      return c.json({ error: 'responder_not_member' }, 403);
+    }
     // P10a — les trois refus propres aux questions rendent LEUR code, pas
     // `approval_already_resolved` : « votre réponse n'est pas une des options »
     // et « cette demande a déjà été tranchée » appellent des gestes opposés, et

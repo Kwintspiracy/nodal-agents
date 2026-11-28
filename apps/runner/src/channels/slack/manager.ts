@@ -30,7 +30,13 @@ import {
   reportRepeatingRecovery,
   clearRepeatingFailure,
 } from '../../lib/repeat-log.ts';
-import { startSlackSocket, type SlackSocketHandle, type SlackSocketOpts } from './socket.ts';
+import {
+  slackLinkSignal,
+  startSlackSocket,
+  type SlackSocketHandle,
+  type SlackSocketOpts,
+} from './socket.ts';
+import { recordChannelLink } from '../link-state.ts';
 
 export interface SlackManagerOpts {
   env: RunnerEnv;
@@ -342,7 +348,7 @@ export function startSlackManager(deps: RunnerDeps, opts: SlackManagerOpts): Sla
         appToken,
         deps,
         env: opts.env,
-        onClosed: (reason) => {
+        onClosed: (reason, error) => {
           // Only mark THIS socket dead: by the time the callback fires the map
           // may already hold a newer socket for the same agent (a rotation
           // respawned it), and flagging that one would tear down a healthy
@@ -364,6 +370,9 @@ export function startSlackManager(deps: RunnerDeps, opts: SlackManagerOpts): Sla
                 wasEstablished ? 'now' : 'on a later refresh'
               } with freshly-read credentials (attempt ${count})`,
           );
+          // The link's state, on the agent's Channels tab: the reason is the
+          // platform's own words.
+          void recordChannelLink(deps.db, agentId, 'slack', slackLinkSignal(reason, error));
           // A connection that WAS live is replaced at once; refresh() is
           // single-flight, so this coalesces with any scan already running.
           if (wasEstablished && !stopped) void refresh();
@@ -372,6 +381,7 @@ export function startSlackManager(deps: RunnerDeps, opts: SlackManagerOpts): Sla
           const current = active.get(agentId);
           if (current !== entry) return;
           current.connected = true;
+          void recordChannelLink(deps.db, agentId, 'slack', { link: 'up' });
           reportRepeatingRecovery(
             `slack-manager:socket:${agentId}`,
             (failures) =>

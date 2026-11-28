@@ -184,6 +184,14 @@ export const agents = pgTable(
      * l'agent racine.
      */
     mayChangeTeam: boolean('may_change_team').notNull().default(false),
+    /**
+     * Migration 0175. TRUE (le défaut) : les formes du masqueur unique cachent
+     * au modèle, et à tout ce qui range ce qu'il a lu, une valeur qui a la
+     * forme d'une clé dans ce qu'un outil rend (`maskToolResult`). FALSE : ces
+     * formes passent pour cet agent. Les valeurs exactes que Nodal garde pour
+     * l'espace restent masquées dans les deux cas.
+     */
+    maskSecretShapes: boolean('mask_secret_shapes').notNull().default(true),
     // User-controlled order on the /agents page (Brique A, migration 0019).
     // Default 0 — ties are broken by `name ASC` in the list query. Newly
     // created agents land at the front of their group by default; the user

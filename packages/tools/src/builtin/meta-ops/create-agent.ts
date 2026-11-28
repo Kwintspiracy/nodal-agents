@@ -13,6 +13,7 @@ import { eq, createAgentRepo } from '@nodal-agents/db';
 import { agents } from '@nodal-agents/db';
 import type { ToolDefinition } from '../../types';
 import { resolveAgentProvider, validateModelForProvider } from './agent-model';
+import { outcomeOfOkFlag } from '../../outcome';
 
 const CreateAgentInput = z.object({
   slug: AgentSlugSchema.describe('URL-safe identifier for the agent (e.g. "support-bot").'),
@@ -74,6 +75,7 @@ export const createAgentTool: ToolDefinition<typeof CreateAgentInput, CreateAgen
   egress: 'none',
   card: 'text',
   defaultApproval: 'require_approval',
+  outcomeOf: outcomeOfOkFlag,
   execute: async (input, ctx) => {
     // Resolve subAgentSlugs → IDs within this entity (if provided)
     let subAgentIds: string[] = [];

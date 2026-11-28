@@ -4,7 +4,7 @@
 
 import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
-import { agentMemory, eq } from '@nodal-agents/db';
+import { agentMemory, agentMemoryVersions, eq } from '@nodal-agents/db';
 import { markMemoryHelpfulTool } from '../builtin/mark-memory-helpful';
 import { markMemoryOutdatedTool } from '../builtin/mark-memory-outdated';
 import type { ToolContext } from '../types';
@@ -222,5 +222,64 @@ describe('mark_memory_outdated', () => {
       makeCtx(),
     );
     expect(result).toMatchObject({ archived: true, id: seeded.id });
+  });
+});
+
+// ─── Both tools change a fact through mutateMemory (#1144) ───────────────────
+
+describe('mark_memory_* keep the previous state and who changed it (#1144) @cap:se-souvenir/moteur', () => {
+  async function versionsOf(id: string) {
+    return db.select().from(agentMemoryVersions).where(eq(agentMemoryVersions.memoryId, id));
+  }
+
+  it('mark_memory_outdated keeps the fact as it was, with the agent and the reason it gave', async () => {
+    const seeded = await seedMemory('the standup is at 9am', 3);
+    const result = await markMemoryOutdatedTool.execute(
+      { fact_substring: 'standup is at', reason: 'moved to 10am this week' },
+      makeCtx(),
+    );
+    expect(result).toMatchObject({ archived: true, id: seeded.id });
+    const versions = await versionsOf(seeded.id);
+    expect(
+      versions.map((v) => [v.fact, v.archived, v.changedBy, v.agentId, v.action, v.reason]),
+    ).toEqual([
+      ['the standup is at 9am', false, 'agent', seed.agentId, 'retire', 'moved to 10am this week'],
+    ]);
+    const [row] = await db.select().from(agentMemory).where(eq(agentMemory.id, seeded.id));
+    expect(row?.version).toBe(2);
+  });
+
+  it('mark_memory_helpful keeps the previous importance, with the agent', async () => {
+    const seeded = await seedMemory('the build cache lives in .turbo', 2);
+    const result = await markMemoryHelpfulTool.execute(
+      { fact_substring: 'build cache' },
+      makeCtx(),
+    );
+    expect(result).toMatchObject({ marked: true, newImportance: 3 });
+    const versions = await versionsOf(seeded.id);
+    expect(versions.map((v) => [v.importance, v.changedBy, v.agentId, v.action])).toEqual([
+      [2, 'agent', seed.agentId, 'rescore'],
+    ]);
+  });
+
+  it('an agent other than the author is refused an owner-written fact by both tools, row unchanged', async () => {
+    const seeded = await seedMemory('owner: the invoices are sent on the 1st', 3, {
+      source: 'manual',
+    });
+    const before = (await db.select().from(agentMemory).where(eq(agentMemory.id, seeded.id)))[0];
+    const out = await markMemoryOutdatedTool.execute(
+      { fact_substring: 'invoices are sent' },
+      makeCtx(),
+    );
+    const help = await markMemoryHelpfulTool.execute(
+      { fact_substring: 'invoices are sent' },
+      makeCtx(),
+    );
+    expect(out).toMatchObject({ archived: false });
+    expect(help).toMatchObject({ marked: false });
+    if (!out.archived) expect(out.reason).toContain('do not retry');
+    const after = (await db.select().from(agentMemory).where(eq(agentMemory.id, seeded.id)))[0];
+    expect(after).toEqual(before);
+    expect(await versionsOf(seeded.id)).toEqual([]);
   });
 });

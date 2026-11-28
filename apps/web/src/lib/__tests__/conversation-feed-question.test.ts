@@ -77,6 +77,7 @@ const suspendedRow = (): FeedToolCallRow => ({
   turn: 1,
   toolInput: { question: QUESTION, options: OPTIONS },
   toolOutput: JSON.stringify({ outcome: 'awaiting_approval', approvalRequestId: 'apr-1' }),
+  outcome: 'awaiting_approval',
   createdAt: new Date('2026-09-06T10:00:01Z'),
 });
 
@@ -94,6 +95,7 @@ const replayedRow = (): FeedToolCallRow => ({
   turn: 1,
   toolInput: { question: QUESTION, options: OPTIONS },
   toolOutput: JSON.stringify({ answer: OPTIONS[1], option_index: 1 }),
+  outcome: 'done',
   createdAt: new Date('2026-09-06T10:05:00Z'),
 });
 

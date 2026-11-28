@@ -128,6 +128,7 @@ test.beforeAll(async () => {
       toolName: 'file_write',
       toolInput: { file_path: `${projectDir}/src/app.ts`, content: 'export const a = 1;\n' },
       toolOutput: 'ok',
+      outcome: 'done',
     });
   } finally {
     await close();

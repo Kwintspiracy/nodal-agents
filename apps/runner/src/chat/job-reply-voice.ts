@@ -57,7 +57,7 @@
 import { randomUUID } from 'node:crypto';
 import { agentJobs, eq } from '@nodal-agents/db';
 import { splitSentences } from '@nodal-agents/speech';
-import { redactSecretsInText } from '@nodal-agents/shared';
+import { outboundText, outboundValue, type Outbound } from '@nodal-agents/shared';
 import type { RunnerDeps } from '../deps.ts';
 import { jobEvents, type JobEventBus } from '../events/job-events.ts';
 import type { FinishedJob } from '../events/publish.ts';
@@ -68,7 +68,7 @@ import { JOB_REPLY_TIMING_MARKS, createVoiceTiming, openReplyVoice } from './run
 /** Un événement du flux de la voix, tel que `routes/voice-reply.ts` l'écrit. */
 export interface ReplyAudioEvent {
   event: 'audio' | 'audio_end' | 'done';
-  data: unknown;
+  data: Outbound<unknown>;
 }
 
 interface ReplyAudio {
@@ -149,7 +149,7 @@ export function speakFinishedJob(
   );
 
   const timing = createVoiceTiming(endedAt, now, 'voice-job-reply', JOB_REPLY_TIMING_MARKS);
-  const emit = (event: string, data: unknown): void => {
+  const emit = (event: string, data: Outbound<unknown>): void => {
     if (event === 'audio' || event === 'audio_end') emitTo(reply, { event, data });
   };
   void (async () => {
@@ -168,7 +168,7 @@ export function speakFinishedJob(
       if (!announcement.ok) {
         speechError = {
           code: announcement.code,
-          ...(announcement.detail ? { detail: redactSecretsInText(announcement.detail) } : {}),
+          ...(announcement.detail ? { detail: outboundText(announcement.detail) } : {}),
         };
       } else {
         // Les mots de l'agent, rangés tels quels ; ce qui est DIT est masqué.
@@ -176,7 +176,7 @@ export function speakFinishedJob(
           .update(agentJobs)
           .set({ spokenAnnouncement: announcement.text })
           .where(eq(agentJobs.id, job.jobId));
-        said = redactSecretsInText(announcement.text);
+        said = outboundText(announcement.text);
         const opened = await openReplyVoice(db, job.entityId, emit, timing);
         if (opened.voice) {
           for (const sentence of splitSentences(said)) opened.voice.say(sentence);
@@ -189,12 +189,12 @@ export function speakFinishedJob(
     } catch (err) {
       speechError = {
         code: 'speech_failed',
-        detail: redactSecretsInText(err instanceof Error ? err.message : String(err)),
+        detail: outboundText(err instanceof Error ? err.message : String(err)),
       };
     }
     if (reply.events.some((e) => e.event === 'audio')) timing.mark('lastAudio');
     reply.ended = true;
-    emitTo(reply, { event: 'done', data: { text: said, speechError } });
+    emitTo(reply, { event: 'done', data: outboundValue({ text: said, speechError }) });
     reply.readers.clear();
     // `warn` : le canal des lignes de journal du runner, comme `[voice-turn]`.
     console.warn(timing.line());

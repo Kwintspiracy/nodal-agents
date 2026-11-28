@@ -21,6 +21,8 @@ import {
 } from './delivery-guard';
 import type { ToolDefinition, ToolContext } from '../types';
 import { sentCard } from '../presenters';
+import { RECEIPT_KEY, sendReceipt, withSendAttempt, type SendReceipt } from './receipt';
+import { chatTarget } from '@nodal-agents/shared';
 
 // ─── Input / Output ───────────────────────────────────────────────────────────
 
@@ -52,6 +54,9 @@ const TelegramSendMessageInput = z.object({
 type TelegramSendMessageInput = z.infer<typeof TelegramSendMessageInput>;
 /**
  * Ce que le MODÈLE reçoit après un envoi : un accusé de réception, rien de plus.
+ * La ligne de l'appel garde en plus le reçu de la plateforme (`receipt` : le
+ * canal, le chat, l'identifiant du message), que le modèle ne lit jamais
+ * (`keptFromModel`, receipt.ts).
  *
  * Cet outil rendait `{messageId}`. Le 08/09/2026, un agent a lu le sien comme
  * un message de l'utilisateur — « User replied "2311"? … likely they mean port
@@ -64,7 +69,7 @@ type TelegramSendMessageInput = z.infer<typeof TelegramSendMessageInput>;
  * (revue Codex, PR #48, qui a corrigé la première version de ce commentaire).
  * Ce que le modèle relit ne doit rien contenir qui ressemble à un message.
  */
-type TelegramSendMessageOutput = { sent: true };
+type TelegramSendMessageOutput = { sent: true; receipt: SendReceipt };
 
 // ─── Envoi interrompu ─────────────────────────────────────────────────────────
 
@@ -163,6 +168,7 @@ Fail conditions:
     riskLevel: 'write',
     egress: 'channel',
     loading: 'eager',
+    keptFromModel: [RECEIPT_KEY],
     card: 'sent',
     present: ({ input }) =>
       sentCard({
@@ -187,6 +193,10 @@ Fail conditions:
         'telegram_no_recipient',
         input.channel,
       );
+      // What this call acts on (#1184): the chat it resolved, whatever form
+      // the model gave the address in. Said before the send, so a failure or
+      // a timeout is keyed to it as well as a success.
+      ctx.reportTarget?.(chatTarget(channel, chatId));
 
       // 2. Bot token — the runner's resolved token wins (B3: a delegated worker
       // inheriting its entity's root agent's token); otherwise fall back to this
@@ -212,16 +222,17 @@ Fail conditions:
             ? await adapter.sendText({ botToken }, chatId, input.text)
             : await adapter.sendText({ botToken }, chatId, input.text, { fromChunk });
       } catch (err) {
-        throw await withoutConversationId(partialSendError(err, key, input.text), ctx, {
-          chatId,
-          channel,
-        });
+        throw withSendAttempt(
+          await withoutConversationId(partialSendError(err, key, input.text), ctx, {
+            chatId,
+            channel,
+          }),
+          { chatId, channel },
+        );
       }
 
-      // `res.messageId` reste disponible ici pour qui en aurait besoin côté
-      // runner ; il ne remonte simplement pas au modèle.
-      void res;
-      return { sent: true };
+      // Le reçu reste sur la ligne de l'appel ; il ne remonte pas au modèle.
+      return { sent: true, receipt: sendReceipt({ chatId, channel }, res) };
     },
   };
 }

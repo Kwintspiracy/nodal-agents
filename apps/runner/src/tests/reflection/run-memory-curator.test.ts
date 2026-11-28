@@ -23,9 +23,13 @@ import { MockLanguageModelV3 } from 'ai/test';
 import { generateText, type ModelMessage } from 'ai';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { agentMemory, eq } from '@nodal-agents/db';
+import { agentMemory, agentMemoryVersions, eq } from '@nodal-agents/db';
+import { mutateMemory } from '@nodal-agents/memory';
 import type { RunnerDeps } from '../../deps.ts';
-import { runMemoryCuration } from '../../reflection/run-memory-curator.ts';
+import {
+  runMemoryCuration,
+  MEMORY_CURATOR_CANDIDATE_CHARS,
+} from '../../reflection/run-memory-curator.ts';
 
 // ── createLlmClient interception (same pattern as curator.test.ts) ─────────────
 const { getActiveLlmClient, setActiveLlmClient } = vi.hoisted(() => {
@@ -63,7 +67,17 @@ interface CapturedCall {
   messages: ModelMessage[];
 }
 
-function makeScriptedClient(turns: ScriptedTurn[]): {
+/**
+ * `turns` is either a fixed script, or a function that writes each turn once it
+ * has seen what the runner sent (the system prompt of that call) — and may act
+ * on the database in between, like an owner editing a fact while the pass
+ * thinks.
+ */
+type Script =
+  | ScriptedTurn[]
+  | ((i: number, call: CapturedCall) => ScriptedTurn | Promise<ScriptedTurn>);
+
+function makeScriptedClient(turns: Script): {
   client: RunnerDeps['llmClient'];
   calls: CapturedCall[];
 } {
@@ -72,7 +86,10 @@ function makeScriptedClient(turns: ScriptedTurn[]): {
     provider: 'mock',
     modelId: 'mock',
     doGenerate: async () => {
-      const t = turns[i] ?? turns[turns.length - 1] ?? {};
+      const t =
+        typeof turns === 'function'
+          ? await turns(i, calls[calls.length - 1]!)
+          : (turns[i] ?? turns[turns.length - 1] ?? {});
       i += 1;
       const content: Array<
         | { type: 'text'; text: string }
@@ -279,7 +296,7 @@ describe('runMemoryCuration — archive_memory soft-archives a real DB row', () 
 
 // ── 4-7. Error paths — correct outcome string, counter NOT incremented, DB untouched ──
 describe('runMemoryCuration — set_importance error paths never re-try silently', () => {
-  it('refuses a source=manual fact: outcome names it user-entered, rescored stays 0', async () => {
+  it('refuses a source=manual fact: outcome says the owner wrote it, rescored stays 0', async () => {
     await db.delete(agentMemory);
     const factId = await insertFact({ fact: 'user fact', source: 'manual', importance: 3 });
 
@@ -301,13 +318,13 @@ describe('runMemoryCuration — set_importance error paths never re-try silently
 
     expect(result.rescored).toBe(0);
     const outcome = findToolOutcome(calls, 't1');
-    expect(outcome).toContain('user-entered');
-    expect(outcome).toContain('cannot be re-scored');
+    expect(outcome).toContain('was written by the owner');
+    expect(outcome).toContain('only the owner changes it');
     const row = await loadFact(factId);
     expect(row?.importance).toBe(3); // untouched
   });
 
-  it('refuses an importance_locked fact: outcome names it user-locked, rescored stays 0', async () => {
+  it('refuses an importance_locked fact: outcome says the owner pinned it, rescored stays 0', async () => {
     await db.delete(agentMemory);
     const factId = await insertFact({
       fact: 'user-pinned agent fact',
@@ -334,7 +351,7 @@ describe('runMemoryCuration — set_importance error paths never re-try silently
 
     expect(result.rescored).toBe(0);
     const outcome = findToolOutcome(calls, 't1');
-    expect(outcome).toContain('user-locked');
+    expect(outcome).toContain('is pinned by the owner');
     const row = await loadFact(factId);
     expect(row?.importance).toBe(4); // untouched
   });
@@ -367,7 +384,7 @@ describe('runMemoryCuration — set_importance error paths never re-try silently
     expect(row?.importance).toBe(3); // untouched
   });
 
-  it('reports "not found" for a nonexistent memory id and leaves counters at 0', async () => {
+  it('refuses an id that was not shown (here: no such fact) and leaves counters at 0', async () => {
     await db.delete(agentMemory);
     // Need at least one candidate for the pass to run at all.
     await insertFact({ fact: 'unrelated agent fact', source: 'agent', importance: 3 });
@@ -394,7 +411,7 @@ describe('runMemoryCuration — set_importance error paths never re-try silently
 
     expect(result).toEqual({ edited: 0, archived: 0, rescored: 0, turns: 2 });
     const outcome = findToolOutcome(calls, 't1');
-    expect(outcome).toContain('not found');
+    expect(outcome).toContain('not among the facts shown to you');
   });
 });
 
@@ -458,5 +475,211 @@ describe('runMemoryCuration — a turn over the per-turn tool-call budget runs n
     );
     const row = await loadFact(factId);
     expect(row?.archived).toBe(false);
+  });
+});
+
+// ── A pass changes only what it was shown in full, keeps the previous text, and
+//    leaves the owner's marks alone (#1144) ─────────────────────────────────────
+
+async function versionsOf(id: string) {
+  return db
+    .select()
+    .from(agentMemoryVersions)
+    .where(eq(agentMemoryVersions.memoryId, id))
+    .orderBy(agentMemoryVersions.version);
+}
+
+function rowState(r: Awaited<ReturnType<typeof loadFact>>) {
+  return r
+    ? {
+        fact: r.fact,
+        importance: r.importance,
+        importanceLocked: r.importanceLocked,
+        archived: r.archived,
+        validTo: r.validTo,
+        version: r.version,
+      }
+    : null;
+}
+
+describe('runMemoryCuration — a long fact is shown whole, and a rewrite of it can be undone (#1144) @cap:se-souvenir/moteur', () => {
+  it('600 characters: the pass sees the whole text; after its edit the exact original is kept and comes back', async () => {
+    await db.delete(agentMemoryVersions);
+    await db.delete(agentMemory);
+    const original =
+      'Release checklist. '.repeat(30) + 'Decisive last line: the rollback window is 17 minutes.';
+    expect(original.length).toBeGreaterThan(580);
+    const factId = await insertFact({ fact: original, source: 'agent', importance: 4 });
+
+    // The fake model asks for exactly what the old first instruction asked for:
+    // distill the oversized fact to its key statement.
+    const { client, calls } = makeScriptedClient([
+      {
+        toolCalls: [
+          {
+            toolCallId: 'd1',
+            toolName: 'edit_memory',
+            args: { memoryId: factId, fact: 'Release checklist: see the workspace file.' },
+          },
+        ],
+      },
+      {},
+    ]);
+    setActiveLlmClient(client);
+
+    const result = await runMemoryCuration(db, seed.entityId, 3);
+
+    const system = calls[0]?.system ?? '';
+    expect(system).toContain(original);
+    expect(system).not.toContain('OVERSIZED');
+    expect(system).not.toMatch(/DISTILL/i);
+    expect(result.edited).toBe(1);
+
+    const versions = await versionsOf(factId);
+    expect(versions.map((v) => [v.version, v.changedBy, v.action, v.fact])).toEqual([
+      [1, 'curator', 'edit', original],
+    ]);
+
+    const back = await mutateMemory(db, {
+      entityId: seed.entityId,
+      memoryId: factId,
+      readVersion: 2,
+      actor: { kind: 'owner' },
+      change: { kind: 'revert', versionId: versions[0]!.id },
+    });
+    expect(back.ok).toBe(true);
+    expect((await loadFact(factId))?.fact).toBe(original);
+  });
+
+  it('a fact left out of the pass for size is not shown, and the pass cannot change it', async () => {
+    await db.delete(agentMemoryVersions);
+    await db.delete(agentMemory);
+    const ids: string[] = [];
+    const facts = new Map<string, string>();
+    const count = Math.ceil(MEMORY_CURATOR_CANDIDATE_CHARS / 4800) + 1;
+    for (let n = 0; n < count; n += 1) {
+      const fact = (`Fact ${n}: ` + `${n} long procedure step. `.repeat(400)).slice(0, 4800);
+      const id = await insertFact({ fact, source: 'agent', importance: 3 });
+      ids.push(id);
+      facts.set(id, fact);
+    }
+
+    let hidden: string | undefined;
+    const { client, calls } = makeScriptedClient((i, call) => {
+      if (i > 0) return {};
+      hidden = ids.find((id) => !(call.system ?? '').includes(`id=${id}`));
+      return {
+        toolCalls: [
+          { toolCallId: 'h1', toolName: 'edit_memory', args: { memoryId: hidden, fact: 'short' } },
+          { toolCallId: 'h2', toolName: 'archive_memory', args: { memoryId: hidden } },
+        ],
+      };
+    });
+    setActiveLlmClient(client);
+
+    const result = await runMemoryCuration(db, seed.entityId, 3);
+
+    expect(hidden).toBeDefined();
+    expect(calls[0]?.system ?? '').not.toContain(facts.get(hidden!)!);
+    expect(result).toMatchObject({ edited: 0, archived: 0 });
+    expect(findToolOutcome(calls, 'h1')).toContain('not among the facts shown to you');
+    expect(findToolOutcome(calls, 'h2')).toContain('not among the facts shown to you');
+    const row = await loadFact(hidden!);
+    expect([row?.fact, row?.archived, row?.version]).toEqual([facts.get(hidden!), false, 1]);
+  });
+});
+
+describe("runMemoryCuration — every curator tool leaves the owner's facts untouched (#1144) @cap:se-souvenir/moteur", () => {
+  it('a pinned agent fact and an owner-written fact: edit, archive and re-score are refused, rows byte-identical', async () => {
+    await db.delete(agentMemoryVersions);
+    await db.delete(agentMemory);
+    const pinned = await insertFact({
+      fact: 'Invoices for this client go to the accounts address.',
+      source: 'agent',
+      importance: 5,
+      importanceLocked: true,
+    });
+    const manual = await insertFact({
+      fact: 'The operator is based in the head office.',
+      source: 'manual',
+      importance: 3,
+    });
+    const before = {
+      pinned: rowState(await loadFact(pinned)),
+      manual: rowState(await loadFact(manual)),
+    };
+
+    const toolCalls = [pinned, manual].flatMap((id, k) => [
+      { toolCallId: `e${k}`, toolName: 'edit_memory', args: { memoryId: id, fact: 'merged' } },
+      { toolCallId: `a${k}`, toolName: 'archive_memory', args: { memoryId: id } },
+      {
+        toolCallId: `s${k}`,
+        toolName: 'set_importance',
+        args: { memoryId: id, importance: 1, reason: 'never used' },
+      },
+    ]);
+    const { client, calls } = makeScriptedClient([{ toolCalls }, {}]);
+    setActiveLlmClient(client);
+
+    const result = await runMemoryCuration(db, seed.entityId, 3);
+
+    expect(result).toMatchObject({ edited: 0, archived: 0, rescored: 0 });
+    for (const tc of toolCalls) {
+      const outcome = findToolOutcome(calls, tc.toolCallId) ?? '';
+      expect(outcome).toContain('only the owner changes it');
+      expect(outcome).toContain('do not retry');
+    }
+    // The candidates say which facts are the owner's, so the model can skip them.
+    expect(calls[0]?.system ?? '').toMatch(new RegExp(`id=${pinned}[^\\n]*protected=pinned`));
+    expect(calls[0]?.system ?? '').toMatch(new RegExp(`id=${manual}[^\\n]*protected=owner`));
+    expect(rowState(await loadFact(pinned))).toEqual(before.pinned);
+    expect(rowState(await loadFact(manual))).toEqual(before.manual);
+    expect(await versionsOf(pinned)).toEqual([]);
+    expect(await versionsOf(manual)).toEqual([]);
+  });
+});
+
+describe('runMemoryCuration — a fact the owner changed while the pass was thinking is not overwritten (#1144) @cap:se-souvenir/moteur', () => {
+  it('the curator edit prepared on the version it read is refused; the owner text stays', async () => {
+    await db.delete(agentMemoryVersions);
+    await db.delete(agentMemory);
+    const factId = await insertFact({
+      fact: 'The weekly report goes out on Monday.',
+      source: 'agent',
+      importance: 3,
+    });
+    const ownerText = 'The weekly report goes out on Tuesday since the team moved.';
+
+    const { client, calls } = makeScriptedClient(async (i) => {
+      if (i > 0) return {};
+      // The owner edits the fact between the pass's read and its tool call.
+      const r = await mutateMemory(db, {
+        entityId: seed.entityId,
+        memoryId: factId,
+        readVersion: 1,
+        actor: { kind: 'owner' },
+        change: { kind: 'edit', fact: ownerText },
+      });
+      expect(r.ok).toBe(true);
+      return {
+        toolCalls: [
+          {
+            toolCallId: 'x1',
+            toolName: 'edit_memory',
+            args: { memoryId: factId, fact: 'Weekly report: Monday.' },
+          },
+          { toolCallId: 'x2', toolName: 'archive_memory', args: { memoryId: factId } },
+        ],
+      };
+    });
+    setActiveLlmClient(client);
+
+    const result = await runMemoryCuration(db, seed.entityId, 3);
+
+    expect(result).toMatchObject({ edited: 0, archived: 0 });
+    expect(findToolOutcome(calls, 'x1')).toContain('changed since it was read');
+    expect(findToolOutcome(calls, 'x2')).toContain('changed since it was read');
+    const row = await loadFact(factId);
+    expect([row?.fact, row?.archived, row?.version]).toEqual([ownerText, false, 2]);
   });
 });

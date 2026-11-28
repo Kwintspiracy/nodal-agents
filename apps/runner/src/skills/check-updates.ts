@@ -3,19 +3,25 @@
 // download + parse steps as installCommunitySkill (parseSkillSource →
 // downloadAndExtract → readInstalledSkillSource → buildContent) and
 // diffs the result against what's stored: `defaultContent` for the wrapped
-// SKILL.md body, and a path-set + sha256 compare (computeScriptsChanged,
-// fs-util.ts) for the bundled scripts against what's actually on disk in the
-// skill's store dir.
+// SKILL.md body, and the three-way file plan (planSkillFiles, manifest.ts)
+// for EVERY file of the skill folder — the same plan the preview shows and
+// the apply follows.
 //
 // Called per-skill by the cron phase (cron/run-skill-update-check.ts),
 // throttled there by `last_update_check_at`. This module owns ONLY the
 // per-skill check + its DB write of the 3 tracking columns (update_available,
-// update_detail, last_update_check_at) — it never touches the store-dir files.
+// update_detail, last_update_check_at) — it never writes to the skill folder.
 // Applying an update (writing files, revoking script authorization) is a
 // separate, explicit action: applySkillUpdate in install.ts.
 
 import { join } from 'node:path';
-import { eq, agentSkills, type AnyDrizzleDb, type SkillSourceProblem } from '@nodal-agents/db';
+import {
+  eq,
+  agentSkills,
+  type AnyDrizzleDb,
+  type SkillSourceProblem,
+  type SkillFilesState,
+} from '@nodal-agents/db';
 import { parseSkillSource, SkillSourceError } from './source';
 import { downloadAndExtract, SkillFetchError } from './fetch';
 import { FrontmatterError } from './frontmatter';
@@ -26,7 +32,8 @@ import {
   SkillInstallError,
   SkillIdentityChangedError,
 } from './install';
-import { buildNestedSkillExclusion, computeScriptsState } from './fs-util';
+import { buildNestedSkillExclusion } from './fs-util';
+import { readTree, isCaseInsensitiveDir, planSkillFiles, restrictPlan, stateOf } from './manifest';
 
 export interface SkillUpdateCheckSkill {
   id: string;
@@ -34,6 +41,8 @@ export interface SkillUpdateCheckSkill {
   source: string;
   defaultContent: string | null;
   installedScripts: Array<{ path: string; language: string; sha256?: string }> | null;
+  /** agent_skills.installed_files — null for a skill installed before the manifest. */
+  installedFiles: Array<{ path: string; sha256: string }> | null;
 }
 
 export interface CheckSkillUpdateOptions {
@@ -55,7 +64,8 @@ export type SkillUpdateCheckOutcome =
       kind: 'checked';
       contentChanged: boolean;
       scriptsChanged: boolean;
-      scriptsState: 'clean' | 'update' | 'conflict' | 'local-only';
+      scriptsState: SkillFilesState;
+      filesState: SkillFilesState;
     }
   /**
    * The source could not be read as the skill this row tracks: repo/ref/
@@ -198,34 +208,49 @@ export async function checkSkillUpdate(
     const contentChanged = wrapped !== (skill.defaultContent ?? '');
 
     const localDir = join(opts.skillStoreDir, skill.slug);
-    // Three-way compare against the install-time ORIGIN hashes: a locally
-    // patched script with an unchanged upstream ('local-only') must NOT raise
-    // the badge — there is nothing new to install, and "updating" would only
-    // overwrite the local patches with identical upstream files.
-    const scriptsState = await computeScriptsState(
-      localDir,
-      skillDirAbs,
-      freshScripts,
-      skill.installedScripts ?? [],
+    // Three-way compare of EVERY file against what the source shipped: a
+    // file changed only locally, or added locally, must NOT raise the badge —
+    // there is nothing new to install — and a reference or template changed
+    // upstream must, like SKILL.md and scripts.
+    const [upstreamTree, localTree, caseInsensitive] = await Promise.all([
+      readTree(skillDirAbs, isExcluded),
+      readTree(localDir),
+      isCaseInsensitiveDir(opts.skillStoreDir),
+    ]);
+    const plan = planSkillFiles({
+      local: localTree,
+      upstream: upstreamTree,
+      origin: skill.installedFiles,
+      legacyScriptOrigins: skill.installedScripts,
+      caseInsensitive,
+    });
+    const filesState = plan.state;
+    const scriptsState = stateOf(
+      restrictPlan(plan, [
+        ...freshScripts.map((s) => s.path),
+        ...(skill.installedScripts ?? []).map((s) => s.path),
+      ]),
     );
     const scriptsChanged = scriptsState === 'update' || scriptsState === 'conflict';
+    const filesChanged = filesState === 'update' || filesState === 'conflict';
 
     const now = new Date();
     await db
       .update(agentSkills)
       .set({
-        updateAvailable: contentChanged || scriptsChanged,
+        updateAvailable: contentChanged || filesChanged,
         updateDetail: {
           contentChanged,
           scriptsChanged,
           scriptsState,
+          filesState,
           checkedAt: now.toISOString(),
         },
         lastUpdateCheckAt: now,
       })
       .where(eq(agentSkills.id, skill.id));
 
-    return { kind: 'checked', contentChanged, scriptsChanged, scriptsState };
+    return { kind: 'checked', contentChanged, scriptsChanged, scriptsState, filesState };
   } finally {
     await extracted.cleanup();
   }

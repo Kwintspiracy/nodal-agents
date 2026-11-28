@@ -835,7 +835,9 @@ describe('#810 — le modèle lit un rôle et un id opaque, jamais une donnée d
     expect(entry!.content).not.toContain(memberEmail);
   });
 
-  it('un compte qui n’existe plus : la forme le dit, fixe, au lieu d’en changer en silence', async () => {
+  it('un compte qui n’existe plus ne tranche rien : refusé, et ses mots n’arrivent nulle part', async () => {
+    // Celui qui tranche appartient à l'espace de la demande (approvals/resolve.ts) :
+    // un compte qu'aucune ligne ne nomme n'en est pas, ses mots ne partent pas.
     const head = await insertHead();
     const child = await insertChild(head, reviewerAgentId);
     const card = await insertCard(child, reviewerAgentId);
@@ -848,11 +850,8 @@ describe('#810 — le modèle lit un rôle et un id opaque, jamais une donnée d
       answeredBy: { userId: goneUserId },
       notes: NOTE,
     });
-    expect(r.ok).toBe(true);
-    const [entry] = await inboxOf(head);
-    expect(bySegment(entry!.content)).toBe(
-      `by: unlisted user:${goneUserId} (no account with this id)`,
-    );
+    expect(r).toEqual({ ok: false, code: 'responder_not_member' });
+    expect(await inboxOf(head)).toEqual([]);
   });
 
   // Le `by:` d'un canal est dans le MÊME espace d'adresses que ce que les

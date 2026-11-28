@@ -22,8 +22,9 @@
 // a missing config, an unreachable runner and an unknown agent each throw, and
 // `runSections` records the section error rather than reporting a silent 0.
 
-import { readFileSync } from 'node:fs';
-import { nodalHomeEntry } from '@nodal-agents/shared/nodal-home';
+import type { NodalConfig } from '@nodal-agents/shared/nodal-config';
+import { readNodalConfigFile } from '@nodal-agents/shared/nodal-config-file';
+import { nodalConfigPath } from '@nodal-agents/shared/state-files';
 import type { Metric, Section } from '../types';
 
 /** The task replayed each run — the exact one from the incident (job f1852d35). */
@@ -34,23 +35,16 @@ const DEFAULT_RUNS = 5;
 const JOB_TIMEOUT_MS = 10 * 60_000;
 const POLL_MS = 3_000;
 
-interface LocalConfig {
-  ports?: { web?: number; runner?: number; postgres?: number };
-  workerSecret?: string;
-  postgresPassword?: string;
-}
-
-function readLocalConfig(): LocalConfig {
-  const path = nodalHomeEntry('config.json');
-  let raw: string;
-  try {
-    raw = readFileSync(path, 'utf8');
-  } catch {
+/** The local stack's config.json, read by the product's own reader. */
+function readLocalConfig(): NodalConfig {
+  const path = nodalConfigPath();
+  const config = readNodalConfigFile(path);
+  if (config === null) {
     throw new Error(
       `Configuration locale introuvable (${path}) — la stack n'a jamais démarré ici.`,
     );
   }
-  return JSON.parse(raw) as LocalConfig;
+  return config;
 }
 
 function intFromEnv(name: string, fallback: number): number {
@@ -168,7 +162,10 @@ export const delegationSection: Section = {
     const runnerUrl =
       process.env['BENCH_RUNNER_URL'] ?? `http://127.0.0.1:${config.ports?.runner ?? 3001}`;
 
-    const health = await fetch(`${runnerUrl}/api/health`).catch(() => null);
+    // With the install's proof: the runner admits no caller without it.
+    const health = await fetch(`${runnerUrl}/api/health`, {
+      headers: { authorization: `Bearer ${secret}` },
+    }).catch(() => null);
     if (!health?.ok) throw new Error(`Runner injoignable sur ${runnerUrl} — démarre la stack.`);
 
     const { db, close } = await openDb();

@@ -13,8 +13,13 @@
 // Une entrée par conversation suffit : la file de `turn-lane.ts` ne joue qu'UN
 // tour à la fois par conversation (même raisonnement que `turn-stop.ts`).
 
-/** Ce qu'un auditeur reçoit : un fragment, ou la fin du tour. */
-export type LiveTurnEvent = { kind: 'delta'; text: string } | { kind: 'end' };
+import type { Outbound } from '@nodal-agents/shared';
+
+/**
+ * Ce qu'un auditeur reçoit : un fragment, ou la fin du tour. Le fragment est
+ * déjà passé par la forme flux de la couture de sortie (`playChatTurn`).
+ */
+export type LiveTurnEvent = { kind: 'delta'; text: Outbound<string> } | { kind: 'end' };
 
 interface LiveTurn {
   entityId: string;
@@ -33,7 +38,7 @@ const live = new Map<string, LiveTurn>();
 export async function withLiveTurn<T>(
   entityId: string,
   conversationId: string,
-  work: (say: (delta: string) => void) => Promise<T>,
+  work: (say: (delta: Outbound<string>) => void) => Promise<T>,
 ): Promise<T> {
   const turn: LiveTurn = { entityId, startedAt: Date.now(), text: '', listeners: new Set() };
   live.set(conversationId, turn);

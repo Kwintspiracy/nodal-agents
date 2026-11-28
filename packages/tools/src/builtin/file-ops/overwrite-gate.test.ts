@@ -473,7 +473,12 @@ describe('D1 overwrite gate — the fingerprint is what the tool WROTE, checked 
       },
     } as typeof fileWriteTool;
 
-    const result = await executeTool(lent, { path, content: 'take 2' }, ctx(), opts(undefined));
+    // Un AUTRE run du même agent : le contenu est à l'agent (la porte laisse
+    // passer), et ce run ne l'a jamais vu (la garde du contenu vu, qui refuse
+    // plus tôt dans le run qui l'a écrit, ne s'applique pas). C'est la
+    // dernière vérification, au `rename`, qui reste seule à le voir.
+    const other = ctxOf(await jobOf(seed.agentId));
+    const result = await executeTool(lent, { path, content: 'take 2' }, other, opts(undefined));
 
     expect(result.outcome).toBe('success');
     const out = (result as { output: { ok: boolean; reason?: string } }).output;

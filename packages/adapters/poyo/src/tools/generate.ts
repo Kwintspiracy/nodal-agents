@@ -65,6 +65,9 @@ export function makePoyoGenerateImageTool(
     description:
       'Generate an image from a text prompt using Poyo. Submits the job, waits for it to finish, and returns the resulting image URL(s). Use `model` to pick a Poyo image model (default gpt-4o-image) and `size` for the aspect ratio.',
     inputSchema: GenerateImageInput,
+    // Submitted and still running when the poll ends: the image may yet be
+    // made, and a second call pays again. Neither done nor failed (#1184).
+    outcomeOf: (output) => (output.status === 'running' ? 'unknown' : 'done'),
     async execute(input, _ctx: ToolContext) {
       const model = input.model ?? DEFAULT_MODEL;
       try {

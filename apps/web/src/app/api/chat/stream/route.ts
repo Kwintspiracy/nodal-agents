@@ -14,7 +14,7 @@
 
 import { and, eq } from '@nodal-agents/db';
 import { agents, conversations } from '@nodal-agents/db';
-import { createStreamRedactor, redactSecretsInText } from '@nodal-agents/shared';
+import { createOutboundStream, outboundText } from '@nodal-agents/shared';
 import { z } from 'zod';
 import { getDb, requireUserWithEntity } from '@/lib/server.ts';
 import { env } from '@/lib/env.ts';
@@ -114,7 +114,7 @@ export async function POST(req: Request): Promise<Response> {
   const encoder = new TextEncoder();
   const relayed = new ReadableStream<Uint8Array>({
     async start(controller) {
-      const redactor = createStreamRedactor();
+      const redactor = createOutboundStream();
       const write = (event: string, data: unknown): void => {
         controller.enqueue(encoder.encode(sseEvent(event, data)));
       };
@@ -124,7 +124,7 @@ export async function POST(req: Request): Promise<Response> {
             const text = (JSON.parse(msg.data) as { text?: unknown }).text;
             if (typeof text !== 'string') continue;
             // Ce qui sort est déjà masqué ; ce qui pourrait encore devenir un
-            // secret attend le fragment suivant (`createStreamRedactor`).
+            // secret attend le fragment suivant (`createOutboundStream`).
             const safe = redactor.push(text);
             if (safe !== '') write('delta', { text: safe });
             continue;
@@ -145,7 +145,7 @@ export async function POST(req: Request): Promise<Response> {
             write('done', {
               // La réponse ENTIÈRE, masquée d'un bloc — exactement ce que le
               // fil rendra au rechargement. C'est elle qui fait foi.
-              reply: redactSecretsInText(reply),
+              reply: outboundText(reply),
               spawnedJobId: typeof payload.spawnedJobId === 'string' ? payload.spawnedJobId : null,
               // Relayé tel quel : le runner sait si les fragments étaient bien
               // cette réponse, la porte web n'a rien à en juger.

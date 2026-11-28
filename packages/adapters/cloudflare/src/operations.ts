@@ -16,6 +16,10 @@ export const CLOUDFLARE_OPERATIONS: OperationDescriptor[] = [
     summary:
       'Publish a built site or app from the workspace. It goes live at a workers.dev address.',
     risk: 'write',
+    // wrangler is given 300 s (its first run downloads it), after the account is read.
+    timeBoundMs: 360_000,
+    // The deployment is wrangler's (a child process), not a request of the SDK.
+    effectOutsideTransport: true,
     requiresApproval: true,
     description:
       'Publish a built static site/app directory from the agent workspace to Cloudflare ' +

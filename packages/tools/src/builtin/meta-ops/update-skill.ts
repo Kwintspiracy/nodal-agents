@@ -9,6 +9,7 @@ import { agentSkills } from '@nodal-agents/db';
 import type { ToolDefinition } from '../../types';
 import { lintSkillContent } from './lint-skill-content';
 import { SKILL_AUTHORING_GUIDE } from './create-skill';
+import { outcomeOfOkFlag } from '../../outcome';
 
 const UpdateSkillInput = z.object({
   skillSlug: z.string().min(1).describe('The slug OR name of the skill to update.'),
@@ -39,6 +40,7 @@ export const updateSkillTool: ToolDefinition<typeof UpdateSkillInput, UpdateSkil
   egress: 'none',
   card: 'text',
   defaultApproval: 'require_approval',
+  outcomeOf: outcomeOfOkFlag,
   execute: async (input, ctx) => {
     if (
       input.name === undefined &&

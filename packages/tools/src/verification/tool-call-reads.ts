@@ -16,13 +16,26 @@
 // ligne. Ce qu'une commande, un harnais de code ou un outil MCP lit n'est pas
 // ici : la plateforme n'ouvre pas ces fichiers elle-même.
 //
-// Ce n'est PAS une garde : une insertion qui échoue ne bloque jamais l'outil.
+// L'insertion n'est PAS une garde : une insertion qui échoue ne bloque jamais l'outil.
 // Elle est journalisée par un code (`TOOL_CALL_READS_UNRECORDED`), et l'absence
 // de ligne se lit « non enregistré », jamais comme la preuve que rien n'a été
 // lu (invariant #4).
+//
+// Ces lignes, avec celles de `tool_call_writes`, sont la MÉMOIRE de ce que le
+// job a vu : `lastContentSeenByJob` les relit pour la garde du contenu vu des
+// outils qui remplacent un fichier (`file-ops/text-file.ts`).
 
 import type { AnyDrizzleDb } from '@nodal-agents/db';
-import { toolCallReads } from '@nodal-agents/db';
+import {
+  and,
+  desc,
+  eq,
+  isNotNull,
+  or,
+  toolCallReads,
+  toolCallWrites,
+  toolCalls,
+} from '@nodal-agents/db';
 import { cheminConstate } from './record-constat';
 
 /**
@@ -58,4 +71,88 @@ export async function recordToolCallReads(input: {
     );
     return 0;
   }
+}
+
+/**
+ * Le contenu de `absPath` tel que CE JOB l'a vu en dernier : l'empreinte que
+ * porte le dernier appel du job qui l'a lu ou écrit, dans l'ordre d'écriture
+ * des appels (`tool_calls.seq`). `null` : le job ne l'a jamais vu.
+ *
+ * Ce qu'un appel « a vu » se lit sur ses lignes, sans liste d'outils :
+ *  - un appel qui a ÉCRIT ce fichier (une ligne `tool_call_writes`) l'a laissé
+ *    dans l'état de ses octets écrits (`after_source = 'written'`) ; quand il
+ *    n'a rien écrit (refusé, échoué) ou que son état d'après est une relecture
+ *    du disque, il n'en a rien montré au modèle et ne compte pas — sa propre
+ *    lecture interne non plus, ce qui empêche un appel refusé de « rafraîchir »
+ *    la vue qu'il vient de déclarer périmée ;
+ *  - un appel qui n'a fait que le LIRE (une ligne `tool_call_reads` seule) l'a
+ *    vu tel que ses octets lus.
+ *
+ * C'est la mémoire qui garde un remplacement de ne s'appliquer qu'au contenu
+ * que ce job a vu (`text-file.ts`, `assertSeenByJob`). Une ligne qui n'a pas
+ * pu être rangée (`TOOL_CALL_READS_UNRECORDED`, journalisée) se lit comme un
+ * fichier jamais vu : la règle d'écrasement d'avant s'applique, rien de plus.
+ */
+export async function lastContentSeenByJob(
+  db: AnyDrizzleDb,
+  jobId: string,
+  absPath: string,
+): Promise<string | null> {
+  return (await lastViewByJob(db, jobId, absPath))?.sha256 ?? null;
+}
+
+/**
+ * The last view this job had of `absPath` (see `lastContentSeenByJob`), and
+ * whether the job read the file with a result the boundary masked
+ * (`tool_calls.result_masked`, 0175) since its last successful write of it:
+ * the model then saw the file with values hidden from it, and a later read of
+ * another part of it does not show them either. A successful write sets the
+ * view to what it wrote, and starts the count again. Read from the rows, so
+ * it is the same after a suspension.
+ */
+export async function lastViewByJob(
+  db: AnyDrizzleDb,
+  jobId: string,
+  absPath: string,
+): Promise<{ sha256: string; masked: boolean } | null> {
+  const path = await cheminConstate(absPath);
+  const rows = await db
+    .select({
+      readSha: toolCallReads.sha256,
+      resultMasked: toolCalls.resultMasked,
+      writeId: toolCallWrites.id,
+      writeSha: toolCallWrites.afterSha256,
+      writeSource: toolCallWrites.afterSource,
+    })
+    .from(toolCalls)
+    .leftJoin(
+      toolCallReads,
+      and(eq(toolCallReads.toolCallId, toolCalls.id), eq(toolCallReads.path, path)),
+    )
+    .leftJoin(
+      toolCallWrites,
+      and(eq(toolCallWrites.toolCallId, toolCalls.id), eq(toolCallWrites.path, path)),
+    )
+    .where(
+      and(
+        eq(toolCalls.jobId, jobId),
+        or(isNotNull(toolCallReads.id), isNotNull(toolCallWrites.id)),
+      ),
+    )
+    .orderBy(desc(toolCalls.seq));
+  let last: string | null = null;
+  let masked = false;
+  for (const r of rows) {
+    if (r.writeId !== null) {
+      if (r.writeSource === 'written' && r.writeSha !== null) {
+        return { sha256: last ?? r.writeSha, masked };
+      }
+      continue;
+    }
+    if (r.readSha !== null) {
+      last ??= r.readSha;
+      masked ||= r.resultMasked;
+    }
+  }
+  return last === null ? null : { sha256: last, masked };
 }

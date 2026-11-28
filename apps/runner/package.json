@@ -30,6 +30,7 @@
     "@nodal-agents/speech": "workspace:*",
     "@nodal-agents/tools": "workspace:*",
     "@slack/bolt": "^4.7.3",
+    "@slack/socket-mode": "2.0.7",
     "@slack/web-api": "^7.19.0",
     "@xmldom/xmldom": "0.9.12",
     "cron-parser": "^5.5.0",

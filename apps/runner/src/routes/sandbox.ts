@@ -13,7 +13,7 @@
 // commande appliquera, jamais une copie. Un réglage illisible rend 500 avec
 // son code, jamais un état supposé (invariant #4).
 //
-// Auth : la garde `requireRunnerAuth` (server.ts). Un appelant de confiance (le
+// Auth : l’admission (lib/admission.ts). Un appelant de confiance (le
 // web, qui a cadré l'espace depuis la session) passe ; un porteur de jeton de
 // session ne lit que SON espace, et un autre est introuvable (404).
 

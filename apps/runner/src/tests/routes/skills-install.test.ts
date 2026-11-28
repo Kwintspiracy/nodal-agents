@@ -124,7 +124,9 @@ describe('POST /api/skills/install — authentification', () => {
       { source: 'github.com/exemple/skill', entityId: seed.entityId },
       { secret: null },
     );
-    expect(res.status).toBe(403);
+    // Refusée à la porte (lib/admission.ts), comme toute route.
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: 'proof_required' });
 
     expect(await skillCount(), 'une skill a été installée sans secret').toBe(avant);
   });
@@ -134,8 +136,8 @@ describe('POST /api/skills/install — authentification', () => {
       { source: 'github.com/exemple/skill', entityId: seed.entityId },
       { secret: 'mauvais-secret' },
     );
-    expect(res.status).toBe(403);
-    expect(await res.json()).toMatchObject({ error: 'invalid_worker_secret' });
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: 'proof_invalid' });
   });
 
   it('refuse un secret de la bonne longueur mais faux — pas de comparaison partielle', async () => {
@@ -145,14 +147,14 @@ describe('POST /api/skills/install — authentification', () => {
       { source: 'github.com/exemple/skill', entityId: seed.entityId },
       { secret: 'test-secrez' },
     );
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(401);
   });
 
   it('vérifie le secret AVANT de regarder le corps', async () => {
     // Un corps invalide ne doit pas renvoyer 400 à un appelant non authentifié :
     // ce serait un oracle sur la forme attendue de la requête.
     const res = await post({ nimporte: 'quoi' }, { secret: null });
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(401);
   });
 });
 

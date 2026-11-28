@@ -38,6 +38,8 @@ import {
   isWindowsPath,
   normalizePath,
   projectKey,
+  callMayHaveActed,
+  readCallOutcome,
 } from '@nodal-agents/shared';
 import type { RunnerDeps } from '../deps.ts';
 
@@ -584,10 +586,12 @@ export async function hiddenSubtreePredicate(
  */
 export function scannedEditPath(row: {
   toolInput: unknown;
-  toolOutput: string | null;
+  /** What became of the call (`tool_calls.outcome`, #1184). */
+  outcome: string | null;
 }): string | null {
-  const head = (row.toolOutput ?? '').slice(0, 400);
-  if (head.includes('<tool_use_error>') || /^\s*\{"ok"\s*:\s*false\b/.test(head)) return null;
+  // Une écriture qui n'a pas abouti (refusée, en échec, en attente) n'a rien
+  // créé : sa colonne le dit, écrite par la porte ou par l'enregistreur CLI.
+  if (!callMayHaveActed(readCallOutcome(row.outcome))) return null;
   const input = (row.toolInput ?? {}) as Record<string, unknown>;
   const raw =
     typeof input['file_path'] === 'string'
@@ -709,7 +713,7 @@ export async function scanProjects(db: RunnerDeps['db'], entityId: string): Prom
     const rows = await db
       .select({
         toolInput: toolCalls.toolInput,
-        toolOutput: toolCalls.toolOutput,
+        outcome: toolCalls.outcome,
         createdAt: toolCalls.createdAt,
         agentId: agentJobs.agentId,
         jobId: toolCalls.jobId,

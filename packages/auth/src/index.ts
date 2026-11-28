@@ -29,10 +29,37 @@ export type { BearerTokenProviderOptions } from './providers/bearer-token.ts';
 
 export { requireAuth, requireAuthWithEntity } from './helpers.ts';
 
-// NETWORK-001: Origin/Host admission control for the runner's /api surface.
+// Loopback or RFC1918 origin (better-auth's trusted origins in local-auth).
 export { isPrivateOrigin } from './lib/private-origin.ts';
-export { checkRequestOrigin, isAllowedOrigin, isAllowedHost } from './lib/request-origin.ts';
-export type { RequestOriginCheck, OriginRejection } from './lib/request-origin.ts';
+
+// Request admission: the one decision both servers apply to every request
+// (Host, Origin with its proof, the caller's proof, body type).
+export { admitRequest, bodyTypesFor, hasRequestBody } from './lib/request-origin.ts';
+export type {
+  AdmissionRefusal,
+  BodyRoute,
+  RequestFacts,
+  RequestProof,
+} from './lib/request-origin.ts';
+
+// Constant-time comparison of a presented secret.
+export { constantTimeEqual } from './lib/constant-time.ts';
+
+// The dashboard's way in with no password: a launch link, then a cookie, both
+// derived from the install's secret.
+export {
+  DASHBOARD_COOKIE_MAX_AGE_S,
+  LAUNCH_PARAM,
+  LAUNCH_TTL_MS,
+  LaunchLedger,
+  dashboardCookieName,
+  launchUrl,
+  mintDashboardCookie,
+  mintLaunchToken,
+  verifyDashboardCookie,
+  verifyLaunchToken,
+} from './lib/launch-link.ts';
+export type { LaunchRefusal, LaunchVerdict } from './lib/launch-link.ts';
 
 // Re-export the Next.js handler helper so apps/web can call it without
 // importing better-auth directly (apps/web doesn't list better-auth as a dep).

@@ -1,36 +1,15 @@
 // @nodal-agents/adapter-outlook-mail — message payload builder tests
 
 import { describe, it, expect } from 'vitest';
-import {
-  parseRecipients,
-  buildFileAttachments,
-  detectBodyContentType,
-} from '../../helpers/message';
+import { buildFileAttachments, graphBody, toGraphRecipients } from '../../helpers/message';
 
-describe('parseRecipients', () => {
-  it('parses a single address', () => {
-    expect(parseRecipients('alice@example.com')).toEqual([
-      { emailAddress: { address: 'alice@example.com' } },
-    ]);
-  });
-
-  it('parses a comma-separated list, trimming whitespace', () => {
-    expect(parseRecipients('alice@example.com,  bob@example.com')).toEqual([
-      { emailAddress: { address: 'alice@example.com' } },
-      { emailAddress: { address: 'bob@example.com' } },
-    ]);
-  });
-
-  it('returns an empty array for undefined, empty, or blank input', () => {
-    expect(parseRecipients(undefined)).toEqual([]);
-    expect(parseRecipients('')).toEqual([]);
-    expect(parseRecipients('   ')).toEqual([]);
-  });
-
-  it('drops empty entries from a trailing/leading comma', () => {
-    expect(parseRecipients('alice@example.com,,bob@example.com,')).toEqual([
-      { emailAddress: { address: 'alice@example.com' } },
-      { emailAddress: { address: 'bob@example.com' } },
+describe('toGraphRecipients', () => {
+  it('keeps display names and leaves bare addresses bare', () => {
+    expect(
+      toGraphRecipients([{ name: 'Doe, Jane', address: 'jane@acme.com' }, { address: 'b@y.com' }]),
+    ).toEqual([
+      { emailAddress: { name: 'Doe, Jane', address: 'jane@acme.com' } },
+      { emailAddress: { address: 'b@y.com' } },
     ]);
   });
 });
@@ -102,13 +81,13 @@ describe('buildFileAttachments', () => {
   });
 });
 
-describe('detectBodyContentType', () => {
-  it('detects html when the body contains real tags', () => {
-    expect(detectBodyContentType('<p>Hello</p>')).toBe('html');
-  });
-
-  it('treats plain text as text, including text with bare angle brackets', () => {
-    expect(detectBodyContentType('Hello world')).toBe('text');
-    expect(detectBodyContentType('5 < 10 and 10 > 5')).toBe('text');
+describe('graphBody', () => {
+  it('labels the body with the declared type, whatever its characters', () => {
+    const text = 'Reach Jane <jane@acme.com>.' + String.fromCharCode(10) + 'Dear <Name>';
+    expect(graphBody(text, 'text')).toEqual({ contentType: 'text', content: text });
+    expect(graphBody('plain words', 'html')).toEqual({
+      contentType: 'html',
+      content: 'plain words',
+    });
   });
 });

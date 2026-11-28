@@ -90,6 +90,13 @@ const PrintConnectorSlot = z
     mcpServer: z.literal(BENCH_PRINTER_SLUG),
     tools: z.array(BenchPrinterTool).min(1),
     autoApprove: z.array(BenchPrinterTool),
+    /**
+     * Une imprimante qui imprime (#1071) : chaque demande devient un travail,
+     * terminé en ce nombre de secondes, que `get_print_request` sait suivre.
+     * Absent : les demandes attendent, rien n'imprime (l'empreinte d'une
+     * configuration qui ne le porte pas ne change pas).
+     */
+    printSeconds: z.number().positive().max(600).optional(),
   })
   .strict()
   .refine((p) => p.autoApprove.every((t) => p.tools.includes(t)), {

@@ -146,7 +146,11 @@ describe('ask_user — la porte', () => {
       makeOpts([resumeBypassRule()], 'fully_autonomous'),
     );
 
-    expect(result).toEqual({ outcome: 'error', error: 'question_without_call_id' });
+    expect(result).toMatchObject({
+      outcome: 'error',
+      error: 'question_without_call_id',
+      callOutcome: 'failed',
+    });
     // Aucune ligne sans id n'a été créée : rien à reprendre, rien à reposer.
     const sansId = await db
       .select({ id: approvalRequests.id })

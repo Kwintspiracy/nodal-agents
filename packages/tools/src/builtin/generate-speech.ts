@@ -34,6 +34,7 @@ import {
   MAX_WRITE_BYTES,
   WorkspaceError,
 } from './file-ops/workspace';
+import { outcomeOfOkFlag } from '../outcome';
 
 /**
  * The models take 8,192 tokens of context; this keeps a request well inside
@@ -151,6 +152,7 @@ export const generateSpeechTool: ToolDefinition<
     if (target === null) return false;
     return (await computeSharedOverwriteApproval(ctx, target)) === 'require_approval';
   },
+  outcomeOf: outcomeOfOkFlag,
   execute: async (input, ctx) => {
     const target = wavPath(input.path);
     if (target === null) {

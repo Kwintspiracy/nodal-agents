@@ -10,7 +10,15 @@
 //                 sheets_set_basic_filter, sheets_clear_basic_filter, sheets_sort_range
 //   destructive — sheets_delete_sheet
 
-import type { OperationDescriptor } from '@nodal-agents/shared';
+import type { OperationDescriptor, ScopeRequirement } from '@nodal-agents/shared';
+
+// OAuth right, from the Sheets API reference: spreadsheets.* and
+// spreadsheets.values.* accept the spreadsheets scope, and the Drive scope too
+// (which is why a credential granted for Drive also runs these).
+const SHEETS: ScopeRequirement = [
+  'https://www.googleapis.com/auth/spreadsheets',
+  'https://www.googleapis.com/auth/drive',
+];
 
 export const SHEETS_OPERATIONS: OperationDescriptor[] = [
   // ─── Read (5) ────────────────────────────────────────────────────────────────
@@ -19,6 +27,7 @@ export const SHEETS_OPERATIONS: OperationDescriptor[] = [
     name: 'Read range',
     risk: 'read',
     requiresApproval: false,
+    scopes: [SHEETS],
     description: 'Read values from a cell range (e.g. A1:C10).',
   },
   {
@@ -26,6 +35,7 @@ export const SHEETS_OPERATIONS: OperationDescriptor[] = [
     name: 'Read all',
     risk: 'read',
     requiresApproval: false,
+    scopes: [SHEETS],
     description: 'Read all values from a sheet.',
   },
   {
@@ -33,6 +43,7 @@ export const SHEETS_OPERATIONS: OperationDescriptor[] = [
     name: 'Batch read ranges',
     risk: 'read',
     requiresApproval: false,
+    scopes: [SHEETS],
     description: 'Read multiple cell ranges in a single request.',
   },
   {
@@ -40,6 +51,7 @@ export const SHEETS_OPERATIONS: OperationDescriptor[] = [
     name: 'Get metadata',
     risk: 'read',
     requiresApproval: false,
+    scopes: [SHEETS],
     description: 'Retrieve spreadsheet metadata and sheet list.',
   },
   {
@@ -47,6 +59,7 @@ export const SHEETS_OPERATIONS: OperationDescriptor[] = [
     name: 'Find rows',
     risk: 'read',
     requiresApproval: false,
+    scopes: [SHEETS],
     description: 'Search rows matching a column value.',
   },
 
@@ -56,6 +69,7 @@ export const SHEETS_OPERATIONS: OperationDescriptor[] = [
     name: 'Write range',
     risk: 'write',
     requiresApproval: false,
+    scopes: [SHEETS],
     description: 'Write values to a cell range.',
   },
   {
@@ -63,6 +77,7 @@ export const SHEETS_OPERATIONS: OperationDescriptor[] = [
     name: 'Append row',
     risk: 'write',
     requiresApproval: false,
+    scopes: [SHEETS],
     description: 'Append a new row at the end of a sheet.',
   },
   {
@@ -70,6 +85,7 @@ export const SHEETS_OPERATIONS: OperationDescriptor[] = [
     name: 'Clear range',
     risk: 'write',
     requiresApproval: false,
+    scopes: [SHEETS],
     description: 'Clear values in a cell range.',
   },
   {
@@ -77,6 +93,7 @@ export const SHEETS_OPERATIONS: OperationDescriptor[] = [
     name: 'Batch update values',
     risk: 'write',
     requiresApproval: false,
+    scopes: [SHEETS],
     description: 'Write values to multiple ranges in one request.',
   },
   {
@@ -84,6 +101,7 @@ export const SHEETS_OPERATIONS: OperationDescriptor[] = [
     name: 'Create spreadsheet',
     risk: 'write',
     requiresApproval: false,
+    scopes: [SHEETS],
     description: 'Create a new Google Sheets spreadsheet.',
   },
   {
@@ -91,6 +109,7 @@ export const SHEETS_OPERATIONS: OperationDescriptor[] = [
     name: 'Add sheet',
     risk: 'write',
     requiresApproval: false,
+    scopes: [SHEETS],
     description: 'Add a new sheet tab to a spreadsheet.',
   },
   {
@@ -98,6 +117,7 @@ export const SHEETS_OPERATIONS: OperationDescriptor[] = [
     name: 'Duplicate sheet',
     risk: 'write',
     requiresApproval: false,
+    scopes: [SHEETS],
     description: 'Duplicate an existing sheet tab.',
   },
   {
@@ -105,6 +125,7 @@ export const SHEETS_OPERATIONS: OperationDescriptor[] = [
     name: 'Rename sheet',
     risk: 'write',
     requiresApproval: false,
+    scopes: [SHEETS],
     description: 'Rename a sheet tab.',
   },
   {
@@ -112,6 +133,7 @@ export const SHEETS_OPERATIONS: OperationDescriptor[] = [
     name: 'Format range',
     risk: 'write',
     requiresApproval: false,
+    scopes: [SHEETS],
     description: 'Apply formatting (bold, color, number format) to a cell range.',
   },
   {
@@ -119,6 +141,7 @@ export const SHEETS_OPERATIONS: OperationDescriptor[] = [
     name: 'Resize columns',
     risk: 'write',
     requiresApproval: false,
+    scopes: [SHEETS],
     description: 'Resize column widths in a sheet.',
   },
   {
@@ -126,6 +149,7 @@ export const SHEETS_OPERATIONS: OperationDescriptor[] = [
     name: 'Freeze panes',
     risk: 'write',
     requiresApproval: false,
+    scopes: [SHEETS],
     description: 'Freeze rows or columns in a sheet.',
   },
   {
@@ -133,6 +157,7 @@ export const SHEETS_OPERATIONS: OperationDescriptor[] = [
     name: 'Set basic filter',
     risk: 'write',
     requiresApproval: false,
+    scopes: [SHEETS],
     description: 'Apply a basic filter to a sheet range.',
   },
   {
@@ -140,6 +165,7 @@ export const SHEETS_OPERATIONS: OperationDescriptor[] = [
     name: 'Clear basic filter',
     risk: 'write',
     requiresApproval: false,
+    scopes: [SHEETS],
     description: 'Remove the basic filter from a sheet.',
   },
   {
@@ -147,6 +173,7 @@ export const SHEETS_OPERATIONS: OperationDescriptor[] = [
     name: 'Sort range',
     risk: 'write',
     requiresApproval: false,
+    scopes: [SHEETS],
     description: 'Sort a range by one or more columns.',
   },
 
@@ -156,6 +183,7 @@ export const SHEETS_OPERATIONS: OperationDescriptor[] = [
     name: 'Delete sheet',
     risk: 'destructive',
     requiresApproval: true,
+    scopes: [SHEETS],
     description: 'Permanently delete a sheet tab from a spreadsheet.',
   },
 ];

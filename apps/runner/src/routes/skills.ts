@@ -12,6 +12,7 @@ import { isValidWorkerSecret } from '../lib/worker-secret.ts';
 import {
   installCommunitySkill,
   uninstallCommunitySkill,
+  previewSkillRemoval,
   applySkillUpdate,
   previewSkillUpdate,
   acknowledgeSkillUpdate,
@@ -22,14 +23,27 @@ import {
   FrontmatterError,
 } from '../skills/index.ts';
 
+const ConflictChoicesSchema = z.record(
+  z.string().min(1).max(1024),
+  z.enum(['keep-local', 'take-upstream']),
+);
+
 const InstallRequestSchema = z.object({
   source: z.string().min(1).max(2048),
   entityId: z.string().guid(),
+  /** Files already in the store for this skill: the review's upstreamFilesHash. */
+  expectedFilesHash: z
+    .string()
+    .regex(/^[0-9a-f]{64}$/)
+    .optional(),
+  conflictChoices: ConflictChoicesSchema.optional(),
 });
 
 const UninstallRequestSchema = z.object({
   slug: z.string().min(1).max(128),
   entityId: z.string().guid(),
+  /** The person's choice for their own files in the folder (previewSkillRemoval). */
+  localFiles: z.enum(['keep', 'delete']).optional(),
 });
 
 const UpdateRequestSchema = z.object({
@@ -44,6 +58,13 @@ const UpdateRequestSchema = z.object({
     .string()
     .regex(/^[0-9a-f]{64}$/)
     .optional(),
+  /** The preview's upstreamFilesHash: same contract, for the files. */
+  expectedFilesHash: z
+    .string()
+    .regex(/^[0-9a-f]{64}$/)
+    .optional(),
+  /** One choice per file the preview listed as a conflict, keyed by path. */
+  conflictChoices: ConflictChoicesSchema.optional(),
 });
 
 const PreviewRequestSchema = z.object({
@@ -94,6 +115,12 @@ export async function installSkillRoute(
       source: parsed.data.source,
       skillStoreDir: skillStoreDir(parsed.data.entityId),
       entityId: parsed.data.entityId,
+      ...(parsed.data.expectedFilesHash === undefined
+        ? {}
+        : { expectedFilesHash: parsed.data.expectedFilesHash }),
+      ...(parsed.data.conflictChoices === undefined
+        ? {}
+        : { conflictChoices: parsed.data.conflictChoices }),
     });
     return c.json({ ok: true, skill: result }, 200);
   } catch (err) {
@@ -121,13 +148,14 @@ export async function uninstallSkillRoute(
   }
 
   try {
-    await uninstallCommunitySkill({
+    const result = await uninstallCommunitySkill({
       db: deps.db,
       slug: parsed.data.slug,
       skillStoreDir: skillStoreDir(parsed.data.entityId),
       entityId: parsed.data.entityId,
+      ...(parsed.data.localFiles === undefined ? {} : { localFiles: parsed.data.localFiles }),
     });
-    return c.json({ ok: true }, 200);
+    return c.json({ ok: true, ...result }, 200);
   } catch (err) {
     if (isUserFacingInstallError(err)) {
       return c.json({ ok: false, error: 'uninstall_failed', message: err.message }, 400);
@@ -136,11 +164,50 @@ export async function uninstallSkillRoute(
   }
 }
 
+// ─── POST /api/skills/preview-uninstall ─────────────────────────────────────
+//
+// Read-only: the person's files in the skill folder (files the source did not
+// ship, shipped files changed here), shown before a removal so the person
+// chooses whether they are kept or deleted with the skill.
+
+export async function previewUninstallSkillRoute(
+  c: Context,
+  deps: RunnerDeps,
+  runnerEnv: RunnerEnv,
+): Promise<Response> {
+  const authFail = checkWorkerSecret(c, runnerEnv);
+  if (authFail) return authFail;
+
+  const body = await c.req.json().catch(() => null);
+  const parsed = PreviewRequestSchema.safeParse(body);
+  if (!parsed.success) {
+    return c.json({ error: 'invalid_request', issues: parsed.error.issues }, 400);
+  }
+
+  try {
+    const result = await previewSkillRemoval({
+      db: deps.db,
+      slug: parsed.data.slug,
+      skillStoreDir: skillStoreDir(parsed.data.entityId),
+      entityId: parsed.data.entityId,
+    });
+    return c.json({ ok: true, ...result }, 200);
+  } catch (err) {
+    if (isUserFacingInstallError(err)) {
+      return c.json({ ok: false, error: 'preview_failed', message: err.message }, 400);
+    }
+    throw err;
+  }
+}
+
 // ─── POST /api/skills/update ────────────────────────────────────────────────
 //
 // Applies a pending upstream update to an already-installed community skill:
-// re-downloads the source, replaces the store-dir files, and updates the DB
-// row (defaultContent always; content only when not owner-overridden). If the
+// re-downloads the source, applies the file plan the preview showed (files
+// added locally kept, conflicts per the owner's choices) by building the new
+// folder beside the old one and switching it in with the DB row, and updates
+// the row (content and defaultContent; an owner edit is replaced, which the
+// dashboard's update dialog says before the owner confirms). If the
 // skill's bundled scripts changed, revokes scripts_authorized on every
 // agent×skill assignment for it — see applySkillUpdate (skills/install.ts)
 // for the full security rationale.
@@ -168,6 +235,12 @@ export async function updateSkillRoute(
       ...(parsed.data.expectedContentHash === undefined
         ? {}
         : { expectedContentHash: parsed.data.expectedContentHash }),
+      ...(parsed.data.expectedFilesHash === undefined
+        ? {}
+        : { expectedFilesHash: parsed.data.expectedFilesHash }),
+      ...(parsed.data.conflictChoices === undefined
+        ? {}
+        : { conflictChoices: parsed.data.conflictChoices }),
     });
     return c.json({ ok: true, ...result }, 200);
   } catch (err) {

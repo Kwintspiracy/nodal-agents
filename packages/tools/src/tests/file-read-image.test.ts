@@ -43,7 +43,12 @@ const WEBP = Buffer.concat([
   Buffer.from([0x10, 0, 0, 0]),
   Buffer.from('WEBPVP8 body'),
 ]);
-const BMP = Buffer.concat([Buffer.from('BM'), Buffer.alloc(20, 1)]);
+// Un en-tête BMP réel : « BM », la taille, les quatre octets réservés (nuls), le décalage.
+const BMP = Buffer.concat([
+  Buffer.from('BM'),
+  Buffer.from([22, 0, 0, 0, 0, 0, 0, 0, 14, 0, 0, 0]),
+  Buffer.alloc(8, 1),
+]);
 
 const SEES: ModelAttachmentInput = { image: { sees: true }, pdf: { sees: true } };
 const BLIND: ModelAttachmentInput = {

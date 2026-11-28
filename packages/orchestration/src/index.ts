@@ -35,21 +35,18 @@ export {
   DEFAULT_LIMITS,
   remainingDelegationHops,
   delegationDepthExceededMessage,
+  remainingDelegationResumes,
+  delegationResumeLimitMessage,
 } from './chain-counters';
 
-// ─── Guard 1f — non-progress detector (pure reducers) ────────────────────────
+// ─── Guard 1f — non-progress detector (pure reducer) ─────────────────────────
 export {
-  NON_PROGRESS_SAME_TOOL_NUDGE_AT,
-  NON_PROGRESS_SAME_TOOL_FAIL_AT,
   NON_PROGRESS_ERROR_STREAK_NUDGE_AT,
   NON_PROGRESS_ERROR_STREAK_FAIL_AT,
-  NON_PROGRESS_EXEMPT_TOOLS,
-  recordSameToolCall,
   recordToolOutcome,
-  INITIAL_SAME_TOOL_STREAK_STATE,
   INITIAL_ERROR_STREAK_STATE,
 } from './chain-counters';
-export type { SameToolStreakState, ErrorStreakState, NonProgressSignal } from './chain-counters';
+export type { ErrorStreakState, NonProgressSignal } from './chain-counters';
 
 // ─── After a failed delegation (#510) — one rule for the payload and the gate ─
 export {
@@ -60,13 +57,6 @@ export {
   retryBlockedMessage,
 } from './router/failed-delegation';
 export type { FailedDelegationState } from './router/failed-delegation';
-
-// ─── Guard 1g — verify-before-assert nudge (cancel/undo intent) ─────────────
-export {
-  CANCEL_UNDO_INTENT_RE,
-  CANCEL_UNDO_INTENT_SCAN_CHARS,
-  VERIFY_BEFORE_ASSERT_NUDGE,
-} from './chain-counters';
 
 // ─── OrchestratorMode detection ───────────────────────────────────────────────
 export { detectOrchestratorMode } from './orchestrator-mode';

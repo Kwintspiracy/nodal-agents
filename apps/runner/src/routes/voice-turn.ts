@@ -14,7 +14,9 @@
 // `audio_malformed` 400, 409 quand l'espace n'a pas d'oreille (le code de la
 // résolution : `voice_key_missing` avec `source`, `voice_setting_missing`,
 // `voice_setting_unreadable`…, #976), `transcription_failed` 502 (avec
-// `detail`, les mots du fournisseur, masqués). Chaque refus est écrit au
+// `reason`, le code de packages/speech — `speech_unreachable` quand rien ne
+// répond à l'adresse d'un serveur de la personne, #1048 — et `detail`, les
+// mots du fournisseur, masqués). Jamais une autre oreille à la place. Chaque refus est écrit au
 // journal du runner avec son code. Rien n'est rangé. Sinon la
 // réponse est `text/event-stream`, et ses événements sont, dans cet ordre :
 //
@@ -87,6 +89,7 @@
 // session du tableau de bord.
 
 import type { Context } from 'hono';
+import { outboundValue, type Outbound } from '@nodal-agents/shared';
 import { z } from 'zod';
 import { and, conversations, eq } from '@nodal-agents/db';
 import type { RunnerDeps } from '../deps.ts';
@@ -124,7 +127,7 @@ const StartSchema = z
 
 /**
  * Le tour `turnId` s'il appartient à l'appelant. Un appelant de confiance (le
- * web avec WORKER_SECRET, local-trust) a déjà résolu son entité ; un porteur
+ * web avec WORKER_SECRET) a déjà résolu son entité ; un porteur
  * de session n'atteint que les tours de SON entité. Un tour d'une autre
  * entité répond comme un tour inexistant : son existence ne se devine pas.
  */
@@ -223,7 +226,11 @@ export async function voiceTurnEndRoute(
   const heard = await hearVoiceTurn(deps, u);
   if (heard.outcome === 'failed') {
     return c.json(
-      { error: heard.error, ...(heard.detail ? { detail: heard.detail } : {}) },
+      {
+        error: heard.error,
+        ...(heard.reason ? { reason: heard.reason } : {}),
+        ...(heard.detail ? { detail: heard.detail } : {}),
+      },
       heard.status,
     );
   }
@@ -235,7 +242,7 @@ export async function voiceTurnEndRoute(
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
       let closed = false;
-      const send = (event: string, data: unknown): void => {
+      const send = (event: string, data: Outbound<unknown>): void => {
         if (closed) return;
         try {
           controller.enqueue(encoder.encode(sseEvent(event, data)));
@@ -251,7 +258,10 @@ export async function voiceTurnEndRoute(
           if (heard.outcome === 'nothing_heard') {
             // Le modèle qui n'a rien écrit (#976), pour que l'écran le nomme ;
             // `null` : aucun échantillon, rien n'est parti au fournisseur.
-            send('nothing_heard', { durationMs: heard.durationMs, model: heard.model });
+            send(
+              'nothing_heard',
+              outboundValue({ durationMs: heard.durationMs, model: heard.model }),
+            );
             return;
           }
           await speakVoiceTurn(deps, runnerEnv, u, heard, send, {
@@ -260,7 +270,7 @@ export async function voiceTurnEndRoute(
           });
         } catch (err) {
           console.error('[voiceTurnRoute] turn failed:', err);
-          send('error', { error: 'chat_failed' });
+          send('error', outboundValue({ error: 'chat_failed' }));
         } finally {
           timing.mark('done');
           // `warn` : le canal des lignes de journal du runner (comme

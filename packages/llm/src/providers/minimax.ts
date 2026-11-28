@@ -21,8 +21,7 @@ import { createAnthropic } from '@ai-sdk/anthropic';
 import type { LanguageModel } from 'ai';
 import { findModelCatalogEntry } from '@nodal-agents/shared';
 import type { ProviderConfig } from '../types';
-import { ProviderConfigError } from '../errors';
-import { PROVIDER_PRESETS } from './registry';
+import { resolveProviderEndpoint } from '../endpoint';
 import { providerFetch } from '../transport';
 
 // ─── Beta flags MiniMax rejects ───────────────────────────────────────────────
@@ -152,13 +151,10 @@ export function normalizeMiniMaxBaseURL(raw: string): string {
 // ─── Provider builder ──────────────────────────────────────────────────────────
 
 export function buildMiniMaxModel(config: ProviderConfig): LanguageModel {
-  if (!config.apiKey) {
-    throw new ProviderConfigError('minimax provider requires an apiKey');
-  }
-
-  const baseURL = normalizeMiniMaxBaseURL(
-    config.baseURL ?? PROVIDER_PRESETS.minimax.defaultBaseURL,
-  );
+  const endpoint = resolveProviderEndpoint(config);
+  const baseURL = normalizeMiniMaxBaseURL(endpoint.baseURL);
+  // A hosted provider: resolution refused a row without a key.
+  const apiKey = endpoint.apiKey!;
 
   // Gate thinking injection on the catalog reasoning flag. Non-reasoning models
   // (MiniMax-M2 / M2.7) must NOT receive the thinking block — only M3 is a
@@ -179,9 +175,9 @@ export function buildMiniMaxModel(config: ProviderConfig): LanguageModel {
   const provider = createAnthropic({
     // The SDK sends x-api-key using this value; the fetch wrapper swaps it to
     // Authorization: Bearer before the request reaches the wire.
-    apiKey: config.apiKey,
+    apiKey,
     baseURL,
-    fetch: createMiniMaxFetch(config.apiKey, { injectThinking, budgetTokens }),
+    fetch: createMiniMaxFetch(apiKey, { injectThinking, budgetTokens }),
   });
 
   return provider(config.model);

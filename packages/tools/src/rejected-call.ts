@@ -39,7 +39,7 @@ import {
   sql,
   approvalsNewestFirst,
 } from '@nodal-agents/db';
-import { canonicalJson } from '@nodal-agents/shared';
+import { canonicalJson, readCallOutcome } from '@nodal-agents/shared';
 import { PURPOSE_KEY } from './purpose';
 import type { ToolContext } from './types';
 
@@ -69,33 +69,16 @@ function actionOf(input: unknown, purposeIsArgument: boolean): string {
 }
 
 /**
- * Une ligne d'audit qui n'a rien FAIT. Deux cas, tous deux écrits par la porte
- * elle-même (`executeTool`), et c'est ce résultat qu'on lit :
- *   - l'appel attend une décision (`awaiting_approval`) ;
- *   - l'appel a reçu CETTE réponse-ci, le refus déjà prononcé.
+ * Une ligne d'audit qui n'a rien FAIT, lue sur sa colonne (`tool_calls.outcome`,
+ * #1184) : l'appel attend une décision (`awaiting_approval`), ou la porte l'a
+ * refusé (`refused` : une règle du propriétaire, ou ce refus-ci déjà prononcé).
  * Tout le reste est un geste, le même appel compris : exécuté plus tard (une
  * règle changée entre-temps), il a changé ce que la décision supposait (revue
  * Codex de #492, passe 3). Un appel exécuté en échec aussi.
  */
-function didNothing(toolOutput: string | null): boolean {
-  if (!toolOutput) return false;
-  try {
-    const parsed = JSON.parse(toolOutput) as {
-      outcome?: unknown;
-      approvalRequestId?: unknown;
-      error?: unknown;
-    };
-    if (parsed.outcome === 'awaiting_approval' && typeof parsed.approvalRequestId === 'string') {
-      return true;
-    }
-    return (
-      parsed.outcome === 'error' &&
-      typeof parsed.error === 'string' &&
-      parsed.error.startsWith(ALREADY_REJECTED_CODE)
-    );
-  } catch {
-    return false;
-  }
+function didNothing(outcome: string | null): boolean {
+  const o = readCallOutcome(outcome);
+  return o === 'awaiting_approval' || o === 'refused';
 }
 
 /** Le refus déjà prononcé dans ce job sur ce même appel, ou `null`. */
@@ -141,12 +124,11 @@ export async function priorRejectionOfSameCall(
   const since = await ctx.db
     .select({
       toolName: toolCalls.toolName,
-      toolInput: toolCalls.toolInput,
-      toolOutput: toolCalls.toolOutput,
+      outcome: toolCalls.outcome,
     })
     .from(toolCalls)
     .where(and(eq(toolCalls.jobId, ctx.jobId), gte(toolCalls.createdAt, same.resolvedAt)));
-  const didSomethingElse = since.some((c) => !didNothing(c.toolOutput));
+  const didSomethingElse = since.some((c) => !didNothing(c.outcome));
   return didSomethingElse ? null : { approvalRequestId: same.id, notes: same.notes };
 }
 

@@ -20,7 +20,11 @@ import {
 } from '@nodal-agents/secrets';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { credentials } from '@nodal-agents/db';
+import { credentials, decryptCredentialForDisplay } from '@nodal-agents/db';
+import { getOAuthProvider } from '@nodal-agents/shared';
+// Static: runner-adapters pulls every adapter; loaded at collection, not
+// inside a test's timeout.
+import { connectorAccessFor } from '@nodal-agents/runner-adapters';
 import { eq } from '@nodal-agents/db';
 
 // ─── Module-level mock setup ──────────────────────────────────────────────────
@@ -81,6 +85,9 @@ async function buildValidCookie(opts: {
   credentialType?: string;
   returnTo?: string;
   name?: string;
+  connector?: string;
+  requestedScopes?: string;
+  credentialId?: string;
 }): Promise<{ cookieValue: string; state: string; codeVerifier: string }> {
   const { generatePkce, generateState, signStatePayload } = await import('@/lib/oauth-state.ts');
   const { codeVerifier } = generatePkce();
@@ -95,6 +102,9 @@ async function buildValidCookie(opts: {
     clientId: opts.clientId ?? 'test-client-id',
     clientSecretEnc: encrypt(clientSecret),
     credentialType: opts.credentialType ?? 'google-oauth',
+    connector: opts.connector ?? 'google-drive',
+    requestedScopes: opts.requestedScopes ?? 'https://www.googleapis.com/auth/drive openid email',
+    ...(opts.credentialId ? { credentialId: opts.credentialId } : {}),
     ...(opts.returnTo ? { returnTo: opts.returnTo } : {}),
     ...(opts.name ? { name: opts.name } : {}),
     createdAt: Date.now(),
@@ -127,6 +137,8 @@ function mockSuccessfulGoogleFetch(
     refresh_token?: string;
     expires_in?: number;
     email?: string;
+    /** The grant the provider answers with; `null` omits the field. */
+    scope?: string | null;
   } = {},
 ): ReturnType<typeof vi.fn> {
   const {
@@ -134,6 +146,7 @@ function mockSuccessfulGoogleFetch(
     refresh_token = 'test-refresh-token',
     expires_in = 3600,
     email = 'test@example.com',
+    scope = 'https://www.googleapis.com/auth/drive openid email',
   } = overrides;
 
   let callCount = 0;
@@ -146,7 +159,7 @@ function mockSuccessfulGoogleFetch(
             access_token,
             refresh_token,
             expires_in,
-            scope: 'https://www.googleapis.com/auth/drive openid email',
+            ...(scope === null ? {} : { scope }),
             token_type: 'Bearer',
           }),
           { status: 200, headers: { 'content-type': 'application/json' } },
@@ -164,7 +177,8 @@ function mockSuccessfulGoogleFetch(
 }
 
 const ORIGIN = 'http://localhost:3000';
-const SLUG = 'google-drive';
+// The path names the credential type: the OAuth client the person registered.
+const SLUG = 'google-oauth';
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
@@ -588,5 +602,179 @@ describe('GET /api/oauth/[provider]/callback — error cases', () => {
     // Parse the redirect query so URLSearchParams handles +/encoding correctly.
     const redirectUrl = new URL(location);
     expect(redirectUrl.searchParams.get('detail')).toBe(errorDescription);
+  });
+});
+
+// ─── The grant the provider answered with is what the credential holds ───────
+
+const GMAIL_READONLY = 'https://www.googleapis.com/auth/gmail.readonly';
+const GMAIL_SEND = 'https://www.googleapis.com/auth/gmail.send';
+const DRIVE = 'https://www.googleapis.com/auth/drive';
+
+async function runCallback(opts: {
+  cookie: Parameters<typeof buildValidCookie>[0];
+  code: string;
+  fetchMock: ReturnType<typeof vi.fn>;
+}): Promise<string> {
+  const { cookieValue, state } = await buildValidCookie(opts.cookie);
+  const req = buildCallbackRequest({
+    origin: ORIGIN,
+    slug: SLUG,
+    code: opts.code,
+    state,
+    cookieValue,
+  });
+  vi.stubGlobal('fetch', opts.fetchMock);
+  try {
+    const { GET } = await import('@/app/api/oauth/[provider]/callback/route.ts');
+    const response = await GET(req, { params: Promise.resolve({ provider: SLUG }) });
+    expect(response.status).toBe(302);
+    return response.headers.get('location') ?? '';
+  } finally {
+    vi.unstubAllGlobals();
+  }
+}
+
+async function storedScopes(credentialId: string): Promise<string> {
+  const cred = await decryptCredentialForDisplay(_testDb!, credentialId);
+  return cred!.payload.scopes;
+}
+
+describe('GET /api/oauth/[provider]/callback — the granted scopes are stored @cap:connecter-un-service/moteur', () => {
+  it('stores what the provider granted when it grants less than asked, and the connector then lacks exactly that', async () => {
+    // Asked: every Gmail right. Granted: read only (the person unticked the rest).
+    const location = await runCallback({
+      cookie: {
+        slug: SLUG,
+        entityId: _testEntityId,
+        connector: 'gmail',
+        requestedScopes: getOAuthProvider('gmail')!.scopes.join(' '),
+      },
+      code: 'AUTH_CODE_PARTIAL',
+      fetchMock: mockSuccessfulGoogleFetch({
+        email: 'partial@example.com',
+        scope: `${GMAIL_READONLY} openid https://www.googleapis.com/auth/userinfo.email`,
+      }),
+    });
+    const credentialId = new URL(location).searchParams.get('created')!;
+    const scopes = await storedScopes(credentialId);
+    expect(scopes).toBe(`${GMAIL_READONLY} openid https://www.googleapis.com/auth/userinfo.email`);
+
+    const access = connectorAccessFor('gmail', scopes);
+    expect(access.kind).toBe('needs_access');
+    if (access.kind !== 'needs_access') throw new Error('unreachable');
+    expect(access.grantedOperations).toContain('gmail_list_messages');
+    expect(access.missingOperations).toContain('gmail_send_email');
+    expect(access.missingScopes).toContain(GMAIL_SEND);
+  });
+
+  it('stores what was asked when the provider omits `scope` (RFC 6749 §5.1: identical grant)', async () => {
+    const asked = `${DRIVE} openid`;
+    const location = await runCallback({
+      cookie: { slug: SLUG, entityId: _testEntityId, requestedScopes: asked },
+      code: 'AUTH_CODE_NO_SCOPE',
+      fetchMock: mockSuccessfulGoogleFetch({ email: 'noscope@example.com', scope: null }),
+    });
+    expect(await storedScopes(new URL(location).searchParams.get('created')!)).toBe(asked);
+  });
+
+  it('adding access updates the SAME credential with the new grant, and inserts no row', async () => {
+    // An existing Drive-only credential for addaccess@example.com.
+    const [existing] = await _testDb!
+      .insert(credentials)
+      .values({
+        ownerUserId: _testUserId,
+        name: 'Existing Google',
+        type: 'google-oauth',
+        payload: encrypt(
+          JSON.stringify({
+            clientId: 'stored-client-id',
+            clientSecret: 'stored-client-secret',
+            refreshToken: 'old-rt',
+            accessToken: 'old-at',
+            expiresAt: null,
+            scopes: `${DRIVE} openid`,
+            accountName: 'addaccess@example.com',
+            tokenUrl: 'https://oauth2.googleapis.com/token',
+          }),
+        ),
+      })
+      .returning();
+    const before = await _testDb!.select({ id: credentials.id }).from(credentials);
+
+    const granted = `${DRIVE} ${GMAIL_READONLY} ${GMAIL_SEND} openid`;
+    const location = await runCallback({
+      cookie: {
+        slug: SLUG,
+        entityId: _testEntityId,
+        connector: 'gmail',
+        credentialId: existing!.id,
+        requestedScopes: granted,
+        returnTo: '/connectors?connectorSlug=gmail',
+      },
+      code: 'AUTH_CODE_ADD_ACCESS',
+      fetchMock: mockSuccessfulGoogleFetch({
+        email: 'addaccess@example.com',
+        access_token: 'new-at',
+        scope: granted,
+      }),
+    });
+
+    expect(new URL(location, ORIGIN).searchParams.get('credentialId')).toBe(existing!.id);
+    const after = await _testDb!.select({ id: credentials.id }).from(credentials);
+    expect(after).toHaveLength(before.length);
+    const updated = await decryptCredentialForDisplay(_testDb!, existing!.id);
+    expect(updated!.payload.scopes).toBe(granted);
+    expect(updated!.payload.accessToken).toBe('new-at');
+    expect(updated!.name).toBe('Existing Google');
+  });
+
+  it('refuses to put another account on an existing credential, and leaves it untouched', async () => {
+    const [existing] = await _testDb!
+      .insert(credentials)
+      .values({
+        ownerUserId: _testUserId,
+        name: 'Owner Google',
+        type: 'google-oauth',
+        payload: encrypt(
+          JSON.stringify({
+            clientId: 'c',
+            clientSecret: 's',
+            refreshToken: 'rt',
+            accessToken: 'at-kept',
+            expiresAt: null,
+            scopes: DRIVE,
+            accountName: 'first@example.com',
+            tokenUrl: 'https://oauth2.googleapis.com/token',
+          }),
+        ),
+      })
+      .returning();
+
+    const location = await runCallback({
+      cookie: {
+        slug: SLUG,
+        entityId: _testEntityId,
+        connector: 'gmail',
+        credentialId: existing!.id,
+        requestedScopes: `${DRIVE} ${GMAIL_READONLY}`,
+      },
+      code: 'AUTH_CODE_OTHER_ACCOUNT',
+      fetchMock: mockSuccessfulGoogleFetch({ email: 'second@example.com' }),
+    });
+
+    expect(location).toContain('oauth_error=account_mismatch');
+    const kept = await decryptCredentialForDisplay(_testDb!, existing!.id);
+    expect(kept!.payload.accessToken).toBe('at-kept');
+    expect(kept!.payload.scopes).toBe(DRIVE);
+  });
+
+  it('refuses a state cookie whose connector does not authorise through the path type', async () => {
+    const location = await runCallback({
+      cookie: { slug: SLUG, entityId: _testEntityId, connector: 'outlook-mail' },
+      code: 'AUTH_CODE_WRONG_FAMILY',
+      fetchMock: mockSuccessfulGoogleFetch(),
+    });
+    expect(location).toContain('oauth_error=unknown_provider');
   });
 });

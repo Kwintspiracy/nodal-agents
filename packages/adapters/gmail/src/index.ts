@@ -1,7 +1,7 @@
 // @nodal-agents/adapter-gmail — public API
 // Single factory: createGmailTools(opts) → ConnectorToolDefinition[]
 
-import type { ConnectorToolDefinition } from '@nodal-agents/tools';
+import type { ConnectorIo, ConnectorToolDefinition } from '@nodal-agents/tools';
 import type { z } from 'zod';
 import { createGmailClient } from './client';
 
@@ -42,7 +42,7 @@ import { createGetAttachmentTool } from './tools/attachments';
 // History (1)
 import { createListHistoryTool } from './tools/history';
 
-export type GmailAdapterOptions =
+export type GmailAdapterOptions = (
   | {
       /**
        * Static OAuth2 access token, captured once for the tools' lifetime.
@@ -59,7 +59,11 @@ export type GmailAdapterOptions =
        * from the DB instead of capturing one token for the tools' lifetime.
        */
       getAccessToken: () => Promise<string>;
-    };
+    }
+) & {
+  /** The connector contract's transport, which the provider's SDK uses (ConnectorIo). */
+  fetch?: ConnectorIo['fetch'];
+};
 
 /**
  * Create all 25 Gmail tools using the provided OAuth access token.
@@ -83,7 +87,7 @@ export function createGmailTools(
 ): ConnectorToolDefinition<z.ZodTypeAny, unknown>[] {
   const getAccessToken =
     'getAccessToken' in opts ? opts.getAccessToken : async () => opts.accessToken;
-  const gmail = createGmailClient(getAccessToken);
+  const gmail = createGmailClient(getAccessToken, opts.fetch);
 
   return [
     // Read tools (9)

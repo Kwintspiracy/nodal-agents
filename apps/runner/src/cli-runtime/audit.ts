@@ -8,7 +8,13 @@
 //
 // D'où cette fonction : PURE, donc le masquage se prouve au lieu de se relire.
 
-import { redactSecretsForAudit, redactSecretsInText } from '@nodal-agents/shared';
+import {
+  maskToolResultText,
+  redactSecrets,
+  type ToolCallOutcome,
+  type ToolResultMaskPolicy,
+} from '@nodal-agents/shared';
+import { cliCallVerdict } from '@nodal-agents/tools';
 
 /**
  * Plafond par ligne d'audit. La sortie d'un outil peut peser des mégaoctets
@@ -23,20 +29,30 @@ export interface CliAuditRow {
   toolOutput: string;
   toolCallId: string;
   durationMs: number;
+  /** What the stream said of the call (#1184), and what it acted on. */
+  outcome: ToolCallOutcome;
+  target: string;
 }
 
 /**
  * Ce qu'on écrit pour un appel d'outil interne, prêt à insérer.
  *
- * Les deux masquages ne font PAS le même travail, et il faut les deux :
+ * Un seul masqueur, sous ses deux formes :
  *
- *   - `redactSecretsForAudit` masque par NOM DE CHAMP. Il convient à l'entrée,
- *     qui est structurée.
- *   - `redactSecretsInText` cherche des FORMES de credentials dans du texte
- *     libre. C'est le seul qui vaille pour la sortie — et c'est là que se
- *     trouve le vrai risque : ces lignes enregistrent la sortie de chaque
- *     commande interne de la CLI, donc le contenu de chaque fichier lu, jeton
- *     compris. Il rend la chaîne inchangée quand rien ne correspond.
+ *   - `redactSecrets` pour l'entrée, structurée : un champ dont le NOM dit
+ *     secret est masqué en entier, et CHAQUE chaîne est masquée par forme —
+ *     pour une CLI, l'entrée est du texte libre (`command`, `content`,
+ *     `new_string`), pas seulement des champs nommés ;
+ *   - pour la sortie, la frontière des résultats d'outil
+ *     (`maskToolResultText`, la même que `executeTool`) : les valeurs exactes
+ *     que Nodal garde pour l'espace, puis les formes selon le réglage de
+ *     l'agent. Ces lignes enregistrent la sortie de chaque commande interne de
+ *     la CLI, donc le contenu de chaque fichier lu, jeton compris. Ce que la
+ *     CLI a lu est parti chez son fournisseur sans passer par Nodal : Nodal ne
+ *     masque que ce qu'il range et montre.
+ *
+ * La sortie est masquée AVANT d'être coupée au plafond : une valeur à cheval
+ * sur la coupe ne serait plus reconnue, et son début resterait lisible.
  *
  * Le nom est préfixé `cli:` pour qu'un `Read` interne ne soit jamais confondu
  * avec un builtin Nodal dans les écrans Runs et Logs.
@@ -48,11 +64,19 @@ export function buildCliAuditRow(args: {
   toolCallId: string;
   startedAt: number;
   now: number;
+  /** The stream's own flag on the result (`is_error`, `status: "failed"`). */
+  isError?: boolean;
+  /** The agent's policy for its tool results (`loadToolResultMaskPolicy`). */
+  policy: ToolResultMaskPolicy;
 }): CliAuditRow {
   return {
+    ...cliCallVerdict(args.toolName, args.toolInput, args.isError === true),
     toolName: `cli:${args.toolName}`,
-    toolInput: redactSecretsForAudit(args.toolInput) as Record<string, unknown>,
-    toolOutput: redactSecretsInText((args.toolOutput ?? '').slice(0, MAX_AUDIT_OUTPUT_CHARS)),
+    toolInput: redactSecrets(args.toolInput) as Record<string, unknown>,
+    toolOutput: maskToolResultText(args.toolOutput ?? '', args.policy).slice(
+      0,
+      MAX_AUDIT_OUTPUT_CHARS,
+    ),
     toolCallId: args.toolCallId,
     durationMs: args.now - args.startedAt,
   };

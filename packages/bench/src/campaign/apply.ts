@@ -313,7 +313,12 @@ export async function applyCampaignConfig(
         assigned: true,
         enabledOperations: [...conn.operations],
       });
-      if ('error' in r) fail('campaign_connector', `${a.slug} ← ${conn.slug}: ${r.error}`);
+      if ('error' in r) {
+        fail(
+          'campaign_connector',
+          `${a.slug} ← ${conn.slug}: ${'message' in r ? r.message : r.error}`,
+        );
+      }
     }
 
     for (const [i, f] of a.folders.entries()) {
@@ -329,7 +334,9 @@ export async function applyCampaignConfig(
       const key = `${entityId}:printer`;
       let serverId = connectorIds.get(key);
       if (!serverId) {
-        const declaration = benchPrinterServer(deps.printerRecordsDir!);
+        const declaration = benchPrinterServer(deps.printerRecordsDir!, {
+          printSeconds: p.printSeconds ?? null,
+        });
         mkdirSync(deps.printerRecordsDir!, { recursive: true });
         const listed = await (deps.listMcpServer ?? listStdioMcpServer)(declaration);
         serverId = (

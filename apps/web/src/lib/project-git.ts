@@ -28,13 +28,12 @@
 import { lstat } from 'node:fs/promises';
 import type { ProgramRunner } from '@nodal-agents/sandbox';
 import { normalizePath } from '@nodal-agents/shared';
-// LA MÊME résolution que le constat par git (#227), pas une copie : c'est le
-// même `git`, lancé avec le même `cwd`, donc la même question. Deux copies
-// auraient divergé au premier correctif porté d'un seul côté (revue C de la
-// PR #244, constat bloquant). Elle vit dans un SOUS-CHEMIN de `shared`, que
-// les deux paquets ont déjà — voir l'en-tête de ce module-là.
 import { createFileExclusive } from '@nodal-agents/shared/exclusive-create';
-import { resolveGitBinary } from '@nodal-agents/shared/git-binary';
+// LE MÊME lanceur que tout git que Nodal lance pour lui-même (#227, #244), pas
+// une copie : le même binaire résolu, la même configuration fixe, le même
+// environnement nettoyé. Il vit dans un SOUS-CHEMIN de `shared`, que tous les
+// paquets qui lancent git ont déjà — voir l'en-tête de ce module-là.
+import { GitBinaryMissingError, runInternalGit } from '@nodal-agents/shared/internal-git';
 
 /** Une commande git qui pend ne doit pas tenir un clic. */
 const GIT_TIMEOUT_MS = 10_000;
@@ -114,23 +113,21 @@ export async function initGitRepository(
     return { kind: 'failed', reason };
   }
 
-  // Le chemin ABSOLU, jamais le nom nu : `cwd` est le dossier d'un projet, donc
-  // un dossier où des agents écrivent, et le nom nu le ferait entrer dans la
-  // recherche du programme. Sans git sur le PATH, on ne pose rien et on le dit.
-  const binaire = await resolveGitBinary();
-  if (binaire === null) {
-    console.error(`[projects] GIT_INIT_NO_GIT_ON_PATH path=${cwd}`);
-    return { kind: 'failed', reason: 'git is not on this machine’s PATH' };
-  }
-
+  // Par le lanceur : le chemin ABSOLU, jamais le nom nu (`cwd` est le dossier
+  // d'un projet, donc un dossier où des agents écrivent). Sans git sur le
+  // PATH, on ne pose rien et on le dit.
   try {
-    await programs.execFile(binaire, ['init'], {
+    await runInternalGit(programs, ['init'], {
       cwd,
       timeout: GIT_TIMEOUT_MS,
       writableRoots: [cwd],
       readableRoots: [],
     });
   } catch (err) {
+    if (err instanceof GitBinaryMissingError) {
+      console.error(`[projects] GIT_INIT_NO_GIT_ON_PATH path=${cwd}`);
+      return { kind: 'failed', reason: 'git is not on this machine’s PATH' };
+    }
     const reason = err instanceof Error ? err.message : String(err);
     console.error(`[projects] GIT_INIT_FAILED path=${cwd}`, err);
     return { kind: 'failed', reason };

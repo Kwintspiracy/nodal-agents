@@ -5,8 +5,9 @@
 // et une voix pendant :
 //
 //   1. `hearVoiceTurn` : l'audio reçu par morceaux (`voice-utterances.ts`) est
-//      transcrit par packages/speech, sur la clé OpenRouter de l'espace
-//      (`resolveEar`, le modèle du réglage de voix, #976). Tout ce qui se refuse se refuse ICI, avant
+//      transcrit par packages/speech, par l'oreille du réglage de voix
+//      (`resolveEar` : la source, le modèle, et l'adresse d'un serveur de la
+//      personne, #976, #1048). Tout ce qui se refuse se refuse ICI, avant
 //      que la route ouvre son flux : un audio illisible, l'espace sans clé, la
 //      transcription en échec, et le « rien entendu ». Aucun n'écrit de ligne
 //      (invariant #4) : un message vide serait un tour que personne n'a dit ;
@@ -27,7 +28,8 @@
 // LES SECRETS NE SONT JAMAIS DITS (revue de #968, passes 1 et 2). Les
 // fragments arrivent ici déjà masqués par `playChatTurn`, une fois pour tous
 // les consommateurs du tour ; le texte écrit d'un bloc et `done.reply` le sont
-// par `redactSecretsInText`. Un son ne se reprend pas à la porte. La ligne
+// par la couture de sortie (`outboundText`, `outboundValue`). Chaque événement
+// du flux est une valeur sortante (`VoiceTurnEmit`). Un son ne se reprend pas à la porte. La ligne
 // rangée en base reste intacte : le masquage est d'affichage.
 //
 // Pourquoi ce découpage : mesuré sur la stack du propriétaire le 03/11, 10,1 s
@@ -54,7 +56,14 @@ import {
   readWav,
   splitSentences,
 } from '@nodal-agents/speech';
-import { redactSecretsInText, type SpeakingVoice } from '@nodal-agents/shared';
+import {
+  outboundAsIs,
+  outboundFields,
+  outboundText,
+  outboundValue,
+  type Outbound,
+  type SpeakingVoice,
+} from '@nodal-agents/shared';
 import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
 import { resolveEar, resolveVoice } from '../job/resolve-voice.ts';
@@ -71,6 +80,8 @@ export type VoiceTurnHearing =
       outcome: 'failed';
       status: 400 | 409 | 502;
       error: string;
+      /** The code of packages/speech behind a failed transcription (`speech_unreachable`…, #1048). */
+      reason?: string;
       detail?: string;
       /** Le modèle qui devait transcrire, quand il est connu. */
       model?: string;
@@ -86,6 +97,7 @@ function logHearingFailure(h: Extract<VoiceTurnHearing, { outcome: 'failed' }>):
   console.warn(
     `[voice-turn] transcription failed ${JSON.stringify({
       error: h.error,
+      ...(h.reason ? { reason: h.reason } : {}),
       status: h.status,
       model: h.model ?? null,
       ...(h.detail ? { detail: h.detail.slice(0, 500) } : {}),
@@ -167,10 +179,13 @@ export async function hearVoiceTurn(
     if (err instanceof SpeechError && err.code === 'speech_nothing_heard') {
       return { outcome: 'nothing_heard', durationMs: audio.durationMs, model };
     }
+    // The ear the setting names failed: the turn fails with its code, and no
+    // other ear is tried in its place (invariant #4, #1048).
     return failed({
       outcome: 'failed',
       status: 502,
       error: 'transcription_failed',
+      ...(err instanceof SpeechError ? { reason: err.code } : {}),
       detail: err instanceof Error ? err.message : String(err),
       model,
     });
@@ -329,21 +344,26 @@ export async function openReplyVoice(
     },
     onChunk: (c) => {
       timing.mark('firstAudio');
-      emit('audio', {
-        seq: c.seq,
-        sentence: c.sentence,
-        mimeType: c.mimeType,
-        ...(c.sampleRate !== undefined ? { sampleRate: c.sampleRate } : {}),
-        base64: Buffer.from(c.audio).toString('base64'),
-      });
+      emit(
+        'audio',
+        outboundFields({
+          seq: c.seq,
+          sentence: c.sentence,
+          mimeType: outboundText(c.mimeType),
+          ...(c.sampleRate !== undefined ? { sampleRate: c.sampleRate } : {}),
+          // Le son d'un texte déjà masqué : des octets, pas un texte.
+          base64: outboundAsIs(Buffer.from(c.audio).toString('base64'), 'encoded-bytes'),
+        }),
+      );
     },
-    onSentenceEnd: (sentence, complete) => emit('audio_end', { sentence, complete }),
+    onSentenceEnd: (sentence, complete) =>
+      emit('audio_end', outboundFields({ sentence, complete })),
   });
   return { voice, unavailable: null, named };
 }
 
 /** Un événement du flux de la route (voir l'en-tête de routes/voice-turn.ts). */
-export type VoiceTurnEmit = (event: string, data: unknown) => void;
+export type VoiceTurnEmit = (event: string, data: Outbound<unknown>) => void;
 
 /**
  * Le tour joué et dit. Les événements sortent par `emit` dans l'ordre du
@@ -361,7 +381,7 @@ export async function speakVoiceTurn(
   opts: { timing: VoiceTiming; readerGone: AbortSignal },
 ): Promise<void> {
   const { timing } = opts;
-  emit('transcript', { transcript: heard.transcript, durationMs: heard.durationMs });
+  emit('transcript', outboundValue({ transcript: heard.transcript, durationMs: heard.durationMs }));
   timing.mark('transcript');
 
   // La voix de l'espace (#969), relue à chaque tour : un réglage changé vaut
@@ -397,7 +417,7 @@ export async function speakVoiceTurn(
     if (streamed) say(chunker.flush());
     else {
       voice?.reset();
-      say(splitSentences(redactSecretsInText(text)));
+      say(splitSentences(outboundText(text)));
     }
     voice?.end();
   };
@@ -417,7 +437,7 @@ export async function speakVoiceTurn(
         // Déjà masqué (`playChatTurn`) : le texte rendu ET la voix.
         onTextDelta: (delta) => {
           timing.mark('firstDelta');
-          emit('delta', { text: delta });
+          emit('delta', outboundFields({ text: delta }));
           if (!settled) say(chunker.push(delta));
         },
         onReplyText: ({ text, streamed }) => settle(text, streamed),
@@ -433,10 +453,13 @@ export async function speakVoiceTurn(
   if (!result.ok) {
     voice?.cancel();
     opts.readerGone.removeEventListener('abort', silence);
-    emit('error', {
-      error: result.error,
-      ...(result.cutReason ? { detail: result.cutReason } : {}),
-    });
+    emit(
+      'error',
+      outboundValue({
+        error: result.error,
+        ...(result.cutReason ? { detail: result.cutReason } : {}),
+      }),
+    );
     return;
   }
   // Une réponse arrêtée par la personne ne se dit plus : elle a demandé le silence.
@@ -456,12 +479,15 @@ export async function speakVoiceTurn(
   }
   opts.readerGone.removeEventListener('abort', silence);
 
-  emit('done', {
-    reply: redactSecretsInText(result.reply),
-    spawnedJobId: result.spawnedJobId ?? null,
-    streamed: result.streamed === true,
-    stopped: result.stopped === true,
-    cutReason: result.cutReason ?? null,
-    speechError,
-  });
+  emit(
+    'done',
+    outboundValue({
+      reply: result.reply,
+      spawnedJobId: result.spawnedJobId ?? null,
+      streamed: result.streamed === true,
+      stopped: result.stopped === true,
+      cutReason: result.cutReason ?? null,
+      speechError,
+    }),
+  );
 }

@@ -12,6 +12,7 @@ export type GmailErrorCode =
   | 'gmail_validation_error'
   | 'gmail_service_unavailable'
   | 'gmail_attachment_too_large'
+  | 'gmail_forward_unavailable'
   | 'gmail_unknown';
 
 export class GmailAdapterError extends Error {

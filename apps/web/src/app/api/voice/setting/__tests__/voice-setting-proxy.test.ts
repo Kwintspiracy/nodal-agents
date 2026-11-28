@@ -26,6 +26,8 @@ vi.mock('@/lib/env.ts', () => ({
 
 import { GET, PUT } from '../route.ts';
 import { POST as sample } from '../../sample/route.ts';
+import { POST as check } from '../../check/route.ts';
+import { POST as serverModels } from '../../server/models/route.ts';
 
 type Received = { url: string; method: string; authorization: string | null; body: unknown };
 let received: Received[];
@@ -78,6 +80,7 @@ describe('the web door of the voice setting is a pass-through (#969) @cap:parler
       source: 'openrouter',
       model: 'x-ai/grok-voice-tts-1.0',
       voice: 'Kore',
+      transcriptionSource: 'openrouter',
       transcriptionModel: 'x-ai/grok-stt-1.0',
     };
     const res = await PUT(
@@ -128,5 +131,66 @@ describe('the web door of the voice setting is a pass-through (#969) @cap:parler
     const res = await GET(new Request('http://web.test/api/voice/setting'));
     expect(res.status).toBe(401);
     expect(received).toEqual([]);
+  });
+
+  // #1048: the state of a part and the models of a server pass through the
+  // same door, with the entity of the session.
+  it('check and server models: the request as sent, the entity of the session, the answer as is', async () => {
+    runnerAnswer = () =>
+      Response.json({
+        part: 'listening',
+        state: 'answers',
+        model: 'w',
+        latencyMs: 1,
+        checkedAt: 't',
+      });
+    const listening = {
+      transcriptionSource: 'openai-compatible',
+      transcriptionModel: 'w',
+      transcriptionServer: { address: 'http://127.0.0.1:8786/v1', key: { value: 'sk-x' } },
+    };
+    const res = await check(
+      new Request('http://web.test/api/voice/check', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          entityId: 'someone-else',
+          part: 'listening',
+          listening,
+          fresh: true,
+        }),
+      }),
+    );
+    expect(await res.json()).toMatchObject({ state: 'answers' });
+    runnerAnswer = () => Response.json({ state: 'listed', models: [], listedAt: 't' });
+    await serverModels(
+      new Request('http://web.test/api/voice/server/models', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          entityId: 'someone-else',
+          part: 'speaking',
+          server: { address: 'http://127.0.0.1:8880/v1', key: 'none' },
+        }),
+      }),
+    );
+    expect(received).toEqual([
+      {
+        url: 'http://runner.test/api/voice/check',
+        method: 'POST',
+        authorization: 'Bearer worker-secret',
+        body: { part: 'listening', listening, fresh: true, entityId: 'entity-of-the-session' },
+      },
+      {
+        url: 'http://runner.test/api/voice/server/models',
+        method: 'POST',
+        authorization: 'Bearer worker-secret',
+        body: {
+          part: 'speaking',
+          server: { address: 'http://127.0.0.1:8880/v1', key: 'none' },
+          entityId: 'entity-of-the-session',
+        },
+      },
+    ]);
   });
 });

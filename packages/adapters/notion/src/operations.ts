@@ -42,6 +42,8 @@ export const NOTION_OPERATIONS: OperationDescriptor[] = [
     name: 'Query database',
     risk: 'read',
     requiresApproval: false,
+    // One page per call, in the connector contract's list shape.
+    returns: 'list',
     description: 'Filter and sort rows in a Notion database.',
   },
   {

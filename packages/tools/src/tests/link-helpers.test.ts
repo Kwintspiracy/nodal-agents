@@ -116,6 +116,6 @@ describe('resolveConnectorId — F-10 LIKE-wildcard guard', () => {
     if (!decoy) throw new Error('failed to seed decoy connector');
 
     const id = await resolveConnectorId(db as never, seed.entityId, 'notion workspace');
-    expect(id).toBe(decoy.id);
+    expect(id).toEqual({ id: decoy.id });
   });
 });

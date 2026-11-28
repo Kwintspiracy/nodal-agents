@@ -394,7 +394,10 @@ async function awaitingRoot(w: World, agentId: string, toolName: string): Promis
           content: [{ type: 'tool-call', toolCallId: 'tu-1', toolName, input: {} }],
         },
       ],
-      pendingDelegation: { type: 'single', toolUseId: 'tu-1', toolName, subJobId: 'x' },
+      // Sans `subJobId` : l'enfant naît après cette ligne, dans chaque cas. Une
+      // délégation qui nomme son enfant n'est reprise que par lui (#1204,
+      // prouvé dans resume.test.ts).
+      pendingDelegation: { type: 'single', toolUseId: 'tu-1', toolName },
     })
     .returning();
   return row!.id;

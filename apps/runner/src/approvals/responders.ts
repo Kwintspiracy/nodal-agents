@@ -23,6 +23,7 @@
 import { and, conversationHandleFor, eq } from '@nodal-agents/db';
 import {
   channelAllowedConversations,
+  entities,
   entityMembers,
   telegramAllowedChats,
   users,
@@ -40,6 +41,31 @@ export type AnsweredBy =
 
 /** Le rôle quand aucune ligne ne le donne. */
 export const UNLISTED_ROLE = 'unlisted';
+
+/**
+ * Une personne appartient-elle à l'espace `entityId` ? Elle en est le
+ * propriétaire (`entities.user_id`), ou une ligne `entity_members` la nomme
+ * (toute création d'espace écrit les deux pour son propriétaire). Ce qui
+ * décide qui peut trancher une carte, jamais ce qui la décrit (`readResponder`).
+ */
+export async function isWorkspaceMember(
+  db: AnyDrizzleDb,
+  entityId: string,
+  userId: string,
+): Promise<boolean> {
+  const [owner] = await db
+    .select({ id: entities.id })
+    .from(entities)
+    .where(and(eq(entities.id, entityId), eq(entities.userId, userId)))
+    .limit(1);
+  if (owner) return true;
+  const [row] = await db
+    .select({ id: entityMembers.id })
+    .from(entityMembers)
+    .where(and(eq(entityMembers.entityId, entityId), eq(entityMembers.userId, userId)))
+    .limit(1);
+  return row !== undefined;
+}
 
 export async function readResponder(
   db: AnyDrizzleDb,

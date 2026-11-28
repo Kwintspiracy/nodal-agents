@@ -81,6 +81,9 @@ const testEnv: RunnerEnv = {
   NODALAI_APPROVAL_GRACE_MS: 0,
 };
 
+/** The install's secret, which every caller of the runner sends, in every mode. */
+const PROOF = { Authorization: `Bearer ${testEnv.WORKER_SECRET}` };
+
 beforeAll(async () => {
   const result = await spinUpTestDb();
   db = result.db;
@@ -116,7 +119,7 @@ afterAll(async () => {
 
 describe('server boot @cap:installer-et-demarrer/moteur', () => {
   it('GET /api/health returns 200', async () => {
-    const res = await app.fetch(new Request('http://localhost/api/health'));
+    const res = await app.fetch(new Request('http://localhost/api/health', { headers: PROOF }));
     expect(res.status).toBe(200);
     const body = (await res.json()) as { ok: boolean; db: string };
     expect(body.ok).toBe(true);
@@ -129,7 +132,9 @@ describe('server boot @cap:installer-et-demarrer/moteur', () => {
   });
 
   it('POST /api/cron returns tick result', async () => {
-    const res = await app.fetch(new Request('http://localhost/api/cron', { method: 'POST' }));
+    const res = await app.fetch(
+      new Request('http://localhost/api/cron', { method: 'POST', headers: PROOF }),
+    );
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       ok: boolean;
@@ -305,44 +310,42 @@ describe('requireRunnerAuth — local-auth mode @cap:se-connecter/moteur', () =>
   });
 });
 
-// ─── requireRunnerAuth — local-trust mode ────────────────────────────────────
+// ─── local-trust mode: no password, but a proof ──────────────────────────────
 //
-// In local-trust mode all routes are accessible without any Authorization header.
+// In local-trust mode there is no password to type, and every caller still
+// proves it holds the install's secret: without it, 401; with it, the route.
 
-describe('requireRunnerAuth — local-trust mode (no auth required)', () => {
+describe('local-trust mode asks every caller for the install secret @cap:se-connecter/moteur', () => {
   // The top-level `app` is created with AUTH_MODE='local-trust'
+  const ROUTES: { path: string; body?: Record<string, unknown> }[] = [
+    { path: '/api/cron' },
+    {
+      path: '/api/chat',
+      body: {
+        entityId: '00000000-0000-0000-0000-000000000001',
+        agentId: '00000000-0000-0000-0000-000000000002',
+        conversationId: '00000000-0000-0000-0000-000000000003',
+        message: 'hello',
+      },
+    },
+    { path: '/api/agent', body: { task: 'hello' } },
+  ];
 
-  it('POST /api/cron with no auth → reaches handler (not 401)', async () => {
-    const res = await app.fetch(new Request('http://localhost/api/cron', { method: 'POST' }));
-    expect(res.status).not.toBe(401);
-  });
-
-  it('POST /api/chat with no auth → reaches handler (not 401)', async () => {
-    const res = await app.fetch(
-      new Request('http://localhost/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          entityId: '00000000-0000-0000-0000-000000000001',
-          agentId: '00000000-0000-0000-0000-000000000002',
-          conversationId: '00000000-0000-0000-0000-000000000003',
-          message: 'hello',
-        }),
-      }),
-    );
-    expect(res.status).not.toBe(401);
-  });
-
-  it('POST /api/agent with no auth → reaches handler (not 401)', async () => {
-    const res = await app.fetch(
-      new Request('http://localhost/api/agent', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ task: 'hello' }),
-      }),
-    );
-    expect(res.status).not.toBe(401);
-  });
+  for (const { path, body } of ROUTES) {
+    it(`POST ${path} with no auth → 401 proof_required; with the secret → reaches handler`, async () => {
+      const request = (headers: Record<string, string>) =>
+        new Request(`http://localhost${path}`, {
+          method: 'POST',
+          headers: body ? { 'Content-Type': 'application/json', ...headers } : headers,
+          ...(body ? { body: JSON.stringify(body) } : {}),
+        });
+      const anonymous = await app.fetch(request({}));
+      expect(anonymous.status).toBe(401);
+      expect(await anonymous.json()).toEqual({ error: 'proof_required' });
+      const proved = await app.fetch(request(PROOF));
+      expect(proved.status).not.toBe(401);
+    });
+  }
 });
 
 // ─── /api/approve auth — bearer fallback (legacy test, kept for regression) ──
@@ -706,7 +709,7 @@ describe('POST /api/cron — shared guard with the in-process ticker (finding R3
     try {
       // First request starts a tick and gets stuck on the gate.
       const firstReqPromise = app.fetch(
-        new Request('http://localhost/api/cron', { method: 'POST' }),
+        new Request('http://localhost/api/cron', { method: 'POST', headers: PROOF }),
       );
 
       // Yield a turn so the handler actually reaches runCronTickGuarded and
@@ -717,7 +720,7 @@ describe('POST /api/cron — shared guard with the in-process ticker (finding R3
       // simulates an external scheduler firing again before the previous
       // invocation returned.
       const secondRes = await app.fetch(
-        new Request('http://localhost/api/cron', { method: 'POST' }),
+        new Request('http://localhost/api/cron', { method: 'POST', headers: PROOF }),
       );
       expect(secondRes.status).toBe(200);
       const secondBody = (await secondRes.json()) as { ok: boolean; skipped: boolean };

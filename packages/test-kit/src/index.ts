@@ -38,6 +38,9 @@ export * from './builders';
 export * from './gate';
 export * from './trust-boundary';
 export * from './architecture';
+export * from './outbound-exits';
+export * from './tool-result-seam';
+export * from './continuation-fields';
 // What is SOURCE in the repository, for every scanner: git's own view.
 export * from './source-files';
 export * from './real-postgres';
@@ -53,5 +56,9 @@ export * from './stated-limits';
 export * from './pdf';
 // N disk operations with a bounded number in flight, not N at once (#1034).
 export * from './bounded-io';
+// A real speech/transcription server of the OpenAI audio surface, for tests (#1048).
+export * from './speech-server';
 // A wait for a file that says so when the file does not come, never a silent return (#1042).
 export * from './wait-for-file';
+// Credential-shaped test values assembled at run time, never written whole (#1185).
+export * from './fake-secrets';

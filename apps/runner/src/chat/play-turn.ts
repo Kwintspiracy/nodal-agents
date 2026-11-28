@@ -17,8 +17,9 @@
 // LES FRAGMENTS SONT MASQUÉS ICI, UNE FOIS (revue de #968, passe 2). Avant
 // tout consommateur du texte qui s'écrit — le tour lisible d'une autre page
 // (`say`, `/api/chat/live`) ET la porte (`onTextDelta` : le flux tapé, la voix
-// du tour dit) —, le masqueur de flux (`createStreamRedactor`,
-// packages/shared) retire les secrets. Aucun client du runner, tableau de bord
+// du tour dit) —, la forme flux de la couture de sortie
+// (`createOutboundStream`, packages/shared/src/outbound.ts) retire les
+// secrets ; le type `Outbound<string>` du fragment le dit à chaque porte. Aucun client du runner, tableau de bord
 // ou module, ne reçoit un fragment brut, et la voix n'en dit aucun. Il garde en
 // réserve ce qui pourrait encore devenir un secret jusqu'à l'espace suivante
 // (un mot au plus) ; la réserve sort quand le texte est fixé
@@ -26,7 +27,7 @@
 // le masquage est d'affichage, comme aux portes web.
 
 import type { JobId } from '@nodal-agents/orchestration';
-import { createStreamRedactor } from '@nodal-agents/shared';
+import { createOutboundStream, type Outbound } from '@nodal-agents/shared';
 import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
 import { executeJob } from '../job/execute.ts';
@@ -35,7 +36,13 @@ import { runChatTurn, type ChatTurnResult } from './run-chat-turn.ts';
 import { runInLane } from './turn-lane.ts';
 import { withChatTurnStop } from './turn-stop.ts';
 
-export type PlayChatTurnInput = Omit<Parameters<typeof runChatTurn>[0], 'deps' | 'abortSignal'>;
+export type PlayChatTurnInput = Omit<
+  Parameters<typeof runChatTurn>[0],
+  'deps' | 'abortSignal' | 'onTextDelta'
+> & {
+  /** Chaque fragment de la réponse, DÉJÀ masqué (la forme flux de la couture de sortie). */
+  onTextDelta?: (delta: Outbound<string>) => void;
+};
 
 export async function playChatTurn(
   deps: RunnerDeps,
@@ -44,21 +51,22 @@ export async function playChatTurn(
   /** Le nom de la porte, pour le journal d'un job lancé qui échoue. */
   door: string,
 ): Promise<ChatTurnResult> {
-  const { entityId, conversationId, onTextDelta, onReplyText } = input;
+  const { onTextDelta, ...turnInput } = input;
+  const { entityId, conversationId, onReplyText } = turnInput;
   const result = await runInLane(conversationId, () =>
     withLiveTurn(entityId, conversationId, (say) =>
       withChatTurnStop(conversationId, async (abortSignal) => {
-        const redactor = createStreamRedactor();
+        const redactor = createOutboundStream();
         // Le texte qui s'écrit est lisible d'une autre page (#457) : ce que
         // la porte diffuse passe d'abord par le tour en cours. Masqué avant
         // l'un et l'autre.
-        const out = (safe: string): void => {
+        const out = (safe: Outbound<string>): void => {
           if (safe === '' || !onTextDelta) return;
           say(safe);
           onTextDelta(safe);
         };
         const turn = await runChatTurn({
-          ...input,
+          ...turnInput,
           deps,
           abortSignal,
           ...(onTextDelta

@@ -5,11 +5,7 @@
 // dans un transcript. Rien dans le produit ne les aurait masqués.
 
 import { describe, it, expect } from 'vitest';
-import {
-  redactSecretsInText,
-  redactTranscriptForDisplay,
-  REDACTED_TEXT,
-} from '../redact-transcript';
+import { redactSecretsInText, redactSecrets, REDACTED_TEXT } from '../redact-secrets';
 
 /**
  * Assemble une fixture à l'EXÉCUTION, à partir de fragments.
@@ -79,7 +75,7 @@ describe('redactSecretsInText — les formes qui ont fuité', () => {
   });
 });
 
-describe('redactTranscriptForDisplay', () => {
+describe('redactSecrets on a stored transcript', () => {
   it('masque un secret dans du TEXTE LIBRE, là où aucune clé ne le signale', () => {
     const messages = [
       {
@@ -95,7 +91,7 @@ describe('redactTranscriptForDisplay', () => {
         ],
       },
     ];
-    const out = JSON.stringify(redactTranscriptForDisplay(messages));
+    const out = JSON.stringify(redactSecrets(messages));
     expect(out).not.toContain(SLACK_SHAPED);
   });
 
@@ -104,14 +100,14 @@ describe('redactTranscriptForDisplay', () => {
     // par clé ; un token dans de la prose n'est attrapé que par la passe par
     // forme. Aucune ne remplace l'autre.
     const out = JSON.stringify(
-      redactTranscriptForDisplay([{ role: 'user', content: { apiKey: 'valeur-quelconque-42' } }]),
+      redactSecrets([{ role: 'user', content: { apiKey: 'valeur-quelconque-42' } }]),
     );
     expect(out).not.toContain('valeur-quelconque-42');
   });
 
   it('ne modifie pas le tableau d’origine — le resume relit les vrais messages', () => {
     const original = [{ role: 'tool', content: shape('sk-', 'AbCdEf0123456789AbCdEf0123456789') }];
-    redactTranscriptForDisplay(original);
+    redactSecrets(original);
     expect(original[0]!.content).toContain('AbCdEf0123456789');
   });
 });

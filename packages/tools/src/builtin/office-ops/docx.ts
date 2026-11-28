@@ -35,6 +35,7 @@ import { z } from 'zod';
 import type { ToolDefinition } from '../../types';
 import { detailOf, failureText, readCard, writtenFile } from '../../presenters';
 import { readWorkspaceBinary, writeWorkspaceBinary } from './office-helpers';
+import { outcomeOfOkFlag } from '../../outcome';
 
 // ─── Shared helpers ────────────────────────────────────────────────────────────
 
@@ -266,6 +267,7 @@ export const docxReadTool: ToolDefinition<typeof DocxReadInput, DocxReadOutput> 
           sections: output.paragraphs.length,
         })
       : failureText(output.reason),
+  outcomeOf: outcomeOfOkFlag,
   execute: async (input, ctx) => {
     const readResult = await readWorkspaceBinary(ctx, input.path);
     if (!readResult.ok) return readResult;
@@ -388,6 +390,7 @@ export const docxCreateTool: ToolDefinition<typeof DocxCreateInput, DocxCreateOu
   card: 'files',
   present: ({ output }) =>
     output.ok ? writtenFile(output.path, 'created') : failureText(output.reason),
+  outcomeOf: outcomeOfOkFlag,
   execute: async (input, ctx) => {
     let usesNumberedList = false;
     const children: (Paragraph | Table)[] = [];
@@ -573,6 +576,7 @@ export const docxAppendParagraphsTool: ToolDefinition<typeof DocxAppendInput, Do
     output.ok
       ? writtenFile(output.path, 'modified', { detail: detailOf(output) })
       : failureText(output.reason),
+  outcomeOf: outcomeOfOkFlag,
   execute: async (input, ctx) => {
     const readResult = await readWorkspaceBinary(ctx, input.path);
     if (!readResult.ok) return readResult;
@@ -755,6 +759,7 @@ export const docxReplaceTextTool: ToolDefinition<
     output.ok
       ? writtenFile(output.path, 'modified', { detail: detailOf(output) })
       : failureText(output.reason),
+  outcomeOf: outcomeOfOkFlag,
   execute: async (input, ctx) => {
     const readResult = await readWorkspaceBinary(ctx, input.path);
     if (!readResult.ok) return readResult;

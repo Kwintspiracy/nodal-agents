@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { eq, and, or, ilike, assignSkillRepo } from '@nodal-agents/db';
 import { agentSkills, agents } from '@nodal-agents/db';
 import type { ToolDefinition } from '../../types';
+import { outcomeOfOkFlag } from '../../outcome';
 
 const AssignSkillInput = z.object({
   skillSlug: z
@@ -30,6 +31,7 @@ export const assignSkillTool: ToolDefinition<typeof AssignSkillInput, AssignSkil
   egress: 'none',
   card: 'text',
   defaultApproval: 'require_approval',
+  outcomeOf: outcomeOfOkFlag,
   execute: async (input, ctx) => {
     // Resolve skillSlug → skillId within this entity
     const [skillRow] = await ctx.db

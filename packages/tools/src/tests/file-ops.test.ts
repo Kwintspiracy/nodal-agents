@@ -51,8 +51,16 @@ beforeEach(async () => {
  * pas le typage : la table est vide, et c'est `intent.test.ts` qui exerce la
  * règle sur une vraie base.
  */
+// Les tables sont vides pour toute lecture : pas de projet, et rien que ce job
+// ait lu ou écrit (la garde du contenu vu, `lastContentSeenByJob`, relit ses
+// lectures et écritures par une jointure ; elle est exercée sur une vraie base
+// dans `file-text-layer.test.ts`).
+const emptyRows = {
+  leftJoin: (): unknown => emptyRows,
+  where: () => Object.assign(Promise.resolve([]), { orderBy: async () => [] }),
+};
 const noProjectsDb = {
-  select: () => ({ from: () => ({ where: async () => [] }) }),
+  select: () => ({ from: () => emptyRows }),
 } as unknown as ToolContext['db'];
 
 /** Single-workspace context (backward-compat helper). */

@@ -11,11 +11,12 @@
 // POST { agentId }      → ensures the socket exists (idempotent) so a QR
 //      starts being generated; the web polls GET afterward.
 //
-// Auth: same requireRunnerAuth gate as /api/agent et al. (wired in
+// Auth: the admission (lib/admission.ts), as /api/agent et al. (wired in
 // server.ts). An untrusted session bearer-token caller may only pair an
 // agent within its OWN entity — mirrors agent.ts's entity-scoping.
 
 import type { Context } from 'hono';
+import { answerAsIs } from './outbound-responses.ts';
 import { z } from 'zod';
 import { eq } from '@nodal-agents/db';
 import { agents } from '@nodal-agents/db';
@@ -67,7 +68,13 @@ export async function whatsappPairingStatusRoute(
   const state = manager.getPairingState(agentId);
   if (!state) return c.json({ error: 'no_whatsapp_binding' }, 404);
 
-  return c.json({ status: state.status, qr: state.status === 'qr_pending' ? state.qr : null }, 200);
+  // The code the owner's phone scans: the pairing's own secret (outbound-responses.ts).
+  return answerAsIs(
+    c,
+    { status: state.status, qr: state.status === 'qr_pending' ? state.qr : null },
+    200,
+    'pairing-credential',
+  );
 }
 
 // ─── POST /api/whatsapp/pairing ──────────────────────────────────────────────

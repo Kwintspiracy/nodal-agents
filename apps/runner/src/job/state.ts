@@ -3,10 +3,9 @@
 
 import { and, eq, notInArray, or, isNull, sql } from '@nodal-agents/db';
 import { agentJobs, toolCalls, heldBy, ownJobRow, RUN_ACTS_WHILE } from '@nodal-agents/db';
-import { announceTransitions } from '@nodal-agents/db';
+import { announceTransitions, inTransaction, isOpenTransaction } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import type { JobFailureHint, JobResultKind } from '@nodal-agents/shared';
-import { isInboxMessage } from '@nodal-agents/shared';
 import {
   appendDeliveredVerdicts,
   readChildDeliverables,
@@ -14,12 +13,27 @@ import {
 } from '@nodal-agents/orchestration';
 import type { JobDeliverable } from '@nodal-agents/orchestration';
 import {
+  currentTurnMessages,
+  findTaskBoundary,
   flattenTranscript,
   deepDbSafe,
   runnerNotesValue,
   toDbSafeString,
 } from './transcript-text.ts';
 import { writtenAnswerOfRun } from './final-answer.ts';
+import {
+  ANSWER_NOT_PREPARED,
+  answerNotPreparedLine,
+  prepareAnswerDelivery,
+  type PrepareAnswerOptions,
+} from './answer-delivery.ts';
+import { drainDeliveries } from '../delivery/outbox.ts';
+import {
+  FAILURE_NOTICE_NOT_PREPARED,
+  noticeNotPreparedLine,
+  prepareFailureNotice,
+} from './failure-notice.ts';
+import { runnerInstanceId } from '../runner-identity.ts';
 
 // ─── JobState ─────────────────────────────────────────────────────────────────
 
@@ -144,6 +158,8 @@ export async function claimJob(db: AnyDrizzleDb, jobId: string): Promise<number 
     .set({
       status: 'processing',
       claimGeneration: sql`${agentJobs.claimGeneration} + 1`,
+      // Who holds it (#1204): the job is alive while THIS instance runs.
+      claimedBy: runnerInstanceId,
       updatedAt: new Date(),
     })
     .where(and(eq(agentJobs.id, jobId), eq(agentJobs.status, 'pending')))
@@ -312,62 +328,10 @@ async function fillResultFromChildrenIfEmpty(db: AnyDrizzleDb, jobId: string): P
     );
 }
 
-/** The text of a message, whatever its shape: a string, or the joined text parts. */
-export function messageText(content: unknown): string {
-  if (typeof content === 'string') return content;
-  if (!Array.isArray(content)) return '';
-  const parts: string[] = [];
-  for (const p of content) {
-    const part = p as { type?: unknown; text?: unknown } | null;
-    if (part && part.type === 'text' && typeof part.text === 'string') parts.push(part.text);
-  }
-  return parts.join('');
-}
-
-/**
- * La tranche de la transcription qui appartient à CE tour : du message
- * utilisateur qui porte la tâche du job jusqu'à la fin.
- *
- * Une transcription commence par l'historique rejoué du fil (thread-history.ts) :
- * pour chaque tour passé, un message utilisateur, puis un message assistant
- * SYNTHÉTIQUE qui porte la réponse d'alors — un texte assistant que rien ne
- * distingue d'un texte écrit par l'agent à ce tour. Les lignes de grand livre
- * (`[Delegated to X (…) — actions: …]`) ne sont plus dans ce message depuis
- * #562 : elles suivent, dans un relevé `[système]` de rôle utilisateur. La
- * frontière reste nécessaire pour la réponse rejouée elle-même.
- *
- * Issue #419 : un tour Telegram qui a répondu par `telegram_send_message` puis
- * `return_result {status}` n'écrit aucun texte ; le « dernier texte assistant »
- * balayé sur TOUTE la transcription était alors la dernière ligne de grand
- * livre rejouée — la délégation du 15/09 devenait le résultat de chaque tour
- * suivant, et l'historique du tour d'après la rejouait comme si l'agent
- * l'avait envoyée sur Telegram.
- *
- * La frontière est la DERNIÈRE occurrence du message utilisateur égal à la
- * tâche : l'historique la précède toujours, les relances système (`[système]`,
- * les rappels de livrable) la suivent. Quand la tâche n'apparaît nulle part
- * (une transcription qui n'a pas la forme d'un job), la tranche est la
- * transcription entière : c'est l'ancien comportement, et il n'est pas caché —
- * un job dont on ne retrouve pas la tâche est un cas que ce fichier ne sait
- * pas mieux lire.
- */
-export function findTaskBoundary(messages: readonly unknown[], task: string): number {
-  if (task.trim() === '') return -1;
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const m = messages[i] as { role?: unknown; content?: unknown } | null;
-    // Un message remis pendant le run (#531) qui répète la tâche mot pour mot
-    // n'est pas le début du tour : il en fait partie. Sa marque est
-    // structurelle, jamais lue dans le texte.
-    if (isInboxMessage(m)) continue;
-    if (m && m.role === 'user' && messageText(m.content) === task) return i;
-  }
-  return -1;
-}
-
-export function currentTurnMessages<T>(messages: readonly T[], task: string): readonly T[] {
-  const i = findTaskBoundary(messages, task);
-  return i === -1 ? messages : messages.slice(i);
-}
+// La frontière du tour vit dans transcript-text.ts (déplacée telle quelle,
+// #1215) : la préparation de la réponse (answer-delivery.ts) la lit, et
+// elle est lue par ce fichier.
+export { currentTurnMessages, findTaskBoundary } from './transcript-text.ts';
 
 /**
  * Extract the agent's last substantive assistant text from a transcript.
@@ -518,6 +482,12 @@ export async function completeJob(
    * résultat recompilé du cron sans que personne ne s'en aperçoive.
    */
   resultKind?: JobResultKind,
+  /**
+   * What the gate needs to tell the person, beyond the row (#1215): the lines
+   * the runner adds to the result (#562), and the text a board writes for the
+   * chat instead of its compiled result.
+   */
+  answer: PrepareAnswerOptions = {},
 ): Promise<boolean> {
   // Byte-level DB safety: model/tool output can carry raw NULs or lone
   // surrogates that Postgres rejects at write time, failing the whole UPDATE
@@ -589,15 +559,73 @@ export async function completeJob(
     if (messages !== undefined) await fillResultFromFinalTextIfEmpty(db, jobId, messages);
     await fillResultFromChildrenIfEmpty(db, jobId);
   }
+  if (!landed) return false;
+
+  // Les lignes du runner (une délégation arrêtée, #108), APRÈS les
+  // remplissages : posées avant, elles rendaient le résultat non vide et
+  // remplaçaient la réponse au lieu de s'y ajouter. Dites comme les siennes
+  // (#562) : les écrans les lisent dans `result`, la relecture du fil dans
+  // `runner_notes`.
+  const runnerLines = (answer.runnerLines ?? []).filter((l) => l.trim() !== '');
+  if (runnerLines.length > 0) await appendRunnerLines(db, jobId, runnerLines);
+
+  // La réponse, une fois `result` arrêté, dans la transaction qui pose
+  // `completed` (#1215) : la personne qui a demandé dans un chat la reçoit
+  // dans ce chat, quel que soit le canal ou le runtime.
+  const delivery = await prepareAnswerDelivery(db, jobId, { ...answer, runnerLines });
+  if (delivery.kind === 'unreachable') {
+    // Invariant #4 : la ligne le dit, le journal aussi ; rien n'est avalé.
+    console.error(`[completeJob] ${ANSWER_NOT_PREPARED} job=${jobId} reason=${delivery.reason}`);
+    await appendRunnerLines(db, jobId, [answerNotPreparedLine(delivery.reason)]);
+  }
+
   // #944 — PORTE (a) : le succès qui atterrit est annoncé. Son unique appelante
   // (`finalizeJobSuccess`) l'écrit dans une transaction `inTransaction` :
   // l'annonce part après le COMMIT, avec le résultat rempli ci-dessus.
-  if (landed) await announceTransitions(db, { endedJobIds: [jobId] });
-  return landed;
+  await announceTransitions(db, { endedJobIds: [jobId] });
+  return true;
+}
+
+/** Ajoute des lignes du runner au résultat d'un job que CE run vient de finir. */
+async function appendRunnerLines(
+  db: AnyDrizzleDb,
+  jobId: string,
+  lines: readonly string[],
+): Promise<void> {
+  const [row] = await db
+    .select({ result: agentJobs.result, runnerNotes: agentJobs.runnerNotes })
+    .from(agentJobs)
+    .where(eq(agentJobs.id, jobId))
+    .limit(1);
+  const before = (row?.result ?? '').trim();
+  await db
+    .update(agentJobs)
+    .set({
+      result: [before, ...lines].filter((t) => t !== '').join('\n\n'),
+      runnerNotes: runnerNotesValue([...(row?.runnerNotes ?? []), ...lines]),
+      updatedAt: new Date(),
+    })
+    // Juste après la ligne terminale que CE run vient de poser (#566).
+    .where(ownJobRow(jobId, ['completed']));
+}
+
+/** Ce que l'appelant de `failJob` peut dire de plus sur l'explication qu'il donne. */
+export interface FailJobOptions {
+  /**
+   * `userMessage` REMPLACE le résultat déjà écrit, dans la transaction qui pose
+   * l'échec. Par défaut seul un résultat vide est rempli ; quand un texte a été
+   * publié (« Film livré. ») et que l'échec dit pourquoi il est faux, les deux
+   * atterrissent ensemble (revue Codex de #509, passe 3) — et la notice de
+   * l'échec, préparée dans la même transaction, lit ce texte-là.
+   */
+  readonly replaceResult?: boolean;
+  /** Les lignes de `userMessage` écrites par le runner (#562), rangées dans `runner_notes`. */
+  readonly runnerLines?: readonly string[];
 }
 
 /**
- * Mark a job as failed. Stores the error code/message.
+ * Mark a job as failed — THE one writer of `failed` (#1180). Stores the error
+ * code/message.
  * Persists tokens + turn + duration when provided so partial run state isn't lost.
  *
  * Sets `completedAt` so the row matches the terminal-state semantics of
@@ -615,10 +643,20 @@ export async function completeJob(
  * write lands, guarantee the user-facing `result` column is non-empty. When the
  * caller supplies `userMessage` (e.g. a blocked agent's reason) it is used
  * verbatim; otherwise a generic, error-code-derived system notice is written.
- * Filled ONLY when `result` is currently empty, so a partial delivery written
- * earlier in the job (e.g. dashboard_publish) is preserved. This anchors the
- * rule "never leave the user without an explanation after a fail/block" for
- * EVERY fail path (return_result blocked, guards, transport death, orphan reap).
+ * Filled ONLY when `result` is currently empty (unless `replaceResult`), so a
+ * partial delivery written earlier in the job (e.g. dashboard_publish) is
+ * preserved. This anchors the rule "never leave the user without an
+ * explanation after a fail/block" for EVERY fail path (return_result blocked,
+ * guards, transport death, orphan reap).
+ *
+ * The notice (#1180, #1086): in the SAME transaction, once `result` is
+ * settled, the one notice of this failure is prepared for the person, on the
+ * surface the request came from (job/failure-notice.ts). No caller decides
+ * whether the person is told: every exit of every runtime, the board and the
+ * sweepers come through here. A job with a parent tells its parent only. When
+ * the job has a chat that no channel can carry, the row says so. The send
+ * itself follows the COMMIT: here when this call opened the transaction, by
+ * whoever commits it otherwise (`finalizeJobSuccess`'s callers drain).
  *
  * `hint` nomme LE GESTE que cet échec appelle, quand il en appelle un (#193).
  * C'est le runner qui le décide — ici il est seulement écrit, tel quel, dans
@@ -630,8 +668,8 @@ export async function completeJob(
  * « statut non terminal »), donc aucun geste antérieur n'est effacé.
  *
  * #944 — PORTE (a) : l'échec qui ATTERRIT est annoncé (`announceTransitions`,
- * @nodal-agents/db). Dans une transaction ouverte par `inTransaction`, l'annonce
- * attend son COMMIT ; hors transaction, elle part tout de suite.
+ * @nodal-agents/db). La transaction est ouverte par `inTransaction` : l'annonce
+ * attend son COMMIT, celui de la transaction de l'appelant quand il en tient une.
  */
 export async function failJob(
   db: AnyDrizzleDb,
@@ -641,6 +679,29 @@ export async function failJob(
   rawMessages?: unknown[],
   userMessage?: string,
   hint?: JobFailureHint,
+  options: FailJobOptions = {},
+): Promise<boolean> {
+  const landed = await inTransaction(db, (tx) =>
+    writeFailure(tx, jobId, errorCode, stats, rawMessages, userMessage, hint, options),
+  );
+  // L'envoi suit le COMMIT, jamais dedans : il peut durer des minutes.
+  if (landed && !isOpenTransaction(db)) {
+    await drainDeliveries(db, { jobId }).catch((e: unknown) =>
+      console.error(`[failJob] DELIVERY_DRAIN_FAILED job=${jobId}`, e),
+    );
+  }
+  return landed;
+}
+
+async function writeFailure(
+  db: AnyDrizzleDb,
+  jobId: string,
+  errorCode: string,
+  stats: RunStats | undefined,
+  rawMessages: unknown[] | undefined,
+  userMessage: string | undefined,
+  hint: JobFailureHint | undefined,
+  options: FailJobOptions,
 ): Promise<boolean> {
   const now = new Date();
   // Byte-level DB safety (see completeJob) — the fail path is the LAST writer;
@@ -684,34 +745,47 @@ export async function failJob(
     .returning({ id: agentJobs.id });
 
   const landed = rows.length > 0 && rows[0]?.id === jobId;
+  if (!landed) return false;
 
   // Explanation backstop — only when WE won the terminal write (don't clobber a
   // result owned by whoever already finalized the row). Fills `result` only if
   // it is still empty, preserving any partial delivery from earlier in the job.
   // Precedence: the caller's explicit reason → the delegated children's output
   // (a failed parent that delegated) → a generic error-code notice.
-  if (landed) {
-    let explanation = toDbSafeString(userMessage?.trim() ?? '');
-    // Chaque source dit sa provenance, parce que NULL ne la dit pas (revue
-    // Codex de #576, passes 1 et 2) :
-    //  - la compilation des enfants est le texte d'AUTRES jobs : `relay`,
-    //    comme dans fillResultFromChildrenIfEmpty ;
-    //  - l'explication générique est du runner : elle va dans `runner_notes`,
-    //    et la relecture du fil la range dans le relevé du runner (#562) ;
-    //  - le message de l'appelant reste sans marque : sa provenance dépend de
-    //    l'appelant (le texte d'un agent, souvent).
-    let kind: JobResultKind | null = null;
-    let runnerNotes: string[] | null = null;
-    if (!explanation) {
-      explanation = await compileChildResults(db, jobId);
-      if (explanation) kind = 'relay';
-    }
-    if (!explanation) {
-      // Le code peut porter un détail brut (NUL, demi-surrogate) : même
-      // normalisation que le message de l'appelant (revue Codex de #576, passe 4).
-      explanation = toDbSafeString(genericFailExplanation(errorCode));
-      runnerNotes = runnerNotesValue([explanation]);
-    }
+  let explanation = toDbSafeString(userMessage?.trim() ?? '');
+  // Chaque source dit sa provenance, parce que NULL ne la dit pas (revue
+  // Codex de #576, passes 1 et 2) :
+  //  - la compilation des enfants est le texte d'AUTRES jobs : `relay`,
+  //    comme dans fillResultFromChildrenIfEmpty ;
+  //  - l'explication générique est du runner : elle va dans `runner_notes`,
+  //    et la relecture du fil la range dans le relevé du runner (#562) ;
+  //  - le message de l'appelant garde la provenance que l'appelant lui donne :
+  //    les lignes qu'il dit être du runner (`options.runnerLines`), sinon
+  //    aucune marque (le texte d'un agent, souvent).
+  let kind: JobResultKind | null = null;
+  let runnerNotes: string[] | null = null;
+  if (options.runnerLines) runnerNotes = runnerNotesValue(options.runnerLines);
+  if (!explanation) {
+    explanation = await compileChildResults(db, jobId);
+    if (explanation) kind = 'relay';
+  }
+  if (!explanation) {
+    // Le code peut porter un détail brut (NUL, demi-surrogate) : même
+    // normalisation que le message de l'appelant (revue Codex de #576, passe 4).
+    explanation = toDbSafeString(genericFailExplanation(errorCode));
+    runnerNotes = runnerNotesValue([explanation]);
+  }
+  if (options.replaceResult === true && userMessage !== undefined && userMessage.trim() !== '') {
+    await db
+      .update(agentJobs)
+      .set({
+        result: toDbSafeString(userMessage),
+        ...(runnerNotes ? { runnerNotes } : {}),
+        updatedAt: new Date(),
+      })
+      // Juste après la ligne `failed` que CE run vient de poser (#566).
+      .where(ownJobRow(jobId, ['failed']));
+  } else {
     await db
       .update(agentJobs)
       .set({ result: explanation, resultKind: kind, runnerNotes, updatedAt: new Date() })
@@ -720,8 +794,30 @@ export async function failJob(
       );
   }
 
-  if (landed) await announceTransitions(db, { endedJobIds: [jobId] });
-  return landed;
+  // La notice, une fois `result` arrêté, dans la transaction qui pose `failed`.
+  const notice = await prepareFailureNotice(db, jobId);
+  if (notice.kind === 'unreachable') {
+    // Invariant #4 : la ligne le dit, le journal aussi ; rien n'est avalé.
+    const line = noticeNotPreparedLine(notice.reason);
+    console.error(`[failJob] ${FAILURE_NOTICE_NOT_PREPARED} job=${jobId} reason=${notice.reason}`);
+    const [row] = await db
+      .select({ result: agentJobs.result, runnerNotes: agentJobs.runnerNotes })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, jobId))
+      .limit(1);
+    const before = (row?.result ?? '').trim();
+    await db
+      .update(agentJobs)
+      .set({
+        result: before === '' ? line : `${before}\n\n${line}`,
+        runnerNotes: runnerNotesValue([...(row?.runnerNotes ?? []), line]),
+        updatedAt: new Date(),
+      })
+      .where(ownJobRow(jobId, ['failed']));
+  }
+
+  await announceTransitions(db, { endedJobIds: [jobId] });
+  return true;
 }
 
 /**
