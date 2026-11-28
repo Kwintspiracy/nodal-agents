@@ -77,6 +77,12 @@ export interface ClaudeTurnResult {
   permissionDenials: number;
   /** Event types we did not recognize — logged, never silently dropped. */
   unknownEventTypes: string[];
+  /**
+   * The per-response tool-call cap that stopped this turn (invariant #8):
+   * the cap and the calls counted in the response that went over it. `null`
+   * when the cap did not fire.
+   */
+  toolCallCap: { limit: number; calls: number } | null;
 }
 
 export interface ClaudeTurnOptions {
@@ -121,7 +127,7 @@ export interface ClaudeTurnOptions {
   abortSignal?: AbortSignal;
   /**
    * Anti-loop guard (invariant #8): kill the CLI past this many tool_use
-   * events in one turn. The Nodal loop's maxToolCallsPerTurn does not see a
+   * events in ONE MODEL RESPONSE, never over the whole session. The Nodal loop's maxToolCallsPerTurn does not see a
    * CLI-internal loop — this is its equivalent at the runtime seam. The calls
    * under the cap have run; the kill lands on the line that opens the one over
    * it, which may already have started (see SpawnTurnOptions.maxToolCalls).
@@ -196,6 +202,15 @@ export interface StreamParseState {
   unknownEventTypes: Set<string>;
   /** Les appels admis par le budget : seuls leurs résultats passent après le cap. */
   admittedToolIds: Set<string>;
+  /**
+   * La réponse du modèle que porte le dernier événement `assistant` lu : son
+   * `message.id`. Claude émet UN événement par bloc de contenu, et tous les
+   * blocs d'une réponse (texte, appels parallèles) portent le même identifiant
+   * (flux enregistré, stream-fixture.jsonl) : c'est la frontière d'une réponse,
+   * l'unité du budget d'appels (invariant #8). `null` quand l'événement n'en
+   * porte pas : la dérive est notée, l'appel n'est pas compté.
+   */
+  responseId: string | null;
 }
 
 export function newStreamParseState(): StreamParseState {
@@ -205,6 +220,7 @@ export function newStreamParseState(): StreamParseState {
     rateLimit: null,
     unknownEventTypes: new Set(),
     admittedToolIds: new Set(),
+    responseId: null,
   };
 }
 
@@ -250,7 +266,11 @@ export function handleStreamLine(
     return;
   }
   if (type === 'assistant' || type === 'user') {
-    const message = evt['message'] as { content?: unknown } | undefined;
+    const message = evt['message'] as { content?: unknown; id?: unknown } | undefined;
+    if (type === 'assistant') {
+      state.responseId = typeof message?.id === 'string' ? message.id : null;
+      if (state.responseId === null) state.unknownEventTypes.add('assistant(no message.id)');
+    }
     const content = Array.isArray(message?.content) ? message.content : [];
     for (const block of content as Array<Record<string, unknown>>) {
       if (block['type'] === 'tool_use') {
@@ -313,7 +333,7 @@ export function countToolUses(
   handleStreamLine(state, line, (evt) => {
     if (evt.kind === 'tool_use') {
       toolUses += 1;
-      if (!gate.admit()) return;
+      if (!gate.admit(state.responseId)) return;
       if (evt.toolUseId) state.admittedToolIds.add(evt.toolUseId);
     }
     onEvent?.(evt);
@@ -333,12 +353,10 @@ export function finishTurn(
   durationMs: number,
   stderrExcerpt: string,
   toolCapExceeded?: number,
+  toolCapCalls?: number,
 ): ClaudeTurnResult {
-  const capDetail =
-    toolCapExceeded !== undefined
-      ? `tool_call_limit_exceeded: the CLI exceeded ${String(toolCapExceeded)} tool calls in one ` +
-        `turn and was killed (anti-loop guard, invariant #8)`
-      : null;
+  const toolCallCap = cliToolCallCap(toolCapExceeded, toolCapCalls);
+  const capDetail = toolCallCap ? toolCallCapDetail(toolCallCap) : null;
   const r = state.finalResult;
   if (!r) {
     return {
@@ -361,6 +379,7 @@ export function finishTurn(
       rateLimit: state.rateLimit,
       permissionDenials: 0,
       unknownEventTypes: [...state.unknownEventTypes],
+      toolCallCap,
     };
   }
   const denials = Array.isArray(r['permission_denials']) ? r['permission_denials'].length : 0;
@@ -384,7 +403,24 @@ export function finishTurn(
     rateLimit: state.rateLimit,
     permissionDenials: denials,
     unknownEventTypes: [...state.unknownEventTypes],
+    toolCallCap,
   };
+}
+
+/** Le plafond qui a tiré, sous la forme du résultat d'un tour (les deux CLI). */
+export function cliToolCallCap(
+  limit: number | undefined,
+  calls: number | undefined,
+): ClaudeTurnResult['toolCallCap'] {
+  return limit === undefined ? null : { limit, calls: calls ?? limit + 1 };
+}
+
+/** Le détail d'erreur d'un tour tué par le plafond d'appels d'une réponse. */
+export function toolCallCapDetail(cap: { limit: number; calls: number }): string {
+  return (
+    `tool_call_limit_exceeded: ${String(cap.calls)} tool calls in one model response, over ` +
+    `the limit of ${String(cap.limit)}; the CLI was killed (anti-loop guard, invariant #8)`
+  );
 }
 
 export class ClaudeCliNotFoundError extends Error {
@@ -458,14 +494,22 @@ function spawnClaudeTurn(
     onLine: (line, gate) => {
       countToolUses(state, line, opts.onEvent, gate);
     },
-    finish: ({ exitCode, timedOut, durationMs, stderr, toolCapExceeded }) => {
+    finish: ({ exitCode, timedOut, durationMs, stderr, toolCapExceeded, toolCapCalls }) => {
       if (state.unknownEventTypes.size > 0) {
         console.warn(
           `[cli-runtime] unknown stream event types (CLI drift?): ` +
             [...state.unknownEventTypes].join(', '),
         );
       }
-      return finishTurn(state, exitCode, timedOut, durationMs, stderr, toolCapExceeded);
+      return finishTurn(
+        state,
+        exitCode,
+        timedOut,
+        durationMs,
+        stderr,
+        toolCapExceeded,
+        toolCapCalls,
+      );
     },
   });
 }

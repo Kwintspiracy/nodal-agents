@@ -40,7 +40,15 @@ import {
   readAgentBudgetState,
   gatesACall,
 } from '@nodal-agents/db';
-import { readRunSpentUsd, runCostCeilingUsd } from './run-budget.ts';
+import {
+  budgetDeliverable,
+  budgetErrorCode,
+  budgetStopLine,
+  readRunSpentUsd,
+  runCostCeilingUsd,
+  runTimeCeilingMs,
+  type BudgetStopFacts,
+} from './run-budget.ts';
 import type { ApprovalRequestRow } from '@nodal-agents/db';
 import {
   metaToolsForAgent,
@@ -866,20 +874,6 @@ export function timeoutStopLine(faits: TimeoutFacts): string {
 }
 
 /**
- * Ce qu'un budget arrêté rapporte : quoi, combien, contre quel plafond, où.
- * `cost`, `time`, `tokens` : le budget du RUN (#442). `agent_day`,
- * `agent_month` : le budget de l'AGENT, tous fournisseurs (#447). `turns` : le
- * plafond de tours de l'invariant 8, qui livre lui aussi ce qui a été écrit
- * (#504) au lieu de le jeter.
- */
-export interface BudgetStopFacts {
-  kind: 'cost' | 'time' | 'tokens' | 'turns' | 'agent_day' | 'agent_month';
-  spent: number;
-  limit: number;
-  turn: number;
-}
-
-/**
  * Le code machine d'un tour dont la réponse s'est arrêtée sur le plafond de
  * jetons de SORTIE du modèle (#554), pour `agent_jobs.error`. Même famille que
  * `llm_timeout:` et `context_window_exceeded:` : le code, puis les faits qui le
@@ -917,60 +911,6 @@ export function toolCallLimitErrorCode(
   );
 }
 
-/** Le code d'erreur d'un run arrêté par son budget. Les deux premiers existaient déjà. */
-export function budgetErrorCode(kind: BudgetStopFacts['kind']): string {
-  if (kind === 'agent_day' || kind === 'agent_month') return 'agent_budget_exceeded';
-  if (kind === 'turns') return 'turn_limit_exceeded';
-  return kind === 'cost'
-    ? 'cost_budget_exceeded'
-    : kind === 'tokens'
-      ? 'token_budget_exceeded'
-      : 'run_time_exceeded';
-}
-
-/**
- * La ligne que l'utilisateur lit quand un run s'arrête sur son budget (#442).
- *
- * Même famille que `timeoutStopLine` : une ligne de PLATEFORME, entre
- * crochets, faite de champs typés (ce qui a été dépensé, le plafond, le tour).
- * Avant #442 ces arrêts écrivaient « ⚠️ The task could not be completed
- * (cost_budget_exceeded) and no explanation was provided » et jetaient ce que
- * le run avait déjà écrit.
- */
-export function budgetStopLine(f: BudgetStopFacts): string {
-  if (f.kind === 'cost') {
-    return `[stopped: run budget — $${f.spent.toFixed(2)} spent, ceiling $${f.limit.toFixed(2)}, turn ${f.turn}]`;
-  }
-  if (f.kind === 'turns') {
-    return `[stopped: turn limit — ${f.spent} turns, ceiling ${f.limit}]`;
-  }
-  if (f.kind === 'agent_day' || f.kind === 'agent_month') {
-    const when = f.kind === 'agent_day' ? 'today' : 'this month';
-    return `[stopped: agent budget — $${f.spent.toFixed(2)} spent ${when}, ceiling $${f.limit.toFixed(2)}, turn ${f.turn}]`;
-  }
-  if (f.kind === 'time') {
-    // À la minute, et le temps passé ARRONDI AU-DESSUS : coupé à 2 h 00 min
-    // 01 s sous un plafond de 2 h, la ligne disait « 2.0 h of work, ceiling
-    // 2.0 h », un dépassement illisible (revue de la PR #495).
-    const hm = (minutes: number) =>
-      `${Math.floor(minutes / 60)} h ${String(minutes % 60).padStart(2, '0')} min`;
-    return `[stopped: run budget — ${hm(Math.ceil(f.spent / 60_000))} of work, ceiling ${hm(Math.floor(f.limit / 60_000))}, turn ${f.turn}]`;
-  }
-  const n = (x: number) => Math.round(x).toLocaleString('en-US');
-  return `[stopped: token budget — ${n(f.spent)} tokens, ceiling ${n(f.limit)}, turn ${f.turn}]`;
-}
-
-/**
- * Ce qu'un run arrêté par son budget livre : son DERNIER texte des tours
- * précédents (relu dans la transcription enregistrée, donc aussi d'avant une
- * suspension), puis celui du tour en cours s'il en a un, et la ligne qui dit
- * pourquoi il s'arrête. Un texte identique n'est pas répété.
- *
- * Le dernier texte, pas tous : c'est l'état le plus récent de ce que l'agent
- * rendait, la même lecture que le livrable d'un run qui finit normalement
- * (`lastAssistantTextSeen`). Empiler chaque texte intermédiaire livrerait des
- * brouillons que l'agent a lui-même dépassés (revue de la PR #495).
- */
 /**
  * La marque du rappel de progression, pour le RECONNAÎTRE dans une
  * transcription relue. Elle porte un caractère de contrôle, comme
@@ -1102,21 +1042,16 @@ export function progressReminder(f: ProgressFacts): string {
   );
 }
 
-export function budgetDeliverable(prior: string, current: string, line: string): string {
-  const parts = [prior.trim()];
-  if (current.trim() !== '' && current.trim() !== prior.trim()) parts.push(current.trim());
-  parts.push(line);
-  return parts.filter((t) => t !== '').join('\n\n');
-}
-
-// `runCostCeilingUsd` vit dans job/run-budget.ts : le chemin des CLI de code le lit aussi.
-
-/** La durée maximale d'un run en ms, depuis `entities.max_run_hours` (`0` = aucune). */
-export function runTimeCeilingMs(settingHours: number | null | undefined): number {
-  return settingHours !== null && settingHours !== undefined && settingHours > 0
-    ? settingHours * 3_600_000
-    : Infinity;
-}
+// Les arrêts sur budget (`BudgetStopFacts`, leur code, leur ligne, leur livrable) et
+// les plafonds du run vivent dans job/run-budget.ts : le chemin des CLI de code
+// les lit aussi, et s'arrête par la même sortie.
+export {
+  budgetDeliverable,
+  budgetErrorCode,
+  budgetStopLine,
+  runTimeCeilingMs,
+  type BudgetStopFacts,
+} from './run-budget.ts';
 
 /** Période de relecture du statut du travail pendant un appel au modèle (Stop). */
 export const STOP_POLL_MS = 2_000;
