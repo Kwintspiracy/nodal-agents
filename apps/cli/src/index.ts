@@ -7,6 +7,7 @@ import { Command } from 'commander';
 import chalk from 'chalk';
 import { assertNodalHomeSettings } from '@nodal-agents/shared/nodal-home';
 import { getInstalledVersion } from './lib/version.ts';
+import { DEFAULT_SNAPSHOTS_KEPT } from '@nodal-agents/shared/nodal-config';
 
 // NODALAI_HOME (ou une variable plus étroite, NODALAI_CONFIG_PATH…) vide ou
 // relative : refusée ICI, avant toute commande, avec le message seul. Chaque
@@ -38,10 +39,18 @@ program
 program
   .option('--dev', 'Run web in `next dev` mode (HMR, no prebuild required)')
   .option('-d, --detach', 'Return to the prompt once healthy — services keep running')
-  .action(async (opts: { dev?: boolean; detach?: boolean }) => {
+  .option(
+    '--skip-renderer-install',
+    'Do not download the page renderer at this start (render_pdf then says it is not installed)',
+  )
+  .action(async (opts: { dev?: boolean; detach?: boolean; skipRendererInstall?: boolean }) => {
     const { runUp } = await import('./commands/up.ts');
     try {
-      await runUp({ dev: opts.dev, detach: opts.detach });
+      await runUp({
+        dev: opts.dev,
+        detach: opts.detach,
+        skipRendererInstall: opts.skipRendererInstall,
+      });
     } catch (err) {
       console.error(chalk.red('Error:'), err instanceof Error ? err.message : String(err));
       process.exit(1);
@@ -53,7 +62,10 @@ program
 program
   .command('init')
   .description('Interactive wizard — configure LLM, ports, and bind mode')
-  .option('--force', 'Overwrite existing config without confirmation')
+  .option(
+    '--force',
+    'Change an existing config without confirmation (it is edited, never replaced)',
+  )
   .option(
     '--non-interactive',
     'Write a default config without prompting (used by container entrypoints)',
@@ -82,14 +94,62 @@ program
     '--repair-migrations',
     'Apply migrations the journal announces and this database never got',
   )
-  .action(async (opts: { dev?: boolean; detach?: boolean; repairMigrations?: boolean }) => {
-    const { runUp } = await import('./commands/up.ts');
+  .option(
+    '--skip-renderer-install',
+    'Do not download the page renderer at this start (render_pdf then says it is not installed)',
+  )
+  .action(
+    async (opts: {
+      dev?: boolean;
+      detach?: boolean;
+      repairMigrations?: boolean;
+      skipRendererInstall?: boolean;
+    }) => {
+      const { runUp } = await import('./commands/up.ts');
+      try {
+        await runUp({
+          dev: opts.dev,
+          detach: opts.detach,
+          repairMigrations: opts.repairMigrations,
+          skipRendererInstall: opts.skipRendererInstall,
+        });
+      } catch (err) {
+        console.error(chalk.red('Error:'), err instanceof Error ? err.message : String(err));
+        process.exit(1);
+      }
+    },
+  );
+
+// ── nodal-agents renderer ─────────────────────────────────────────────────────
+//
+// Le moteur de rendu de pages (#1082) : `up` le télécharge une fois, après
+// « All services healthy ». Cette commande l'installe au premier plan (refusé
+// au démarrage, ou échoué hors ligne), ou dit où il en est.
+
+const renderer = program
+  .command('renderer')
+  .description("Nodal's page renderer (the window-less Chrome that render_pdf drives)");
+
+renderer
+  .command('install')
+  .description('Download and install the pinned page renderer now, showing progress')
+  .action(async () => {
+    const { runRendererInstall } = await import('./lib/page-renderer.ts');
     try {
-      await runUp({
-        dev: opts.dev,
-        detach: opts.detach,
-        repairMigrations: opts.repairMigrations,
-      });
+      process.exitCode = await runRendererInstall();
+    } catch (err) {
+      console.error(chalk.red('Error:'), err instanceof Error ? err.message : String(err));
+      process.exit(1);
+    }
+  });
+
+renderer
+  .command('status')
+  .description('Say whether the page renderer is installed, and why not')
+  .action(async () => {
+    const { runRendererStatus } = await import('./lib/page-renderer.ts');
+    try {
+      process.exitCode = await runRendererStatus();
     } catch (err) {
       console.error(chalk.red('Error:'), err instanceof Error ? err.message : String(err));
       process.exit(1);
@@ -141,6 +201,26 @@ program
     }
   });
 
+// ── nodal-agents open ─────────────────────────────────────────────────────────
+//
+// In the mode with no password, a browser enters the dashboard through a link
+// made from the install's secret (lib/dashboard-link.ts). `up` opens one; this
+// makes another, for a browser that has not been let in yet.
+
+program
+  .command('open')
+  .description('Open the dashboard in a browser (prints the one-time link too)')
+  .option('--print', 'Only print the link, do not open a browser')
+  .action(async (opts: { print?: boolean }) => {
+    const { runOpen } = await import('./commands/open.ts');
+    try {
+      process.exitCode = await runOpen({ print: opts.print });
+    } catch (err) {
+      console.error(chalk.red('Error:'), err instanceof Error ? err.message : String(err));
+      process.exit(1);
+    }
+  });
+
 // ── nodal-agentslogs ──────────────────────────────────────────────────────────────
 
 program
@@ -150,6 +230,108 @@ program
     const { runLogs } = await import('./commands/logs.ts');
     try {
       await runLogs(service);
+    } catch (err) {
+      console.error(chalk.red('Error:'), err instanceof Error ? err.message : String(err));
+      process.exit(1);
+    }
+  });
+
+// ── nodal-agents rollback ─────────────────────────────────────────────────────
+//
+// The way back from a migration: `up` copies the database inside its cluster
+// before every migration (with config.json and secrets.key beside the copy).
+// This lists the copies, or swaps one back in, the current database kept as a
+// copy of its own. Refused while Nodal runs.
+
+program
+  .command('rollback')
+  .description('List the copies of the database taken before migrations, or swap one back in')
+  .argument('[snapshot]', 'The copy to swap back in (omit to list them)')
+  .addHelpText(
+    'after',
+    `
+A copy is taken before every migration of a database that holds data. Nodal keeps
+the last ${DEFAULT_SNAPSHOTS_KEPT} (setting: "snapshots": { "keep": N } in config.json, at least 1);
+older ones are dropped only once a new one is complete. Swapping one back keeps
+the current database as a copy too: nothing is dropped. Stop Nodal first
+(nodal-agents down).`,
+  )
+  .action(async (snapshot: string | undefined) => {
+    const { runRollback } = await import('./commands/rollback.ts');
+    try {
+      await runRollback(snapshot === undefined ? {} : { name: snapshot });
+    } catch (err) {
+      console.error(chalk.red('Error:'), err instanceof Error ? err.message : String(err));
+      process.exit(1);
+    }
+  });
+
+// ── nodal-agents backup / restore ─────────────────────────────────────────────
+//
+// One file holding everything this install needs to live again (every table,
+// the master key, the config, optionally the workspaces), read back and
+// compared with the database before it is called done; and the way back from
+// it, on this machine or another. The database a restore replaces is kept as
+// a copy `rollback` can swap back.
+
+program
+  .command('backup')
+  .description('Write everything this install needs into one verified file')
+  .option('--to <folder>', 'The folder to write it to (default: the "backups" folder of this home)')
+  .option('--with-workspaces', "Include this home's workspaces folder")
+  .option(
+    '--passphrase',
+    'Protect the file with a passphrase you type (or NODALAI_BACKUP_PASSPHRASE)',
+  )
+  .option(
+    '--keep <n>',
+    'Keep only the newest N backups of the folder, once this one is verified',
+    (v) => Number(v),
+  )
+  .addHelpText(
+    'after',
+    `
+The file holds the master key: whoever has it can read every stored
+credential, unless it was made with --passphrase (a forgotten passphrase
+cannot be recovered). The default folder is on the same disk as the install:
+copy the file elsewhere to survive the loss of the disk. It works while Nodal
+runs (one consistent snapshot) or not.`,
+  )
+  .action(
+    async (opts: {
+      to?: string;
+      withWorkspaces?: boolean;
+      passphrase?: boolean;
+      keep?: number;
+    }) => {
+      const { runBackup } = await import('./commands/backup.ts');
+      try {
+        await runBackup(opts);
+      } catch (err) {
+        console.error(chalk.red('Error:'), err instanceof Error ? err.message : String(err));
+        process.exit(1);
+      }
+    },
+  );
+
+program
+  .command('restore')
+  .description('Bring this install back from a backup file (the replaced database is kept)')
+  .argument('<file>', 'The backup file (.nodalbak)')
+  .addHelpText(
+    'after',
+    `
+Stop Nodal first (nodal-agents down). The database the backup replaces is kept
+as a copy: \`nodal-agents rollback\` lists it and swaps it back. A backup from an
+older version is migrated by this one; a backup from a newer version is refused
+(install that version first). On a machine with no install yet, one is created
+first. The config of the backup comes back, with this machine's ports and
+database password.`,
+  )
+  .action(async (file: string) => {
+    const { runRestore } = await import('./commands/restore.ts');
+    try {
+      await runRestore(file);
     } catch (err) {
       console.error(chalk.red('Error:'), err instanceof Error ? err.message : String(err));
       process.exit(1);

@@ -8,7 +8,12 @@ import type { Message } from '@microsoft/microsoft-graph-types';
 import { mapOutlookError, OutlookAdapterError } from '../errors';
 import { paginateOutlook } from '../helpers/pagination';
 import type { ODataListResponse } from '../helpers/pagination';
-import { parseRecipients, buildFileAttachments, detectBodyContentType } from '../helpers/message';
+import {
+  mailBodyFormatSchema,
+  parseMailAddressList,
+  resolveMailBodyFormat,
+} from '@nodal-agents/shared/mail-contract';
+import { buildFileAttachments, graphBody, toGraphRecipients } from '../helpers/message';
 import type { AttachmentSpec } from '../helpers/message';
 
 // ── Attachment schema ─────────────────────────────────────────────────────────
@@ -88,7 +93,10 @@ export function createListDraftsTool(
 const CreateDraftInput = z.object({
   to: z.string().describe('Recipient email address.'),
   subject: z.string().describe('Email subject line.'),
-  body: z.string().describe('Email body — plain text or HTML.'),
+  body: z
+    .string()
+    .describe('Email body, kept exactly as written, in the format given by body_format.'),
+  body_format: mailBodyFormatSchema,
   cc: z.string().optional().describe('CC address(es), comma-separated.'),
   bcc: z.string().optional().describe('BCC address(es), comma-separated.'),
   attachments: z.array(AttachmentItemSchema).optional().describe('Optional file attachments.'),
@@ -107,10 +115,10 @@ export function createCreateDraftTool(
       try {
         const message: Message = {
           subject: input.subject,
-          body: { contentType: detectBodyContentType(input.body), content: input.body },
-          toRecipients: parseRecipients(input.to),
-          ccRecipients: parseRecipients(input.cc),
-          bccRecipients: parseRecipients(input.bcc),
+          body: graphBody(input.body, resolveMailBodyFormat(input.body_format)),
+          toRecipients: toGraphRecipients(parseMailAddressList(input.to)),
+          ccRecipients: toGraphRecipients(parseMailAddressList(input.cc)),
+          bccRecipients: toGraphRecipients(parseMailAddressList(input.bcc)),
           attachments: buildFileAttachments(input.attachments as AttachmentSpec[] | undefined),
         };
         const created = (await client.api('/me/messages').post(message)) as Message;
@@ -130,7 +138,11 @@ const UpdateDraftInput = z.object({
     .describe('Draft ID to update (from outlook_list_drafts or outlook_create_draft).'),
   to: z.string().optional().describe('Recipient email address.'),
   subject: z.string().optional().describe('Email subject line.'),
-  body: z.string().optional().describe('Email body — plain text or HTML.'),
+  body: z
+    .string()
+    .optional()
+    .describe('Email body, kept exactly as written, in the format given by body_format.'),
+  body_format: mailBodyFormatSchema,
   cc: z.string().optional().describe('CC address(es), comma-separated.'),
   bcc: z.string().optional().describe('BCC address(es), comma-separated.'),
   attachments: z
@@ -175,11 +187,14 @@ export function createUpdateDraftTool(
         const patch: Partial<Message> = {};
         if (input.subject !== undefined) patch.subject = input.subject;
         if (input.body !== undefined) {
-          patch.body = { contentType: detectBodyContentType(input.body), content: input.body };
+          patch.body = graphBody(input.body, resolveMailBodyFormat(input.body_format));
         }
-        if (input.to !== undefined) patch.toRecipients = parseRecipients(input.to);
-        if (input.cc !== undefined) patch.ccRecipients = parseRecipients(input.cc);
-        if (input.bcc !== undefined) patch.bccRecipients = parseRecipients(input.bcc);
+        if (input.to !== undefined)
+          patch.toRecipients = toGraphRecipients(parseMailAddressList(input.to));
+        if (input.cc !== undefined)
+          patch.ccRecipients = toGraphRecipients(parseMailAddressList(input.cc));
+        if (input.bcc !== undefined)
+          patch.bccRecipients = toGraphRecipients(parseMailAddressList(input.bcc));
 
         const draftPath = `/me/messages/${encodeURIComponent(input.draft_id)}`;
         if (Object.keys(patch).length > 0) {

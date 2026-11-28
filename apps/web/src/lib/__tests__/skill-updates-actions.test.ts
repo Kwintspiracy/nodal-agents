@@ -93,6 +93,7 @@ describe('updateCommunitySkillAction', () => {
         contentChanged: true,
         scriptsChanged: true,
         scriptsAuthorizationRevoked: 2,
+        leftoverDir: null,
       }),
     );
     vi.stubGlobal('fetch', fetchMock);
@@ -105,6 +106,7 @@ describe('updateCommunitySkillAction', () => {
         contentChanged: true,
         scriptsChanged: true,
         scriptsAuthorizationRevoked: 2,
+        leftoverDir: null,
       });
     }
 
@@ -119,6 +121,37 @@ describe('updateCommunitySkillAction', () => {
     expect(JSON.parse(init.body as string)).toEqual({
       slug: 'comfyui-workflows',
       entityId: seed.entityId,
+    });
+  });
+
+  it('sends the reviewed files pin and the choice made for each conflicting file', async () => {
+    const { updateCommunitySkillAction } = await import('../actions.ts');
+    await insertCommunitySkill({ slug: 'pinned-files', name: 'Pinned Files' });
+    const fetchMock = vi.fn().mockResolvedValue(
+      Response.json({
+        ok: true,
+        contentChanged: false,
+        scriptsChanged: false,
+        scriptsAuthorizationRevoked: 0,
+        leftoverDir: null,
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const contentHash = 'a'.repeat(64);
+    const filesHash = 'b'.repeat(64);
+    await updateCommunitySkillAction('pinned-files', contentHash, {
+      expectedFilesHash: filesHash,
+      conflictChoices: { 'references/guide.md': 'keep-local', 'assets/logo.bin': 'take-upstream' },
+    });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toEqual({
+      slug: 'pinned-files',
+      entityId: seed.entityId,
+      expectedContentHash: contentHash,
+      expectedFilesHash: filesHash,
+      conflictChoices: { 'references/guide.md': 'keep-local', 'assets/logo.bin': 'take-upstream' },
     });
   });
 

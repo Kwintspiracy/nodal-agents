@@ -25,12 +25,18 @@ const ligne = (over: Partial<ClassifiableRow>): ClassifiableRow => ({
   toolInput: {},
   // Une sortie NON-JSON : c'est ainsi qu'`executeTool` écrit un succès.
   toolOutput: 'ok',
+  outcome: 'done',
   ...over,
 });
 
-/** La sortie qu'`executeTool` écrit quand l'appel n'a PAS abouti. */
-const echec = (outcome: 'error' | 'blocked' | 'awaiting_approval') =>
-  JSON.stringify({ outcome, error: `${outcome}: rien n'est sorti` });
+/**
+ * La ligne qu'`executeTool` écrit quand l'appel n'a PAS abouti : son enveloppe,
+ * et son issue dans sa colonne (#1184), qui est ce que l'encart lit.
+ */
+const echec = (issue: 'error' | 'blocked' | 'awaiting_approval') => ({
+  toolOutput: JSON.stringify({ outcome: issue, error: `${issue}: rien n'est sorti` }),
+  outcome: issue === 'error' ? 'failed' : issue === 'blocked' ? 'refused' : 'awaiting_approval',
+});
 
 /**
  * Le tour du job de tête, avec une écriture CONSTATÉE (#197) — ce que le
@@ -504,7 +510,7 @@ describe("classifyProduction — l'issue de l'appel", () => {
   for (const { nom, ligne: base } of cartes) {
     for (const issue of ['error', 'blocked', 'awaiting_approval'] as const) {
       it(`une carte ${nom} en ${issue} ne produit RIEN`, () => {
-        const v = verdict([ligne({ ...base, toolOutput: echec(issue) })]);
+        const v = verdict([ligne({ ...base, ...echec(issue) })]);
         expect(v.isWork).toBe(false);
         // UNE COMMANDE REFUSÉE PAR UNE RÈGLE PARAÎT, sans rien produire
         // (#395) : c'est la seule ligne en échec que l'encart liste, et elle
@@ -537,14 +543,16 @@ describe("classifyProduction — l'issue de l'appel", () => {
         toolName: 'file_write',
         card: 'files',
         presented: null,
-        toolOutput: echec('awaiting_approval'),
+        ...echec('awaiting_approval'),
       }),
     ]);
     expect(v).toEqual({ isWork: false, items: [], uncertain: 0, more: 0, unclassified: 0 });
   });
 
   it('une sortie ABSENTE ne vaut ni succès ni échec : elle est dite non classable', () => {
-    const v = verdict([ligne({ toolName: 'file_write', card: 'files', toolOutput: null })]);
+    const v = verdict([
+      ligne({ toolName: 'file_write', card: 'files', toolOutput: null, outcome: null }),
+    ]);
     expect(v.isWork).toBe(false);
     expect(v.items).toEqual([]);
     expect(v.unclassified).toBe(1);
@@ -790,6 +798,7 @@ describe('classifyProduction — l’issue de la commande @cap:verifier-un-livra
           outcome: 'error',
           error: 'blocked: an approval rule forbids "run_command" for this agent.',
         }),
+        outcome: 'refused',
       }),
     ]);
     expect(v.items).toEqual([
@@ -822,6 +831,7 @@ describe('classifyProduction — l’issue de la commande @cap:verifier-un-livra
           outcome: 'error',
           error: 'blocked: an approval rule forbids "run_skill_script" for this agent.',
         }),
+        outcome: 'refused',
       }),
     ]);
     expect(v.items).toEqual([
@@ -842,6 +852,7 @@ describe('classifyProduction — l’issue de la commande @cap:verifier-un-livra
       commande('pnpm build', {
         presented: null,
         toolOutput: JSON.stringify({ outcome: 'error', error: 'spawn ENOENT' }),
+        outcome: 'failed',
       }),
     ]);
     expect(v.items).toEqual([]);

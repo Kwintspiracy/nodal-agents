@@ -8,7 +8,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { createServer, request as httpRequest, type Server } from 'node:http';
 import { connect, createServer as createNetServer } from 'node:net';
 import { once } from 'node:events';
-import { startNodalProxy, localAddresses, type NodalProxy } from '../proxy';
+import { startNodalProxy, localAddresses, isPublicAddress, type NodalProxy } from '../proxy';
 
 const closers: (() => void | Promise<void>)[] = [];
 afterEach(async () => {
@@ -254,5 +254,93 @@ describe('startNodalProxy — an upstream that resets the connection is no unhan
       process.off('uncaughtException', record);
     }
     expect(unhandled.map(String)).toEqual([]);
+  });
+});
+
+// ─── `publicOnly` : le moteur de rendu de pages (#1082) ─────────────────────
+//
+// Ce qu'une page écrite par un agent demande ne joint QUE l'internet public :
+// aucun port de cette machine (pas seulement ceux de Nodal), aucune adresse
+// privée, même par un nom qui s'y résout. La politique du bac à sable, elle,
+// reste la même : les tests du dessus la prouvent toujours.
+
+describe('isPublicAddress @cap:travailler-sur-des-fichiers/moteur', () => {
+  const none = new Set<string>();
+  it.each([
+    '127.0.0.1',
+    '127.9.9.9',
+    '10.1.2.3',
+    '172.16.0.1',
+    '172.31.255.255',
+    '192.168.1.10',
+    '169.254.169.254',
+    '100.64.0.1',
+    '0.0.0.0',
+    '224.0.0.1',
+    '255.255.255.255',
+    '::1',
+    '::',
+    'fe80::1',
+    'fd00::1',
+    '::ffff:127.0.0.1',
+    '::ffff:192.168.0.1',
+    'not-an-address',
+  ])('%s is not public', (a) => {
+    expect(isPublicAddress(a, none)).toBe(false);
+  });
+
+  it.each(['8.8.8.8', '1.1.1.1', '172.32.0.1', '2606:4700:4700::1111', '::ffff:8.8.4.4'])(
+    '%s is public',
+    (a) => {
+      expect(isPublicAddress(a, none)).toBe(true);
+    },
+  );
+
+  it("an address of one of this machine's interfaces is never public, even a public one", () => {
+    expect(isPublicAddress('8.8.8.8', new Set(['8.8.8.8']))).toBe(false);
+  });
+});
+
+describe('startNodalProxy — publicOnly @cap:travailler-sur-des-fichiers/moteur', () => {
+  it('refuses any local port, not only Nodal’s, over HTTP and CONNECT, and the server is never reached', async () => {
+    let reached = 0;
+    const server = createServer((_q, r) => {
+      reached++;
+      r.end('ok');
+    });
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    closers.push(() => new Promise<void>((r) => server.close(() => r())));
+    const port = (server.address() as { port: number }).port;
+    const proxy = await startNodalProxy([], {}, { publicOnly: true });
+    closers.push(() => proxy.close());
+
+    const r = await getThroughProxy(proxy, `http://127.0.0.1:${port}/`);
+    expect(r).toEqual({ status: 403, body: 'a local or private address is refused' });
+    expect(await connectThroughProxy(proxy, `127.0.0.1:${port}`)).toMatch(/^HTTP\/1\.1 403/);
+    expect(await connectThroughProxy(proxy, `localhost:${port}`)).toMatch(/^HTTP\/1\.1 403/);
+    expect(reached).toBe(0);
+    expect(proxy.refusedCount()).toBe(3);
+  });
+
+  it('a public-looking NAME that resolves to a private address is refused by that address (rebinding)', async () => {
+    const proxy = await startNodalProxy(
+      [],
+      { lookup: async () => ['93.184.216.34', '192.168.1.1'] },
+      { publicOnly: true },
+    );
+    closers.push(() => proxy.close());
+    const r = await getThroughProxy(proxy, 'http://looks-public.example/');
+    expect(r.status).toBe(403);
+  });
+
+  it('without publicOnly, the same local port is forwarded: the sandbox policy is unchanged', async () => {
+    const allowed = await localServer();
+    const proxy = await startNodalProxy([]);
+    closers.push(() => proxy.close());
+    expect(await getThroughProxy(proxy, `http://127.0.0.1:${allowed.port}/`)).toEqual({
+      status: 200,
+      body: 'ok',
+    });
   });
 });

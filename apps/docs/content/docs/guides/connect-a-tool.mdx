@@ -62,7 +62,12 @@ You need a Google Cloud project with the relevant APIs enabled.
 2. Enable each API your agents will use — Drive, Gmail, Sheets, Docs, Calendar —
    from the API Library, then hit **Enable** on each.
 3. **APIs & Services → OAuth consent screen.** User Type **External**, fill in
-   the app name, and add your own email as a **Test user**.
+   the app name, then under **Audience** click **Publish app** so the publishing
+   status reads **In production**. Left in **Testing**, Google ends every
+   authorisation seven days after consent and your agents stop working. When
+   you connect, Google warns that the app is not verified: it is your own app,
+   continue past the warning (Google lets 100 accounts in all authorise an
+   unverified app).
 4. **APIs & Services → Credentials → Create credentials → OAuth client ID →
    Application type: Web application.**
 5. Under **Authorized JavaScript origins**, add the origin shown in the wizard.
@@ -75,8 +80,12 @@ You need a Google Cloud project with the relevant APIs enabled.
    completes the credential.
 
 Once the Google credential exists, every Google connector (Drive, Gmail, Sheets,
-Docs, Calendar) can use it — open the connector, click **Connect**, pick the
-credential.
+Docs, Calendar) can use it. Google is asked only for the access of the connector
+you are connecting: when you pick the credential for another connector whose
+access it does not hold yet, the dashboard says which access is missing and
+offers **Add access**, which asks Google for that connector's access on the same
+account (no client ID or secret to paste again). Sheets and Docs also work on a
+credential that holds Drive access, since Google accepts it for them.
 
 ### Notion (OAuth — Public integration)
 
@@ -109,12 +118,13 @@ Airtable OAuth has two gotchas: a redirect-host restriction and a scopes step.
    **Register new OAuth integration**.
 2. Give it a name (e.g. `Nodal-Agents`).
 3. In **Redirect URIs**, paste the redirect URI from the wizard. Mandatory.
-4. In **Scopes**, check all four: `data.records:read`, `data.records:write`,
-   `schema.bases:read`, `schema.bases:write` — then **save/update** so the scopes
-   persist. If they aren't saved, the OAuth flow returns `invalid_scope`.
+4. In **Scopes**, check all three: `data.records:read`, `data.records:write`,
+   `schema.bases:read` — then **save/update** so the scopes persist. If they
+   aren't saved, the OAuth flow returns `invalid_scope`.
 5. **Register integration** (or Save changes if editing).
 6. On the detail page copy the **Client ID** (a UUID) and **Client secret**.
-7. Paste both into the Credentials wizard.
+7. Paste both into the Credentials wizard. An Airtable authorisation that no
+   agent uses for 60 days ends (Airtable's rule): reconnect it then.
 
 ### Microsoft (Outlook Mail)
 
@@ -132,21 +142,33 @@ Directory) — a free Azure tenant works, no paid subscription required.
    page.
 5. **Certificates & secrets → Client secrets → New client secret.** Copy the
    secret **Value** immediately — Azure hides it after you leave the page (the
-   adjacent Secret ID is not what you need).
+   adjacent Secret ID is not what you need). The expiry you choose ends every
+   connection made with this secret (Microsoft allows 24 months at most): note
+   the date, and before it create a new secret and a new credential with it.
 6. **API permissions → Add a permission → Microsoft Graph → Delegated
-   permissions**, and add: `Mail.ReadWrite`, `Mail.Send`,
-   `MailboxSettings.Read`, `offline_access`.
+   permissions**, and add: `Mail.ReadWrite`, `Mail.Send`, `offline_access`.
 7. Admin consent is not required for these delegated permissions on a personal
    account — the consent screen appears during the connect flow instead.
 8. Paste the Application (client) ID and the client secret value into the
-   Credentials wizard.
+   Credentials wizard. A Microsoft authorisation that no agent uses for 90 days
+   ends: reconnect it then.
 
 ### After the credential exists
 
 Go to **Connectors**, open the OAuth connector, click **Connect**, and pick the
 credential you just made. The authorize popup runs once; the connector turns
-connected. Then assign it to an agent: agent edit page → **Connectors** tab →
+connected. If you declined part of the access on the provider's consent screen,
+the connector shows **Needs access** with the missing permissions: the
+operations that need them are not given to agents until you click **Add
+access**. Then assign it to an agent: agent edit page → **Connectors** tab →
 enable it. Tools appear on the agent's next job.
+
+When a provider ends an authorisation (revoked, expired, or a Google app left
+in Testing), the connector shows **Reconnect** with the provider's reason, and
+the agents holding it are told the account is disconnected instead of failing
+their calls. Click **Reconnect**: the same credential is authorised again, and
+every connector and agent using it works again at its next job. Nothing is
+retried in between, so a dead authorisation costs no request at every job.
 
 ## API-key connectors
 

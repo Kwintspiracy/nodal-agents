@@ -5,7 +5,8 @@ import { toast } from 'sonner';
 import { PencilSimple, ArrowClockwise, Trash } from '@phosphor-icons/react';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
 import CountPill from '@/components/ui/CountPill';
-import StatusPill from '@/components/ui/StatusPill';
+import ConnectionStatusPill from '@/components/ConnectionStatusPill.tsx';
+import type { ConnectionState } from '@nodal-agents/shared';
 import Table, {
   THead,
   Th,
@@ -140,13 +141,18 @@ function CredentialRow({
     });
   }
 
-  const status = credential.decryptError
-    ? { variant: 'warn' as const, label: 'Decrypt error' }
-    : supportsRefresh
-      ? { variant: 'done' as const, label: 'Auto-refresh' }
-      : expired
-        ? { variant: 'warn' as const, label: 'Expired' }
-        : { variant: 'done' as const, label: 'Connected' };
+  // The engine's state for this credential (an expired token a provider
+  // cannot renew needs the person, as the refresh itself would record).
+  const connection: ConnectionState =
+    !supportsRefresh && expired && credential.connection.state === 'working'
+      ? {
+          state: 'needs_reauth',
+          cause: 'no_refresh',
+          detail: null,
+          observedAt: null,
+          retryAfter: null,
+        }
+      : credential.connection;
 
   return (
     <>
@@ -172,7 +178,7 @@ function CredentialRow({
         </Td>
 
         <Td>
-          <StatusPill variant={status.variant} label={status.label} />
+          <ConnectionStatusPill connection={connection} />
           {!supportsRefresh && !credential.decryptError && credential.expiresAt && (
             <div>
               <CellMuted>{formatExpiry(credential.expiresAt)}</CellMuted>

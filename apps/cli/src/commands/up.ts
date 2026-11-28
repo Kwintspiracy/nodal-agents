@@ -4,27 +4,33 @@ import chalk from 'chalk';
 import ora from 'ora';
 import open from 'open';
 import { randomBytes } from 'crypto';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, statfsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import {
   readConfig,
   writeConfig,
+  createConfig,
+  newInstallConfig,
   ensureConfigDir,
   CONFIG_FILE,
   LOG_DIR,
   PG_DATA_DIR,
-  type Config,
 } from '../lib/config.ts';
 import {
   startEmbeddedPostgres,
-  runMigrations,
-  findMigrationGaps,
-  repairMigrations,
+  migrateDatabase,
   stopOrphanPostgres,
   livePostmasterPid,
   postgresProcessesForDataDir,
-  LEGACY_PG_PASSWORD,
+  PostgresAuthError,
 } from '../lib/postgres.ts';
+import {
+  startWithPassword,
+  finishPasswordChange,
+  passwordMismatchMessage,
+  type PasswordStart,
+} from '../lib/pg-password.ts';
+import { lastGoodCopyPath } from '@nodal-agents/shared/state-files';
 import {
   probeEmbeddedPostgres,
   hydrateEmbeddedPostgres,
@@ -40,8 +46,7 @@ import {
   resolveAuthMode,
 } from '../lib/env.ts';
 import {
-  isPortBindable,
-  findFreePort,
+  allocateServicePorts,
   pidListeningOnPort,
   formatPortRotation,
   type PortRotation,
@@ -73,9 +78,26 @@ import {
   isPidAlive,
   waitForPidDead,
   type SpawnResult,
+  type ProcessRecord,
 } from '../lib/processes.ts';
 import { createClient, assertMasterKeyRestorable } from '@nodal-agents/db';
+import { DatabaseNewerThanProgramError } from '@nodal-agents/db/schema-state';
+import { MigrationFailedError, MigrationGapError, errorChain } from '@nodal-agents/db/safe-migrate';
+import {
+  DEFAULT_SNAPSHOTS_KEPT,
+  SnapshotError,
+  formatBytes,
+  homeStateFiles,
+} from '@nodal-agents/db/snapshots';
+import {
+  databaseNewerRefusal,
+  migrationFailure,
+  snapshotRefusal,
+  unclaimedHistoryNotice,
+} from '../lib/schema-messages.ts';
+import { getInstalledVersion } from '../lib/version.ts';
 import { startHealthWatchdog, probeRunnerHealth, type Watchdog } from '../lib/watchdog.ts';
+import { LAUNCH_TTL_MINUTES, dashboardEntry } from '../lib/dashboard-link.ts';
 
 async function killSilent(child: SpawnResult): Promise<void> {
   // Kill the whole process tree — see killProcessTree for the Windows
@@ -182,9 +204,19 @@ export interface RunUpOptions {
    * detection — to do the same three statements.
    */
   repairMigrations?: boolean;
+  /**
+   * Do not download the page renderer at this start (#1082). The same as
+   * `"pageRenderer": { "autoInstall": false }` in config.json, for one start.
+   */
+  skipRendererInstall?: boolean;
 }
 
-export async function runUp(opts: RunUpOptions = {}): Promise<void> {
+/**
+ * The embedded database's binaries are there and can run: steps 0 and 0b of
+ * `up`, shared with every command that starts the cluster itself
+ * (`rollback`). Throws `EmbeddedPostgresUnavailableError` when they are not.
+ */
+export async function ensureDatabaseBinaries(): Promise<void> {
   // ── 0. Are the database binaries actually there? (issue #247) ─────────────
   //
   // Demandé AVANT tout le reste, config comprise : sans binaires il n'y a rien
@@ -225,8 +257,17 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
       }
     }
   }
+}
+
+export async function runUp(opts: RunUpOptions = {}): Promise<void> {
+  await ensureDatabaseBinaries();
 
   // ── 1. Load config (write a no-friction default if missing) ───────────────
+  //
+  // `readConfig` answers null for an ABSENT file only. A file that exists but
+  // cannot be read or understood throws here, before anything is started or
+  // written: it holds the only copy of the database password, and treating it
+  // as a first run is what used to write defaults over it (B38-02).
 
   let config = readConfig();
   if (!config) {
@@ -238,21 +279,13 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
     //
     // Power users who want LAN / email-auth / a pre-baked LLM key still run
     // `nodal-agents init` explicitly — that path is unchanged.
+    //
+    // `createConfig` refuses when this home already holds an install (a
+    // database, a master key, a last good copy): a missing config there is a
+    // loss to repair, not a first run.
+    const defaultConfig = newInstallConfig();
+    createConfig(defaultConfig);
     console.log(chalk.cyan('  First run — opening the dashboard to finish setup…\n'));
-    const defaultConfig: Config = {
-      // No `llm` section: the browser onboarding sets it via createLlmKeyAction.
-      ports: { web: 3000, runner: 3001, postgres: 25432 },
-      workerSecret: randomBytes(32).toString('hex'),
-      serverActionsKey: randomBytes(32).toString('base64'),
-      // M-4: authSecret is minted here (distinct from workerSecret) rather
-      // than left for readConfig()'s auto-mint, because this in-memory
-      // `config` is used directly below without a re-read.
-      authSecret: randomBytes(32).toString('base64'),
-      // loopback derives auth: local-trust (no login/signup). Leave `auth`
-      // unset so resolveAuthMode falls back to the loopback → local-trust map.
-      bind: 'loopback',
-    };
-    writeConfig(defaultConfig);
     config = defaultConfig;
   }
 
@@ -284,6 +317,7 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
     runnerPort: config.ports.runner,
     webPort: config.ports.web,
     dataDir: PG_DATA_DIR,
+    workerSecret: config.workerSecret,
   });
   if (!startVerdict.proceed) {
     logLauncherEvent('refused-kill', `already-running runner=${config.ports.runner}`);
@@ -717,11 +751,11 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
   // not bindable, rotate to a free one nearby and persist so the next boot
   // uses the working port directly.
 
+  // One decision over the three ports (allocateServicePorts): a port another
+  // service of this configuration holds or was just given is never handed out.
+  const allocation = await allocateServicePorts(config.ports);
   const portChanges: PortRotation[] = [];
-  for (const name of ['web', 'runner', 'postgres'] as const) {
-    const configured = config.ports[name];
-    if (await isPortBindable(configured)) continue;
-    const next = await findFreePort(configured + 1);
+  for (const { name, from: configured, to } of allocation.moved) {
     // WHO still holds it. Asked here, at the moment of the move, because this
     // is the only place that knows the port is being abandoned — and after a
     // hard Ctrl+C with an unreadable process table, the answer is a pid we
@@ -729,11 +763,11 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
     portChanges.push({
       name,
       from: configured,
-      to: next,
+      to,
       heldBy: await pidListeningOnPort(configured),
     });
-    config.ports[name] = next;
   }
+  config = { ...config, ports: { ...config.ports, ...allocation.ports } };
 
   if (portChanges.length > 0) {
     console.log(chalk.yellow('Configured ports unavailable — rotating:'));
@@ -762,25 +796,40 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
   //
   // A cluster created before this field exists still carries the old password:
   // initdb sets it once, so the fix has to go through ALTER USER on a running
-  // server. `pgPassword` is what we start WITH; `pendingRotation` is what we
-  // move to once it is up.
-  const pgPassword = config.postgresPassword ?? LEGACY_PG_PASSWORD;
-  const pendingRotation = config.postgresPassword ? null : randomBytes(24).toString('base64url');
-
+  // server. A change is recorded as `postgresPasswordPending` BEFORE it is made
+  // and confirmed only once the database took it, so a start cut in the middle
+  // loses neither value (lib/pg-password.ts).
+  const pgPort = config.ports.postgres;
   const pgSpinner = ora('Starting embedded Postgres…').start();
-  let pg: Awaited<ReturnType<typeof startEmbeddedPostgres>>;
+  let started: PasswordStart<Awaited<ReturnType<typeof startEmbeddedPostgres>>>;
   try {
-    // `--detach`: the cluster must outlive this launcher, so it is spawned
-    // detached and released from the package's stop-at-exit just before the
-    // exit below (#835). A foreground `up` keeps both: Ctrl+C stops everything.
-    pg = await startEmbeddedPostgres(undefined, config.ports.postgres, pgPassword, undefined, {
-      detached: opts.detach === true,
+    started = await startWithPassword(config, {
+      // `--detach`: the cluster must outlive this launcher, so it is spawned
+      // detached and released from the package's stop-at-exit just before the
+      // exit below (#835). A foreground `up` keeps both: Ctrl+C stops everything.
+      start: (password) =>
+        startEmbeddedPostgres(undefined, pgPort, password, undefined, {
+          detached: opts.detach === true,
+        }),
+      save: (next) => writeConfig(next),
+      mint: () => randomBytes(24).toString('base64url'),
     });
     pgSpinner.succeed(chalk.green(`Postgres ready on port ${config.ports.postgres}`));
   } catch (err) {
     pgSpinner.fail('Failed to start Postgres');
+    if (err instanceof PostgresAuthError) {
+      const lastGood = lastGoodCopyPath(CONFIG_FILE);
+      throw new Error(
+        passwordMismatchMessage(CONFIG_FILE, existsSync(lastGood) ? lastGood : null),
+        {
+          cause: err,
+        },
+      );
+    }
     throw err;
   }
+  config = started.config;
+  const pg = started.pg;
 
   // ── 2b. Shutdown handlers — registered HERE, not at the end ───────────────
   // The moment Postgres is up there is something that must be torn down on
@@ -809,7 +858,14 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
     // Read the tree BEFORE killing: clearPids() wipes it at the end, and on
     // Ctrl+C the live parent/child links are already collapsing (see
     // recordServiceTree for the full account).
-    const recorded = readPids()?.children ?? [];
+    // An unreadable record must not stop the teardown halfway (the database
+    // would stay up): it is said, and what this process holds is still stopped.
+    let recorded: ProcessRecord[] = [];
+    try {
+      recorded = readPids()?.children ?? [];
+    } catch (err) {
+      console.error(chalk.red(`  ${err instanceof Error ? err.message : String(err)}`));
+    }
     await Promise.allSettled(
       [running.runner, running.web].filter((c): c is SpawnResult => c !== null).map(killSilent),
     );
@@ -830,90 +886,101 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
   process.on('SIGINT', () => void shutdown('SIGINT'));
   process.on('SIGTERM', () => void shutdown('SIGTERM'));
 
-  let effectivePgPassword = pgPassword;
-  if (pendingRotation) {
-    // ORDER MATTERS: persist first, then ALTER, then revert on failure. The
-    // reverse order leaves a window where the role has changed and nothing on
-    // disk knows the new value — an install that cannot open its own database.
-    // This way the worst case is a config naming a password the role does not
-    // have yet, which the next boot simply retries.
-    writeConfig({ ...config, postgresPassword: pendingRotation });
-    const rotated = await pg.rotatePassword(pendingRotation);
-    if (rotated) {
-      effectivePgPassword = pendingRotation;
-    } else {
-      writeConfig({ ...config, postgresPassword: undefined });
-      // Not fatal: the install keeps working on the legacy password and retries
-      // next boot. Loud rather than silent (invariant #4) — a database still
-      // reachable with a well-known password is something the owner should know.
-      console.warn(
-        chalk.yellow(
-          '  Could not rotate the local Postgres password — still using the shipped default.\n' +
-            '  Any other process on this machine can read the database. Retried on next start.',
-        ),
-      );
-    }
-  }
+  // After the handlers, so a Ctrl+C during the ALTER still stops the cluster.
+  // Not fatal when the ALTER fails: the install keeps working on the previous
+  // password and the recorded change runs again next start. Loud rather than
+  // silent (invariant #4).
+  const finished = await finishPasswordChange(started, {
+    save: (next) => writeConfig(next),
+    warn: (message) => console.warn(chalk.yellow(message.replace(/^/gm, '  '))),
+  });
+  config = finished.config;
+  const effectivePgPassword = finished.password;
 
   const databaseUrl = buildDatabaseUrl(config.ports.postgres, effectivePgPassword);
 
-  // ── 3. Apply Drizzle migrations ───────────────────────────────────────────
-
-  const migrateSpinner = ora('Applying database migrations…').start();
+  // ── 3. The schema: one function decides, for every way `up` is started ─────
+  //
+  // `migrateDatabase` (@nodal-agents/db/safe-migrate) is the only path that
+  // moves the schema, here and with `--repair-migrations`, `--dev`, and the
+  // restart `update` launches. In order: a database newer than this program
+  // is refused; a migration the migrator skipped (#298) is refused unless
+  // repair is asked; when the schema is about to move over rows, a copy is
+  // taken first inside the cluster with config.json and secrets.key beside it,
+  // and when that copy cannot be made NOTHING is migrated (invariant #4);
+  // then the migrations, the repair, a second reading, and the version that
+  // opened the database is recorded.
+  const schemaSpinner = ora('Checking the database schema…').start();
+  const programVersion = getInstalledVersion();
   try {
-    await runMigrations(databaseUrl, { patchVectorAsText: !pg.vectorAvailable });
-    migrateSpinner.succeed(chalk.green('Migrations applied'));
-  } catch (err) {
-    migrateSpinner.fail('Migration failed');
-    await pg.stop();
-    throw err;
-  }
-
-  // ── 3.2 A migration the migrator SKIPPED (issue #298) ─────────────────────
-  //
-  // `migrate()` only applies entries whose `when` is past the LAST applied
-  // one, so a migration merged after a more recent one is skipped in silence,
-  // for good. On 2026-09-20 that left the owner's database without
-  // `code_projects.init_git`: every write to that table failed, and nothing at
-  // boot said why. A launcher that serves a database it knows to be short of a
-  // migration is a silent smart fallback (invariant #4), so it refuses.
-  //
-  // The check reads the journal against `drizzle.__drizzle_migrations` BY
-  // TIMESTAMP, never by hash: with `patchVectorAsText` the applied files are
-  // rewritten, so the recorded hashes are those of the patched copies.
-  const vectorPatched = { patchVectorAsText: !pg.vectorAvailable };
-  const gapSpinner = ora('Checking the migration journal…').start();
-  let gaps = await findMigrationGaps(databaseUrl, vectorPatched).catch(async (err: unknown) => {
-    gapSpinner.fail('Could not read the migration journal');
-    await pg.stop();
-    throw err;
-  });
-
-  if (gaps.length > 0 && opts.repairMigrations === true) {
-    gapSpinner.text = `Repairing ${gaps.length} skipped migration${gaps.length === 1 ? '' : 's'}…`;
-    try {
-      const repaired = await repairMigrations(databaseUrl, vectorPatched);
-      gapSpinner.succeed(chalk.green(`Repaired: ${repaired.map((g) => g.tag).join(', ')}`));
-    } catch (err) {
-      gapSpinner.fail('Repair failed');
-      await pg.stop();
-      throw err;
+    const result = await migrateDatabase(databaseUrl, {
+      patchVectorAsText: !pg.vectorAvailable,
+      repair: opts.repairMigrations === true,
+      programVersion,
+      keep: config.snapshots?.keep ?? DEFAULT_SNAPSHOTS_KEPT,
+      // The volume the cluster writes the copy to: its data directory's.
+      freeBytes: () => {
+        const fs = statfsSync(PG_DATA_DIR);
+        return Number(fs.bavail) * Number(fs.bsize);
+      },
+      stateFiles: homeStateFiles(),
+      onStep: (text) => {
+        schemaSpinner.text = text;
+      },
+    });
+    const said: string[] = [];
+    if (result.snapshot) {
+      said.push(
+        `copy ${result.snapshot.name} (${formatBytes(result.snapshot.sizeBytes)}) taken first`,
+      );
     }
-    // Relu, jamais déduit : une réparation qui a rendu sans lever ne prouve
-    // pas que la base est complète.
-    gaps = await findMigrationGaps(databaseUrl, vectorPatched);
-  }
-
-  if (gaps.length > 0) {
-    gapSpinner.fail(
-      `${gaps.length} migration${gaps.length === 1 ? '' : 's'} in the journal never reached this database`,
+    if (result.applied.length > 0) {
+      said.push(
+        `${result.applied.length} migration${result.applied.length === 1 ? '' : 's'} applied`,
+      );
+    }
+    if (result.repaired.length > 0) said.push(`repaired: ${result.repaired.join(', ')}`);
+    schemaSpinner.succeed(
+      chalk.green(
+        said.length > 0 ? `Database schema: ${said.join('; ')}` : 'Database schema up to date',
+      ),
     );
+    if (result.unclaimed.length > 0) {
+      console.log(chalk.yellow(`  ${unclaimedHistoryNotice(result.unclaimed)}`));
+    }
+    if (result.pruned.length > 0) {
+      console.log(
+        chalk.gray(
+          `  Older copies removed (keeping ${config.snapshots?.keep ?? DEFAULT_SNAPSHOTS_KEPT}): ${result.pruned.join(', ')}`,
+        ),
+      );
+    }
+  } catch (err) {
     await pg.stop();
-    throw new Error(
-      migrationGapRefusal(gaps, { dev: opts.dev === true, detach: opts.detach === true }),
-    );
+    if (err instanceof DatabaseNewerThanProgramError) {
+      schemaSpinner.fail('This database is newer than this program');
+      throw new Error(databaseNewerRefusal(err, programVersion), { cause: err });
+    }
+    if (err instanceof MigrationGapError) {
+      schemaSpinner.fail(
+        `${err.gaps.length} migration${err.gaps.length === 1 ? '' : 's'} in the journal never reached this database`,
+      );
+      throw new Error(
+        migrationGapRefusal(err.gaps, { dev: opts.dev === true, detach: opts.detach === true }),
+        { cause: err },
+      );
+    }
+    if (err instanceof SnapshotError) {
+      schemaSpinner.fail('No copy of the database could be made: nothing was migrated');
+      throw new Error(snapshotRefusal(err), { cause: err });
+    }
+    if (err instanceof MigrationFailedError) {
+      schemaSpinner.fail('Migration failed');
+      throw new Error(migrationFailure(errorChain(err.cause), err.snapshot), { cause: err });
+    }
+    schemaSpinner.fail('Could not check the database schema');
+    throw err;
   }
-  gapSpinner.succeed(chalk.green('Migration journal complete'));
 
   // ── 3.5 Master-key sanity check (I-6) ─────────────────────────────────────
   // Before anything touches encrypted rows: if ~/.nodalai/secrets.key is
@@ -1042,10 +1109,10 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
 
   try {
     await Promise.all([
-      waitForHealth(runnerUrl, runnerHealthMs).then(() => {
+      waitForHealth(runnerUrl, runnerHealthMs, config.workerSecret).then(() => {
         pending.delete('runner');
       }),
-      waitForHealth(webUrl, webHealthMs).then(() => {
+      waitForHealth(webUrl, webHealthMs, config.workerSecret).then(() => {
         pending.delete('web');
       }),
     ]);
@@ -1056,7 +1123,7 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
     // compile of `/` can take minutes on a cold cache (see assertWebRenders).
     pending.add('web page render');
     healthSpinner.text = describeWait();
-    await assertWebRenders(webUrl, webHealthMs);
+    await assertWebRenders(webUrl, webHealthMs, config.workerSecret);
     pending.delete('web page render');
     clearInterval(ticker);
     healthSpinner.succeed(chalk.green('All services healthy'));
@@ -1106,9 +1173,8 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
   // The race against a short timer ensures this can't stall the output.
   void (async () => {
     try {
-      const { getInstalledVersion, getLatestVersion, isNewerVersion } =
-        await import('../lib/version.ts');
-      const installed = getInstalledVersion();
+      const { getLatestVersion, isNewerVersion } = await import('../lib/version.ts');
+      const installed = programVersion;
       // Timeout already capped inside getLatestVersion() at 5 s; we add an
       // outer race of 3 s here so any internal delay can't push the notice
       // after the ready block.
@@ -1130,9 +1196,14 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
   // ── 8. Open browser ───────────────────────────────────────────────────────
   // NODALAI_NO_BROWSER=1 disables this — set it on headless servers / CI
   // runners with no desktop, where `open` would either hang or crash.
+  //
+  // In the mode with no password, what is opened is a launch link made from
+  // the install's secret (lib/dashboard-link.ts): the dashboard lets a browser
+  // in only through one, once, and leaves it a cookie.
+  const entry = dashboardEntry(config);
   if (!process.env['NODALAI_NO_BROWSER']) {
     try {
-      await open(webUrl);
+      await open(entry.url);
     } catch {
       /* best-effort — headless environments without xdg-open shouldn't crash up */
     }
@@ -1149,6 +1220,34 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
   if (config.bind === 'lan') {
     console.log(chalk.cyan(`  LAN mode — sign up at ${webUrl}/login`));
   }
+  if (entry.oneTime) {
+    // The link goes to a terminal a person reads, never to a file: when the
+    // output is not a terminal (a service, a log), the command is named.
+    if (process.stdout.isTTY) {
+      console.log(chalk.cyan(`  Open the dashboard: ${entry.url}`));
+      console.log(
+        chalk.gray(
+          `  (works once, within ${LAUNCH_TTL_MINUTES} minutes; \`nodal-agents open\` makes another)`,
+        ),
+      );
+    } else {
+      console.log(chalk.cyan('  Open the dashboard with `nodal-agents open`'));
+    }
+  }
+
+  // ── 9a. The page renderer, downloaded once (#1082) ───────────────────────
+  // AFTER "All services healthy" and the ready line, never before: the
+  // download cannot delay the start. It never fails it either: a failure is
+  // said here and by render_pdf, with the command to install it later.
+  // Foreground: it runs while the services serve. Detached: the prompt comes
+  // back once it is done, so the progress is seen and nothing is cut halfway.
+  const { ensureRendererAtStart, rendererInstallTurnedOff } =
+    await import('../lib/page-renderer.ts');
+  const rendererStart = ensureRendererAtStart({
+    turnedOff: rendererInstallTurnedOff(config, opts.skipRendererInstall === true),
+  }).then((outcome) => {
+    logLauncherEvent('page-renderer', `outcome=${outcome}`);
+  });
 
   // ── 9b. Detached: hand the terminal back and leave everything running ─────
   // The order matters. We return only AFTER the health + render checks above,
@@ -1159,6 +1258,7 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
   // to kill the services when the foreground CLI dies, which is precisely what
   // must not happen here.
   if (opts.detach) {
+    await rendererStart;
     logLauncherEvent('detached', `web=${webUrl} runner=${runnerUrl}`);
     console.log(chalk.gray('  Detached — the terminal is yours again.'));
     console.log(chalk.gray('  nodal-agents logs runner   follow a service'));
@@ -1192,7 +1292,7 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
   // Foreground uniquement : en --detach le lanceur est déjà sorti, la vérité
   // vit alors dans /api/health (runner ET web pingent la base désormais).
   const watchdog: Watchdog = startHealthWatchdog({
-    probe: () => probeRunnerHealth(runnerUrl),
+    probe: () => probeRunnerHealth(runnerUrl, config.workerSecret),
     onTransition: (state, detail) => {
       const at = new Date().toLocaleTimeString();
       // The terminal gets local time for whoever is watching; the file gets a

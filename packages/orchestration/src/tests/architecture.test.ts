@@ -11,9 +11,12 @@ import { describe, it, expect } from 'vitest';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  scanForToolResultBypass,
   scanForAgentSlugs,
   scanForUserFacingStrings,
   formatViolations,
+  scanForOutcomeGuesses,
+  assertNoViolations,
 } from '@nodal-agents/test-kit';
 
 const SRC_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -29,5 +32,21 @@ describe('invariant 2 — aucun texte utilisateur en dur', () => {
   it('src/ ne met aucune phrase dans la bouche de l’agent', () => {
     const v = scanForUserFacingStrings({ srcDir: SRC_DIR });
     if (v.length > 0) expect.fail(formatViolations('Invariant 2 violé', v));
+  });
+});
+
+describe('architecture — the outcome of a call is read on its row (#1184)', () => {
+  it('no production file decides a call’s outcome from its output', () => {
+    assertNoViolations(
+      'outcome guessed from a tool output',
+      scanForOutcomeGuesses({ srcDir: SRC_DIR }),
+    );
+  });
+});
+
+describe('architecture — un résultat d’outil ne sort que par la frontière (executeTool) @cap:connecter-un-service/moteur', () => {
+  it('src/ ne lance aucun outil hors d’executeTool et n’écrit aucune ligne tool_calls hors de la frontière', () => {
+    const v = scanForToolResultBypass({ srcDir: SRC_DIR });
+    if (v.length > 0) expect.fail(formatViolations('Résultat d’outil hors de la frontière', v));
   });
 });

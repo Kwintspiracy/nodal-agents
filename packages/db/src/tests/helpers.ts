@@ -164,6 +164,8 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       -- mirrors migration 0111 : OFF par défaut, et OFF pour tous les agents
       -- existants — les trois outils d'équipe n'entrent pas dans la liste.
       may_change_team boolean NOT NULL DEFAULT false,
+      -- mirrors migration 0175 : les formes du masque sur les résultats d'outil, ON par défaut.
+      mask_secret_shapes boolean NOT NULL DEFAULT true,
       position integer NOT NULL DEFAULT 0,
       created_at timestamptz DEFAULT now(),
       updated_at timestamptz DEFAULT now(),
@@ -259,6 +261,10 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       checkpoint_tool_seq bigint,
       -- mirrors migration 0135 (#566) : le numéro de la prise en cours
       claim_generation integer NOT NULL DEFAULT 0,
+      -- mirrors migration 0173 : l'instance de runner qui tient la prise, et ce
+      -- qu'un faucheur a constaté en la lui reprenant.
+      claimed_by uuid,
+      sweeper_observed jsonb,
       -- project_id (0093) references code_projects, created further below — la
       -- FK est ajoutée par un ALTER TABLE juste après cette table, comme pour
       -- schedule_id ci-dessus.
@@ -414,6 +420,22 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
     CREATE UNIQUE INDEX IF NOT EXISTS connectors_entity_slug_name_unique
       ON connectors (entity_id, slug, name);
 
+    -- Migration 0171: what was learnt about each connection.
+    CREATE TABLE IF NOT EXISTS connection_states (
+      source_kind text NOT NULL,
+      source_id text NOT NULL,
+      state text NOT NULL,
+      cause text NOT NULL,
+      detail text,
+      retry_after timestamptz,
+      observed_at timestamptz NOT NULL DEFAULT now(),
+      PRIMARY KEY (source_kind, source_id),
+      CONSTRAINT connection_states_kind_check
+        CHECK (source_kind IN ('credential','connector','mcp_server','channel')),
+      CONSTRAINT connection_states_state_check
+        CHECK (state IN ('working','needs_reauth','unreachable','broken'))
+    );
+
     CREATE TABLE IF NOT EXISTS agent_connector_assignments (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       agent_id uuid NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
@@ -444,8 +466,13 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       risk_level text CHECK (risk_level IS NULL OR risk_level IN ('read','write','destructive')),
       -- mirrors migration 0166 (#1075): the MCP server's read-only hint at the call
       read_only_hint boolean,
+      -- mirrors migration 0175 : le masque a caché quelque chose dans ce résultat
+      result_masked boolean NOT NULL DEFAULT false,
       -- mirrors migration 0133 (#443)
       execution_started boolean,
+      -- mirrors migration 0170 (#1184): the call's outcome, and what it acted on
+      outcome text CHECK (outcome IS NULL OR outcome IN ('done','failed','unknown','refused','awaiting_approval')),
+      target text,
       -- 0110 : l'ordre d'ECRITURE. Ni l'uuid, ni le tour, ni created_at ne
       -- disent laquelle de deux lignes d'un meme tour est arrivee la derniere.
       seq bigserial,
@@ -548,10 +575,31 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       fact_hash text,
       archived boolean DEFAULT false,
       importance_locked boolean NOT NULL DEFAULT false,
+      -- mirrors migration 0172
+      version integer NOT NULL DEFAULT 1,
       last_accessed_at timestamptz DEFAULT now(),
       access_count integer DEFAULT 0,
       created_at timestamptz DEFAULT now(),
       updated_at timestamptz DEFAULT now()
+    );
+
+    -- mirrors migration 0172
+    CREATE TABLE IF NOT EXISTS agent_memory_versions (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      memory_id uuid NOT NULL REFERENCES agent_memory(id) ON DELETE CASCADE,
+      entity_id uuid REFERENCES entities(id) ON DELETE CASCADE,
+      version integer NOT NULL,
+      fact text NOT NULL,
+      category text,
+      importance integer,
+      importance_locked boolean NOT NULL,
+      archived boolean NOT NULL,
+      valid_to timestamptz,
+      changed_by text NOT NULL CHECK (changed_by IN ('owner','agent','curator','lifecycle')),
+      agent_id uuid REFERENCES agents(id) ON DELETE SET NULL,
+      action text NOT NULL CHECK (action IN ('edit','archive','retire','restore','rescore','pin','unpin','revert')),
+      reason text,
+      created_at timestamptz NOT NULL DEFAULT now()
     );
 
     CREATE TABLE IF NOT EXISTS webhook_triggers (
@@ -587,6 +635,7 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       is_community boolean NOT NULL DEFAULT false,
       source text,
       installed_scripts jsonb,
+      installed_files jsonb,
       update_available boolean NOT NULL DEFAULT false,
       update_detail jsonb,
       last_update_check_at timestamptz,
@@ -1227,6 +1276,17 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       ON verification_runs (job_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_verification_runs_source_job
       ON verification_runs (source_job_id);
+
+    -- runner_instances (migration 0173) — les processus runner qui tiennent
+    -- des jobs : leur battement est écrit à l'horloge de la base.
+    CREATE TABLE IF NOT EXISTS runner_instances (
+      id uuid PRIMARY KEY,
+      host text NOT NULL,
+      pid integer NOT NULL,
+      started_at timestamptz NOT NULL DEFAULT now(),
+      last_seen_at timestamptz NOT NULL DEFAULT now(),
+      stopped_at timestamptz
+    );
 
     -- job_deliveries (migration 0090) — mirrors migration 0090. L'outbox de la
     -- livraison : la finalisation du job pose 'prepared' dans SA transaction,

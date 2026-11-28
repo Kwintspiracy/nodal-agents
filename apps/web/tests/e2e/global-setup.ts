@@ -16,9 +16,9 @@
  *
  *  - `/api/auth/session` answers 200  → local-auth: sign up (idempotent), sign
  *    in, capture the session cookie, inject it.
- *  - anything else → the better-auth API is absent. Confirm the dashboard is
- *    genuinely open by loading a protected route WITHOUT a session; if it
- *    renders, we are in local-trust and the saved state is simply cookie-free.
+ *  - anything else → the better-auth API is absent: the mode with no
+ *    password. Enter through a launch link, as a person does; if the
+ *    protected route renders, the saved state carries the dashboard cookie.
  *
  * If neither holds, we fail loudly with what was observed — a stack that
  * refuses both auth and anonymous access is broken, and silently writing an
@@ -29,6 +29,8 @@ import { chromium, type FullConfig, type Page } from '@playwright/test';
 import path from 'path';
 import { mkdirSync } from 'fs';
 import { fileURLToPath } from 'url';
+import { launchUrl } from '@nodal-agents/auth/launch-link';
+import { installProofHeaders, installSecret } from './install-secret.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -47,10 +49,12 @@ const E2E_NAME = 'E2E Playwright';
 export const AUTH_STATE_PATH = path.join(__dirname, '.auth', 'user.json');
 
 /**
- * local-trust path: the dashboard is open by design ("local mode = no auth by
- * default"), so the saved state carries no cookie. We still PROVE the route is
- * reachable anonymously before writing it — an empty state written blindly
- * would mask a broken stack behind a pile of unrelated spec failures.
+ * local-trust path: the mode with no password. The browser enters as a person
+ * does, through a launch link made from the install's secret (what `up` and
+ * `nodal-agents open` open), and the saved state carries the dashboard cookie
+ * that link leaves. We still PROVE the route renders before writing it — a
+ * state written blindly would mask a broken stack behind a pile of unrelated
+ * spec failures.
  */
 async function setupWithoutAuth(baseURL: string): Promise<void> {
   mkdirSync(path.dirname(AUTH_STATE_PATH), { recursive: true });
@@ -59,7 +63,7 @@ async function setupWithoutAuth(baseURL: string): Promise<void> {
   const context = await browser.newContext({ baseURL });
   try {
     const page = await context.newPage();
-    const response = await page.goto('/agents');
+    const response = await page.goto(launchUrl(new URL('/agents', baseURL).href, installSecret()));
     const landedOn = response?.url() ?? '(no response)';
     if (landedOn.includes('/login')) {
       throw new Error(
@@ -70,14 +74,17 @@ async function setupWithoutAuth(baseURL: string): Promise<void> {
     }
     if (response && !response.ok()) {
       throw new Error(
-        `/agents answered ${response.status()} without a session. Expected the ` +
+        `/agents answered ${response.status()} after its launch link. Expected the ` +
           `dashboard to render in local-trust mode.`,
       );
+    }
+    if (new URL(page.url()).searchParams.has('nodal_launch')) {
+      throw new Error('The launch link was not exchanged: the address still carries it.');
     }
     await completeOnboardingIfNeeded(page);
     await context.storageState({ path: AUTH_STATE_PATH });
     console.log(
-      `[global-setup] local-trust detected — cookie-free state saved → ${AUTH_STATE_PATH}`,
+      `[global-setup] local-trust detected — state with the launch cookie saved → ${AUTH_STATE_PATH}`,
     );
   } finally {
     await browser.close();
@@ -144,6 +151,7 @@ async function globalSetup(config: FullConfig): Promise<void> {
   // ── 1. Ensure stack is reachable ────────────────────────────────────────────
   try {
     const health = await fetch(`${baseURL}/api/health`, {
+      headers: installProofHeaders(),
       signal: AbortSignal.timeout(5_000),
     });
     if (!health.ok) {
@@ -174,7 +182,7 @@ async function globalSetup(config: FullConfig): Promise<void> {
   let betterAuthAvailable = false;
   try {
     const probe = await fetch(`${baseURL}/api/auth/get-session`, {
-      headers: { Origin: baseURL },
+      headers: { Origin: baseURL, ...installProofHeaders() },
       signal: AbortSignal.timeout(10_000),
     });
     betterAuthAvailable = probe.ok;

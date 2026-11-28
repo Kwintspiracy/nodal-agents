@@ -34,8 +34,7 @@ import { createDeepSeek } from '@ai-sdk/deepseek';
 import type { LanguageModel } from 'ai';
 import { findModelCatalogEntry } from '@nodal-agents/shared';
 import type { ProviderConfig } from '../types';
-import { ProviderConfigError } from '../errors';
-import { PROVIDER_PRESETS } from './registry';
+import { resolveProviderEndpoint } from '../endpoint';
 import { createTolerantFetch } from './tolerant-fetch';
 import { providerFetch } from '../transport';
 
@@ -156,11 +155,7 @@ function createDeepSeekFetch(
 // ─── Provider builder ──────────────────────────────────────────────────────────
 
 export function buildDeepSeekModel(config: ProviderConfig): LanguageModel {
-  if (!config.apiKey) {
-    throw new ProviderConfigError('deepseek provider requires an apiKey');
-  }
-
-  const baseURL = config.baseURL ?? PROVIDER_PRESETS.deepseek.defaultBaseURL;
+  const { baseURL, apiKey } = resolveProviderEndpoint(config);
 
   // Gate thinking injection on the catalog reasoning flag. Non-reasoning models
   // (deepseek-chat) must NOT receive the thinking flag — it's only valid for
@@ -173,7 +168,7 @@ export function buildDeepSeekModel(config: ProviderConfig): LanguageModel {
   const injectThinking = isReasoning && config.reasoningEffort !== 'off';
 
   const provider = createDeepSeek({
-    apiKey: config.apiKey,
+    apiKey,
     baseURL,
     fetch: createDeepSeekFetch({ injectThinking }),
   });

@@ -17,6 +17,11 @@ import {
   scanForProjectKeyCopies,
   scanForMcpToolPrefixCopies,
   scanForNodalHomeCopies,
+  scanForOutcomeGuesses,
+  scanForStateFileBypass,
+  OUTBOUND_BRAND_CAST,
+  scanForOutboundBypass,
+  scanForGitSpawnOutsideLauncher,
 } from '@nodal-agents/test-kit';
 
 const srcDir = join(fileURLToPath(import.meta.url), '..', '..');
@@ -73,10 +78,56 @@ describe('architecture invariants', () => {
     assertNoViolations('chemin ~/.nodalai recopié', violations);
   });
 
+  it('hosts the ONE reader and writer of the state files — no direct write in apps/ or packages/ @cap:installer-et-demarrer/moteur', () => {
+    // Repo-wide, like the two rules above: the config had two writers (CLI and
+    // dashboard), both truncating it in place, and the bench wrote a third.
+    const repo = join(srcDir, '..', '..', '..');
+    const violations = ['apps', 'packages'].flatMap((root) =>
+      scanForStateFileBypass({
+        srcDir: join(repo, root),
+        skipDirs: ['tests', '__tests__'],
+        skipFiles: ['packages/shared/src/state-files.ts'],
+      }),
+    );
+    assertNoViolations('fichier d’état écrit hors de state-files.ts', violations);
+  });
+
+  it('hosts the ONE launcher of git — no git started for Nodal itself anywhere else in apps/ or packages/', () => {
+    // Repo-wide, like the two rules above: a new package would bring its own
+    // architecture test only if someone thought of it. The developer tools
+    // are not Nodal starting git for itself: the scanners' own walker (it asks
+    // git which files are source), the benchmark's commit stamp, the quality
+    // portal's collector.
+    const repo = join(srcDir, '..', '..', '..');
+    const violations = ['apps', 'packages'].flatMap((root) =>
+      scanForGitSpawnOutsideLauncher({
+        srcDir: join(repo, root),
+        skipDirs: ['tests', '__tests__', 'test-kit', 'bench', 'qa'],
+        skipFiles: ['packages/shared/src/internal-git.ts', 'packages/shared/src/git-binary.ts'],
+      }),
+    );
+    assertNoViolations('git lancé hors du lanceur', violations);
+  });
+
   it('hosts the ONE path identity rule — no second copy even inside this package', () => {
     assertNoViolations(
       'copie de projectKey',
       scanForProjectKeyCopies({ srcDir, skipFiles: ['project-key.ts'] }),
+    );
+  });
+});
+
+describe('architecture — the outcome of a call is read on its row (#1184)', () => {
+  it('no production file decides a call’s outcome from its output', () => {
+    assertNoViolations('outcome guessed from a tool output', scanForOutcomeGuesses({ srcDir }));
+  });
+});
+
+describe('the outbound seam is the only one that says a value went through it', () => {
+  it('no cast to `Outbound` outside outbound.ts', () => {
+    assertNoViolations(
+      'valeur dite sortie sans être passée par la couture',
+      scanForOutboundBypass({ srcDir, skipFiles: ['src/outbound.ts'] }, [OUTBOUND_BRAND_CAST]),
     );
   });
 });

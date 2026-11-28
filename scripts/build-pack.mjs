@@ -488,6 +488,12 @@ const packPkg = {
     docx: '^9.7.1',
     pptxgenjs: '^4.0.1',
     officeparser: '^7.1.0',
+    // ── Nodal's page renderer (#1082): the driver the runner loads
+    // (apps/runner/build.mjs EXTERNALS) and the installer the CLI and the
+    // runner load. Exact pins, like the chrome-headless-shell build they drive
+    // (packages/page-render/src/pin.ts).
+    'puppeteer-core': '25.17.0',
+    '@puppeteer/browsers': '3.2.7',
     // ── Community-skill install (fetch + unpack SKILL.md archives)
     tar: '^7.5.16',
     fflate: '^0.8.3',

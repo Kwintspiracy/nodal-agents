@@ -26,6 +26,7 @@ import { readFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { lancerEtAttendre, finDuJournal, refusSansBuild } from './lib/boot-stack.mjs';
+import { nodalHomeEntry } from './lib/nodal-home.mjs';
 
 if (process.platform === 'win32') {
   console.error(
@@ -69,8 +70,23 @@ if (refus) {
 }
 const v = await lancerEtAttendre({
   commande: 'pnpm',
-  args: ['--filter', 'nodal-agents', 'exec', 'tsx', 'src/index.ts'],
+  // `--skip-renderer-install` (#1082) : la stack des parcours e2e ne rend
+  // aucune page, et le téléchargement du moteur, après « healthy », se
+  // disputerait la machine avec les parcours.
+  args: ['--filter', 'nodal-agents', 'exec', 'tsx', 'src/index.ts', '--skip-renderer-install'],
   url: values.url,
+  // Le secret de l'installation que le CLI démarre, lu dans SON config.json
+  // une fois écrit : la sonde le porte comme le font les programmes du produit.
+  preuve: () => {
+    try {
+      const { workerSecret } = JSON.parse(readFileSync(nodalHomeEntry('config.json'), 'utf8'));
+      return typeof workerSecret === 'string' && workerSecret !== ''
+        ? { authorization: `Bearer ${workerSecret}` }
+        : {};
+    } catch {
+      return {};
+    }
+  },
   journal: values.log,
   plafondMs: plafondMin * 60_000,
 });

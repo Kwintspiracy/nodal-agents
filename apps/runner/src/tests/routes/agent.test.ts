@@ -56,6 +56,9 @@ const testEnv: RunnerEnv = {
   NODALAI_APPROVAL_GRACE_MS: 0,
 };
 
+/** What the dashboard's server side sends with every runner call: the install's secret. */
+const DASHBOARD_PROOF = { Authorization: `Bearer ${testEnv.WORKER_SECRET}` };
+
 beforeAll(async () => {
   const result = await spinUpTestDb();
   db = result.db;
@@ -99,7 +102,7 @@ describe('POST /api/agent', () => {
     const res = await app.fetch(
       new Request('http://localhost/api/agent', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...DASHBOARD_PROOF },
         body: JSON.stringify({ task: 'Test task for agent route' }),
       }),
     );
@@ -123,7 +126,7 @@ describe('POST /api/agent', () => {
     const res = await app.fetch(
       new Request('http://localhost/api/agent', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...DASHBOARD_PROOF },
         body: JSON.stringify({ task: 'standalone task, no parent' }),
       }),
     );
@@ -144,7 +147,7 @@ describe('POST /api/agent', () => {
     const res = await app.fetch(
       new Request('http://localhost/api/agent', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...DASHBOARD_PROOF },
         body: JSON.stringify({ task: 'monte la vidéo', jobFolder: folder }),
       }),
     );
@@ -162,7 +165,7 @@ describe('POST /api/agent', () => {
       const res = await app.fetch(
         new Request('http://localhost/api/agent', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...DASHBOARD_PROOF },
           body: JSON.stringify({ task: 'x', jobFolder }),
         }),
       );
@@ -199,7 +202,7 @@ describe('POST /api/agent', () => {
     return app.fetch(
       new Request('http://localhost/api/agent', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...DASHBOARD_PROOF },
         body: JSON.stringify(body),
       }),
     );
@@ -265,7 +268,7 @@ describe('POST /api/agent', () => {
     const res = await app.fetch(
       new Request('http://localhost/api/agent', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...DASHBOARD_PROOF },
         body: JSON.stringify({ agentSlug: 'test' }),
       }),
     );
@@ -278,7 +281,7 @@ describe('POST /api/agent', () => {
     const res = await app.fetch(
       new Request('http://localhost/api/agent', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...DASHBOARD_PROOF },
         body: JSON.stringify({ task: 'x'.repeat(200_001) }),
       }),
     );
@@ -289,7 +292,7 @@ describe('POST /api/agent', () => {
     const res = await app.fetch(
       new Request('http://localhost/api/agent', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...DASHBOARD_PROOF },
         body: JSON.stringify({ task: 'hello', agentSlug: 'nonexistent-slug-xyz' }),
       }),
     );
@@ -302,7 +305,7 @@ describe('POST /api/agent', () => {
     const res = await app.fetch(
       new Request('http://localhost/api/agent', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...DASHBOARD_PROOF },
         body: JSON.stringify({ task: 'telegram task', channel: 'telegram', chatId: '12345' }),
       }),
     );
@@ -360,7 +363,7 @@ describe('POST /api/agent — the request names its workspace', () => {
     const res = await app.fetch(
       new Request('http://localhost/api/agent', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...DASHBOARD_PROOF },
         body: JSON.stringify(body),
       }),
     );
@@ -413,7 +416,7 @@ describe('POST /api/agent — triggerWorker carries an AbortSignal', () => {
     const res = await app.fetch(
       new Request('http://localhost/api/agent', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...DASHBOARD_PROOF },
         body: JSON.stringify({ task: 'triggerWorker signal check' }),
       }),
     );

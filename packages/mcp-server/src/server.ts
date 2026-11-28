@@ -36,6 +36,7 @@ import {
 } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { MCP_MAX_JOBS_IN_FLIGHT } from '@nodal-agents/shared';
+import { mcpAnswer, mcpError } from './answer';
 import {
   runTaskInputSchema,
   RUN_TASK_DESCRIPTION,
@@ -469,28 +470,13 @@ export async function buildNodalMcpServer(opts: McpServerOptions): Promise<McpSe
             .catch(() => {});
         }
 
-        return {
-          content: [
-            {
-              type: 'text' as const,
-              text: JSON.stringify({
-                jobId: job?.id,
-                status: 'pending',
-                note: 'The job runs asynchronously under the agent’s own rules. Call get_task with this jobId to get its result.',
-              }),
-            },
-          ],
-        };
+        return mcpAnswer({
+          jobId: job?.id,
+          status: 'pending',
+          note: 'The job runs asynchronously under the agent’s own rules. Call get_task with this jobId to get its result.',
+        });
       } catch (err) {
-        return {
-          isError: true,
-          content: [
-            {
-              type: 'text' as const,
-              text: err instanceof Error ? err.message : String(err),
-            },
-          ],
-        };
+        return mcpError(err);
       }
     },
   );
@@ -518,19 +504,9 @@ export async function buildNodalMcpServer(opts: McpServerOptions): Promise<McpSe
           pollMs: GET_TASK_POLL_MS,
           signal: extra.signal,
         });
-        return {
-          content: [{ type: 'text' as const, text: JSON.stringify(getTaskReply(jobId, state)) }],
-        };
+        return mcpAnswer(getTaskReply(jobId, state));
       } catch (err) {
-        return {
-          isError: true,
-          content: [
-            {
-              type: 'text' as const,
-              text: err instanceof Error ? err.message : String(err),
-            },
-          ],
-        };
+        return mcpError(err);
       }
     },
   );

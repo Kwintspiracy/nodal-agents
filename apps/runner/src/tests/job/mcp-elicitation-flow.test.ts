@@ -39,6 +39,7 @@ import type { RunnerEnv } from '../../env.ts';
 import { executeJob } from '../../job/execute.ts';
 import { resolveApprovalDecision } from '../../approvals/resolve.ts';
 import type { JobId } from '@nodal-agents/orchestration';
+import { seedResponder } from '../approvals/workspace-responder.ts';
 
 const FIXTURE = fileURLToPath(
   new URL(
@@ -172,6 +173,7 @@ beforeAll(async () => {
   const result = await spinUpTestDb();
   db = result.db;
   seed = await seedMinimal(db);
+  await seedResponder(db, seed.entityId);
   await db
     .update(agents)
     .set({ role: 'agent', systemAgent: false })

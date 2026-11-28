@@ -294,12 +294,28 @@ describe('deep research into the vault, on a real trial', () => {
 });
 
 describe('comfyui-telegram on a real trial', () => {
-  const f = fixture('comfyui-telegram-green');
+  const captured = fixture('comfyui-telegram-green');
+  // Captured before 0170: its rows carry no outcome, which the judge reads as
+  // not recorded, never as a success (#1184). The send's row is given the
+  // outcome the seam writes for it now; nothing else of the trial changes.
+  const f: Fixture = {
+    ...captured,
+    facts: {
+      ...captured.facts,
+      toolCalls: captured.facts.toolCalls.map((c) =>
+        c.toolName === 'send_image' ? { ...c, outcome: 'done' } : c,
+      ),
+    },
+  };
 
-  it('is green: an image written during the run, and that very image sent with ok', () => {
+  it('is green: an image written during the run, and that very image sent, done', () => {
     const send = f.facts.toolCalls.find((c) => c.toolName === 'send_image')!;
     expect(JSON.parse(send.output!)).toEqual({ ok: true, bytes: 1575446 });
     expect(judge(f)).toEqual([]);
+  });
+
+  it('the same trial as captured, with no outcome on its rows: no send is confirmed', () => {
+    expect(judge(captured)).toEqual(['no send was confirmed (the tool never returned ok)']);
   });
 
   it('a send that never returned ok is red, whatever the model says', () => {
@@ -307,7 +323,11 @@ describe('comfyui-telegram on a real trial', () => {
       ...f.facts,
       toolCalls: f.facts.toolCalls.map((c) =>
         c.toolName === 'send_image'
-          ? { ...c, output: '{"outcome":"error","error":"telegram_timeout: AMBIGUOUS OUTCOME"}' }
+          ? {
+              ...c,
+              output: '{"outcome":"error","error":"telegram_timeout: AMBIGUOUS OUTCOME"}',
+              outcome: 'unknown',
+            }
           : c,
       ),
     };

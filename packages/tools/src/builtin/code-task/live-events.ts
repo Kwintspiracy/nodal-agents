@@ -13,8 +13,9 @@
 
 import { toolCalls } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
-import { redactSecretsForAudit, redactSecretsInText } from '@nodal-agents/shared';
+import { maskToolResultText, redactSecrets, type ToolResultMaskPolicy } from '@nodal-agents/shared';
 import type { ToolCard } from '@nodal-agents/shared';
+import { cliCallVerdict } from '../../outcome';
 
 /**
  * Plafond par ligne d audit. Une sortie d outil peut faire des megaoctets (un
@@ -30,6 +31,8 @@ export interface LiveToolEvent {
   input: unknown;
   /** Present on the closing event only. */
   output?: string;
+  /** The stream's own flag on the result (`is_error`, `status: "failed"`, #1184). */
+  isError?: boolean;
 }
 
 /**
@@ -75,6 +78,7 @@ export function parseLiveToolEvent(
             name: '',
             input: undefined,
             output: typeof c === 'string' ? c : JSON.stringify(c ?? ''),
+            isError: p['is_error'] === true,
           },
         };
       }
@@ -101,6 +105,7 @@ export function parseLiveToolEvent(
       name: itemType,
       input: undefined,
       output: JSON.stringify(item).slice(0, 8000),
+      isError: item['status'] === 'failed',
     },
   };
 }
@@ -127,6 +132,12 @@ export function makeLiveToolRecorder(args: {
   entityId: string | null;
   jobId: string;
   provider: 'claude' | 'codex';
+  /**
+   * The policy of the agent that called `code_task`, for what the CLI's tools
+   * return (`loadToolResultMaskPolicy`): the same boundary as every tool
+   * result, the CLI runtimes' included.
+   */
+  policy: ToolResultMaskPolicy;
 }): { onLine: (line: string) => void; settled: () => Promise<void> } {
   const pending = new Map<string, { name: string; input: unknown; startedAt: number }>();
   // Les insertions restent « lancées et oubliées » — une panne d'audit ne doit
@@ -167,17 +178,24 @@ export function makeLiveToolRecorder(args: {
         // n a que la ligne d evenement, pas une sortie structuree ; l ecran
         // montre l entree et la sortie brutes et le dit.
         card: cliToolCard(started.name),
-        toolInput: redactSecretsForAudit(started.input) as Record<string, unknown>,
-        // La SORTIE aussi, et elle porte le vrai risque : redactSecretsForAudit
-        // masque par NOM DE CHAMP, ce qui ne dit rien d un texte libre. Or ces
-        // lignes-la n existaient pas avant — un code_task n ecrivait qu une
-        // ligne finale. Enregistrer chaque appel interne fait entrer dans l
-        // audit le contenu de chaque fichier lu, jeton compris. redactSecretsInText
-        // masque les formes de credentials dans du texte, et rend la chaine
-        // inchangee quand rien ne matche.
-        toolOutput: redactSecretsInText((parsed.event.output ?? '').slice(0, MAX_OUTPUT_CHARS)),
+        // L entree par noms de champ ET par forme sur chaque chaine : l entree
+        // d un CLI est du texte libre (une commande, le contenu d un fichier).
+        toolInput: redactSecrets(started.input) as Record<string, unknown>,
+        // La SORTIE aussi, et elle porte le vrai risque : enregistrer chaque
+        // appel interne fait entrer dans l audit le contenu de chaque fichier
+        // lu, jeton compris. Par la frontiere des resultats d outil, la meme
+        // que tout outil (les valeurs exactes de l espace, puis les formes
+        // selon le reglage de l agent), AVANT la coupe : une valeur a cheval
+        // sur le plafond ne serait plus reconnue, et son debut resterait lisible.
+        toolOutput: maskToolResultText(parsed.event.output ?? '', args.policy).slice(
+          0,
+          MAX_OUTPUT_CHARS,
+        ),
         durationMs: Date.now() - started.startedAt,
         toolCallId: parsed.event.id,
+        // What the session said of its own call, and what it acted on
+        // (#1184): the same reading as the CLI runtime's rows.
+        ...cliCallVerdict(started.name, started.input, parsed.event.isError === true),
       })
       .catch((err: unknown) => {
         console.warn(`[code-task] live tool_calls insert failed (job=${args.jobId}):`, err);

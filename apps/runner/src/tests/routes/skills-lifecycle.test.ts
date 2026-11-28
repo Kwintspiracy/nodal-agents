@@ -225,7 +225,7 @@ describe('POST /api/skills/uninstall', () => {
       { slug: SLUG_PARTAGE, entityId: seed.entityId },
       { secret: null },
     );
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(401);
 
     expect(await skillDe(seed.entityId), 'désinstallation sans authentification').toBeDefined();
   });
@@ -246,7 +246,7 @@ describe('POST /api/skills/update', () => {
       { slug: SLUG_PARTAGE, entityId: seed.entityId },
       { secret: 'mauvais' },
     );
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(401);
   });
 
   it('ne trouve pas la skill d’un autre espace — la recherche est scopée', async () => {
@@ -282,7 +282,7 @@ describe('POST /api/skills/acknowledge-update', () => {
       { slug: SLUG_PARTAGE, entityId: seed.entityId },
       { secret: null },
     );
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(401);
   });
 
   it('refuse une skill sans source — il n’y a rien à re-caler', async () => {

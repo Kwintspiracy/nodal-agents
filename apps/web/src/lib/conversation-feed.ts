@@ -34,12 +34,7 @@ import type { ToolCard, ToolCardPayload } from '@nodal-agents/shared';
 // (voir `listInternalToolsAction`, lib/actions.ts). Un `import type` est effacé.
 import type { ReviewVerdictRecord } from '@nodal-agents/orchestration';
 import { blocksFromContent } from './transcript-blocks.ts';
-import {
-  parsePresented,
-  outcomeOfToolOutput,
-  callHappened,
-  isToolCard,
-} from './tool-card-payload.ts';
+import { parsePresented, stepOutcomeOf, callHappened, isToolCard } from './tool-card-payload.ts';
 import { lineCountsOfCall, type LineCounts } from './coding-changes.ts';
 import type { FileChangeGesture } from './file-change-groups.ts';
 import { knownHint, type FailureHint } from './failure-hint.ts';
@@ -59,6 +54,8 @@ export type FeedToolCallRow = {
   turn: number | null;
   toolInput: unknown;
   toolOutput: string | null;
+  /** What became of the call (`tool_calls.outcome`, #1184), read by `stepOutcomeOf`. */
+  outcome: string | null;
   createdAt: Date | null;
 };
 
@@ -1014,7 +1011,7 @@ export function buildConversationFeed(
         if (row?.createdAt) rowTimes.push(row.createdAt.getTime());
         const card = row && isToolCard(row.card) ? row.card : null;
         const q = b.toolCallId ? questionByCallId.get(b.toolCallId) : undefined;
-        const outcome = outcomeOfToolOutput(row?.toolOutput);
+        const outcome = stepOutcomeOf(row?.outcome);
         // Un appel qui n'a pas ABOUTI n'a rien écrit : une édition en attente
         // d'approbation, bloquée ou en erreur garde son entrée (le fil la
         // montre) mais aucun compteur — sinon la carte dirait « +2 −1 » sur un
@@ -1035,7 +1032,7 @@ export function buildConversationFeed(
           outputText: row?.toolOutput ?? null,
           outcome,
           durationMs: row?.durationMs ?? null,
-          lineCounts: wrote ? lineCountsOfCall(toolName, b.payload, row?.toolOutput) : {},
+          lineCounts: wrote ? lineCountsOfCall(toolName, b.payload, row?.outcome) : {},
           question: q
             ? {
                 approvalRequestId: q.approvalRequestId,

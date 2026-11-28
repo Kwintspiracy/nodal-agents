@@ -252,6 +252,91 @@ export function scanForForbiddenPackageImports(
 }
 
 /**
+ * The packages whose factories build a model provider client. When a base URL
+ * or a key is not passed, these factories read one from the process
+ * environment, so the destination of a key would be decided by whatever the
+ * shell that started Nodal exports. `@ai-sdk/provider` and
+ * `@ai-sdk/provider-utils` are type and helper packages, not clients.
+ */
+const PROVIDER_SDK_SPECIFIER = String.raw`['"](@ai-sdk\/(?!provider(?:-utils)?['"/])[^'"/]+|@openrouter\/ai-sdk-provider|ollama-ai-provider[^'"/]*|@anthropic-ai\/sdk|openai|@google\/genai|@google\/generative-ai|@mistralai\/[^'"/]+|groq-sdk)(?:\/[^'"]*)?['"]`;
+
+export const MODEL_PROVIDER_SDK_IMPORT = new RegExp(
+  String.raw`(?:from\s+|import\s*\(\s*)` + PROVIDER_SDK_SPECIFIER,
+);
+
+/**
+ * Invariant: a model provider client is built in ONE package (`@nodal-agents/llm`).
+ * Run over any other package's source: every import of a provider SDK is a
+ * violation, because a client built there would not go through the endpoint
+ * resolution (`resolveProviderEndpoint`) that decides where a key is sent.
+ */
+export function scanForModelProviderSdkImports(opts: ScanOptions): Violation[] {
+  return scanForPattern(opts, {
+    pattern: MODEL_PROVIDER_SDK_IMPORT,
+    rule: 'model-provider-sdk-import',
+  });
+}
+
+/**
+ * Invariant: inside the package that builds model clients, every factory call
+ * of a provider SDK is matched by a `resolveProviderEndpoint(` call in the same
+ * file, so each client receives the stored (or official) address and the
+ * stored key explicitly, never an environment default.
+ *
+ * The factories are found from the file's own imports of a provider SDK, not
+ * from a list of names: a new SDK, or a new factory of a known one, is counted
+ * the day it is imported.
+ */
+export function scanForModelClientsWithoutEndpoint(opts: ScanOptions): Violation[] {
+  const files = collectTsFiles(
+    opts.srcDir,
+    opts.skipDirs ?? DEFAULT_SKIP,
+    [],
+    opts.extensions ?? TS_EXTENSIONS,
+  ).filter((f) => !isSkipped(f, opts.skipFiles ?? []));
+  const importRe = new RegExp(
+    String.raw`import\s*(type\s+)?\{([^}]*)\}\s*from\s*` + PROVIDER_SDK_SPECIFIER,
+    'g',
+  );
+  const out: Violation[] = [];
+  for (const file of files) {
+    const text = readFileSync(file, 'utf-8');
+    const factories: string[] = [];
+    for (const m of text.matchAll(importRe)) {
+      if (m[1]) continue; // `import type { … }`: no factory
+      for (const part of (m[2] ?? '').split(',')) {
+        const spec = part.trim();
+        if (spec.length === 0 || spec.startsWith('type ')) continue;
+        const local = spec
+          .split(/\s+as\s+/)
+          .pop()
+          ?.trim();
+        if (local && /^create[A-Z]/.test(local)) factories.push(local);
+      }
+    }
+    if (factories.length === 0) continue;
+    const lines = text.split('\n');
+    const isCode = (line: string): boolean => !/^\s*(\/\/|\*|\/\*)/.test(line);
+    const resolverCalls = lines.filter(
+      (l) => isCode(l) && /\bresolveProviderEndpoint\s*\(/.test(l),
+    ).length;
+    const factoryLines: Array<{ line: number; text: string }> = [];
+    lines.forEach((l, i) => {
+      if (!isCode(l) || /^\s*import\b/.test(l)) return;
+      if (factories.some((f) => new RegExp(String.raw`\b${f}\s*\(`).test(l))) {
+        factoryLines.push({ line: i + 1, text: l.trim().slice(0, 120) });
+      }
+    });
+    if (factoryLines.length > resolverCalls) {
+      for (const f of factoryLines) {
+        out.push({ file, line: f.line, text: f.text, rule: 'model-client-without-endpoint' });
+      }
+    }
+  }
+  return out;
+}
+
+/**
  * Generic line scanner, so a package-specific rule reuses the shared walker
  * instead of shipping its twelfth copy of a recursive readdir.
  */
@@ -341,6 +426,42 @@ export function scanForNodalHomeCopies(opts: ScanOptions): Violation[] {
 }
 
 /**
+ * The files an install cannot live without (`config.json`, `secrets.key`,
+ * `pids/processes.json`) are read and written by ONE module:
+ * `packages/shared/src/state-files.ts` (atomic replace, last good copy, an
+ * unusable file is an error, never "absent"), through `nodal-config-file.ts`
+ * for the config. A second writer is how the config was lost: two of them
+ * truncated it in place, and a crash in between left an empty file that the
+ * next start took for a first run (B38-02, B49-14).
+ *
+ * Two fingerprints, read in `.ts` and `.tsx`:
+ *   - a state file's PATH built outside the module: the config's name handed to
+ *     `nodalHomeEntry` or `nodalHomePath`, and the names `secrets.key` and `processes.json`
+ *     as quoted literals. The module exports the paths (`nodalConfigPath`,
+ *     `masterKeyFilePath`, `processesFilePath`);
+ *   - a `node:fs` write, rename, copy or removal aimed straight at one of those
+ *     paths (`CONFIG_FILE`, `NODALAI_CONFIG_PATH`, `PROCESSES_FILE`, or a call
+ *     to a path function).
+ * Not caught: a path copied into another variable before the write, and a
+ * name assembled at run time. Comments are not read as paths: the names
+ * appear there in backticks, which neither fingerprint matches.
+ */
+export const STATE_FILE_PATH_PATTERN =
+  /nodalHome(?:Entry|Path)\(\s*['"]config\.json['"]|['"](?:secrets\.key|processes\.json)['"]/;
+export const STATE_FILE_DIRECT_WRITE_PATTERN =
+  /\b(?:writeFileSync|writeFile|appendFileSync|appendFile|renameSync|rename|copyFileSync|copyFile|cpSync|createWriteStream|truncateSync|truncate|rmSync|rm|unlinkSync|unlink|openSync|open)\(\s*(?:CONFIG_FILE|NODALAI_CONFIG_PATH|PROCESSES_FILE|(?:nodalConfigPath|masterKeyFilePath|masterKeyPath|processesFilePath)\()/;
+
+export function scanForStateFileBypass(opts: ScanOptions): Violation[] {
+  return [
+    ...scanForPattern(opts, { pattern: STATE_FILE_PATH_PATTERN, rule: 'state-file-path-copy' }),
+    ...scanForPattern(opts, {
+      pattern: STATE_FILE_DIRECT_WRITE_PATTERN,
+      rule: 'state-file-direct-write',
+    }),
+  ];
+}
+
+/**
  * The MCP tool prefix (`my-server` → `my_server`) lives in ONE place:
  * `packages/shared/src/mcp-tool-prefix.ts` (#661).
  *
@@ -411,6 +532,73 @@ export function scanForMcpToolPrefixCopies(opts: ScanOptions): Violation[] {
  */
 export function scanForMutatingSpawnOutsideIntent(opts: ScanOptions, pattern: RegExp): Violation[] {
   return scanForPattern(opts, { pattern, rule: 'mutating-spawn-outside-intent' });
+}
+
+/**
+ * Tout git que Nodal lance pour lui-même passe par UN lanceur :
+ * `runInternalGit` / `spawnInternalGit` (`packages/shared/src/internal-git.ts`).
+ * Lui seul pose la configuration fixe, écarte celle de l'utilisateur et du
+ * système, et nettoie l'environnement ; un git lancé à côté n'aurait rien de
+ * tout cela, et aucun test de comportement ne le verrait.
+ *
+ * Ce que la règle attrape, dans le code livré (les fichiers de test ne sont
+ * pas lus : ils lancent git en direct pour poser leurs dépôts) :
+ *   - la résolution du binaire de git (`resolveGitBinary`, le sous-chemin
+ *     `git-binary`) utilisée hors du lanceur : sans elle, pas de chemin
+ *     absolu de git à lancer ;
+ *   - `git` nommé comme programme d'un appel qui lance un processus
+ *     (`execFile`, `spawn`, `exec`, leurs variantes synchrones, `fork`, et la
+ *     méthode du même nom d'un lanceur de programmes), même sur plusieurs
+ *     lignes ;
+ *   - `git` passé en premier argument d'un appel QUELCONQUE suivi d'une liste
+ *     d'arguments (`run('git', [...])`) : le même lancement sous un autre nom
+ *     (`const run = promisify(execFile)`, un import renommé), la forme qu'il
+ *     a eue dans `packages/checkpoints` jusqu'au lanceur.
+ *
+ * Les commandes git qu'un AGENT lance (`run_command`) ne sont pas concernées :
+ * elles passent par l'outil de l'agent, sous ses règles, et ne nomment pas git
+ * dans le code. Le fichier du lanceur est passé en `skipFiles` par le paquet
+ * qui l'héberge ; ailleurs, rien n'est permis.
+ */
+export const GIT_SPAWN_RULES: ReadonlyArray<{ readonly rule: string; readonly pattern: RegExp }> = [
+  {
+    rule: 'git-binary-outside-launcher',
+    pattern:
+      /from\s+['"](?:@nodal-agents\/shared\/git-binary|\.{1,2}\/(?:[\w.-]+\/)*git-binary)['"]|\bresolveGitBinary\s*\(/g,
+  },
+  {
+    rule: 'git-spawn-outside-launcher',
+    pattern:
+      /\b(?:execFile|execFileSync|spawn|spawnSync|exec|execSync|fork)\s*\(\s*['"`]git(?:\.exe)?(?:['"`]|\s)/g,
+  },
+  {
+    rule: 'git-spawn-outside-launcher',
+    pattern: /\(\s*['"`]git(?:\.exe)?['"`]\s*,\s*\[/g,
+  },
+];
+
+/** Un fichier de test : il pose ses dépôts avec un git en direct, c'est son droit. */
+const TEST_FILE = /\.(?:test|spec)\.[cm]?[jt]sx?$/;
+
+export function scanForGitSpawnOutsideLauncher(opts: ScanOptions): Violation[] {
+  const files = collectTsFiles(
+    opts.srcDir,
+    opts.skipDirs ?? DEFAULT_SKIP,
+    [],
+    opts.extensions ?? ['.ts', '.tsx', '.mts', '.cts', '.js', '.mjs', '.cjs'],
+  ).filter((f) => !isSkipped(f, opts.skipFiles ?? []) && !TEST_FILE.test(f));
+  const out: Violation[] = [];
+  for (const file of files) {
+    const text = readFileSync(file, 'utf-8');
+    const lines = text.split('\n');
+    for (const { rule, pattern } of GIT_SPAWN_RULES) {
+      for (const m of text.matchAll(new RegExp(pattern.source, pattern.flags))) {
+        const line = text.slice(0, m.index).split('\n').length;
+        out.push({ file, line, text: (lines[line - 1] ?? '').trim().slice(0, 120), rule });
+      }
+    }
+  }
+  return out;
 }
 
 /**
@@ -506,7 +694,9 @@ export const RUNNER_NON_TERMINAL_SENDERS = [
   'approvals/elicitation-channel.ts',
   'notify/code-transitions.ts',
   'cron/run-schedules.ts',
-  'cron/reset-orphans.ts',
+  // `cron/reset-orphans.ts` n'y est plus (#1180) : la notice d'un job que le
+  // faucheur échoue passe par l'outbox, préparée par `failJob` comme toute fin
+  // d'échec ; son envoi direct sur Telegram est retiré.
   'telegram/poller.ts',
 ] as const;
 
@@ -546,6 +736,37 @@ export function scanFilesForDeliverableTypeLiterals(files: readonly string[]): V
       });
   }
   return out;
+}
+
+// ─── #1184 : l'issue d'un appel se lit sur sa colonne, nulle part ailleurs ──────
+
+/**
+ * What reading a tool's OUTPUT to decide whether the call worked looks like
+ * (#1184). The outcome is written once by the seam (`executeTool`) and the CLI
+ * recorders in `tool_calls.outcome`, and read by `readCallOutcome`
+ * (@nodal-agents/shared); before it, the runner, the web (three ways) and the
+ * bench each guessed it again from the text, and each guessed differently:
+ *   - the seam's failure envelope, read back: an `in` test on its `outcome`
+ *     key, or the transcript's error prefix;
+ *   - the two refusal envelopes the screens recognised: a CLI's error tag,
+ *     a builtin's serialized `ok: false`;
+ *   - the guessers by name, so that one cannot come back under its own name.
+ * A file that WRITES one of these shapes (the CLI recorder that marks a Codex
+ * failure, the seam) is passed in `skipFiles` by the package that owns it.
+ */
+export const OUTCOME_GUESS_PATTERNS: readonly RegExp[] = [
+  /['"]outcome['"]\s+in\b/,
+  /startsWith\(\s*'\{"error":'/,
+  /<tool_use_error>/,
+  // `{"ok":` as text, and `\{"ok"\s*:` as a regular expression in source.
+  /\{"ok"(?:\\s\*)?\s*:/,
+  /\b(?:outcomeOfToolOutput|toolResultShape|isBlockedByRule|isRefusedCall)\b/,
+];
+
+export function scanForOutcomeGuesses(opts: ScanOptions): Violation[] {
+  return OUTCOME_GUESS_PATTERNS.flatMap((pattern) =>
+    scanForPattern(opts, { pattern, rule: 'no-outcome-guess-outside-seam' }),
+  );
 }
 
 /**
@@ -636,7 +857,7 @@ export function scanForModuleReferences(opts: {
  * comment is only taken when what precedes it is not a quote or a colon
  * (`'http://…'`).
  */
-function stripComments(source: string): string {
+export function stripComments(source: string): string {
   return source
     .replace(/\/\*[\s\S]*?\*\//g, (block) => block.replace(/[^\n]/g, ' '))
     .replace(/(^|[^:'"`\\])\/\/[^\n]*/g, '$1');

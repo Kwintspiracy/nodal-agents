@@ -29,6 +29,7 @@
 // un fait, pas une supposition laissée au lecteur (invariant #4).
 
 import type { Context } from 'hono';
+import { outboundFields, outboundValue, type Outbound } from '@nodal-agents/shared';
 import { z } from 'zod';
 import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
@@ -75,7 +76,7 @@ export async function chatStreamRoute(
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
       let closed = false;
-      const send = (event: string, data: unknown): void => {
+      const send = (event: string, data: Outbound<unknown>): void => {
         if (closed) return;
         try {
           controller.enqueue(encoder.encode(sseEvent(event, data)));
@@ -100,24 +101,30 @@ export async function chatStreamRoute(
               agentId,
               conversationId,
               message,
-              onTextDelta: (delta) => send('delta', { text: delta }),
+              onTextDelta: (delta) => send('delta', outboundFields({ text: delta })),
             },
             'chatStreamRoute',
           );
           if (!result.ok) {
-            send('error', { error: result.error, cutReason: result.cutReason ?? null });
+            send(
+              'error',
+              outboundValue({ error: result.error, cutReason: result.cutReason ?? null }),
+            );
             return;
           }
-          send('done', {
-            reply: result.reply,
-            spawnedJobId: result.spawnedJobId ?? null,
-            streamed: result.streamed === true,
-            stopped: result.stopped === true,
-            cutReason: result.cutReason ?? null,
-          });
+          send(
+            'done',
+            outboundValue({
+              reply: result.reply,
+              spawnedJobId: result.spawnedJobId ?? null,
+              streamed: result.streamed === true,
+              stopped: result.stopped === true,
+              cutReason: result.cutReason ?? null,
+            }),
+          );
         } catch (err) {
           console.error('[chatStreamRoute] turn failed:', err);
-          send('error', { error: 'chat_failed' });
+          send('error', outboundValue({ error: 'chat_failed' }));
         } finally {
           closed = true;
           try {

@@ -25,6 +25,7 @@ import {
   entities,
   entityMembers,
   users,
+  agentSkills,
 } from '@nodal-agents/db';
 import { mkdtemp, writeFile, rm, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -388,6 +389,65 @@ describe('uninstallCommunitySkillAction', () => {
       // Rien ne doit partir : une requête émise avec un slug vide dépendrait de
       // la validation du runner pour ne pas faire de dégât.
       expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+});
+
+// ─── deleteSkillAction ───────────────────────────────────────────────────────
+
+describe('deleteSkillAction', () => {
+  // A community skill owns a folder in the skill store: its deletion is the
+  // runner's one removal (row and folder together), never a bare row delete
+  // that leaves the folder behind.
+  it('a community skill goes through the runner removal, with the choice about the files', async () => {
+    const { deleteSkillAction } = await actions();
+    const [row] = await testDb
+      .insert(agentSkills)
+      .values({
+        entityId: seed.entityId,
+        slug: 'comfy-community',
+        name: 'Comfy',
+        content: 'x',
+        isCommunity: true,
+        source: 'owner/repo',
+      })
+      .returning();
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    try {
+      const r = await deleteSkillAction(row!.id, 'keep');
+      expect(r.ok, r.ok ? '' : r.message).toBe(true);
+      const [url, init] = fetchSpy.mock.calls[0]!;
+      expect(String(url)).toContain('/api/skills/uninstall');
+      expect(JSON.parse(String((init as RequestInit).body))).toEqual({
+        slug: 'comfy-community',
+        entityId: seed.entityId,
+        localFiles: 'keep',
+      });
+      // The row is the runner's to delete, in the same step as the folder.
+      const left = await testDb.select().from(agentSkills).where(eq(agentSkills.id, row!.id));
+      expect(left.length).toBe(1);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it('a skill with no folder (custom) is deleted here, row only', async () => {
+    const { deleteSkillAction } = await actions();
+    const [row] = await testDb
+      .insert(agentSkills)
+      .values({ entityId: seed.entityId, slug: 'my-custom', name: 'Mine', content: 'x' })
+      .returning();
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    try {
+      const r = await deleteSkillAction(row!.id);
+      expect(r.ok, r.ok ? '' : r.message).toBe(true);
+      expect(fetchSpy.mock.calls).toEqual([]);
+      const left = await testDb.select().from(agentSkills).where(eq(agentSkills.id, row!.id));
+      expect(left).toEqual([]);
     } finally {
       fetchSpy.mockRestore();
     }

@@ -1,11 +1,18 @@
 // processes.ts — spawn runner and web as child processes
 
 import { execa, type Options, type ResultPromise } from 'execa';
-import { createWriteStream, openSync, writeFileSync, readFileSync, existsSync } from 'fs';
+import { createWriteStream, openSync, existsSync } from 'fs';
+import { z } from 'zod';
+import {
+  readStateFile,
+  replaceStateFile,
+  type StateFileSpec,
+} from '@nodal-agents/shared/state-files';
 import { join, dirname, resolve } from 'path';
 import { fileURLToPath } from 'node:url';
-import { PID_DIR, LOG_DIR, CONFIG_DIR } from './config.ts';
+import { LOG_DIR, CONFIG_DIR, PROCESSES_FILE } from './config.ts';
 import { rotateLogIfNeeded } from './log-rotation.ts';
+import { installProof } from './install-proof.ts';
 import { childProcessEnv, type ChildEnv } from './env.ts';
 import { runWindowsPowerShell } from './windows-powershell.ts';
 import {
@@ -1278,18 +1285,56 @@ export async function sweepRecordedChildren(
   return killed;
 }
 
+const ProcessRecordSchema = z
+  .object({ pid: z.number().int(), ppid: z.number().int(), startedAt: z.string() })
+  .loose();
+
+const PidFileSchema = z
+  .object({
+    runner: z.number().int().optional(),
+    web: z.number().int().optional(),
+    children: z.array(ProcessRecordSchema).optional(),
+    roots: z.array(ProcessRecordSchema).optional(),
+  })
+  .loose();
+
+/**
+ * `pids/processes.json`, as `state-files.ts` reads and writes it. No last good
+ * copy: the file describes what runs NOW, and an older version of it names
+ * processes that are gone (a recycled pid could then be stopped for nothing).
+ */
+const PROCESSES_FILE_SPEC: StateFileSpec<PidFile> = {
+  label: 'The record of the processes Nodal-Agents started',
+  parse: (text) => {
+    let raw: unknown;
+    try {
+      raw = JSON.parse(text) as unknown;
+    } catch (err) {
+      throw new Error(`it is not valid JSON (${err instanceof Error ? err.message : String(err)})`);
+    }
+    const parsed = PidFileSchema.safeParse(raw);
+    if (!parsed.success) {
+      throw new Error(`it does not describe processes (${parsed.error.issues[0]?.message ?? ''})`);
+    }
+    return parsed.data as PidFile;
+  },
+  keepsLastGood: false,
+  recovery:
+    'If no Nodal-Agents process is running, delete this file and run the command again. ' +
+    'If some are, stop them yourself first: this file was the record of which ones they are.',
+};
+
 function writePids(pids: PidFile): void {
-  writeFileSync(join(PID_DIR, 'processes.json'), JSON.stringify(pids, null, 2), 'utf-8');
+  replaceStateFile(PROCESSES_FILE, `${JSON.stringify(pids, null, 2)}\n`, PROCESSES_FILE_SPEC);
 }
 
+/**
+ * What the last start recorded, or null when there is no record. A record
+ * that exists but cannot be read throws `StateFileError`: an unreadable record
+ * is not "nothing runs".
+ */
 export function readPids(): PidFile | null {
-  const pidFile = join(PID_DIR, 'processes.json');
-  if (!existsSync(pidFile)) return null;
-  try {
-    return JSON.parse(readFileSync(pidFile, 'utf-8')) as PidFile;
-  } catch {
-    return null;
-  }
+  return readStateFile(PROCESSES_FILE, PROCESSES_FILE_SPEC);
 }
 
 /**
@@ -1313,10 +1358,7 @@ export function retainPids(pids: PidFile, keep: ReadonlySet<number>): void {
 }
 
 export function clearPids(): void {
-  const pidFile = join(PID_DIR, 'processes.json');
-  if (existsSync(pidFile)) {
-    writeFileSync(pidFile, JSON.stringify({}), 'utf-8');
-  }
+  if (existsSync(PROCESSES_FILE)) writePids({});
 }
 
 // ─── Health check ─────────────────────────────────────────────────────────────
@@ -1324,14 +1366,24 @@ export function clearPids(): void {
 /**
  * Wait until a service's /api/health endpoint returns 200.
  * Polls every 500ms, times out after timeoutMs.
+ *
+ * Asked with the install's proof (`workerSecret`): both servers admit no
+ * caller without it, in every auth mode (packages/auth request-origin.ts).
  */
-export async function waitForHealth(url: string, timeoutMs = 30_000): Promise<void> {
+export async function waitForHealth(
+  url: string,
+  timeoutMs = 30_000,
+  workerSecret: string,
+): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
       const controller = new AbortController();
       const t = setTimeout(() => controller.abort(), 2000);
-      const res = await fetch(`${url}/api/health`, { signal: controller.signal });
+      const res = await fetch(`${url}/api/health`, {
+        headers: installProof(workerSecret),
+        signal: controller.signal,
+      });
       clearTimeout(t);
       if (res.status === 200) return;
     } catch {
@@ -1351,7 +1403,11 @@ export async function waitForHealth(url: string, timeoutMs = 30_000): Promise<vo
  * printed "All services healthy"). GET / follows redirects (login/onboarding
  * are fine landings); anything 5xx after the deadline is a hard failure.
  */
-export async function assertWebRenders(url: string, timeoutMs = 300_000): Promise<void> {
+export async function assertWebRenders(
+  url: string,
+  timeoutMs = 300_000,
+  workerSecret: string,
+): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   let lastStatus = 0;
   while (Date.now() < deadline) {
@@ -1364,7 +1420,10 @@ export async function assertWebRenders(url: string, timeoutMs = 300_000): Promis
       // (live incident, 2026-07-12, right after this probe shipped). The
       // packed build renders in milliseconds and is unaffected.
       const t = setTimeout(() => controller.abort(), 60_000);
-      const res = await fetch(`${url}/`, { signal: controller.signal });
+      const res = await fetch(`${url}/`, {
+        headers: installProof(workerSecret),
+        signal: controller.signal,
+      });
       clearTimeout(t);
       lastStatus = res.status;
       if (res.status < 500) return;

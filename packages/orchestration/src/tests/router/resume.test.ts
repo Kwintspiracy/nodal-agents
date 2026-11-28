@@ -624,6 +624,56 @@ async function scenario(toolUseId: string) {
   };
 }
 
+describe('resumeDelegated : seul l’enfant attendu reprend son parent (#1204) @cap:organiser-equipe/moteur', () => {
+  it('un AUTRE enfant est refusé, et la transcription du parent reste intacte', async () => {
+    const { entityId, orchId } = await seedContext(db);
+    const attendu = await seedChildJob(db, entityId, orchId);
+    const autre = await seedChildJob(db, entityId, orchId);
+    const parent = await seedParentJob(db, entityId, orchId, 'tu_autre_001', attendu.id);
+
+    await expect(
+      resumeDelegated(parent.id as JobId, autre.id as JobId, 'résultat d’un autre', db),
+    ).rejects.toMatchObject({ code: 'parent_waits_for_another_child' });
+
+    const [apres] = await db
+      .select({ status: agentJobs.status, messages: agentJobs.messages })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, parent.id));
+    expect(apres?.status).toBe('awaiting_delegation');
+    expect((apres?.messages as unknown[]).length).toBe(2);
+  });
+
+  it('l’enfant attendu reprend son parent, et une ligne sans `subJobId` reste acceptée', async () => {
+    const { entityId, orchId } = await seedContext(db);
+    const attendu = await seedChildJob(db, entityId, orchId);
+    const parent = await seedParentJob(db, entityId, orchId, 'tu_autre_002', attendu.id);
+    await resumeDelegated(parent.id as JobId, attendu.id as JobId, 'fait', db);
+    const [repris] = await db
+      .select({ status: agentJobs.status })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, parent.id));
+    expect(repris?.status).toBe('pending');
+
+    const ancien = await seedParentJob(db, entityId, orchId, 'tu_autre_003', attendu.id);
+    await db
+      .update(agentJobs)
+      .set({
+        pendingDelegation: {
+          type: 'single',
+          toolUseId: 'tu_autre_003',
+          toolName: 'assign_test_agent',
+        },
+      })
+      .where(eq(agentJobs.id, ancien.id));
+    await resumeDelegated(ancien.id as JobId, attendu.id as JobId, 'fait', db);
+    const [legacy] = await db
+      .select({ status: agentJobs.status })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, ancien.id));
+    expect(legacy?.status).toBe('pending');
+  });
+});
+
 describe('resumeDelegated — what a stopped child wrote, as it is now (#491) @cap:organiser-equipe/moteur', () => {
   it('a file the child wrote, still unchanged: its size, and the parent is told not to redo it', async () => {
     const s = await scenario('tu_491_a');

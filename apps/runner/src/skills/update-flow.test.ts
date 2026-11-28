@@ -111,6 +111,7 @@ describe('update-flow', () => {
           source: row.source!,
           defaultContent: row.defaultContent,
           installedScripts: row.installedScripts,
+          installedFiles: row.installedFiles,
         },
         skillStoreDir: store,
       });
@@ -120,6 +121,7 @@ describe('update-flow', () => {
         contentChanged: false,
         scriptsChanged: false,
         scriptsState: 'clean',
+        filesState: 'clean',
       });
 
       const [after] = await db.select().from(agentSkills).where(eq(agentSkills.id, row.id));
@@ -154,6 +156,7 @@ describe('update-flow', () => {
           source: row.source!,
           defaultContent: row.defaultContent,
           installedScripts: row.installedScripts,
+          installedFiles: row.installedFiles,
         },
         skillStoreDir: store,
       });
@@ -163,6 +166,7 @@ describe('update-flow', () => {
         contentChanged: true,
         scriptsChanged: false,
         scriptsState: 'clean',
+        filesState: 'update',
       });
 
       const [after] = await db.select().from(agentSkills).where(eq(agentSkills.id, row.id));
@@ -201,6 +205,7 @@ describe('update-flow', () => {
           source: row.source!,
           defaultContent: row.defaultContent,
           installedScripts: row.installedScripts,
+          installedFiles: row.installedFiles,
         },
         skillStoreDir: store,
       });
@@ -210,6 +215,7 @@ describe('update-flow', () => {
         contentChanged: false,
         scriptsChanged: true,
         scriptsState: 'update',
+        filesState: 'update',
       });
 
       const [after] = await db.select().from(agentSkills).where(eq(agentSkills.id, row.id));
@@ -255,6 +261,7 @@ describe('update-flow', () => {
           source: row.source!,
           defaultContent: row.defaultContent,
           installedScripts: row.installedScripts,
+          installedFiles: row.installedFiles,
         },
         skillStoreDir: store,
       });
@@ -264,6 +271,7 @@ describe('update-flow', () => {
         contentChanged: false,
         scriptsChanged: false,
         scriptsState: 'local-only',
+        filesState: 'local-only',
       });
       const [after] = await db.select().from(agentSkills).where(eq(agentSkills.id, row.id));
       // No badge: there is nothing new upstream to install.
@@ -303,6 +311,7 @@ describe('update-flow', () => {
           source: row.source!,
           defaultContent: row.defaultContent,
           installedScripts: row.installedScripts,
+          installedFiles: row.installedFiles,
         },
         skillStoreDir: store,
       });
@@ -312,6 +321,7 @@ describe('update-flow', () => {
         contentChanged: false,
         scriptsChanged: true,
         scriptsState: 'conflict',
+        filesState: 'conflict',
       });
       const [after] = await db.select().from(agentSkills).where(eq(agentSkills.id, row.id));
       expect(after!.updateAvailable).toBe(true);
@@ -368,6 +378,7 @@ describe('update-flow', () => {
           source: row.source!,
           defaultContent: acked!.defaultContent,
           installedScripts: acked!.installedScripts,
+          installedFiles: acked!.installedFiles,
         },
         skillStoreDir: store,
       });
@@ -376,6 +387,7 @@ describe('update-flow', () => {
         contentChanged: false,
         scriptsChanged: false,
         scriptsState: 'local-only',
+        filesState: 'local-only',
       });
 
       // Upstream moves AGAIN after the ack → conflict returns. No silent burial.
@@ -391,6 +403,7 @@ describe('update-flow', () => {
           source: row.source!,
           defaultContent: acked!.defaultContent,
           installedScripts: acked!.installedScripts,
+          installedFiles: acked!.installedFiles,
         },
         skillStoreDir: store,
       });
@@ -399,6 +412,7 @@ describe('update-flow', () => {
         contentChanged: false,
         scriptsChanged: true,
         scriptsState: 'conflict',
+        filesState: 'conflict',
       });
     });
 
@@ -426,6 +440,7 @@ describe('update-flow', () => {
           source: row.source!,
           defaultContent: row.defaultContent,
           installedScripts: row.installedScripts,
+          installedFiles: row.installedFiles,
         },
         skillStoreDir: store,
       });
@@ -470,6 +485,7 @@ describe('update-flow', () => {
           source: row.source!,
           defaultContent: row.defaultContent,
           installedScripts: row.installedScripts,
+          installedFiles: row.installedFiles,
         },
         skillStoreDir: store,
       });
@@ -510,6 +526,7 @@ describe('update-flow', () => {
           source: row.source!,
           defaultContent: row.defaultContent,
           installedScripts: row.installedScripts,
+          installedFiles: row.installedFiles,
         },
         skillStoreDir: store,
       });
@@ -558,6 +575,7 @@ describe('update-flow', () => {
             source: row.source!,
             defaultContent: row.defaultContent,
             installedScripts: row.installedScripts,
+            installedFiles: row.installedFiles,
           },
           skillStoreDir: store,
         });
@@ -645,6 +663,7 @@ describe('update-flow', () => {
         contentChanged: true,
         scriptsChanged: false,
         scriptsState: 'clean',
+        filesState: 'update',
         checkedAt: expect.any(String),
       });
     });
@@ -786,6 +805,8 @@ v2`,
         contentChanged: true,
         scriptsChanged: false,
         scriptsAuthorizationRevoked: 0,
+        files: [{ path: 'SKILL.md', kind: 'changed' }],
+        leftoverDir: null,
       });
 
       const [after] = await db.select().from(agentSkills).where(eq(agentSkills.slug, slug));
@@ -985,6 +1006,7 @@ Hello v3`,
           source: row.source!,
           defaultContent: row.defaultContent,
           installedScripts: row.installedScripts,
+          installedFiles: row.installedFiles,
         },
         skillStoreDir: store,
       });

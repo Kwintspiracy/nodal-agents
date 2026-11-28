@@ -1744,11 +1744,14 @@ describe('a file received for a job is written by that job (#913) @cap:parler-pa
   });
 
   it('a received file another job rewrote after the intake waits for a person, and nothing moves', async () => {
-    telegramFiles.set('doc-913c', INVOICE);
+    // Un document TEXTE : un autre run le réécrit avec file_write, qui ne
+    // remplace pas par du texte ce qui n'en est pas (un PDF, la couche texte
+    // des outils de fichiers).
+    telegramFiles.set('doc-913c', new TextEncoder().encode('Facture EDF 2026, montant 42 EUR'));
     const { jobId, outcomes } = await deliver(
       update({
         caption: 'Range moi ça',
-        document: { file_id: 'doc-913c', file_name: 'Facture.pdf', mime_type: 'application/pdf' },
+        document: { file_id: 'doc-913c', file_name: 'Facture.txt', mime_type: 'text/plain' },
       }),
     );
     const received = outcomes[0]!;

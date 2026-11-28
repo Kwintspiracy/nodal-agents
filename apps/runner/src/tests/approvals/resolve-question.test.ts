@@ -19,6 +19,7 @@ import { FREE_ANSWER_MAX } from '@nodal-agents/shared';
 import { resolveApprovalDecision } from '../../approvals/resolve.ts';
 import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';
+import { seedResponder } from './workspace-responder.ts';
 
 let db: TestDb;
 let seed: { entityId: string; agentId: string; jobId: string };
@@ -108,6 +109,7 @@ beforeAll(async () => {
   db = result.db;
   const minimal = await seedMinimal(db);
   seed = { entityId: minimal.entityId, agentId: minimal.agentId, jobId: minimal.jobId };
+  await seedResponder(db, seed.entityId);
 });
 
 beforeEach(async () => {

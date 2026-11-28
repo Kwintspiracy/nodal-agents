@@ -20,8 +20,7 @@ import { wrapLanguageModel } from 'ai';
 import type { LanguageModel, LanguageModelMiddleware } from 'ai';
 import { findModelCatalogEntry, type ReasoningEffort } from '@nodal-agents/shared';
 import type { ProviderConfig } from '../types';
-import { PROVIDER_PRESETS } from './registry';
-import { ProviderConfigError } from '../errors';
+import { resolveProviderEndpoint } from '../endpoint';
 import { kimiToolCallMiddleware, nodalToolCallMiddleware } from './parsers';
 import { createTolerantFetch } from './tolerant-fetch';
 import { isMoonshotModel, sanitizeMoonshotTools } from './moonshot-schema';
@@ -228,11 +227,7 @@ function createOpenRouterFetch(
 }
 
 export function buildOpenRouterModel(config: ProviderConfig): LanguageModel {
-  if (!config.apiKey) {
-    throw new ProviderConfigError('openrouter provider requires an apiKey');
-  }
-
-  const baseURL = config.baseURL ?? PROVIDER_PRESETS.openrouter.defaultBaseURL;
+  const { baseURL, apiKey } = resolveProviderEndpoint(config);
 
   // Official OpenRouter provider (not the generic openai-compatible adapter):
   // it understands OpenRouter's unified reasoning format and preserves each
@@ -241,7 +236,7 @@ export function buildOpenRouterModel(config: ProviderConfig): LanguageModel {
   // round-trips a flat reasoning string and drops the structured details +
   // signatures that reasoning models (MiniMax M3, Gemini 3) require.
   const provider = createOpenRouter({
-    apiKey: config.apiKey,
+    apiKey,
     baseURL,
     // 'strict' is the documented mode for the first-party OpenRouter API
     // ('compatible' is for 3rd-party proxies). We hit openrouter.ai directly.

@@ -133,6 +133,7 @@ export async function fileDiffRoute(c: Context, deps: RunnerDeps): Promise<Respo
       toolName: toolCalls.toolName,
       toolInput: toolCalls.toolInput,
       toolOutput: toolCalls.toolOutput,
+      outcome: toolCalls.outcome,
       presented: toolCalls.presented,
       turn: toolCalls.turn,
     })

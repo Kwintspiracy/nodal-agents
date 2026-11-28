@@ -19,6 +19,7 @@ import { defaultNodalHome } from '@nodal-agents/shared/nodal-home';
 import { readNodalInstances } from '@nodal-agents/shared/nodal-instances';
 import { campaignHome, campaignsRoot } from '../home';
 import {
+  benchRendererDir,
   campaignEnv,
   createInstanceFiles,
   devServerHolding,
@@ -26,6 +27,7 @@ import {
   instancePaths,
   planInstance,
   portAnswers,
+  instanceWorkerSecret,
   notServing,
   startInstance,
   stopInstance,
@@ -113,6 +115,10 @@ describe('the campaign instance: where it lives, what it is given', () => {
     // La première compilation de `next dev` d'un dépôt neuf : 15 min, pas les 300 s par défaut.
     expect(env['NODALAI_WEB_HEALTH_MS']).toBe('900000');
     expect(env['PATH']).toBe(OWNER_SHELL.PATH);
+    // Un moteur de rendu pour toutes les campagnes, sous le dossier du banc :
+    // jamais celui du propriétaire, jamais un téléchargement par campagne (#1082).
+    expect(env['NODALAI_RENDERER_DIR']).toBe(benchRendererDir());
+    expect(benchRendererDir('/home/ada')).toBe(join('/home/ada', '.nodal-bench', 'renderer'));
     for (const k of [
       'NODALAI_WORKSPACES_ROOT',
       'NODALAI_CONFIG_PATH',
@@ -146,9 +152,15 @@ describe('start, then erase: no process, no folder, no registry entry', () => {
     expect(cli.envs[0]!['LLM_API_KEY']).toBeUndefined();
     expect(launcherExited(launched.pid)).toBe(false);
     // Sain veut dire : le runner répond 200 à /api/health, web et Postgres écoutent.
-    const health = await fetch(`http://127.0.0.1:${instance.ports.runner}/api/health`);
+    // Le runner n'admet que le secret de l'instance : sans lui, 401.
+    const secret = instanceWorkerSecret(instance);
+    const health = await fetch(`http://127.0.0.1:${instance.ports.runner}/api/health`, {
+      headers: { authorization: `Bearer ${secret}` },
+    });
     expect(health.status).toBe(200);
-    expect(await notServing(instance.ports)).toEqual([]);
+    const anonymous = await fetch(`http://127.0.0.1:${instance.ports.runner}/api/health`);
+    expect(anonymous.status).toBe(401);
+    expect(await notServing(instance.ports, secret)).toEqual([]);
     expect(registered(instance)).toBe(true);
 
     await stopInstance(instance, deps(cli), launched);

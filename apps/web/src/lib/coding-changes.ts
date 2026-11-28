@@ -23,7 +23,13 @@
 // (`@nodal-agents/shared`) rend exactement ce que `fragmentDiff` colorie — si
 // bien que la ligne et sa plaque s'accordent par construction.
 
-import { fragmentDiffCounts, isWindowsPath, normalizePath } from '@nodal-agents/shared';
+import {
+  callMayHaveActed,
+  fragmentDiffCounts,
+  isWindowsPath,
+  normalizePath,
+  readCallOutcome,
+} from '@nodal-agents/shared';
 
 /**
  * Une écriture lue dans UN appel d'outil, pour le panneau Changes du détail
@@ -53,22 +59,21 @@ export function extractFilePath(input: Record<string, unknown> | null): string |
 }
 
 /**
- * True when a recorded tool call was REFUSED and therefore changed nothing.
- * The CLI returns a `<tool_use_error>` envelope for a tool it removed from the
- * palette — e.g. a read-only runtime agent attempting a write gets
- * "No such tool available: Write. Write is disabled for this session".
+ * True when a recorded tool call did not do what it was asked, and therefore
+ * changed nothing: its OUTCOME (`tool_calls.outcome`, #1184) is `failed`,
+ * `refused` or held. The CLI flags its result as an error for a tool it
+ * removed from the palette (a read-only runtime agent attempting a write), the
+ * Nodal builtins return `ok: false`: both are written as `failed` by their
+ * recorder (the CLI's stream flag, the tool's declaration), and read here,
+ * never from the output's text.
  *
- * Nodal recorded those exactly like successful calls, so the Code tab counted
- * files that were never written, showed their content in Changes, and even
- * qualified a pipeline as a "coding session" on writes that never happened.
- * That is what hid a read-only coding agent for a full day (Quentin 20/08:
- * Dev C, 9 attempts, 9 refusals, and the UI kept saying files changed).
- * The Nodal builtins report their own failures as `{"ok":false,...}`.
+ * Nodal once recorded those exactly like successful calls, so the Code tab
+ * counted files that were never written, showed their content in Changes, and
+ * even qualified a pipeline as a "coding session" on writes that never
+ * happened (20/08: a read-only coding agent, 9 attempts, 9 refusals).
  */
-export function isRefusedToolCall(toolOutput: string | null | undefined): boolean {
-  if (!toolOutput) return false;
-  const head = toolOutput.slice(0, 400);
-  return head.includes('<tool_use_error>') || /^\s*\{"ok"\s*:\s*false\b/.test(head);
+export function isRefusedToolCall(outcome: string | null | undefined): boolean {
+  return !callMayHaveActed(readCallOutcome(outcome));
 }
 
 export function extractChange(toolName: string, rawInput: unknown): CodingChangeView | null {
@@ -172,9 +177,9 @@ export function changeLineCounts(change: CodingChangeView): LineCounts {
 export function lineCountsOfCall(
   toolName: string,
   input: unknown,
-  toolOutput: string | null | undefined,
+  outcome: string | null | undefined,
 ): Record<string, LineCounts> {
-  if (isRefusedToolCall(toolOutput)) return {};
+  if (isRefusedToolCall(outcome)) return {};
   const out: Record<string, LineCounts> = {};
   const add = (path: string, counts: LineCounts): void => {
     const prev = out[path];

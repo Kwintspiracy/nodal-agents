@@ -5,7 +5,7 @@
 // the subscription-runtimes plan). The probe MUST run runner-side: the Next
 // process may live elsewhere (LAN mode), and PATH is a per-process fact.
 //
-// Auth: behind requireRunnerAuth (registered in server.ts). The probe reads
+// Auth: behind the admission (lib/admission.ts). The probe reads
 // machine state only — it never touches credentials (D0 red line) and spends
 // zero subscription usage (`--version` + `codex login status` are free).
 

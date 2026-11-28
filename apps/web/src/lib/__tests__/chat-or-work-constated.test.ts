@@ -103,6 +103,7 @@ async function semer(opts: { cle: string; command: string; aEcrit: boolean }): P
     toolName: 'run_command',
     toolInput: { command: opts.command },
     toolOutput: 'done',
+    outcome: 'done',
     durationMs: 12,
     turn: 1,
     toolCallId: `c_${opts.cle}`,

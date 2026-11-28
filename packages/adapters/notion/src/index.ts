@@ -42,9 +42,13 @@ import { createListUsersTool, createGetUserTool } from './tools/users';
  *
  * Providing both simultaneously is a type error — choose one path.
  */
-export type NotionAdapterOptions =
+export type NotionAdapterOptions = (
   | { apiKey: string; accessToken?: never }
-  | { accessToken: string; apiKey?: never };
+  | { accessToken: string; apiKey?: never }
+) & {
+  /** The connector contract's transport, which the SDK uses (the registry gives it). */
+  fetch?: typeof fetch;
+};
 
 /**
  * Resolve the bearer token from either auth variant.
@@ -86,7 +90,7 @@ function resolveBearer(opts: NotionAdapterOptions): string {
 export function createNotionTools(
   opts: NotionAdapterOptions,
 ): ConnectorToolDefinition<z.ZodTypeAny, unknown>[] {
-  const client = createNotionClient(resolveBearer(opts));
+  const client = createNotionClient(resolveBearer(opts), opts.fetch);
 
   return [
     // Read tools (9)

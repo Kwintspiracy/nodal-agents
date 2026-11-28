@@ -14,7 +14,7 @@ export const toolSchedulesSkill: SystemSkill = {
 A schedule fires a task for an agent on a recurring timer. Tools:
 - **list_schedules** — see all schedules (name, agent, when, next/last run). Use it to answer "what are my automations?" and to find a name.
 - **create_schedule** — agentSlug, name, when (atTimes OR everyMinutes), task, (days?, notifyOnSuccess?).
-- **update_schedule** — name + any of atTimes / everyMinutes / days / task / newName / notifyOnSuccess.
+- **update_schedule** — name + ONLY what changes: any of atTimes / everyMinutes / days / task / newName / notifyOnSuccess. Everything you do not name is kept (moving the time keeps the days; changing the days keeps the times). The answer states the schedule as it is now. A schedule set up by hand in the dashboard whose timing these fields cannot express is not rewritten: the answer says what it is and what you can change.
 - **toggle_schedule** — name + active (true = resume, false = pause).
 - **run_schedule** — name: fire a schedule's task NOW, without waiting.
 
@@ -39,7 +39,7 @@ block in your prompt tells you the current local time. There is no UTC conversio
 | every 30 minutes | \`everyMinutes: 30\` |
 | every 2 hours | \`everyMinutes: 120\` |
 
-\`days\`: omit for daily, or "weekdays" (Mon-Fri) / "weekends" / an array 0=Sun..6=Sat.
+\`days\`: when creating, omit for daily, or "weekdays" (Mon-Fri) / "weekends" / an array 0=Sun..6=Sat. When updating, omit it to keep the current days.
 **One schedule covers several times** — put them all in atTimes, don't make one schedule per time.
 (All atTimes must share the same minute, e.g. 09:00/13:00/21:00.)
 

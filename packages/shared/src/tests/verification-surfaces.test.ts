@@ -80,6 +80,7 @@ describe('VERIFICATION_SURFACE_TOOLS', () => {
         'file_move',
         'file_write',
         'generate_speech',
+        'render_pdf',
         'run_command',
         'run_skill_script',
         ...office,

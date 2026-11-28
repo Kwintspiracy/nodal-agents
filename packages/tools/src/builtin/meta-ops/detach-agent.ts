@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { eq, and, agentAssignments } from '@nodal-agents/db';
 import type { ToolDefinition } from '../../types';
 import { resolveAgentId } from './link-helpers';
+import { outcomeOfOkFlag } from '../../outcome';
 
 const DetachAgentInput = z.object({
   agentSlug: z
@@ -28,6 +29,7 @@ export const detachAgentTool: ToolDefinition<typeof DetachAgentInput, DetachAgen
   egress: 'none',
   card: 'text',
   defaultApproval: 'require_approval',
+  outcomeOf: outcomeOfOkFlag,
   execute: async (input, ctx) => {
     const subAgentId = await resolveAgentId(ctx.db, ctx.entityId, input.agentSlug);
     if (!subAgentId)

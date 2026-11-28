@@ -8,6 +8,7 @@ export { skillStoreDir } from './store-dir';
 export {
   installCommunitySkill,
   uninstallCommunitySkill,
+  previewSkillRemoval,
   applySkillUpdate,
   previewSkillUpdate,
   acknowledgeSkillUpdate,
@@ -17,10 +18,14 @@ export type {
   InstallSkillOptions,
   InstallSkillResult,
   UninstallSkillOptions,
+  SkillRemovalPreview,
   ApplySkillUpdateOptions,
   ApplySkillUpdateResult,
   AcknowledgeSkillUpdateOptions,
   AcknowledgeSkillUpdateResult,
+  PreviewSkillUpdateResult,
+  FileChange,
+  ConflictChoice,
 } from './install';
 export { checkSkillUpdate } from './check-updates';
 export type { SkillUpdateCheckSkill, SkillUpdateCheckOutcome } from './check-updates';

@@ -285,6 +285,8 @@ describe("a worker's list is exactly what it was @cap:assigner-outils/moteur", (
     'search_history',
     'mark_memory_helpful',
     'file_move',
+    // #1082 : toujours donné, comme file_move, et chargé à la demande.
+    'render_pdf',
     ...XLSX,
     'run_command',
   ].sort();

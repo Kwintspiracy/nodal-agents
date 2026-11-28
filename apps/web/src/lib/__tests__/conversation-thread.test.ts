@@ -24,8 +24,7 @@ import type {
   TurnBlock,
   TurnUsage,
 } from '../conversation-feed.ts';
-import { REDACTED_TEXT } from '@nodal-agents/shared';
-import { redactPresented } from '../redact-presented.ts';
+import { REDACTED_TEXT, redactSecrets } from '@nodal-agents/shared';
 import type { ProductionVerdict } from '../chat-or-work.ts';
 
 const totals = (over: Partial<FeedTotals> = {}): FeedTotals => ({
@@ -124,10 +123,12 @@ const ecriture = (
   path: string,
   content: string,
   output: string = '{"ok":true}',
+  outcome: string = 'done',
 ): ThreadAuditRow => ({
   toolName: 'file_write',
   toolInput: { path, content },
   toolOutput: output,
+  outcome,
   presented: { card: 'files', total: 1, truncated: false, files: [{ path, action: 'created' }] },
 });
 
@@ -388,6 +389,7 @@ describe('buildConversationThread — une conversation de canal', () => {
       toolName: 'file_edit',
       toolInput: { path: 'notes/bonjour.html', old_string: 'a', new_string: 'b\nc' },
       toolOutput: '{"ok":true}',
+      outcome: 'done',
       presented: {
         card: 'files',
         total: 1,
@@ -467,9 +469,9 @@ describe('buildConversationThread — une conversation de canal', () => {
           jobId: 'j2',
           verdict: travail,
           audit: [
-            ecriture('src/a.ts', 'x\ny', '{"outcome":"awaiting_approval"}'),
-            ecriture('src/b.ts', 'x', '{"outcome":"blocked"}'),
-            ecriture('src/c.ts', 'x', '{"outcome":"error","error":"boom"}'),
+            ecriture('src/a.ts', 'x\ny', '{"outcome":"awaiting_approval"}', 'awaiting_approval'),
+            ecriture('src/b.ts', 'x', '{"outcome":"error","error":"blocked: a rule"}', 'refused'),
+            ecriture('src/c.ts', 'x', '{"outcome":"error","error":"boom"}', 'failed'),
           ],
         }),
       ],
@@ -1320,7 +1322,8 @@ const ecritureMasquee = (path: string): ThreadAuditRow => {
     toolName: 'file_write',
     toolInput: { path, content: 'x' },
     toolOutput: '{"ok":true}',
-    presented: redactPresented(carte),
+    outcome: 'done',
+    presented: redactSecrets(carte),
     rawFilePaths: [path],
   };
 };
@@ -1346,8 +1349,8 @@ describe('récapitulatif de livraison — un chemin masqué n’efface pas un fi
     ]);
     expect(recap.files).toBe(2);
     expect(recap.fileChanges.map((f) => f.path)).toEqual([
-      `cles/${REDACTED_TEXT} (sk-).txt`,
-      `cles/${REDACTED_TEXT} (sk-).txt`,
+      `cles/${REDACTED_TEXT}.txt`,
+      `cles/${REDACTED_TEXT}.txt`,
     ]);
   });
 
@@ -1368,7 +1371,7 @@ describe('récapitulatif de livraison — un chemin masqué n’efface pas un fi
       ecritureMasquee(`cles/${CLE_A}.txt`),
     ]);
     expect(recap.files).toBe(1);
-    expect(recap.fileChanges.map((f) => f.path)).toEqual([`cles/${REDACTED_TEXT} (sk-).txt`]);
+    expect(recap.fileChanges.map((f) => f.path)).toEqual([`cles/${REDACTED_TEXT}.txt`]);
   });
 
   it('une ligne SANS chemins bruts garde l’ancienne identité : le chemin présenté', () => {
@@ -1378,6 +1381,7 @@ describe('récapitulatif de livraison — un chemin masqué n’efface pas un fi
       toolName: 'file_write',
       toolInput: { path, content: 'x' },
       toolOutput: '{"ok":true}',
+      outcome: 'done',
       presented: {
         card: 'files',
         total: 1,

@@ -35,10 +35,11 @@ describe('drive_list_files', () => {
     const tool = createListFilesTool(drive);
     const result = await tool.execute({ max_results: 20 }, {} as never);
 
-    expect(result.total).toBe(1);
-    expect(result.files[0]?.id).toBe('file-1');
-    expect(result.files[0]?.name).toBe('document.pdf');
-    expect(result.files[0]?.size).toBe(102400);
+    expect(result.next).toBeNull();
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0]?.id).toBe('file-1');
+    expect(result.items[0]?.name).toBe('document.pdf');
+    expect(result.items[0]?.size).toBe(102400);
   });
 
   it('passes query param when provided', async () => {
@@ -63,8 +64,8 @@ describe('drive_list_files', () => {
     const tool = createListFilesTool(drive);
     const result = await tool.execute({}, {} as never);
 
-    expect(result.total).toBe(0);
-    expect(result.files).toHaveLength(0);
+    expect(result.next).toBeNull();
+    expect(result.items).toHaveLength(0);
   });
 
   it('maps 401 to drive_unauthorized', async () => {
@@ -88,6 +89,33 @@ describe('drive_list_files', () => {
     const tool = createListFilesTool(drive);
     await expect(tool.execute({}, {} as never)).rejects.toMatchObject({
       code: 'drive_forbidden',
+    });
+  });
+  it('reads one page per call: cursor is sent as pageToken, nextPageToken comes back as next', async () => {
+    (drive.files.list as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      data: { files: [fakeFile], nextPageToken: 'page-3' },
+    });
+
+    const tool = createListFilesTool(drive);
+    const result = await tool.execute({ cursor: 'page-2', max_results: 5 }, {} as never);
+
+    const callArgs = (drive.files.list as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as {
+      pageToken?: string;
+      pageSize?: number;
+    };
+    expect(callArgs).toMatchObject({ pageToken: 'page-2', pageSize: 5 });
+    expect(result).toEqual({
+      items: [
+        {
+          id: 'file-1',
+          name: 'document.pdf',
+          mimeType: 'application/pdf',
+          modifiedTime: '2024-01-15T10:00:00.000Z',
+          size: 102400,
+        },
+      ],
+      next: 'page-3',
+      truncated: null,
     });
   });
 });

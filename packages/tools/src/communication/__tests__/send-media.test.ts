@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createSendVideoTool, createSendAudioTool, createSendVoiceTool } from '../send-media';
 import type { ToolContext } from '../../types';
+import { toolOutputForModel } from '../../types';
 import { syntheticOutsideSource } from './outside-roots';
 
 // S3: the tools dispatch through getAdapter(...).sendMedia — mocked here as
@@ -138,14 +139,21 @@ describe('send media tools', () => {
 
   it('send_video uploads via the adapter with kind "video" and returns { ok, bytes, filename }', async () => {
     const ctx = makeCtx({ jobChatId: '4242', jobChatChannel: 'telegram' });
-    const result = await createSendVideoTool().execute({ source: SRC_CLIP }, ctx);
+    const tool = createSendVideoTool();
+    const result = await tool.execute({ source: SRC_CLIP }, ctx);
 
     expect(sendMediaMock).toHaveBeenCalledWith(
       { botToken: 'bot:TOKEN' },
       '4242',
       expect.objectContaining({ kind: 'video', filename: 'clip.mp4' }),
     );
-    expect(result).toEqual({ ok: true, bytes: TINY.byteLength, filename: 'clip.mp4' });
+    expect(toolOutputForModel(tool, result)).toEqual({
+      ok: true,
+      bytes: TINY.byteLength,
+      filename: 'clip.mp4',
+    });
+    // The row keeps the platform's receipt; the model never reads it (#1215).
+    expect(result.receipt).toEqual({ channel: 'telegram', chatId: '4242', messageId: '1' });
   });
 
   it('send_audio uploads with kind "audio"; send_voice uploads with kind "voice"', async () => {

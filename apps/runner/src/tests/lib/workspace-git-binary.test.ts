@@ -19,25 +19,17 @@
 //     qui rougit si quelqu'un remet le nom nu, puisque le nom nu ignorerait la
 //     réponse de la résolution et sonderait quand même.
 
-import { describe, it, expect, afterAll, vi } from 'vitest';
+import { describe, it, expect, afterAll } from 'vitest';
 import { mkdtemp, rm, writeFile, copyFile, stat } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 
-/** Ce que la résolution doit répondre ; `undefined` = la vraie réponse. */
-const resolutionForcee = vi.hoisted(() => ({ valeur: undefined as string | null | undefined }));
-
-vi.mock('@nodal-agents/shared/git-binary', async (importOriginal) => {
-  const vrai = await importOriginal<typeof import('@nodal-agents/shared/git-binary')>();
-  return {
-    ...vrai,
-    resolveGitBinary: async (): Promise<string | null> =>
-      resolutionForcee.valeur === undefined ? vrai.resolveGitBinary() : resolutionForcee.valeur,
-  };
-});
-
+// « Aucun git » est obtenu par la VRAIE condition — un PATH où il n'y en a
+// pas —, pas par un faux module : la résolution est appelée par le lanceur de
+// git de Nodal (@nodal-agents/shared/internal-git), et l'identifiant d'un
+// module remplacé dépend de la façon dont chaque système résout ses liens.
 import { resolveGitBinary, _resetGitBinaryCache } from '@nodal-agents/shared/git-binary';
 
 import { probeWorkspaceGit } from '../../lib/workspace-git.ts';
@@ -146,14 +138,18 @@ describe('la sonde git du workspace @cap:travailler-sur-des-fichiers/moteur', ()
     // résolution et lançait `git` nu, elle rendrait l'état de ce dépôt-là.
     const depot = await creerDepot();
 
-    resolutionForcee.valeur = null;
+    const path = process.env['PATH'];
+    process.env['PATH'] = join(depot, 'aucun-git-ici');
+    _resetGitBinaryCache();
     try {
+      expect(await resolveGitBinary()).toBeNull();
       expect(
         await probeWorkspaceGit(depot, noWorkspaceSandbox),
         'la sonde a sondé alors que la résolution a dit « aucun git »',
       ).toBeNull();
     } finally {
-      resolutionForcee.valeur = undefined;
+      process.env['PATH'] = path;
+      _resetGitBinaryCache();
     }
   });
 });

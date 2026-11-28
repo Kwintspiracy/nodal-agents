@@ -109,6 +109,7 @@ beforeAll(async () => {
       toolName: 'notion_search',
       toolInput: { query: 'veille' },
       toolOutput: SORTIE_OUTIL,
+      outcome: 'done',
       durationMs: 320,
       turn: 1,
       createdAt: at(20),
@@ -119,6 +120,7 @@ beforeAll(async () => {
       toolName: 'send_telegram',
       toolInput: { text: 'ok' },
       toolOutput: 'sent',
+      outcome: 'done',
       durationMs: 110,
       turn: 2,
       createdAt: at(40),
@@ -183,6 +185,7 @@ beforeAll(async () => {
       toolName: 'http_request',
       toolInput: { url: `https://example.test/${i}` },
       toolOutput: `page ${i}`,
+      outcome: 'done',
       durationMs: 10,
       turn: 1,
       createdAt: at(200 + i),
@@ -215,6 +218,7 @@ beforeAll(async () => {
     toolName: 'ex_aequo_tool',
     toolInput: {},
     toolOutput: 'ok',
+    outcome: 'done',
     turn: 1,
     createdAt: MEME_INSTANT,
   });
@@ -402,6 +406,7 @@ describe('listRunCallsAction @cap:suivre-execution/moteur', () => {
       toolName: 'run_command',
       toolInput: { command: commande },
       toolOutput: `remote: jeton ${secret} accepté`,
+      outcome: 'done',
       durationMs: 900,
       turn: 1,
       toolCallId: 'c_clone',
@@ -424,20 +429,20 @@ describe('listRunCallsAction @cap:suivre-execution/moteur', () => {
     expect(r.ok).toBe(true);
     if (!r.ok) return;
 
-    const masque = 'git clone https://[secret masqué] (gh*_)@github.com/exemple/depot.git';
+    const masque = 'git clone https://[secret hidden]@github.com/exemple/depot.git';
     const appel = r.data.items[0];
     expect(appel?.kind === 'tool' && appel.step.presented).toEqual({
       card: 'terminal',
       command: masque,
       exitCode: 0,
       timedOut: false,
-      stdoutTail: 'remote: jeton [secret masqué] (gh*_) accepté',
+      stdoutTail: 'remote: jeton [secret hidden] accepté',
       stdoutTruncated: false,
       stderrTail: '',
       stderrTruncated: false,
     });
     expect(appel?.kind === 'tool' && appel.step.outputText).toBe(
-      'remote: jeton [secret masqué] (gh*_) accepté',
+      'remote: jeton [secret hidden] accepté',
     );
     expect(appel?.kind === 'tool' && appel.step.input).toEqual({ command: masque });
     expect(JSON.stringify(r.data)).not.toContain(secret);

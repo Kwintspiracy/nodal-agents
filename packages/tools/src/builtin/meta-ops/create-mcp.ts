@@ -16,6 +16,7 @@ import { createStdioMcpServerRepo, mcpServers } from '@nodal-agents/db';
 import { MCP_SERVER_SLUG_PATTERN, MCP_SERVER_SLUG_RULE } from '@nodal-agents/shared';
 import type { ToolDefinition, ProvisionedMcpTool } from '../../types';
 import { resolveAgentId, linkMcpToAgent } from './link-helpers';
+import { outcomeOfOkFlag } from '../../outcome';
 
 const CreateMcpInput = z.object({
   name: z.string().min(1).describe('Human-readable display name for the MCP server.'),
@@ -81,6 +82,7 @@ export const createMcpTool: ToolDefinition<typeof CreateMcpInput, CreateMcpOutpu
   egress: 'none',
   card: 'text',
   defaultApproval: 'require_approval',
+  outcomeOf: outcomeOfOkFlag,
   execute: async (input, ctx) => {
     const provisioning = ctx.provisioning;
     if (!provisioning) {

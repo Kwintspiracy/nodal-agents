@@ -37,7 +37,7 @@ import { resumeJobAfterApprovalResolution } from './resume.ts';
 import { settleApprovalCards } from './card-settlement.ts';
 import { cardCarriesWords, personWordsOnCard } from './card-words.ts';
 import type { ApprovalDecision } from './card-words.ts';
-import { readResponder } from './responders.ts';
+import { isWorkspaceMember, readResponder } from './responders.ts';
 import type { AnsweredBy } from './responders.ts';
 
 export type { ApprovalDecision };
@@ -156,7 +156,9 @@ export type ResolveApprovalResult =
         | 'content_invalid'
         | 'content_not_expected'
         | 'form_unreadable'
-        | 'draft_changed';
+        | 'draft_changed'
+        // Celui qui répond n'est pas membre de l'espace de la demande.
+        | 'responder_not_member';
       status?: string | null;
       /** Pour `content_invalid` : ce qui ne va pas, champ par champ. */
       errors?: ElicitationContentError[];
@@ -170,6 +172,16 @@ export function draftIs(expected: unknown) {
   return expected === null
     ? isNull(approvalRequests.draft)
     : sql`${approvalRequests.draft} = ${JSON.stringify(expected)}::jsonb`;
+}
+
+/** L'espace d'un job, ou null quand il n'en a pas (ou plus). */
+async function jobEntityOf(deps: RunnerDeps, jobId: string): Promise<string | null> {
+  const [row] = await deps.db
+    .select({ entityId: agentJobs.entityId })
+    .from(agentJobs)
+    .where(eq(agentJobs.id, jobId))
+    .limit(1);
+  return row?.entityId ?? null;
 }
 
 /**
@@ -209,6 +221,24 @@ export async function resolveApprovalDecision(
   if (!approval) return { ok: false, code: 'approval_not_found' };
   if (approval.status !== 'pending') {
     return { ok: false, code: 'already_resolved', status: approval.status };
+  }
+
+  // ── Qui tranche appartient à l'espace de la demande ──────────────────────
+  //
+  // Une personne (le compte que le web lit dans sa session, ou la session d'un
+  // appelant de l'API) ne tranche qu'une demande de SON espace, quel que soit
+  // l'appelant qui la porte : le secret de l'installation prouve qui appelle,
+  // pas pour qui. Un compte inconnu de l'espace est refusé, jamais enregistré
+  // comme `unlisted`. Un canal (Telegram, Slack, Discord, un appareil) répond
+  // par sa conversation autorisée, que son propre chemin a déjà vérifiée.
+  if ('userId' in input.answeredBy) {
+    const workspace = approval.entityId ?? (await jobEntityOf(deps, approval.jobId));
+    if (
+      workspace === null ||
+      !(await isWorkspaceMember(deps.db as AnyDrizzleDb, workspace, input.answeredBy.userId))
+    ) {
+      return { ok: false, code: 'responder_not_member' };
+    }
   }
 
   // ── P10a — une QUESTION ne se résout pas comme une approbation ─────────────

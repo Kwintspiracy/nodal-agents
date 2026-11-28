@@ -92,11 +92,13 @@ import {
   AGENT_BUDGET_ALERT_MIN_PCT,
   AGENT_BUDGET_ALERT_MAX_PCT,
   serverTimezone,
+  applyScheduleChange,
   readProofRepairAttempts,
   type DiscoveredCommand,
   type ProjectManifests,
   type VerifyCommand,
   type VerificationSurfaces,
+  MODEL_PROVIDER_NAMES,
 } from '@nodal-agents/shared';
 import {
   currentManifestHash,
@@ -158,6 +160,7 @@ import {
   setReadOnlyPresetRepo,
   createApiKeyConnectorRepo,
   setAgentConnectorAssignmentRepo,
+  connectorRenameRefusal,
   addAgentWorkspaceRepo,
   orchestratorModelToolsError,
   setAgentModelRepo,
@@ -188,6 +191,10 @@ import {
   showConversationsTo,
   workspaceSandboxReader,
   isSingleUserInstall,
+  decryptCredentialForDisplay,
+  outboundColumn,
+  outboundColumns,
+  serverOnly,
 } from '@nodal-agents/db';
 import {
   deliverableStatuses,
@@ -202,6 +209,12 @@ import { selectVerificationRuns } from './verification-runs-query.ts';
 import { lastReviewVerdict } from './review-state.ts';
 import { readJobRoots } from './job-lineage.ts';
 import { chatFailureText } from './chat-failure.ts';
+import {
+  clearConnectionState,
+  readConnectionState,
+  readConnectionStates,
+  recordConnectionState,
+} from '@nodal-agents/db';
 import type {
   JobTriggerContext,
   AnyDrizzleDb,
@@ -223,10 +236,13 @@ import {
   listMemories,
   createMemory,
   deleteMemory,
-  updateMemory,
+  mutateMemory,
+  latestMemoryVersions,
   keywordSearchMemories,
   MemoryNotFoundError,
   MemoryDuplicateError,
+  type MemoryChange,
+  type MutateMemoryResult,
 } from '@nodal-agents/memory';
 import { encrypt, decrypt, isEncrypted, last4 } from '@nodal-agents/secrets';
 import {
@@ -249,8 +265,17 @@ import type {
   AgentMemory,
   CliModelUsage,
   CredentialType,
+  ConnectorAccess,
+  ConnectionState,
   OperationDescriptor,
   ConstatedBy,
+} from '@nodal-agents/shared';
+import {
+  NOT_CHECKED,
+  channelConnectionId,
+  connectionKey,
+  connectionOfAccess,
+  connectorConnection,
 } from '@nodal-agents/shared';
 import {
   type RootGrants,
@@ -262,7 +287,7 @@ import {
   ShellGateReasonsSchema,
   type ShellGateReason,
   type ShellPolicy,
-  redactSecretsForAudit,
+  redactSecrets,
   explainApproval,
   explainApprovalRules,
   REPLACE_SHARED_FILE_SETTING,
@@ -285,6 +310,9 @@ import { readDeclaredUnverified } from './declared-deliverables-read.ts';
 import { requireAuth, LocalAuthProvider, ClaimError } from '@nodal-agents/auth';
 import { env } from './env.ts';
 import { NODALAI_CONFIG_PATH, mergeNodalaiConfig, readNodalaiConfig } from './cli-config.ts';
+import { StateFileError } from '@nodal-agents/shared/state-files';
+import { isNewerVersion } from '@nodal-agents/shared/version-compare';
+import type { NodalConfig } from '@nodal-agents/shared/nodal-config';
 import {
   SERVICE_LOG_NAMES,
   readServiceLogTail,
@@ -310,23 +338,18 @@ import { toElicitationView, type ElicitationView } from './elicitation-view.ts';
 import { readAttachmentViews } from './elicitation-attachments.ts';
 import { effortKeptOnModel, isRefusedEffort } from './model-choices.ts';
 import type { ConversationFeed, Step } from './conversation-feed.ts';
-import {
-  parsePresented,
-  outcomeOfToolOutput,
-  callHappened,
-  isToolCard,
-} from './tool-card-payload.ts';
+import { parsePresented, stepOutcomeOf, callHappened, isToolCard } from './tool-card-payload.ts';
 import { originOfRun, inTimeOrder, type RunOrigin } from './activity-runs.ts';
 import { aggregateSpaceCost, costOfCalls, type SpaceCostView } from './space-cost.ts';
 import { assembleJobFeed, collectDescendants } from './job-feed.ts';
-import { redactAuditRow, redactPresented } from './redact-presented.ts';
+import { redactAuditRow } from './redact-presented.ts';
 import { readReviewVerdicts, type ReviewVerdictView } from './review-verdicts.ts';
 // P2bis — le récapitulatif de livraison d'un run est posé par la fonction du
 // fil d'une conversation, jamais par une seconde lecture des mêmes lignes.
 import { afterJobItems, type ThreadJob } from './conversation-thread.ts';
 import type { ThreadDeclaredDeliverable } from './declared-proof.ts';
 import { classifyProduction, constatedTurnKey } from './chat-or-work.ts';
-import { probeContextWindow, providerFetch } from '@nodal-agents/llm';
+import { probeContextWindow, providerFetch, resolveProviderEndpoint } from '@nodal-agents/llm';
 import {
   systemSkillSlugs,
   skillKindOfSlug,
@@ -337,7 +360,8 @@ import { connectMcp, type McpToolDescriptor } from '@nodal-agents/adapter-mcp';
 import { getOAuthProvider } from './oauth-providers.ts';
 import { computeNextRun } from './cron.ts';
 import { ROLLUP_MAX_DEPTH, rollupRoot, pipelineMembers } from './coding-rollup.ts';
-import { ADAPTER_REGISTRY } from '@nodal-agents/runner-adapters';
+import { ADAPTER_REGISTRY, connectorAccessFor } from '@nodal-agents/runner-adapters';
+import { bindingRefusalFor, readCredentialGrant } from './connector-access.ts';
 import { APPROVALS_READ_LIMIT } from './approvals-window.ts';
 import type { PartialTotal } from './partial-total.ts';
 
@@ -740,6 +764,12 @@ export type AgentRow = {
    * stay valid, and the edit loader (full row) has it.
    */
   mayChangeTeam?: boolean;
+  /**
+   * agents.mask_secret_shapes (migration 0175). `true` (the default) = a value
+   * shaped like a key is hidden from this agent in what its tools return.
+   * Optional for the same reason as commandAllowlist.
+   */
+  maskSecretShapes?: boolean;
   /**
    * agents.shell_policy (migration 0125, #464): the states the owner set on
    * the shell checklist. Raw, as stored; `resolveShellPolicy` reads it.
@@ -2218,9 +2248,9 @@ export async function listJobsAction(
         agentId: agentJobs.agentId,
         status: agentJobs.status,
         channel: agentJobs.channel,
-        task: agentJobs.task,
-        result: agentJobs.result,
-        error: agentJobs.error,
+        task: outboundColumn(agentJobs.task),
+        result: outboundColumn(agentJobs.result),
+        error: outboundColumn(agentJobs.error),
         chainCount: agentJobs.chainCount,
         inputTokens: agentJobs.inputTokens,
         outputTokens: agentJobs.outputTokens,
@@ -2250,7 +2280,7 @@ export async function getJobDetailAction(id: string): Promise<ActionResult<JobDe
     // may have a null agent_id.
     const [row] = await db
       .select({
-        job: agentJobs,
+        job: outboundColumns(agentJobs),
         agentName: agents.name,
         agentSlug: agents.slug,
       })
@@ -2267,8 +2297,8 @@ export async function getJobDetailAction(id: string): Promise<ActionResult<JobDe
         agentName: agents.name,
         agentSlug: agents.slug,
         status: agentJobs.status,
-        result: agentJobs.result,
-        error: agentJobs.error,
+        result: outboundColumn(agentJobs.result),
+        error: outboundColumn(agentJobs.error),
         createdAt: agentJobs.createdAt,
         completedAt: agentJobs.completedAt,
       })
@@ -2316,7 +2346,7 @@ const SPACE_LIST_SELECT = {
   agentSlug: agents.slug,
   agentAvatarUrl: agents.avatarUrl,
   channel: agentJobs.channel,
-  task: agentJobs.task,
+  task: outboundColumn(agentJobs.task),
   status: agentJobs.status,
   costUsd: agentJobs.totalCostUsd,
   inputTokens: agentJobs.inputTokens,
@@ -2325,7 +2355,7 @@ const SPACE_LIST_SELECT = {
   completedAt: agentJobs.completedAt,
   conversationId: agentJobs.conversationId,
   scheduleId: agentJobs.scheduleId,
-  triggerContext: agentJobs.triggerContext,
+  triggerContext: outboundColumn(agentJobs.triggerContext),
 };
 
 type SpaceListDbRow = {
@@ -2555,7 +2585,7 @@ export async function getSpaceConversationAction(
 
     const [row] = await db
       .select({
-        job: agentJobs,
+        job: outboundColumns(agentJobs),
         agentName: agents.name,
         agentSlug: agents.slug,
         agentAvatarUrl: agents.avatarUrl,
@@ -2653,7 +2683,7 @@ export async function getSpaceConversationAction(
           // LE MESSAGE lui-même, et le reçu qui dit pourquoi il n'est pas parti
           // (18/09) : la file d'envoi annonçait un message sans jamais le
           // montrer. Le texte est masqué à l'AFFICHAGE, comme le reste.
-          payload: jobDeliveries.payload,
+          payload: outboundColumn(jobDeliveries.payload),
           receipt: jobDeliveries.receipt,
           createdAt: jobDeliveries.createdAt,
           updatedAt: jobDeliveries.updatedAt,
@@ -2704,14 +2734,15 @@ export async function getSpaceConversationAction(
         .select({
           jobId: toolCalls.jobId,
           toolName: toolCalls.toolName,
-          card: toolCalls.card,
-          presented: toolCalls.presented,
+          card: outboundColumn(toolCalls.card),
+          presented: outboundColumn(toolCalls.presented),
           // Le tour : c'est par lui que la ligne rejoint son constat
           // d'écriture, dont la clé est (job, tour, chemin) — #197.
           turn: toolCalls.turn,
           riskLevel: toolCalls.riskLevel,
-          toolInput: toolCalls.toolInput,
-          toolOutput: toolCalls.toolOutput,
+          toolInput: outboundColumn(toolCalls.toolInput),
+          toolOutput: outboundColumn(toolCalls.toolOutput),
+          outcome: toolCalls.outcome,
         })
         .from(toolCalls)
         .where(and(eq(toolCalls.entityId, session.entityId), inArray(toolCalls.jobId, relevantIds)))
@@ -2853,6 +2884,7 @@ export async function getSpaceConversationAction(
         toolName: r.toolName,
         toolInput: r.toolInput,
         toolOutput: r.toolOutput,
+        outcome: r.outcome,
         presented: r.presented,
       })),
       // #508 — le prix du run : les appels de la racine et de sa descendance,
@@ -2932,8 +2964,8 @@ export async function getJobStatusAction(
     const [row] = await db
       .select({
         status: agentJobs.status,
-        result: agentJobs.result,
-        error: agentJobs.error,
+        result: outboundColumn(agentJobs.result),
+        error: outboundColumn(agentJobs.error),
       })
       .from(agentJobs)
       .where(and(eq(agentJobs.id, id), eq(agentJobs.entityId, session.entityId)));
@@ -3045,6 +3077,8 @@ export type ChannelUiStatus = 'connected' | 'disconnected' | 'coming_soon';
 export interface AgentChannelSummary {
   channel: MessagingChannelKind;
   status: ChannelUiStatus;
+  /** What the runner last learnt about the link (connection_states), every channel alike. */
+  link: ConnectionState;
 }
 
 export interface AgentChannelsOverview {
@@ -3086,15 +3120,27 @@ export async function getAgentChannelsAction(
 
     const bindings = await listChannelBindings(db, agentId);
     const boundChannels = new Set(bindings.filter((b) => b.enabled).map((b) => b.channel));
+    const links = await readConnectionStates(
+      db,
+      CHANNEL_ORDER.map((channel) => ({
+        kind: 'channel' as const,
+        id: channelConnectionId(agentId, channel),
+      })),
+    );
+    const linkOf = (channel: MessagingChannelKind): ConnectionState =>
+      links.get(connectionKey({ kind: 'channel', id: channelConnectionId(agentId, channel) })) ??
+      NOT_CHECKED;
 
     const channels: AgentChannelSummary[] = CHANNEL_ORDER.map((channel) => {
+      const link = linkOf(channel);
       if (channel === 'telegram') {
-        return { channel, status: row.botToken ? 'connected' : 'disconnected' };
+        return { channel, status: row.botToken ? 'connected' : 'disconnected', link };
       }
-      if (boundChannels.has(channel)) return { channel, status: 'connected' };
+      if (boundChannels.has(channel)) return { channel, status: 'connected', link };
       return {
         channel,
         status: CONNECTABLE_CHANNELS.has(channel) ? 'disconnected' : 'coming_soon',
+        link,
       };
     });
 
@@ -3282,6 +3328,8 @@ export async function configureAgentChannelAction(
     revalidatePath('/agents');
     revalidatePath(`/agents/${agentId}/channels`);
 
+    // The platform just accepted the token: the link's state is `working`.
+    await recordChannelAuthorised(agent.id, 'telegram');
     return ok({
       agentId: agent.id,
       agentSlug: agent.slug,
@@ -3359,6 +3407,8 @@ async function configureDiscordChannel(
   revalidatePath('/agents');
   revalidatePath(`/agents/${agentId}/channels`);
 
+  // The platform just accepted the token: the link's state is `working`.
+  await recordChannelAuthorised(agent.id, 'discord');
   return ok({
     agentId: agent.id,
     agentSlug: agent.slug,
@@ -3437,6 +3487,8 @@ async function configureSlackChannel(
   revalidatePath('/agents');
   revalidatePath(`/agents/${agentId}/channels`);
 
+  // The platform just accepted the token: the link's state is `working`.
+  await recordChannelAuthorised(agent.id, 'slack');
   return ok({
     agentId: agent.id,
     agentSlug: agent.slug,
@@ -3760,7 +3812,40 @@ export type TelegramConfigRow = {
   status: TelegramConfigStatus;
   botUsername: string | null;
   lastSeenChatIdTelegram: string | null;
+  /** What the channel's link last learnt (the runner's poller, the connect). */
+  link: ConnectionState;
 };
+
+/**
+ * A connect validated the token with the platform: the link is `working`
+ * (authorised), whatever the runner last recorded. The runner's next poll or
+ * socket writes what it learns after that.
+ */
+async function recordChannelAuthorised(
+  agentId: string,
+  channel: MessagingChannelKind,
+): Promise<void> {
+  await recordConnectionState(
+    getDb(),
+    { kind: 'channel', id: channelConnectionId(agentId, channel) },
+    {
+      state: 'working',
+      cause: 'authorised',
+      detail: null,
+      observedAt: new Date(),
+      retryAfter: null,
+    },
+  );
+}
+
+/** The state of an agent's link to a channel, as the runner records it. */
+async function channelLinkState(
+  db: AnyDrizzleDb,
+  agentId: string,
+  channel: MessagingChannelKind,
+): Promise<ConnectionState> {
+  return readConnectionState(db, { kind: 'channel', id: channelConnectionId(agentId, channel) });
+}
 
 export async function getAgentTelegramConfigAction(
   agentId: string,
@@ -3793,6 +3878,7 @@ export async function getAgentTelegramConfigAction(
       status: row.botToken ? 'connected' : 'disconnected',
       botUsername: row.botUsername,
       lastSeenChatIdTelegram: row.lastSeenChatIdTelegram,
+      link: await channelLinkState(db, row.id, 'telegram'),
     });
   } catch (err) {
     console.error('[getAgentTelegramConfigAction]', err);
@@ -4030,6 +4116,8 @@ export type DiscordConfigRow = {
   status: DiscordConfigStatus;
   /** "username#id" (or bare id if the bot has no username), display-only. */
   identityLabel: string | null;
+  /** What the channel's link last learnt. */
+  link: ConnectionState;
 };
 
 /** Discord's connection detail for its Channels card — mirrors
@@ -4063,6 +4151,7 @@ export async function getAgentDiscordConfigAction(
       agentName: agent.name,
       status: binding?.enabled ? 'connected' : 'disconnected',
       identityLabel,
+      link: await channelLinkState(getDb(), agent.id, 'discord'),
     });
   } catch (err) {
     console.error('[getAgentDiscordConfigAction]', err);
@@ -4085,6 +4174,8 @@ export type SlackConfigRow = {
   status: SlackConfigStatus;
   /** "username#id" (or bare id if the bot has no username), display-only. */
   identityLabel: string | null;
+  /** What the channel's link last learnt (the runner's socket). */
+  link: ConnectionState;
 };
 
 /** Slack's connection detail for its Channels card — mirrors
@@ -4118,6 +4209,7 @@ export async function getAgentSlackConfigAction(
       agentName: agent.name,
       status: binding?.enabled ? 'connected' : 'disconnected',
       identityLabel,
+      link: await channelLinkState(getDb(), agent.id, 'slack'),
     });
   } catch (err) {
     console.error('[getAgentSlackConfigAction]', err);
@@ -4321,10 +4413,74 @@ const ListMemoriesSchema = z.object({
   pageSize: z.number().int().min(1).max(200).default(50),
 });
 
+/**
+ * The last change of a fact, when it was not made by the owner: an automatic
+ * pass (the weekly curator, the archiver) or an agent's memory tool. The page
+ * shows it with the text the fact had before, and offers to put that back.
+ */
+export type MemoryLastChange = {
+  versionId: string;
+  changedBy: 'agent' | 'curator' | 'lifecycle';
+  /** The agent, when an agent made the change. */
+  agentName: string | null;
+  action: string;
+  previousFact: string;
+  changedAt: string;
+};
+
 export type MemoryListRow = AgentMemory & {
   agentName: string | null;
   agentSlug: string | null;
+  lastChange: MemoryLastChange | null;
 };
+
+/**
+ * Agent names and the last non-owner change for a page of facts, in two
+ * round-trips. Shared by the list and the search of the Memory page.
+ */
+async function toMemoryListRows(
+  db: ReturnType<typeof getDb>,
+  entityId: string,
+  items: AgentMemory[],
+): Promise<MemoryListRow[]> {
+  const latest = await latestMemoryVersions(
+    db,
+    entityId,
+    items.map((m) => m.id),
+  );
+  const agentIds = new Set<string>();
+  for (const m of items) if (m.agent_id) agentIds.add(m.agent_id);
+  for (const v of latest.values()) if (v.agentId) agentIds.add(v.agentId);
+  const agentLookup = new Map<string, { name: string; slug: string }>();
+  if (agentIds.size > 0) {
+    const rows = await db
+      .select({ id: agents.id, name: agents.name, slug: agents.slug })
+      .from(agents)
+      .where(inArray(agents.id, [...agentIds]));
+    for (const r of rows) agentLookup.set(r.id, { name: r.name, slug: r.slug });
+  }
+  return items.map((m) => {
+    const agent = m.agent_id ? agentLookup.get(m.agent_id) : null;
+    const v = latest.get(m.id);
+    const lastChange: MemoryLastChange | null =
+      v && v.changedBy !== 'owner'
+        ? {
+            versionId: v.id,
+            changedBy: v.changedBy,
+            agentName: v.agentId ? (agentLookup.get(v.agentId)?.name ?? null) : null,
+            action: v.action,
+            previousFact: v.fact,
+            changedAt: v.changedAt,
+          }
+        : null;
+    return {
+      ...m,
+      agentName: agent?.name ?? null,
+      agentSlug: agent?.slug ?? null,
+      lastChange,
+    };
+  });
+}
 
 export type MemoryListResult = {
   items: MemoryListRow[];
@@ -4356,28 +4512,7 @@ export async function listMemoriesAction(
       sort: 'recent',
     });
 
-    // Resolve agent name+slug for each unique agentId in the page so the UI
-    // can render a friendly label instead of a raw uuid. Single roundtrip.
-    const agentIds = Array.from(
-      new Set(result.items.map((m) => m.agent_id).filter((x): x is string => x !== null)),
-    );
-    const agentLookup = new Map<string, { name: string; slug: string }>();
-    if (agentIds.length > 0) {
-      const rows = await db
-        .select({ id: agents.id, name: agents.name, slug: agents.slug })
-        .from(agents)
-        .where(inArray(agents.id, agentIds));
-      for (const r of rows) agentLookup.set(r.id, { name: r.name, slug: r.slug });
-    }
-
-    const items: MemoryListRow[] = result.items.map((m) => {
-      const agent = m.agent_id ? agentLookup.get(m.agent_id) : null;
-      return {
-        ...m,
-        agentName: agent?.name ?? null,
-        agentSlug: agent?.slug ?? null,
-      };
-    });
+    const items = await toMemoryListRows(db, session.entityId, result.items);
 
     return ok({
       items,
@@ -4414,28 +4549,7 @@ export async function searchMemoriesAction(query: string): Promise<ActionResult<
       touch: false,
     });
 
-    const agentIds = Array.from(
-      new Set(items.map((m) => m.agent_id).filter((x): x is string => x !== null)),
-    );
-    const agentLookup = new Map<string, { name: string; slug: string }>();
-    if (agentIds.length > 0) {
-      const rows = await db
-        .select({ id: agents.id, name: agents.name, slug: agents.slug })
-        .from(agents)
-        .where(inArray(agents.id, agentIds));
-      for (const r of rows) agentLookup.set(r.id, { name: r.name, slug: r.slug });
-    }
-
-    const rows: MemoryListRow[] = items.map((m) => {
-      const agent = m.agent_id ? agentLookup.get(m.agent_id) : null;
-      return {
-        ...m,
-        agentName: agent?.name ?? null,
-        agentSlug: agent?.slug ?? null,
-      };
-    });
-
-    return ok(rows);
+    return ok(await toMemoryListRows(db, session.entityId, items));
   } catch (err) {
     console.error('[searchMemoriesAction]', err);
     return fail('db_error', 'Failed to search memories');
@@ -4483,59 +4597,84 @@ export async function createMemoryAction(raw: unknown): Promise<ActionResult<voi
   }
 }
 
-export async function archiveMemoryAction(id: string): Promise<ActionResult<void>> {
-  try {
-    const session = await getSession();
-    if (!z.string().guid().safeParse(id).success) {
-      return fail('validation_failed', 'Invalid memory id');
-    }
-    const db = getDb();
-    await updateMemory(db, id, session.entityId, { archived: true });
-    revalidatePath('/memories');
-    return ok(undefined);
-  } catch (err) {
-    if (err instanceof MemoryNotFoundError) {
-      return fail('not_found', 'Memory not found');
-    }
-    console.error('[archiveMemoryAction]', err);
-    return fail('db_error', 'Failed to archive memory');
-  }
-}
-
-const UpdateMemoryImportanceSchema = z.object({
+const MemoryChangeRefSchema = z.object({
   id: z.string().guid(),
-  importance: z.number().int().min(1).max(5),
+  /** The version the page showed: the change applies to that version only. */
+  version: z.number().int().min(1),
 });
 
 /**
+ * Apply one owner change to a fact through mutateMemory, the function every
+ * path changes a fact through (#1144): it keeps the previous state as a
+ * version, and refuses a change prepared on a version that is no longer the
+ * row's (a page left open while an automatic pass or another tab changed it).
+ */
+async function applyOwnerMemoryChange(
+  label: string,
+  ref: { id: string; version: number },
+  change: MemoryChange,
+): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    const parsed = MemoryChangeRefSchema.safeParse(ref);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    const r: MutateMemoryResult = await mutateMemory(getDb(), {
+      entityId: session.entityId,
+      memoryId: parsed.data.id,
+      readVersion: parsed.data.version,
+      actor: { kind: 'owner' },
+      change,
+    });
+    if (!r.ok) {
+      switch (r.reason) {
+        case 'not_found':
+          return fail('not_found', 'Memory not found');
+        case 'stale':
+          return fail('conflict', 'This memory changed since the page loaded. Reload to see it.');
+        case 'duplicate':
+          return fail('conflict', 'An active memory already says exactly this.');
+        default:
+          return fail('validation_failed', r.detail);
+      }
+    }
+    revalidatePath('/memories');
+    return ok(undefined);
+  } catch (err) {
+    console.error(`[${label}]`, err);
+    return fail('db_error', 'Failed to update memory');
+  }
+}
+
+export async function archiveMemoryAction(
+  id: string,
+  version: number,
+): Promise<ActionResult<void>> {
+  return applyOwnerMemoryChange('archiveMemoryAction', { id, version }, { kind: 'archive' });
+}
+
+const MemoryImportanceSchema = z.number().int().min(1).max(5);
+
+/**
  * User override of a fact's importance — top of the authority chain
- * (agent guess → curator re-score → user pin). Always sets
- * importance_locked=true so the curator never re-scores this fact again.
+ * (agent guess → curator re-score → user pin). Pins the fact
+ * (importance_locked=true) so no automatic pass changes it again.
  */
 export async function updateMemoryImportanceAction(
   id: string,
   importance: number,
+  version: number,
 ): Promise<ActionResult<void>> {
-  try {
-    const session = await getSession();
-    const parsed = UpdateMemoryImportanceSchema.safeParse({ id, importance });
-    if (!parsed.success) {
-      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
-    }
-    const db = getDb();
-    await updateMemory(db, parsed.data.id, session.entityId, {
-      importance: parsed.data.importance,
-      importance_locked: true,
-    });
-    revalidatePath('/memories');
-    return ok(undefined);
-  } catch (err) {
-    if (err instanceof MemoryNotFoundError) {
-      return fail('not_found', 'Memory not found');
-    }
-    console.error('[updateMemoryImportanceAction]', err);
-    return fail('db_error', 'Failed to update importance');
+  const parsed = MemoryImportanceSchema.safeParse(importance);
+  if (!parsed.success) {
+    return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid importance');
   }
+  return applyOwnerMemoryChange(
+    'updateMemoryImportanceAction',
+    { id, version },
+    { kind: 'pin', importance: parsed.data },
+  );
 }
 
 /**
@@ -4543,42 +4682,39 @@ export async function updateMemoryImportanceAction(
  * WITHOUT touching the current importance value, so the fact keeps its
  * last-known score until the curator's next usage-driven pass re-scores it.
  */
-export async function unpinMemoryImportanceAction(id: string): Promise<ActionResult<void>> {
-  try {
-    const session = await getSession();
-    if (!z.string().guid().safeParse(id).success) {
-      return fail('validation_failed', 'Invalid memory id');
-    }
-    const db = getDb();
-    await updateMemory(db, id, session.entityId, { importance_locked: false });
-    revalidatePath('/memories');
-    return ok(undefined);
-  } catch (err) {
-    if (err instanceof MemoryNotFoundError) {
-      return fail('not_found', 'Memory not found');
-    }
-    console.error('[unpinMemoryImportanceAction]', err);
-    return fail('db_error', 'Failed to unpin importance');
-  }
+export async function unpinMemoryImportanceAction(
+  id: string,
+  version: number,
+): Promise<ActionResult<void>> {
+  return applyOwnerMemoryChange('unpinMemoryImportanceAction', { id, version }, { kind: 'unpin' });
 }
 
-export async function unarchiveMemoryAction(id: string): Promise<ActionResult<void>> {
-  try {
-    const session = await getSession();
-    if (!z.string().guid().safeParse(id).success) {
-      return fail('validation_failed', 'Invalid memory id');
-    }
-    const db = getDb();
-    await updateMemory(db, id, session.entityId, { archived: false });
-    revalidatePath('/memories');
-    return ok(undefined);
-  } catch (err) {
-    if (err instanceof MemoryNotFoundError) {
-      return fail('not_found', 'Memory not found');
-    }
-    console.error('[unarchiveMemoryAction]', err);
-    return fail('db_error', 'Failed to unarchive memory');
+/** Restore an archived fact: active again, validity window reopened. */
+export async function unarchiveMemoryAction(
+  id: string,
+  version: number,
+): Promise<ActionResult<void>> {
+  return applyOwnerMemoryChange('unarchiveMemoryAction', { id, version }, { kind: 'restore' });
+}
+
+/**
+ * Put back the state a fact had before a change (its text, category,
+ * importance and archived state): the undo of an automatic pass. The undo is
+ * a change too, kept as a version.
+ */
+export async function restoreMemoryVersionAction(
+  id: string,
+  versionId: string,
+  version: number,
+): Promise<ActionResult<void>> {
+  if (!z.string().guid().safeParse(versionId).success) {
+    return fail('validation_failed', 'Invalid version id');
   }
+  return applyOwnerMemoryChange(
+    'restoreMemoryVersionAction',
+    { id, version },
+    { kind: 'revert', versionId },
+  );
 }
 
 export async function deleteMemoryAction(id: string): Promise<ActionResult<void>> {
@@ -4617,6 +4753,18 @@ export type ConnectorRow = {
   credentialAccountName: string | null;
   credentialExpiresAt: Date | null;
   credentialScopes: string | null;
+  /**
+   * What the connector may do, under its credential's grant and on its
+   * connection's state (the rule a job's tool list applies,
+   * `connectorAccessFor`). Null only for a connector this version has no
+   * adapter for.
+   */
+  access: ConnectorAccess | null;
+  /**
+   * The connection's state, from the same rows and the same rule a job reads
+   * (`connectorConnection`): what the status pill and its reason say.
+   */
+  connection: ConnectionState;
   createdAt: Date | null;
   updatedAt: Date | null;
 };
@@ -4639,6 +4787,16 @@ export type ConnectorsListResponse = {
   instances: ConnectorRow[];
   catalog: ConnectorCatalogItem[];
 };
+
+/** Whether this installation can read an API key (it holds the key it was encrypted with). */
+function apiKeyReadable(stored: string): boolean {
+  try {
+    decrypt(stored);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 export async function listConnectorsAction(): Promise<ActionResult<ConnectorsListResponse>> {
   try {
@@ -4670,6 +4828,9 @@ export async function listConnectorsAction(): Promise<ActionResult<ConnectorsLis
       scopes: string | null;
     };
     const credDisplayById = new Map<string, CredDisplayFields>();
+    // A payload this installation cannot decrypt is a state (`broken`), shown
+    // as such, never a connector listed as normal with an empty account.
+    const unreadableCredentials = new Set<string>();
     for (const cred of credRows) {
       try {
         const raw = cred.payload;
@@ -4683,16 +4844,47 @@ export async function listConnectorsAction(): Promise<ActionResult<ConnectorsLis
               : null,
           scopes: typeof parsed['scopes'] === 'string' ? parsed['scopes'] : null,
         });
-      } catch {
+      } catch (err) {
+        console.error(
+          `[listConnectorsAction] credential ${cred.id} cannot be decrypted: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+        unreadableCredentials.add(cred.id);
         credDisplayById.set(cred.id, { accountName: null, expiresAt: null, scopes: null });
       }
     }
+
+    // What was learnt about each connector and each credential it uses.
+    const stored = await readConnectionStates(db, [
+      ...rows.map((r) => ({ kind: 'connector' as const, id: r.id })),
+      ...credentialIds.map((id) => ({ kind: 'credential' as const, id })),
+    ]);
 
     // Map every connector row to a flat ConnectorRow — multi-instance: several
     // rows can share the same slug.
     const instances: ConnectorRow[] = rows.map((row) => {
       const cred = row.credentialId ? credById.get(row.credentialId) : undefined;
       const display = row.credentialId ? (credDisplayById.get(row.credentialId) ?? null) : null;
+      const entry = ADAPTER_REGISTRY[row.slug];
+      const usesKey = entry ? entry.credentialType === 'api_key' : row.authType !== 'oauth2';
+      let secret: 'absent' | 'unreadable' | 'readable';
+      if (usesKey) {
+        secret = !row.apiKey ? 'absent' : apiKeyReadable(row.apiKey) ? 'readable' : 'unreadable';
+      } else {
+        secret = !cred ? 'absent' : unreadableCredentials.has(cred.id) ? 'unreadable' : 'readable';
+      }
+      const connection = connectorConnection({
+        secretKind: usesKey ? 'api_key' : 'credential',
+        secret,
+        stored: [
+          stored.get(connectionKey({ kind: 'connector', id: row.id }))!,
+          ...(cred ? [stored.get(connectionKey({ kind: 'credential', id: cred.id }))!] : []),
+        ],
+      });
+      const access = entry
+        ? connectorAccessFor(row.slug, usesKey ? null : (display?.scopes ?? null), connection)
+        : null;
       return {
         id: row.id,
         slug: row.slug,
@@ -4706,6 +4898,8 @@ export async function listConnectorsAction(): Promise<ActionResult<ConnectorsLis
         credentialAccountName: display?.accountName ?? null,
         credentialExpiresAt: display?.expiresAt ?? null,
         credentialScopes: display?.scopes ?? null,
+        access,
+        connection: access ? connectionOfAccess(access, connection) : connection,
         createdAt: row.createdAt,
         updatedAt: row.updatedAt,
       };
@@ -4814,9 +5008,16 @@ export type McpServerInstance = {
   slug: string;
   name: string;
   active: boolean;
+  /** The row's own transport (a custom server has no catalog entry to read it from). */
+  transport: 'http' | 'stdio';
   hasApiKey: boolean;
   apiKeyLast4: string | null;
   toolCount: number;
+  /**
+   * What the last connection learnt (the job's connect, the dashboard's
+   * verification), as the job reads it before connecting.
+   */
+  connection: ConnectionState;
   createdAt: Date | null;
 };
 
@@ -4866,6 +5067,26 @@ export type McpServersListResponse = {
 };
 
 /**
+ * A connection the dashboard just made to an MCP server succeeded (its create,
+ * its key rotation, its configuration edit all verify by connecting): the
+ * server's state is `working`. This is what lets a server the runner found
+ * refusing its key, or unable to start, be connected again by the next job.
+ */
+async function recordMcpVerified(mcpServerId: string): Promise<void> {
+  await recordConnectionState(
+    getDb(),
+    { kind: 'mcp_server', id: mcpServerId },
+    {
+      state: 'working',
+      cause: 'authorised',
+      detail: null,
+      observedAt: new Date(),
+      retryAfter: null,
+    },
+  );
+}
+
+/**
  * Return every mcp_servers row for the entity (multi-instance: several
  * per slug allowed) plus the static MCP_CATALOG for the marketplace.
  * Never returns the encrypted key.
@@ -4879,14 +5100,20 @@ export async function listMcpServersAction(): Promise<ActionResult<McpServersLis
       .from(mcpServers)
       .where(eq(mcpServers.entityId, session.entityId));
 
+    const mcpStates = await readConnectionStates(
+      db,
+      rows.map((r) => ({ kind: 'mcp_server' as const, id: r.id })),
+    );
     const instances: McpServerInstance[] = rows.map((row) => ({
       id: row.id,
       slug: row.slug,
       name: row.name,
       active: row.active ?? true,
+      transport: row.transport === 'stdio' ? 'stdio' : 'http',
       hasApiKey: !!row.apiKey,
       apiKeyLast4: row.apiKeyLast4 ?? null,
       toolCount: Array.isArray(row.availableTools) ? row.availableTools.length : 0,
+      connection: mcpStates.get(connectionKey({ kind: 'mcp_server', id: row.id })) ?? NOT_CHECKED,
       createdAt: row.createdAt,
     }));
 
@@ -5120,6 +5347,7 @@ export async function createMcpServerFromCatalogAction(
         })
         .returning({ id: mcpServers.id });
       if (!row) return fail('db_error', 'Insert returned no row');
+      await recordMcpVerified(row.id);
       revalidatePath('/mcp');
       return ok({ id: row.id });
     }
@@ -5176,6 +5404,7 @@ export async function createMcpServerFromCatalogAction(
       availableTools: stdioToolDescriptors,
       instructions: stdioInstructions,
     });
+    await recordMcpVerified(row.id);
     revalidatePath('/mcp');
     return ok({ id: row.id });
   } catch (err) {
@@ -5293,6 +5522,7 @@ export async function updateMcpServerApiKeyAction(
       })
       .where(eq(mcpServers.id, mcpServerId));
 
+    await recordMcpVerified(mcpServerId);
     revalidatePath('/mcp');
     return ok(undefined);
   } catch (err) {
@@ -5502,6 +5732,7 @@ export async function updateMcpServerConfigAction(
           updatedAt: new Date(),
         })
         .where(eq(mcpServers.id, mcpServerId));
+      await recordMcpVerified(mcpServerId);
       revalidatePath('/mcp');
       return ok(undefined);
     }
@@ -5586,6 +5817,7 @@ export async function updateMcpServerConfigAction(
         updatedAt: new Date(),
       })
       .where(eq(mcpServers.id, mcpServerId));
+    await recordMcpVerified(mcpServerId);
     revalidatePath('/mcp');
     return ok(undefined);
   } catch (err) {
@@ -5808,9 +6040,16 @@ export async function assignCredentialAction(
           `Credential type '${existingCred.type}' is not compatible with connector '${existingConnector.slug}' (expects '${provider.credentialType}')`,
         );
       }
+
+      // 4. The grant must cover some of what the connector does.
+      const refusal = bindingRefusalFor(
+        existingConnector.slug,
+        await readCredentialGrant(db, credentialId),
+      );
+      if (refusal) return fail('missing_access', refusal);
     }
 
-    // 4. Update FK
+    // 5. Update FK
     await db
       .update(connectors)
       .set({ credentialId, updatedAt: new Date() })
@@ -5887,6 +6126,11 @@ export async function createOrAssignOAuthConnectorAction(
       );
     }
 
+    // The grant must cover some of what the connector does (same rule as
+    // assignCredentialAction: one function decides for both).
+    const refusal = bindingRefusalFor(slug, await readCredentialGrant(db, credentialId));
+    if (refusal) return fail('missing_access', refusal);
+
     // Multi-instance: pure INSERT, no lookup-and-update. The user can have
     // multiple connectors of the same slug (e.g. Gmail perso + Gmail boulot).
     const instanceName = name ?? existingCred.name ?? catalogEntry.label;
@@ -5937,6 +6181,10 @@ export async function renameConnectorAction(
       .from(connectors)
       .where(and(eq(connectors.id, connectorId), eq(connectors.entityId, session.entityId)));
     if (!existing) return fail('not_found', 'Connector not found');
+    // Two accounts of one service on one agent carry names a model can tell
+    // apart: the name is the value of the tools' `account` argument.
+    const refusal = await connectorRenameRefusal(db, connectorId, nameParsed.data);
+    if (refusal) return fail('indistinct_accounts', refusal);
     await db
       .update(connectors)
       .set({ name: nameParsed.data, updatedAt: new Date() })
@@ -5999,6 +6247,9 @@ export async function updateConnectorApiKeyAction(
       .update(connectors)
       .set({ apiKey: enc, updatedAt: new Date() })
       .where(eq(connectors.id, connectorId));
+    // The refused key is gone: what was learnt about it no longer holds, and
+    // the new key is `not_checked` until its first call.
+    await clearConnectionState(db, { kind: 'connector', id: connectorId });
     revalidatePath('/connectors');
     return ok(undefined);
   } catch (err) {
@@ -6265,7 +6516,7 @@ export async function listApprovalsAction(
         agentName: agents.name,
         agentSlug: agents.slug,
         toolName: approvalRequests.toolName,
-        toolInput: approvalRequests.toolInput,
+        toolInput: outboundColumn(approvalRequests.toolInput),
         kind: approvalRequests.kind,
         answer: approvalRequests.answer,
         response: approvalRequests.response,
@@ -6275,8 +6526,8 @@ export async function listApprovalsAction(
         resolvedBy: approvalRequests.resolvedBy,
         expiresAt: approvalRequests.expiresAt,
         notes: approvalRequests.notes,
-        gateReasons: approvalRequests.gateReasons,
-        jobTask: agentJobs.task,
+        gateReasons: outboundColumn(approvalRequests.gateReasons),
+        jobTask: outboundColumn(agentJobs.task),
         jobChannel: agentJobs.channel,
         conversationId: agentJobs.conversationId,
         conversationChannel: conversations.channel,
@@ -6409,7 +6660,7 @@ export async function listApprovalsAction(
         // may leak a secret — create_connector/create_mcp API keys and stdio
         // env values are masked here, the single loader feeding both the
         // approvals page and the sidebar/NotificationsBell provider.
-        const safeInput = redactSecretsForAudit(r.toolInput) as typeof r.toolInput;
+        const safeInput = redactSecrets(r.toolInput) as typeof r.toolInput;
         const ctx = mcpByTool.get(mcpKey(r.agentId, r.toolName)) ?? null;
         // `jobParentJobId` ne sort PAS de l'action : il n'a servi qu'à remonter
         // la chaîne, et les deux champs de tête disent déjà ce que l'écran en
@@ -6537,7 +6788,7 @@ export async function resolveApprovalAction(raw: unknown): Promise<
       .select({
         id: approvalRequests.id,
         kind: approvalRequests.kind,
-        toolInput: approvalRequests.toolInput,
+        toolInput: serverOnly(approvalRequests.toolInput),
       })
       .from(approvalRequests)
       .where(
@@ -7950,6 +8201,56 @@ export async function setAgentMayChangeTeamAction(raw: unknown): Promise<ActionR
   }
 }
 
+// ─── « Cacher les valeurs secrètes à cet agent », par agent (0175) ───────────
+//
+// agents.mask_secret_shapes : la seconde couche du masque des résultats
+// d'outil (les formes du masqueur unique), que le moteur relit à chaque appel
+// (`loadToolResultMaskPolicy`). Les valeurs exactes que Nodal garde pour
+// l'espace restent masquées quoi qu'il dise. Réservé au propriétaire, même
+// garde que setAgentMayChangeTeamAction : il élargit ce qu'un agent peut lire.
+
+const SetAgentMaskSecretShapesSchema = z.object({
+  agentId: z.string().guid(),
+  maskSecretShapes: z.boolean(),
+});
+
+export async function setAgentMaskSecretShapesAction(raw: unknown): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    const parsed = SetAgentMaskSecretShapesSchema.safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    const { agentId, maskSecretShapes } = parsed.data;
+
+    if (env.AUTH_MODE !== 'local-trust') {
+      const db = getDb();
+      const [entityRow] = await db
+        .select({ userId: entities.userId })
+        .from(entities)
+        .where(eq(entities.id, session.entityId));
+      if (!entityRow) return fail('not_found', 'Workspace not found');
+      if (entityRow.userId !== session.userId) {
+        return fail('forbidden', 'Only the workspace owner can change what an agent may read.');
+      }
+    }
+
+    const db = getDb();
+    const updated = await db
+      .update(agents)
+      .set({ maskSecretShapes, updatedAt: new Date() })
+      .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)))
+      .returning({ id: agents.id });
+    if (updated.length === 0) return fail('not_found', 'Agent not found');
+
+    revalidatePath(`/agents/${agentId}/edit`);
+    return ok(undefined);
+  } catch (err) {
+    console.error('[setAgentMaskSecretShapesAction]', err);
+    return fail('db_error', 'Failed to save the secret setting');
+  }
+}
+
 // ─── Clé, modèle et effort d'un agent, réglés depuis le composeur (#138) ─────
 //
 // Les MÊMES champs que l'écran d'édition (`agents.llm_key_id`, `agents.model`,
@@ -9108,7 +9409,16 @@ export async function createSkillAction(raw: unknown): Promise<ActionResult<{ id
   }
 }
 
-export async function deleteSkillAction(id: string): Promise<ActionResult<void>> {
+/**
+ * Delete a skill. A community skill owns a folder in the skill store: it is
+ * removed through the runner's one removal (uninstallCommunitySkillAction),
+ * row and folder together, with the person's choice for their own files.
+ * Any other skill is only a row.
+ */
+export async function deleteSkillAction(
+  id: string,
+  localFiles?: SkillRemovalChoice,
+): Promise<ActionResult<void>> {
   try {
     const session = await getSession();
     if (!z.string().guid().safeParse(id).success) {
@@ -9116,10 +9426,14 @@ export async function deleteSkillAction(id: string): Promise<ActionResult<void>>
     }
     const db = getDb();
     const [existing] = await db
-      .select({ id: agentSkills.id })
+      .select({ id: agentSkills.id, slug: agentSkills.slug, isCommunity: agentSkills.isCommunity })
       .from(agentSkills)
       .where(and(eq(agentSkills.id, id), eq(agentSkills.entityId, session.entityId)));
     if (!existing) return fail('not_found', 'Skill not found');
+    if (existing.isCommunity) {
+      const r = await uninstallCommunitySkillAction(existing.slug, localFiles);
+      return r.ok ? ok(undefined) : r;
+    }
     // The schema has ON DELETE CASCADE on agent_skill_assignments, so
     // assignments are cleared automatically.
     await db.delete(agentSkills).where(eq(agentSkills.id, id));
@@ -9135,15 +9449,60 @@ const InstallCommunitySkillSchema = z.object({
   source: z.string().min(1).max(2048),
 });
 
-export type CommunitySkillInstallResult = {
-  slug: string;
-  name: string;
-  description: string;
-  source: string;
-  installedScripts: InstalledScript[];
-  fileCount: number;
-  reinstalled: boolean;
+/** What happens to the person's own files when a community skill is removed. */
+export type SkillRemovalChoice = 'keep' | 'delete';
+
+export type SkillRemovalPreview = {
+  /** The person's files in the skill folder: added here, or shipped and changed here. */
+  localFiles: SkillFileChange[];
+  /** False for a skill installed before file tracking: every file is listed. */
+  originKnown: boolean;
 };
+
+export type CommunitySkillInstallResult =
+  | {
+      status: 'installed';
+      slug: string;
+      name: string;
+      description: string;
+      source: string;
+      installedScripts: InstalledScript[];
+      fileCount: number;
+    }
+  /**
+   * The store already holds files for this skill (left by an earlier
+   * removal): nothing was written. The person reviews them (same plan as an
+   * update) and installs again with the pin and their choices.
+   */
+  | {
+      status: 'review';
+      slug: string;
+      name: string;
+      description: string;
+      source: string;
+      installedScripts: InstalledScript[];
+      files: SkillFileChange[];
+      filesState: 'clean' | 'update' | 'conflict' | 'local-only';
+      upstreamFilesHash: string;
+    }
+  /**
+   * The same source is already installed: nothing was written. Installing it
+   * again is an update, through the same review (SkillUpdateAction).
+   */
+  | {
+      status: 'already_installed';
+      slug: string;
+      name: string;
+      description: string;
+      source: string;
+      updateAvailable: boolean;
+      updateDetail: SkillUpdateDetail | null;
+      hasScripts: boolean;
+      /** The installed row, for the update review (#896: an edit is replaced by an update). */
+      skillId: string;
+      contentOverridden: boolean;
+      content: string;
+    };
 
 /**
  * Install a community skill (open Agent Skills / SKILL.md format) from a GitHub
@@ -9153,6 +9512,10 @@ export type CommunitySkillInstallResult = {
  */
 export async function installCommunitySkillAction(
   source: string,
+  review?: {
+    expectedFilesHash: string;
+    conflictChoices: Record<string, SkillConflictChoice>;
+  },
 ): Promise<ActionResult<CommunitySkillInstallResult>> {
   try {
     const session = await getSession();
@@ -9172,7 +9535,16 @@ export async function installCommunitySkillAction(
           'Content-Type': 'application/json',
           Authorization: `Bearer ${env.WORKER_SECRET}`,
         },
-        body: JSON.stringify({ source: parsed.data.source, entityId: session.entityId }),
+        body: JSON.stringify({
+          source: parsed.data.source,
+          entityId: session.entityId,
+          ...(review === undefined
+            ? {}
+            : {
+                expectedFilesHash: review.expectedFilesHash,
+                conflictChoices: review.conflictChoices,
+              }),
+        }),
       });
     } catch (fetchErr) {
       console.error('[installCommunitySkillAction] fetch failed:', fetchErr);
@@ -9193,10 +9565,56 @@ export async function installCommunitySkillAction(
 }
 
 /**
- * Uninstall a community skill by slug via the runner's POST
- * /api/skills/uninstall, then revalidate the skills route.
+ * The person's files in a community skill's folder, before removing it
+ * (runner POST /api/skills/preview-uninstall, read-only).
  */
-export async function uninstallCommunitySkillAction(slug: string): Promise<ActionResult<void>> {
+export async function previewSkillRemovalAction(
+  slug: string,
+): Promise<ActionResult<SkillRemovalPreview>> {
+  try {
+    const session = await getSession();
+    if (!z.string().min(1).safeParse(slug).success) {
+      return fail('validation_failed', 'Invalid skill slug');
+    }
+    if (!env.WORKER_SECRET) {
+      console.error('[previewSkillRemovalAction] WORKER_SECRET missing');
+      return fail('config_error', 'Runner secret not configured');
+    }
+    let res: Response;
+    try {
+      res = await fetch(`${env.RUNNER_URL}/api/skills/preview-uninstall`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${env.WORKER_SECRET}`,
+        },
+        body: JSON.stringify({ slug, entityId: session.entityId }),
+      });
+    } catch (fetchErr) {
+      console.error('[previewSkillRemovalAction] fetch failed:', fetchErr);
+      return fail('network_error', 'Could not reach the runner — is it running?');
+    }
+    const body = (await res.json()) as
+      | ({ ok: true } & SkillRemovalPreview)
+      | { ok: false; error: string; message: string };
+    if (!body.ok) return fail(body.error, body.message);
+    return ok({ localFiles: body.localFiles, originKnown: body.originKnown });
+  } catch (err) {
+    console.error('[previewSkillRemovalAction]', err);
+    return fail('unexpected_error', 'An unexpected error occurred');
+  }
+}
+
+/**
+ * Uninstall a community skill by slug via the runner's POST
+ * /api/skills/uninstall — row and folder together — then revalidate the
+ * skills route. `localFiles` is the person's choice for their own files
+ * (previewSkillRemovalAction); the runner refuses without it when there are any.
+ */
+export async function uninstallCommunitySkillAction(
+  slug: string,
+  localFiles?: SkillRemovalChoice,
+): Promise<ActionResult<void>> {
   try {
     const session = await getSession();
     if (!z.string().min(1).safeParse(slug).success) {
@@ -9214,7 +9632,11 @@ export async function uninstallCommunitySkillAction(slug: string): Promise<Actio
           'Content-Type': 'application/json',
           Authorization: `Bearer ${env.WORKER_SECRET}`,
         },
-        body: JSON.stringify({ slug, entityId: session.entityId }),
+        body: JSON.stringify({
+          slug,
+          entityId: session.entityId,
+          ...(localFiles === undefined ? {} : { localFiles }),
+        }),
       });
     } catch (fetchErr) {
       console.error('[uninstallCommunitySkillAction] fetch failed:', fetchErr);
@@ -9238,7 +9660,28 @@ export type CommunitySkillUpdateResult = {
   /** Number of agent×skill assignments whose scripts_authorized was reset to
    *  false as a side effect of this update (0 when scripts didn't change). */
   scriptsAuthorizationRevoked: number;
+  /** The previous folder of the skill, when it could not be removed after the
+   *  update (a process still held it). The update itself is complete. */
+  leftoverDir: string | null;
 };
+
+/** Why a file is a conflict (runner skills/manifest.ts, FileConflictReason). */
+export type SkillFileConflictReason =
+  | 'both-changed'
+  | 'deleted-locally-changed-upstream'
+  | 'edited-locally-removed-upstream'
+  | 'added-on-both-sides'
+  | 'unknown-origin';
+
+/** What an update does with one file of the skill folder (runner FileChange). */
+export type SkillFileChange =
+  | {
+      path: string;
+      kind: 'added' | 'changed' | 'removed' | 'kept-local-change' | 'kept-local-addition';
+    }
+  | { path: string; kind: 'conflict'; reason: SkillFileConflictReason };
+
+export type SkillConflictChoice = 'keep-local' | 'take-upstream';
 
 /**
  * Re-fetch a community skill from its recorded source and apply the diff
@@ -9253,7 +9696,13 @@ export type CommunitySkillUpdatePreview = {
   contentChanged: boolean;
   scriptsChanged: boolean;
   scriptNames: string[];
+  /** Scripts the update brings that the current authorization never covered. */
+  scriptsToAuthorize: string[];
   upstreamContentHash: string;
+  /** Every file whose fate is not "identical everywhere", sorted by path. */
+  files: SkillFileChange[];
+  filesState: 'clean' | 'update' | 'conflict' | 'local-only';
+  upstreamFilesHash: string;
   contentOverridden: boolean;
 };
 
@@ -9299,7 +9748,11 @@ export async function previewCommunitySkillUpdateAction(
       contentChanged: body.contentChanged,
       scriptsChanged: body.scriptsChanged,
       scriptNames: body.scriptNames,
+      scriptsToAuthorize: body.scriptsToAuthorize,
       upstreamContentHash: body.upstreamContentHash,
+      files: body.files,
+      filesState: body.filesState,
+      upstreamFilesHash: body.upstreamFilesHash,
       contentOverridden: body.contentOverridden,
     });
   } catch (err) {
@@ -9308,9 +9761,18 @@ export async function previewCommunitySkillUpdateAction(
   }
 }
 
+/**
+ * `files` pins the apply to the files the owner reviewed (`expectedFilesHash`
+ * from the preview) and carries their choice for each conflicting file. The
+ * runner refuses, writing nothing, when a conflict has no choice.
+ */
 export async function updateCommunitySkillAction(
   slug: string,
   expectedContentHash?: string,
+  files?: {
+    expectedFilesHash: string;
+    conflictChoices: Record<string, SkillConflictChoice>;
+  },
 ): Promise<ActionResult<CommunitySkillUpdateResult>> {
   try {
     const session = await getSession();
@@ -9333,6 +9795,12 @@ export async function updateCommunitySkillAction(
           slug,
           entityId: session.entityId,
           ...(expectedContentHash === undefined ? {} : { expectedContentHash }),
+          ...(files === undefined
+            ? {}
+            : {
+                expectedFilesHash: files.expectedFilesHash,
+                conflictChoices: files.conflictChoices,
+              }),
         }),
       });
     } catch (fetchErr) {
@@ -9345,6 +9813,7 @@ export async function updateCommunitySkillAction(
           contentChanged: boolean;
           scriptsChanged: boolean;
           scriptsAuthorizationRevoked: number;
+          leftoverDir: string | null;
         }
       | { ok: false; error: string; message: string };
     if (!body.ok) {
@@ -9355,6 +9824,7 @@ export async function updateCommunitySkillAction(
       contentChanged: body.contentChanged,
       scriptsChanged: body.scriptsChanged,
       scriptsAuthorizationRevoked: body.scriptsAuthorizationRevoked,
+      leftoverDir: body.leftoverDir,
     });
   } catch (err) {
     console.error('[updateCommunitySkillAction]', err);
@@ -10074,9 +10544,9 @@ export async function listActivityRunsAction(
         agentName: agents.name,
         agentSlug: agents.slug,
         agentAvatarUrl: agents.avatarUrl,
-        task: agentJobs.task,
+        task: outboundColumn(agentJobs.task),
         channel: agentJobs.channel,
-        triggerContext: agentJobs.triggerContext,
+        triggerContext: outboundColumn(agentJobs.triggerContext),
         conversationId: agentJobs.conversationId,
         status: agentJobs.status,
         durationMs: agentJobs.totalDurationMs,
@@ -10221,12 +10691,13 @@ export async function listRunCallsAction(raw: unknown): Promise<ActionResult<Run
           id: toolCalls.id,
           toolName: toolCalls.toolName,
           toolCallId: toolCalls.toolCallId,
-          toolInput: toolCalls.toolInput,
-          toolOutput: toolCalls.toolOutput,
+          toolInput: outboundColumn(toolCalls.toolInput),
+          toolOutput: outboundColumn(toolCalls.toolOutput),
+          outcome: toolCalls.outcome,
           durationMs: toolCalls.durationMs,
           turn: toolCalls.turn,
-          card: toolCalls.card,
-          presented: toolCalls.presented,
+          card: outboundColumn(toolCalls.card),
+          presented: outboundColumn(toolCalls.presented),
           createdAt: toolCalls.createdAt,
         })
         .from(toolCalls)
@@ -10262,7 +10733,7 @@ export async function listRunCallsAction(raw: unknown): Promise<ActionResult<Run
     ]);
 
     const tools: RunCall[] = toolRows.map((r) => {
-      const outcome = outcomeOfToolOutput(r.toolOutput);
+      const outcome = stepOutcomeOf(r.outcome);
       return {
         kind: 'tool',
         id: r.id,
@@ -10279,15 +10750,15 @@ export async function listRunCallsAction(raw: unknown): Promise<ActionResult<Run
           // un secret caché dans le fil restait lisible ici. Les comptes plus
           // bas lisent la ligne BRUTE : masquer change le texte, jamais le
           // nombre de lignes écrites.
-          presented: parsePresented(redactPresented(r.presented)),
-          input: redactPresented(r.toolInput),
+          presented: parsePresented(redactSecrets(r.presented)),
+          input: redactSecrets(r.toolInput),
           outputText: r.toolOutput === null ? null : redactSecretsInText(r.toolOutput),
           outcome,
           durationMs: r.durationMs,
           // Ce que l'appel a écrit, compté comme le fil le compte (même
           // fonction) : un appel qui n'a pas abouti n'a rien écrit.
           lineCounts: callHappened(outcome)
-            ? lineCountsOfCall(r.toolName, r.toolInput, r.toolOutput)
+            ? lineCountsOfCall(r.toolName, r.toolInput, r.outcome)
             : {},
           // Les questions d'approbation sont l'affaire du fil, où l'on peut
           // répondre. La liste des runs montre l'appel, pas ses boutons.
@@ -10845,21 +11316,6 @@ export type VersionInfo = {
   updateAvailable: boolean;
 };
 
-// Compare two "X.Y.Z" versions — true when `latest` is strictly newer.
-function isNewerVersion(latest: string, current: string): boolean {
-  const parse = (v: string) =>
-    v
-      .split('-')[0]
-      .split('.')
-      .map((n) => parseInt(n, 10) || 0);
-  const a = parse(latest);
-  const b = parse(current);
-  for (let i = 0; i < 3; i++) {
-    if ((a[i] ?? 0) !== (b[i] ?? 0)) return (a[i] ?? 0) > (b[i] ?? 0);
-  }
-  return false;
-}
-
 // Cache the npm lookup so navigating the dashboard doesn't hit the registry on
 // every sidebar mount. A 30-minute TTL is plenty for an update nudge — but a
 // FAILED lookup (registry hiccup, offline moment, the 4s abort) must not
@@ -10910,13 +11366,10 @@ export async function getVersionInfoAction(): Promise<ActionResult<VersionInfo>>
 // ─── Automation Actions ───────────────────────────────────────────────────────
 
 // Channels the "Notify via" selector offers (B1, notify-channel-choice plan).
-// A subset of CHANNEL_ORDER: whatsapp has no outbound send tool registered for
-// a job yet (TOOL_ONLY_DELIVERY_CHANNELS, apps/runner/src/job/channel-delivery.ts) —
-// picking it as a schedule's notify channel would set triggerWantsConfirmation
-// (chatId resolves fine via resolveOwnerConversation) but then force the agent
-// to deliver via a tool it was never given, deadlocking the run. Kept in the DB
-// column's check constraint for forward-compat once whatsapp grows send tools,
-// just not offered here.
+// A subset of CHANNEL_ORDER: whatsapp is not offered. It was left out because a
+// chat job could only be answered by a send tool, and whatsapp has none; since
+// #1215 the runner sends the reply on every channel, so nothing in the runner
+// prevents it any more. Offering it is a screen change of its own (B35-02).
 const NOTIFY_CHANNEL_OPTIONS: readonly MessagingChannelKind[] = ['telegram', 'discord', 'slack'];
 
 export type ScheduleRow = {
@@ -11152,19 +11605,30 @@ export async function duplicateScheduleAction(id: string): Promise<ActionResult<
   }
 }
 
+// A schedule edit names what it changes; a field it leaves out is KEPT (never
+// defaulted). The same change vocabulary the agent's update_schedule tool uses:
+// the timing is either `cronExpr` (the whole expression, as the form holds it) or
+// `atTimes` / `everyMinutes` / `days`. One function, applyScheduleChange, computes
+// the new schedule for both.
 const UpdateScheduleSchema = z.object({
   id: z.string().guid(),
-  agentId: z.string().guid('Pick an agent'),
-  name: z.string().min(1).max(120),
-  cronExpr: z.string().min(1).max(100),
-  task: z.string().min(1),
-  notifyOnSuccess: z.boolean().optional().default(false),
+  agentId: z.string().guid('Pick an agent').optional(),
+  name: z.string().min(1).max(120).optional(),
+  cronExpr: z.string().min(1).max(100).optional(),
+  atTimes: z.array(z.string()).optional(),
+  everyMinutes: z.number().int().optional(),
+  days: z
+    .union([z.enum(['daily', 'weekdays', 'weekends']), z.array(z.number().int().min(0).max(6))])
+    .optional(),
+  timezone: z.string().min(1).optional(),
+  task: z.string().min(1).optional(),
+  notifyOnSuccess: z.boolean().optional(),
+  // null = auto (a NAMED change); absent = keep what is stored.
   notifyChannel: z
     .enum(NOTIFY_CHANNEL_OPTIONS as [MessagingChannelKind, ...MessagingChannelKind[]])
     .nullable()
-    .optional()
-    .default(null),
-  dailyBudgetUsd: z.number().min(0.5).max(100).optional().default(5),
+    .optional(),
+  dailyBudgetUsd: z.number().min(0.5).max(100).optional(),
 });
 
 export async function updateScheduleAction(raw: unknown): Promise<ActionResult<void>> {
@@ -11175,49 +11639,51 @@ export async function updateScheduleAction(raw: unknown): Promise<ActionResult<v
       return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
     }
     const db = getDb();
+    const { id, ...named } = parsed.data;
 
-    // Verify schedule exists and belongs to this entity
+    // The stored schedule (and that it belongs to this entity).
     const [existing] = await db
-      .select({ id: agentSchedules.id })
+      .select({
+        id: agentSchedules.id,
+        name: agentSchedules.name,
+        agentId: agentSchedules.agentId,
+        task: agentSchedules.task,
+        cronExpr: agentSchedules.cronExpr,
+        timezone: agentSchedules.timezone,
+        notifyOnSuccess: agentSchedules.notifyOnSuccess,
+        notifyChannel: agentSchedules.notifyChannel,
+        dailyBudgetUsd: agentSchedules.dailyBudgetUsd,
+      })
       .from(agentSchedules)
-      .where(
-        and(eq(agentSchedules.id, parsed.data.id), eq(agentSchedules.entityId, session.entityId)),
-      );
+      .where(and(eq(agentSchedules.id, id), eq(agentSchedules.entityId, session.entityId)));
     if (!existing) return fail('not_found', 'Schedule not found');
+    const { id: _id, ...stored } = existing;
+
+    const changed = applyScheduleChange(stored, named);
+    if (!changed.ok) return fail('validation_failed', changed.error);
 
     // Verify the agent belongs to this entity
     const [agent] = await db
       .select({ id: agents.id })
       .from(agents)
-      .where(and(eq(agents.id, parsed.data.agentId), eq(agents.entityId, session.entityId)));
+      .where(and(eq(agents.id, changed.next.agentId), eq(agents.entityId, session.entityId)));
     if (!agent) return fail('not_found', 'Agent not found');
 
-    const notifyChannelError = await assertNotifyChannelActive(
-      db,
-      parsed.data.agentId,
-      parsed.data.notifyChannel,
-    );
-    if (notifyChannelError) return fail('validation_failed', notifyChannelError);
-
-    const nextRun = computeNextRun(parsed.data.cronExpr);
-    if (!nextRun) {
-      return fail('validation_failed', 'Invalid cron expression');
+    // The channel the schedule will have must be live for the agent it will have
+    // (only checked when the edit names one of them).
+    if (named.notifyChannel !== undefined || named.agentId !== undefined) {
+      const notifyChannelError = await assertNotifyChannelActive(
+        db,
+        changed.next.agentId,
+        changed.next.notifyChannel as MessagingChannelKind | null,
+      );
+      if (notifyChannelError) return fail('validation_failed', notifyChannelError);
     }
 
     await db
       .update(agentSchedules)
-      .set({
-        agentId: parsed.data.agentId,
-        name: parsed.data.name,
-        cronExpr: parsed.data.cronExpr,
-        task: parsed.data.task,
-        nextRun,
-        notifyOnSuccess: parsed.data.notifyOnSuccess,
-        notifyChannel: parsed.data.notifyChannel,
-        dailyBudgetUsd: parsed.data.dailyBudgetUsd,
-        updatedAt: new Date(),
-      })
-      .where(eq(agentSchedules.id, parsed.data.id));
+      .set({ ...changed.patch, updatedAt: new Date() })
+      .where(eq(agentSchedules.id, id));
 
     revalidatePath('/automations');
     return ok(undefined);
@@ -11940,18 +12406,27 @@ function readConfiguredAuth(): {
       configPathExists: false,
     };
   }
-  const auth = (cfg['auth'] ?? null) as {
-    mode?: 'local-trust' | 'local-auth';
-    googleClientId?: string;
-    googleClientSecret?: string;
-  } | null;
-  const bind = cfg['bind'] as 'loopback' | 'lan' | undefined;
+  const auth = cfg.auth ?? null;
+  const bind = cfg.bind;
   const fallback: 'local-trust' | 'local-auth' = bind === 'lan' ? 'local-auth' : 'local-trust';
   return {
     configuredMode: auth?.mode ?? fallback,
     googleConfigured: Boolean(auth?.googleClientId && auth?.googleClientSecret),
     configPathExists: true,
   };
+}
+
+/**
+ * The answer an action gives when config.json is absent or unusable: the
+ * reader's own message, which names the file and says how to recover. An
+ * unusable file is never reported as missing (B48-18).
+ */
+function configFileFailure(err: unknown): ActionResult<never> | null {
+  if (!(err instanceof StateFileError)) return null;
+  return fail(
+    err.code === 'STATE_FILE_ABSENT' ? 'cli_config_missing' : 'cli_config_invalid',
+    err.message,
+  );
 }
 
 export async function getSecuritySettingsAction(): Promise<ActionResult<SecurityView>> {
@@ -11966,6 +12441,8 @@ export async function getSecuritySettingsAction(): Promise<ActionResult<Security
       configPathExists: persisted.configPathExists,
     });
   } catch (err) {
+    const configFailure = configFileFailure(err);
+    if (configFailure) return configFailure;
     console.error('[getSecuritySettingsAction]', err);
     return fail('db_error', 'Failed to load security settings');
   }
@@ -12007,7 +12484,7 @@ export async function updateAuthSettingsAction(
     // restart de l'incident du 23/08, par l'autre porte. Refus explicite
     // plutôt qu'un basculement silencieux du bind : couper l'accès réseau de
     // quelqu'un sans le lui dire serait pire que l'erreur.
-    if (parsed.data.mode === 'local-trust' && existing['bind'] === 'lan') {
+    if (parsed.data.mode === 'local-trust' && existing.bind === 'lan') {
       return fail(
         'validation_failed',
         'This install is reachable on the LAN, where sign-in is required. ' +
@@ -12015,9 +12492,8 @@ export async function updateAuthSettingsAction(
       );
     }
 
-    const prevAuth = (existing['auth'] ?? {}) as Record<string, unknown>;
-    const nextAuth: Record<string, unknown> = {
-      ...prevAuth,
+    const nextAuth: NonNullable<NodalConfig['auth']> = {
+      ...existing.auth,
       mode: parsed.data.mode,
     };
 
@@ -12035,20 +12511,14 @@ export async function updateAuthSettingsAction(
       }
     }
 
-    try {
-      mergeNodalaiConfig({ auth: nextAuth });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : '';
-      if (msg === 'cli_config_missing') {
-        return fail('cli_config_missing', 'Config file disappeared between read and write.');
-      }
-      throw err;
-    }
+    mergeNodalaiConfig({ auth: nextAuth });
 
     revalidatePath('/settings');
     const requiresRestart = parsed.data.mode !== env.AUTH_MODE;
     return ok({ requiresRestart });
   } catch (err) {
+    const configFailure = configFileFailure(err);
+    if (configFailure) return configFailure;
     console.error('[updateAuthSettingsAction]', err);
     return fail('db_error', 'Failed to update auth settings');
   }
@@ -12082,7 +12552,7 @@ function readConfiguredBind(): {
   if (!cfg) {
     return { configuredBind: 'loopback', configPathExists: false };
   }
-  const bind = cfg['bind'] as 'loopback' | 'lan' | undefined;
+  const bind = cfg.bind;
   return {
     configuredBind: bind === 'lan' ? 'lan' : 'loopback',
     configPathExists: true,
@@ -12102,6 +12572,8 @@ export async function getNetworkSettingsAction(): Promise<ActionResult<NetworkVi
       configPathExists: persisted.configPathExists,
     });
   } catch (err) {
+    const configFailure = configFileFailure(err);
+    if (configFailure) return configFailure;
     console.error('[getNetworkSettingsAction]', err);
     return fail('db_error', 'Failed to load network settings');
   }
@@ -12138,34 +12610,24 @@ export async function updateNetworkSettingsAction(
     // unauthenticated). The LAN option is documented as "Sign-in required", so
     // switching to LAN aligns the persisted mode instead of writing a config
     // that bricks the next `nodal-agents up`.
-    const patch: Record<string, unknown> = { bind: parsed.data.bind };
+    const patch: Partial<NodalConfig> = { bind: parsed.data.bind };
     let authModeAligned = false;
     if (parsed.data.bind === 'lan') {
-      const existing = readNodalaiConfig();
-      const prevAuth = (existing?.['auth'] ?? null) as Record<string, unknown> | null;
-      if (prevAuth?.['mode'] === 'local-trust') {
-        patch['auth'] = { ...prevAuth, mode: 'local-auth' };
+      const prevAuth = readNodalaiConfig()?.auth;
+      if (prevAuth?.mode === 'local-trust') {
+        patch.auth = { ...prevAuth, mode: 'local-auth' };
         authModeAligned = true;
       }
     }
 
-    try {
-      mergeNodalaiConfig(patch);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : '';
-      if (msg === 'cli_config_missing') {
-        return fail(
-          'cli_config_missing',
-          `Cannot find ${NODALAI_CONFIG_PATH} — run \`nodal-agents init\` first.`,
-        );
-      }
-      throw err;
-    }
+    mergeNodalaiConfig(patch);
 
     revalidatePath('/settings');
     const runtimeBind: 'loopback' | 'lan' = env.BIND === '0.0.0.0' ? 'lan' : 'loopback';
     return ok({ requiresRestart: parsed.data.bind !== runtimeBind, authModeAligned });
   } catch (err) {
+    const configFailure = configFileFailure(err);
+    if (configFailure) return configFailure;
     console.error('[updateNetworkSettingsAction]', err);
     return fail('db_error', 'Failed to update network settings');
   }
@@ -12211,19 +12673,9 @@ export async function claimOwnerAccountAction(raw: unknown): Promise<ActionResul
 //   • testLlmKeyAction redacts the apiKey in any error message before return.
 //   • All actions verify entityId ownership via getSession().
 
-const PROVIDER_VALUES = [
-  'anthropic',
-  'openai',
-  'openai-compatible',
-  'ollama',
-  'openrouter',
-  'google',
-  'mistral',
-  'groq',
-  'deepseek',
-  'minimax',
-  'moonshot',
-] as const;
+// The one list of providers, beside the address each one is reached at
+// (`PROVIDER_ENDPOINTS`, @nodal-agents/shared).
+const PROVIDER_VALUES = MODEL_PROVIDER_NAMES;
 
 export type LlmProvider = (typeof PROVIDER_VALUES)[number];
 
@@ -12673,48 +13125,31 @@ async function ssrfSafeFetch(url: string, init: RequestInit): Promise<Response> 
   return res;
 }
 
+/**
+ * The probe of each provider: which path answers for a key, and how the key is
+ * presented. WHERE it is sent is not here: the address comes from
+ * `resolveProviderEndpoint` (@nodal-agents/llm), the function every model
+ * client of the runner is built from, so a test and a real call reach the
+ * same address for the same row.
+ */
 const PROVIDER_TEST_CONFIG: Record<
   LlmProvider,
   {
-    canonicalBase: string | null;
     path: string;
     auth: 'bearer' | 'x-api-key' | 'query' | 'none';
   }
 > = {
-  anthropic: {
-    canonicalBase: 'https://api.anthropic.com/v1',
-    path: '/models',
-    auth: 'x-api-key',
-  },
-  openai: { canonicalBase: 'https://api.openai.com/v1', path: '/models', auth: 'bearer' },
-  openrouter: {
-    canonicalBase: 'https://openrouter.ai/api/v1',
-    path: '/auth/key',
-    auth: 'bearer',
-  },
-  google: {
-    canonicalBase: 'https://generativelanguage.googleapis.com/v1beta',
-    path: '/models',
-    auth: 'query',
-  },
-  mistral: { canonicalBase: 'https://api.mistral.ai/v1', path: '/models', auth: 'bearer' },
-  groq: { canonicalBase: 'https://api.groq.com/openai/v1', path: '/models', auth: 'bearer' },
-  'openai-compatible': { canonicalBase: null, path: '/models', auth: 'bearer' },
-  ollama: { canonicalBase: null, path: '/api/tags', auth: 'none' },
-  // /v1 matters here — the runtime registry (packages/llm/src/providers/registry.ts,
-  // the source of truth) uses api.deepseek.com/v1; this canonicalBase had
-  // drifted to the bare host (toilettage, audit #2).
-  deepseek: { canonicalBase: 'https://api.deepseek.com/v1', path: '/models', auth: 'bearer' },
-  minimax: {
-    canonicalBase: 'https://api.minimax.io/anthropic',
-    path: '/v1/models',
-    auth: 'bearer',
-  },
-  moonshot: {
-    canonicalBase: 'https://api.moonshot.ai/v1',
-    path: '/models',
-    auth: 'bearer',
-  },
+  anthropic: { path: '/models', auth: 'x-api-key' },
+  openai: { path: '/models', auth: 'bearer' },
+  openrouter: { path: '/auth/key', auth: 'bearer' },
+  google: { path: '/models', auth: 'query' },
+  mistral: { path: '/models', auth: 'bearer' },
+  groq: { path: '/models', auth: 'bearer' },
+  'openai-compatible': { path: '/models', auth: 'bearer' },
+  ollama: { path: '/api/tags', auth: 'none' },
+  deepseek: { path: '/models', auth: 'bearer' },
+  minimax: { path: '/v1/models', auth: 'bearer' },
+  moonshot: { path: '/models', auth: 'bearer' },
 };
 
 /**
@@ -12817,17 +13252,18 @@ export async function testLlmKeyAction(raw: unknown): Promise<ActionResult<{ mes
     }
 
     // ── Build the test request per provider ────────────────────────────────────
-    // Each provider has a canonical base URL; the user's baseUrl (if set)
-    // takes precedence so proxies / alternate regions / mocks can be tested.
-    // The validation path is always the auth-required endpoint for that
+    // The address is the one a real call of the runner reaches for the same
+    // values: `resolveProviderEndpoint`, the stored baseUrl if set, else the
+    // provider's official address; never one read from the environment. The
+    // validation path is always the auth-required endpoint for that
     // provider — `/models` is public on OpenRouter so we hit `/auth/key`
     // there instead, which 401s on a bad key.
     const cfg = PROVIDER_TEST_CONFIG[provider];
-    // Resolve the effective base: user-provided wins, else canonical.
-    // openai-compatible and ollama require a user-provided baseUrl.
-    const effectiveBase = (baseUrl ?? '').replace(/\/$/, '') || cfg.canonicalBase;
-    if (!effectiveBase) {
-      return fail('validation_failed', `baseUrl is required for ${provider}`);
+    let effectiveBase: string;
+    try {
+      effectiveBase = resolveProviderEndpoint({ provider, baseURL: baseUrl, apiKey }).baseURL;
+    } catch (err) {
+      return fail('validation_failed', err instanceof Error ? err.message : String(err));
     }
 
     const ssrfError = await assertSsrfSafeUrl(effectiveBase);
@@ -12908,9 +13344,12 @@ export async function listKeyModelsAction(keyId: string): Promise<ActionResult<s
     const decryptedKey =
       saved.apiKey && saved.apiKey.length > 0 ? decrypt(saved.apiKey) : undefined;
 
-    const cfg = PROVIDER_TEST_CONFIG[provider];
-    const effectiveBase = (saved.baseUrl ?? '').replace(/\/$/, '') || cfg?.canonicalBase;
-    if (!effectiveBase) return ok([]);
+    // Same address as a real call for this row (`resolveProviderEndpoint`).
+    const effectiveBase = resolveProviderEndpoint({
+      provider,
+      baseURL: saved.baseUrl,
+      apiKey: decryptedKey,
+    }).baseURL;
 
     const modelIds = await fetchProviderModelIds(provider, effectiveBase, decryptedKey);
     return ok(modelIds);
@@ -12929,6 +13368,14 @@ export type AgentConnectorRow = {
   assigned: boolean;
   enabledOperations: string[] | null;
   availableOperations: OperationDescriptor[];
+  /**
+   * What the connector may do under its credential's grant and on its
+   * connection's state: only `offeredOperations(access)` are given to a job,
+   * whatever `enabledOperations` says.
+   */
+  access: ConnectorAccess;
+  /** The connection's state (the job's rule, `connectorConnection`). */
+  connection: ConnectionState;
 };
 
 /**
@@ -12960,6 +13407,7 @@ export async function listAgentConnectorsAction(
         slug: connectors.slug,
         name: connectors.name,
         credentialId: connectors.credentialId,
+        apiKey: connectors.apiKey,
         active: connectors.active,
       })
       .from(connectors)
@@ -12974,12 +13422,24 @@ export async function listAgentConnectorsAction(
       ),
     ];
     const credNameById = new Map<string, string>();
+    const credGrantById = new Map<string, string>();
+    const unreadableCredentials = new Set<string>();
     if (credentialIds.length > 0) {
       const credRows = await db
         .select({ id: credentials.id, name: credentials.name })
         .from(credentials)
         .where(inArray(credentials.id, credentialIds));
       for (const c of credRows) credNameById.set(c.id, c.name);
+      for (const id of credentialIds) {
+        const decrypted = await decryptCredentialForDisplay(db, id).catch((err: unknown) => {
+          // Unreadable payload: logged, and the grid shows no grant for it
+          // rather than guessing one.
+          console.error(`[listAgentConnectorsAction] credential ${id} unreadable`, err);
+          unreadableCredentials.add(id);
+          return null;
+        });
+        if (decrypted) credGrantById.set(id, decrypted.payload.scopes);
+      }
     }
 
     // Fetch existing assignments for this agent
@@ -12998,6 +13458,11 @@ export async function listAgentConnectorsAction(
       });
     }
 
+    const stored = await readConnectionStates(db, [
+      ...connectorRows.map((r) => ({ kind: 'connector' as const, id: r.id })),
+      ...credentialIds.map((id) => ({ kind: 'credential' as const, id })),
+    ]);
+
     // Filter to connectors that have an adapter entry — surfacing connectors
     // without an adapter would create dead assignments.
     const result: AgentConnectorRow[] = [];
@@ -13006,6 +13471,33 @@ export async function listAgentConnectorsAction(
       if (!adapterEntry) continue; // no adapter for this connector slug — skip
 
       const assignment = assignmentByConnectorId.get(row.id);
+      const usesKey = adapterEntry.credentialType === 'api_key';
+      const credentialId = row.credentialId;
+      const connection = connectorConnection({
+        secretKind: usesKey ? 'api_key' : 'credential',
+        secret: usesKey
+          ? !row.apiKey
+            ? 'absent'
+            : apiKeyReadable(row.apiKey)
+              ? 'readable'
+              : 'unreadable'
+          : !credentialId || !credNameById.has(credentialId)
+            ? 'absent'
+            : unreadableCredentials.has(credentialId)
+              ? 'unreadable'
+              : 'readable',
+        stored: [
+          stored.get(connectionKey({ kind: 'connector', id: row.id }))!,
+          ...(credentialId && credNameById.has(credentialId)
+            ? [stored.get(connectionKey({ kind: 'credential', id: credentialId }))!]
+            : []),
+        ],
+      });
+      const access = connectorAccessFor(
+        row.slug,
+        usesKey || !credentialId ? null : (credGrantById.get(credentialId) ?? null),
+        connection,
+      );
 
       result.push({
         connectorId: row.id,
@@ -13015,6 +13507,8 @@ export async function listAgentConnectorsAction(
         assigned: assignment !== undefined,
         enabledOperations: assignment?.enabledOperations ?? null,
         availableOperations: adapterEntry.operations,
+        access,
+        connection: connectionOfAccess(access, connection),
       });
     }
 
@@ -13243,6 +13737,7 @@ export async function setAgentConnectorAssignmentAction(
       enabledOperations: enabledOperations ?? null,
     });
     if ('error' in res) {
+      if (res.error === 'indistinct_accounts') return fail(res.error, res.message);
       return fail(
         'not_found',
         res.error === 'agent_not_found' ? 'Agent not found' : 'Connector not found',
@@ -14038,10 +14533,11 @@ export async function listCodingProcessesAction(): Promise<ActionResult<CodingPr
       .select({
         jobId: toolCalls.jobId,
         toolName: toolCalls.toolName,
-        toolInput: toolCalls.toolInput,
+        toolInput: outboundColumn(toolCalls.toolInput),
         // Needed to tell an executed call from a REFUSED one — a write the
         // harness rejected must not count as a file changed (isRefusedToolCall).
-        toolOutput: toolCalls.toolOutput,
+        toolOutput: outboundColumn(toolCalls.toolOutput),
+        outcome: toolCalls.outcome,
       })
       .from(toolCalls)
       .where(
@@ -14105,6 +14601,7 @@ export async function listCodingProcessesAction(): Promise<ActionResult<CodingPr
         toolName: string;
         toolInput: unknown;
         toolOutput: string | null;
+        outcome: string | null;
         /** L'agent qui a passé l'appel — pour lire ses chemins relatifs. */
         agentId: string | null;
       }>
@@ -14124,6 +14621,7 @@ export async function listCodingProcessesAction(): Promise<ActionResult<CodingPr
         toolName: c.toolName,
         toolInput: c.toolInput,
         toolOutput: c.toolOutput,
+        outcome: c.outcome,
         agentId: callAgentId,
       });
       callsByRoot.set(root, arr);
@@ -14209,7 +14707,7 @@ export async function listCodingProcessesAction(): Promise<ActionResult<CodingPr
           agentName: agents.name,
           channel: agentJobs.channel,
           status: agentJobs.status,
-          task: agentJobs.task,
+          task: outboundColumn(agentJobs.task),
           createdAt: agentJobs.createdAt,
           updatedAt: agentJobs.updatedAt,
         })
@@ -14305,7 +14803,7 @@ export async function listCodingProcessesAction(): Promise<ActionResult<CodingPr
         const set = new Set<string>();
         for (const c of calls) {
           if (!FILE_TOOL_NAMES.has(c.toolName)) continue;
-          if (isRefusedToolCall(c.toolOutput)) continue; // attempted ≠ changed
+          if (isRefusedToolCall(c.outcome)) continue; // attempted ≠ changed
           const fp = extractFilePath(c.toolInput as Record<string, unknown> | null);
           // Un chemin qu'aucun dossier attaché ne couvre n'est pas rattachable
           // à un projet : il ne compte pas dans le décompte de fichiers, faute
@@ -14351,7 +14849,11 @@ export async function listCodingProcessesAction(): Promise<ActionResult<CodingPr
       const verdictRows =
         allRelevantIds.length > 0
           ? await db
-              .select({ jobId: toolCalls.jobId, toolOutput: toolCalls.toolOutput })
+              .select({
+                jobId: toolCalls.jobId,
+                toolOutput: serverOnly(toolCalls.toolOutput),
+                outcome: toolCalls.outcome,
+              })
               .from(toolCalls)
               .where(
                 and(
@@ -14449,6 +14951,8 @@ export type CodingToolCallView = {
   toolName: string;
   toolInput: unknown;
   toolOutput: string | null;
+  /** What became of the call (`tool_calls.outcome`, #1184), read by `stepOutcomeOf`. */
+  outcome: string | null;
   durationMs: number | null;
   createdAt: string | null;
   /** Set when this call happened in a DIRECT CHILD job (a delegated worker), not the root itself. */
@@ -14607,7 +15111,7 @@ export async function getCodingProcessDetailAction(
           agentName: agents.name,
           channel: agentJobs.channel,
           status: agentJobs.status,
-          task: agentJobs.task,
+          task: outboundColumn(agentJobs.task),
           createdAt: agentJobs.createdAt,
           totalDurationMs: agentJobs.totalDurationMs,
           verificationSkippedSurfaces: agentJobs.verificationSkippedSurfaces,
@@ -14682,8 +15186,9 @@ export async function getCodingProcessDetailAction(
           id: toolCalls.id,
           jobId: toolCalls.jobId,
           toolName: toolCalls.toolName,
-          toolInput: toolCalls.toolInput,
-          toolOutput: toolCalls.toolOutput,
+          toolInput: outboundColumn(toolCalls.toolInput),
+          toolOutput: outboundColumn(toolCalls.toolOutput),
+          outcome: toolCalls.outcome,
           durationMs: toolCalls.durationMs,
           createdAt: toolCalls.createdAt,
         })
@@ -14869,17 +15374,16 @@ export async function getCodingProcessDetailAction(
       for (const tc of toolCallRows) {
         // RÉDIGÉ AVANT D'ÊTRE LU (Reviewer C, #164). Ces écritures sont
         // DESSINÉES : la plaque du bloc Files rend `old_string`, `new_string`
-        // et `content` tels quels. Le masquage d'écriture ne les couvre pas —
-        // `redactSecretsForAudit` masque par NOM de champ, et aucun de ces
-        // trois-là ne s'annonce comme un secret — tandis que la frise juste en
+        // et `content` tels quels. Une ligne écrite avant que l'entrée ne soit
+        // masquée à l'écriture porte ces champs en clair, et la frise juste en
         // dessous rédige depuis #158. Une clé écrite dans un fichier se lisait
         // donc EN CLAIR dans Files et masquée dans Activity, sur le même appel.
-        const change = extractChange(tc.toolName, redactPresented(tc.toolInput));
+        const change = extractChange(tc.toolName, redactSecrets(tc.toolInput));
         if (!change) continue;
         const attempted: ChangeRef = { rawPath: change.filePath, workspaces: wsOfCall(tc.jobId) };
         attemptedTargets.push(attempted);
         // A refused call wrote nothing — it must not appear as a change.
-        if (isRefusedToolCall(tc.toolOutput)) continue;
+        if (isRefusedToolCall(tc.outcome)) continue;
         const ref: ChangeRef = { rawPath: change.filePath, workspaces: wsOfCall(tc.jobId) };
         // Non rattachable, hors détail — comme dans la liste.
         if (!isInsideWorkspace(ref, detailWorkspaces)) continue;
@@ -14991,8 +15495,9 @@ export async function getCodingProcessDetailAction(
             toolName: tc.toolName,
             // Rédigés comme dans le fil et dans Activity : l'écran d'un
             // processus Code montrait la sortie brute (Reviewer C, #158).
-            toolInput: redactPresented(tc.toolInput),
+            toolInput: redactSecrets(tc.toolInput),
             toolOutput: tc.toolOutput === null ? null : redactSecretsInText(tc.toolOutput),
+            outcome: tc.outcome,
             durationMs: tc.durationMs,
             createdAt: tc.createdAt ? tc.createdAt.toISOString() : null,
             delegatedFrom:

@@ -26,6 +26,9 @@ import {
 } from './delivery-guard';
 import type { ToolDefinition, ToolContext } from '../types';
 import { sentCard } from '../presenters';
+import type { SendResult } from '@nodal-agents/delivery';
+import { RECEIPT_KEY, sendReceipt, withSendAttempt, type SendReceipt } from './receipt';
+import { chatItemTarget } from '@nodal-agents/shared';
 
 // Telegram sendDocument size limit for bots. Uploads above this are rejected
 // server-side; we enforce the cap locally so the error is clear.
@@ -73,7 +76,7 @@ const SendFileInput = z.object({
 });
 
 type SendFileInput = z.infer<typeof SendFileInput>;
-type SendFileOutput = { ok: true; bytes: number; filename: string };
+type SendFileOutput = { ok: true; bytes: number; filename: string; receipt: SendReceipt };
 
 // ─── Factory ──────────────────────────────────────────────────────────────────
 
@@ -130,6 +133,7 @@ Fail conditions:
     inputSchema: SendFileInput,
 
     riskLevel: 'write',
+    keptFromModel: [RECEIPT_KEY],
     egress: 'channel',
     card: 'sent',
     present: ({ input, output }) =>
@@ -154,6 +158,9 @@ Fail conditions:
         'no_recipient',
         input.channel,
       );
+      // What this call acts on (#1184): THIS item in the chat it resolved. A
+      // later send of another file to the same chat does not make up for it.
+      ctx.reportTarget?.(chatItemTarget(channel, chatId, input.source));
 
       // 2. Bot token — the runner's resolved token wins (B3: a delegated worker
       // inheriting its entity's root agent's token); otherwise fall back to this
@@ -203,19 +210,28 @@ Fail conditions:
       // 5. Upload via the channel-neutral adapter (server-side, zero bytes in LLM context)
       const filename = input.filename ?? derivedName;
       const adapter = getAdapter(channel);
+      let res: SendResult;
       try {
-        await adapter.sendMedia({ botToken }, chatId, {
+        res = await adapter.sendMedia({ botToken }, chatId, {
           kind: 'document',
           bytes,
           filename,
           caption: input.caption,
         });
       } catch (err) {
-        throw await withoutConversationId(err, ctx, { chatId, channel });
+        throw withSendAttempt(await withoutConversationId(err, ctx, { chatId, channel }), {
+          chatId,
+          channel,
+        });
       }
 
       // 6. Return a tiny result — no file data
-      return { ok: true, bytes: bytes.byteLength, filename };
+      return {
+        ok: true,
+        bytes: bytes.byteLength,
+        filename,
+        receipt: sendReceipt({ chatId, channel }, res),
+      };
     },
   };
 }

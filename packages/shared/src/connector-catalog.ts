@@ -65,6 +65,19 @@ export type CatalogEntry = {
    * Only set where the reach is wider than the connector's name implies.
    */
   scopeDisclosure?: string;
+  /**
+   * The service this connector connects to, when another catalog entry
+   * connects to the SAME one by another way (an API key and an OAuth app for
+   * one Notion workspace). Two entries of one service lend the same tools, so
+   * on one agent they are accounts of that service: their tools appear once,
+   * with an `account` argument (`connectorService`, `lendConnectorTools`).
+   * Absent: the service is the entry's own slug.
+   *
+   * Enforced by packages/runner-adapters/src/tests/connector-service.test.ts:
+   * two entries share a service exactly when their adapters lend a tool name
+   * in common.
+   */
+  service?: string;
 };
 
 /**
@@ -77,6 +90,7 @@ export const CONNECTOR_CATALOG: CatalogEntry[] = [
     slug: 'notion',
     label: 'Notion',
     authType: 'api_key',
+    service: 'notion',
     category: 'Productivity',
     docsHint:
       'Create a Notion integration at notion.so/my-integrations and copy its internal secret.',
@@ -85,6 +99,7 @@ export const CONNECTOR_CATALOG: CatalogEntry[] = [
     slug: 'notion-oauth',
     label: 'Notion (OAuth)',
     authType: 'oauth2',
+    service: 'notion',
     credentialType: 'notion-oauth',
     category: 'Productivity',
     docsHint:
@@ -107,6 +122,8 @@ export const CONNECTOR_CATALOG: CatalogEntry[] = [
     credentialType: 'google-oauth',
     category: 'Productivity',
     docsHint: 'OAuth flow — uses your Google credential (create one under Credentials).',
+    scopeDisclosure:
+      'Grants access to your WHOLE mailbox: read, send, draft, label, archive and permanently delete any email. Google grants permanent deletion only with full mailbox access.',
   },
   {
     slug: 'google-calendar',
@@ -142,6 +159,7 @@ export const CONNECTOR_CATALOG: CatalogEntry[] = [
     slug: 'airtable-oauth',
     label: 'Airtable (OAuth)',
     authType: 'oauth2',
+    service: 'airtable',
     credentialType: 'airtable-oauth',
     category: 'Productivity',
     docsHint: 'OAuth flow for Airtable Public Integrations (recommended).',
@@ -153,11 +171,14 @@ export const CONNECTOR_CATALOG: CatalogEntry[] = [
     credentialType: 'microsoft-oauth',
     category: 'Productivity',
     docsHint: 'OAuth flow — uses your Microsoft credential (create one under Credentials).',
+    scopeDisclosure:
+      'Grants access to your WHOLE mailbox: read, change, move, delete and send any email.',
   },
   {
     slug: 'airtable',
     label: 'Airtable',
     authType: 'api_key',
+    service: 'airtable',
     category: 'Productivity',
     docsHint: 'Personal Access Token — airtable.com/create/tokens.',
   },

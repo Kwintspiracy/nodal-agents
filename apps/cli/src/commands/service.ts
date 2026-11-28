@@ -6,7 +6,7 @@
 // cette même commande avec `--json` : le CLI tient l'intégration au système,
 // le web ne la réécrit pas.
 
-import { mkdir, rm, stat, writeFile } from 'fs/promises';
+import { mkdir, readFile, rm, stat, writeFile } from 'fs/promises';
 import { homedir, userInfo } from 'os';
 import { execa } from 'execa';
 import chalk from 'chalk';
@@ -36,7 +36,17 @@ function effects(): AutostartEffects {
         return null;
       }
     },
-    writeFile: (path, text) => writeFile(path, text, 'utf8'),
+    // Les octets tels quels : le script Windows arrive déjà encodé pour son
+    // lecteur (path-handoff.ts) ; un texte s'écrit en UTF-8.
+    writeFile: (path, data) => writeFile(path, data),
+    readFile: async (path) => {
+      try {
+        return await readFile(path);
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
+        throw err;
+      }
+    },
     removeFile: (path) => rm(path, { force: true }),
     exists: async (path) => (await stat(path).catch(() => null)) !== null,
     mkdir: async (path) => {

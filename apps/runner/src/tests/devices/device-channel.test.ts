@@ -69,6 +69,7 @@ import { readSse, type SseEvent } from '../chat/_sse-reader.ts';
 import { drawDeviceToken } from '../../devices/device-secrets.ts';
 // @ts-expect-error — a plain .mjs build script, no declarations
 import { buildClient } from '../../../../../packages/device-client/scripts/build.mjs';
+import { seedResponder } from '../approvals/workspace-responder.ts';
 
 vi.setConfig({ testTimeout: 30_000 });
 
@@ -215,6 +216,9 @@ const testEnv: RunnerEnv = {
   NODALAI_APPROVAL_GRACE_MS: 0,
 };
 
+/** What the dashboard's server side sends with every runner call: the install's secret. */
+const DASHBOARD_PROOF = { Authorization: `Bearer ${testEnv.WORKER_SECRET}` };
+
 // ─── Two workspaces, three devices ───────────────────────────────────────────
 
 const OWNER_CHAT = '424242';
@@ -233,6 +237,8 @@ beforeAll(async () => {
   ({ db } = await spinUpTestDb());
   x = await seedMinimal(db);
   y = await seedMinimal(db);
+  await seedResponder(db, x.entityId);
+  await seedResponder(db, y.entityId);
   for (const s of [x, y]) {
     await db.update(entities).set({ rootAgentId: s.agentId }).where(eq(entities.id, s.entityId));
   }
@@ -518,7 +524,7 @@ describe('what a job launched from a device asks comes back to THAT device (#945
 
     const onA = await device(app, deviceA);
     const onB = await device(app, deviceB);
-    const dashboard = await listenTo(app, `/api/events?entityId=${x.entityId}`);
+    const dashboard = await listenTo(app, `/api/events?entityId=${x.entityId}`, DASHBOARD_PROOF);
 
     const suspended = await executeJob(job as JobId, deps, testEnv);
     expect(suspended.status).toBe('awaiting_approval');
@@ -577,7 +583,7 @@ describe('what a job launched from a device asks comes back to THAT device (#945
     const answered = await app.fetch(
       new Request('http://localhost/api/approve', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...DASHBOARD_PROOF },
         body: JSON.stringify({
           approvalRequestId: request!.id,
           decision: 'approve',
@@ -781,7 +787,7 @@ describe('after a resync, a device re-reads its pending cards (#945) @cap:approu
     const answered = await app.fetch(
       new Request('http://localhost/api/approve', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...DASHBOARD_PROOF },
         body: JSON.stringify({
           approvalRequestId: card.type === 'card' ? card.cardId : '',
           decision: choice!.decision,
@@ -2249,7 +2255,7 @@ describe('a device answers a card with what the person said (#1099) @cap:approuv
     const res = await app.fetch(
       new Request('http://localhost/api/approve', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...DASHBOARD_PROOF },
         body: JSON.stringify({
           approvalRequestId: made.id,
           decision: 'reject',
@@ -2265,7 +2271,7 @@ describe('a device answers a card with what the person said (#1099) @cap:approuv
     const ok = await app.fetch(
       new Request('http://localhost/api/approve', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...DASHBOARD_PROOF },
         body: JSON.stringify({
           approvalRequestId: made.id,
           decision: 'reject',

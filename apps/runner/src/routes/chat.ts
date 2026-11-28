@@ -31,8 +31,8 @@ export async function chatRoute(
   }
   const { entityId, agentId, conversationId, message } = parsed.data;
 
-  // Authorization (finding #4/#5): a trusted caller (web via WORKER_SECRET,
-  // local-trust) has already scoped entityId from the user's session — trust
+  // Authorization (finding #4/#5): a trusted caller (web via WORKER_SECRET)
+  // has already scoped entityId from the user's session — trust
   // the body. An untrusted session bearer-token caller may only run a turn
   // for its OWN entity; anything else is a cross-tenant attempt.
   if (!c.get('callerTrusted') && entityId !== c.get('callerEntityId')) {

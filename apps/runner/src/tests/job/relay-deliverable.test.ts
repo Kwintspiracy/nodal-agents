@@ -222,6 +222,7 @@ async function recordVerdict(jobId: string, output: unknown): Promise<void> {
     toolName: 'review_verdict',
     toolInput: {},
     toolOutput: JSON.stringify(output),
+    outcome: 'done',
     turn: 1,
   } as never);
 }

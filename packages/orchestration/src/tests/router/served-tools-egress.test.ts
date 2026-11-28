@@ -53,6 +53,11 @@ describe('egress — what a served tool reaches beyond Nodal @cap:assigner-outil
       code_task: 'process',
       declare_verification: 'process',
       generate_speech: 'model-provider',
+      // #1082: the page an agent wrote may load the public internet (fonts,
+      // images), through Nodal's proxy in public-only mode — never a local or
+      // private address. Its browser is not a `process`: nothing the agent
+      // writes runs as a command.
+      render_pdf: 'internet',
       run_command: 'process',
       run_skill_script: 'process',
       save_memory: 'model-provider',

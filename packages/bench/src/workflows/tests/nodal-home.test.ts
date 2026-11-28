@@ -35,10 +35,16 @@ describe('the bench under NODALAI_HOME', () => {
     mkdirSync(homeB, { recursive: true });
     writeFileSync(
       join(homeB, 'config.json'),
-      JSON.stringify({ ports: { postgres: 25532, web: 3100 }, postgresPassword: 'p w' }),
+      JSON.stringify({
+        ports: { postgres: 25532, web: 3100, runner: 3101 },
+        workerSecret: 'w'.repeat(64),
+        postgresPassword: 'p w-0123456789abcdef',
+      }),
     );
     const { stackDatabaseUrl, stackWebUrl } = await import('../stack');
-    expect(stackDatabaseUrl()).toBe('postgresql://nodalai:p%20w@localhost:25532/nodalai');
+    expect(stackDatabaseUrl()).toBe(
+      'postgresql://nodalai:p%20w-0123456789abcdef@localhost:25532/nodalai',
+    );
     expect(stackWebUrl()).toBe('http://localhost:3100');
   });
 

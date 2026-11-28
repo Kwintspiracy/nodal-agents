@@ -1,7 +1,7 @@
 // lib/worker-secret.ts — shared WORKER_SECRET validation helper
 //
 // Single implementation of the timing-safe bearer-token check used by
-// worker.ts, skills.ts, and the requireRunnerAuth middleware in server.ts.
+// worker.ts, skills.ts, and the admission (lib/admission.ts).
 // Using crypto.timingSafeEqual prevents secret-length leakage via timing.
 
 import { timingSafeEqual as cryptoTimingSafeEqual } from 'node:crypto';

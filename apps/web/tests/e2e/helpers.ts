@@ -9,6 +9,7 @@ import {
   dropRunCredentials,
   E2E_RUN_ID,
 } from './credential-cleanup.ts';
+import { installProofHeaders } from './install-secret.ts';
 
 export {
   E2E_CREDENTIAL_MARKER_OPEN,
@@ -28,7 +29,9 @@ export {
 export async function requireLiveStack(): Promise<void> {
   const baseURL = base.info().project.use.baseURL ?? 'http://localhost:3000';
   try {
+    // With the install's proof: the dashboard admits no caller without it.
     const res = await fetch(`${baseURL}/api/health`, {
+      headers: installProofHeaders(),
       signal: AbortSignal.timeout(2_000),
     });
     if (!res.ok) {

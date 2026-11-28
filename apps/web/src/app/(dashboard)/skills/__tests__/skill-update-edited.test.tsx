@@ -60,7 +60,12 @@ beforeEach(() => {
   resetMock.mockResolvedValue({ ok: true, data: undefined });
   updateMock.mockResolvedValue({
     ok: true,
-    data: { contentChanged: true, scriptsChanged: false, scriptsAuthorizationRevoked: 0 },
+    data: {
+      contentChanged: true,
+      scriptsChanged: false,
+      scriptsAuthorizationRevoked: 0,
+      leftoverDir: null,
+    },
   });
 });
 
@@ -215,6 +220,11 @@ describe('update of an edited skill, whatever its origin @cap:apprendre-une-skil
         scriptNames: [],
         upstreamContentHash: 'hash-of-v2',
         contentOverridden: true,
+        // The file plan of #1221: nothing but SKILL.md changes here.
+        scriptsToAuthorize: [],
+        files: [],
+        filesState: 'clean',
+        upstreamFilesHash: 'files-hash',
       },
     });
     const el = render(
@@ -231,7 +241,9 @@ describe('update of an edited skill, whatever its origin @cap:apprendre-une-skil
     expect(d!.textContent).not.toContain('your local edits are kept');
 
     await click(dialogButton('Update'));
-    expect(updateMock.mock.calls).toEqual([['comfy', 'hash-of-v2']]);
+    expect(updateMock.mock.calls).toEqual([
+      ['comfy', 'hash-of-v2', { expectedFilesHash: 'files-hash', conflictChoices: {} }],
+    ]);
     expect(resetMock).not.toHaveBeenCalled();
   });
 
@@ -246,6 +258,11 @@ describe('update of an edited skill, whatever its origin @cap:apprendre-une-skil
         scriptNames: [],
         upstreamContentHash: 'hash-of-v2',
         contentOverridden: false,
+        // The file plan of #1221: nothing but SKILL.md changes here.
+        scriptsToAuthorize: [],
+        files: [],
+        filesState: 'clean',
+        upstreamFilesHash: 'files-hash',
       },
     });
     const untouched = { ...editedCommunity, content: 'Upstream v1', contentOverridden: false };
@@ -259,7 +276,9 @@ describe('update of an edited skill, whatever its origin @cap:apprendre-une-skil
     expect(d!.textContent).not.toContain(EDITED_SKILL_UPDATE_MESSAGE);
     expect(d!.querySelector('[data-testid="edited-skill-text"]')).toBeNull();
     await click(dialogButton('Install this version'));
-    expect(updateMock.mock.calls).toEqual([['comfy', 'hash-of-v2']]);
+    expect(updateMock.mock.calls).toEqual([
+      ['comfy', 'hash-of-v2', { expectedFilesHash: 'files-hash', conflictChoices: {} }],
+    ]);
   });
 
   it('the skill screen (edit form) shows the badge and the same Update for an edited system skill', async () => {

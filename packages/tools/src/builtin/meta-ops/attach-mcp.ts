@@ -11,6 +11,7 @@ import {
   linkMcpToAgent,
   listMcpServerSlugs,
 } from './link-helpers';
+import { outcomeOfOkFlag } from '../../outcome';
 
 const AttachMcpInput = z.object({
   mcpSlug: z
@@ -36,6 +37,7 @@ export const attachMcpTool: ToolDefinition<typeof AttachMcpInput, AttachMcpOutpu
   loading: 'eager',
   card: 'text',
   defaultApproval: 'require_approval',
+  outcomeOf: outcomeOfOkFlag,
   execute: async (input, ctx) => {
     const resolved = await resolveMcpServerId(ctx.db, ctx.entityId, input.mcpSlug);
     if (!resolved.ok && resolved.reason === 'ambiguous')

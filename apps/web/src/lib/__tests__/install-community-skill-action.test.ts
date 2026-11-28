@@ -69,7 +69,7 @@ const SKILL_INSTALLEE = {
   source: 'anthropics/skills',
   installedScripts: [],
   fileCount: 4,
-  reinstalled: false,
+  status: 'installed' as const,
 };
 
 describe('installCommunitySkillAction', () => {

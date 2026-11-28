@@ -29,6 +29,9 @@ const BLANKET_SCOPES = new Set([
   'https://www.googleapis.com/auth/calendar',
   'https://mail.google.com/',
   'https://www.googleapis.com/auth/gmail.modify',
+  // Microsoft Graph: every message of the mailbox.
+  'https://graph.microsoft.com/Mail.ReadWrite',
+  'https://graph.microsoft.com/Mail.Read',
 ]);
 
 describe('google-calendar scopes', () => {
@@ -50,13 +53,15 @@ describe('google-calendar scopes', () => {
 });
 
 describe('gmail scopes', () => {
-  it('stays narrow — read + send, never modify or full mailbox', () => {
-    // Already correct before the audit; pinned so it cannot drift wider.
+  it('asks for what its operations need, which reaches the whole mailbox', () => {
+    // The pair read + send pinned here before was "narrow" by leaving
+    // thirteen of the twenty-five operations without the scope Google
+    // requires for them. What Gmail asks is now the union of its operations'
+    // declared rights (runner-adapters connector-scopes.test.ts holds the
+    // equality); this block pins the consequence the person must be told.
     const scopes = OAUTH_PROVIDERS['gmail']!.scopes;
-    expect(scopes).toContain('https://www.googleapis.com/auth/gmail.readonly');
-    expect(scopes).toContain('https://www.googleapis.com/auth/gmail.send');
-    expect(scopes).not.toContain('https://www.googleapis.com/auth/gmail.modify');
-    expect(scopes).not.toContain('https://mail.google.com/');
+    expect(scopes).toContain('https://www.googleapis.com/auth/gmail.modify');
+    expect(scopes).toContain('https://mail.google.com/');
   });
 });
 
@@ -79,13 +84,19 @@ describe('blanket scopes must be disclosed', () => {
     ).toBeTruthy();
   });
 
-  it('the connectors that still need a blanket scope are exactly the three known ones', () => {
+  it('the connectors that need a blanket scope are exactly the known ones', () => {
     // A new entry landing here is not automatically wrong — but it is a
     // decision someone has to make on purpose, not inherit by copy-paste.
     const withBlanket = Object.entries(OAUTH_PROVIDERS)
       .filter(([, p]) => p.scopes.some((s) => BLANKET_SCOPES.has(s)))
       .map(([slug]) => slug)
       .sort();
-    expect(withBlanket).toEqual(['google-docs', 'google-drive', 'google-sheets']);
+    expect(withBlanket).toEqual([
+      'gmail',
+      'google-docs',
+      'google-drive',
+      'google-sheets',
+      'outlook-mail',
+    ]);
   });
 });

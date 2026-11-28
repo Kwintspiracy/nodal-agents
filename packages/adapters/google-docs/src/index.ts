@@ -1,7 +1,7 @@
 // @nodal-agents/adapter-google-docs — public API
 // Single factory: createDocsTools(opts) → ConnectorToolDefinition[]
 
-import type { ConnectorToolDefinition } from '@nodal-agents/tools';
+import type { ConnectorIo, ConnectorToolDefinition } from '@nodal-agents/tools';
 import type { z } from 'zod';
 import { createDocsClient } from './client';
 
@@ -27,7 +27,7 @@ import { createFormatTextTool } from './tools/format';
 import { createApplyNamedStyleTool } from './tools/format';
 import { createBatchUpdateTool } from './tools/format';
 
-export type DocsAdapterOptions =
+export type DocsAdapterOptions = (
   | {
       /**
        * Static OAuth2 access token, captured once for the tools' lifetime.
@@ -44,7 +44,11 @@ export type DocsAdapterOptions =
        * from the DB instead of capturing one token for the tools' lifetime.
        */
       getAccessToken: () => Promise<string>;
-    };
+    }
+) & {
+  /** The connector contract's transport, which the provider's SDK uses (ConnectorIo). */
+  fetch?: ConnectorIo['fetch'];
+};
 
 /**
  * Create all 14 Google Docs tools using the provided OAuth access token.
@@ -64,7 +68,7 @@ export function createDocsTools(
 ): ConnectorToolDefinition<z.ZodTypeAny, unknown>[] {
   const getAccessToken =
     'getAccessToken' in opts ? opts.getAccessToken : async () => opts.accessToken;
-  const docs = createDocsClient(getAccessToken);
+  const docs = createDocsClient(getAccessToken, opts.fetch);
 
   return [
     // Read tools (2)

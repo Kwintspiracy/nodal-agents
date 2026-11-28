@@ -95,6 +95,7 @@ test.beforeAll(async () => {
       toolName: TOOL_NAME,
       toolInput: { query: suffix },
       toolOutput: 'three articles found',
+      outcome: 'done',
       durationMs: 320,
       turn: 1,
       createdAt: new Date(now + 1000),

@@ -3,10 +3,13 @@
 
 import { describe, it, expect } from 'vitest';
 import { getAdapter } from '../registry.ts';
-import { telegramAdapter } from '../channels/telegram-adapter.ts';
-import { discordAdapter } from '../channels/discord-adapter.ts';
-import { slackAdapter } from '../channels/slack-adapter.ts';
-import { whatsappAdapter } from '../channels/whatsapp-adapter.ts';
+// The adapters of the outbound seam: the registry resolves no raw adapter.
+import {
+  telegramAdapter,
+  discordAdapter,
+  slackAdapter,
+  whatsappAdapter,
+} from '../outbound-channel.ts';
 import { DeliveryError } from '../errors.ts';
 import type { ChannelKind } from '../channel-adapter.ts';
 

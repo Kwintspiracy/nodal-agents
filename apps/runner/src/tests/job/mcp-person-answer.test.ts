@@ -36,16 +36,17 @@ import { personAnswerRequestId } from '@nodal-agents/shared';
 import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';
 import { executeJob } from '../../job/execute.ts';
-import { answerOfRun } from '../../job/final-answer.ts';
+import { NO_CHAT_SENDS, answerOfRun } from '../../job/final-answer.ts';
 import { currentTurnMessages, saveCheckpoint } from '../../job/state.ts';
 import {
   reclaimJobsOfDeadRunners,
   RESTART_AFTER_SIDE_EFFECT_CODE,
-  RUNNER_LIVENESS_WINDOW_MS,
 } from '../../cron/reclaim-jobs.ts';
+import { JOB_LIVENESS } from '../../job/liveness.ts';
 import { resolveApprovalDecision } from '../../approvals/resolve.ts';
 import type { AnsweredBy } from '../../approvals/responders.ts';
 import type { JobId } from '@nodal-agents/orchestration';
+import { seedResponder } from '../approvals/workspace-responder.ts';
 
 const FIXTURE = fileURLToPath(
   new URL(
@@ -219,6 +220,7 @@ beforeAll(async () => {
   const result = await spinUpTestDb();
   db = result.db;
   seed = await seedMinimal(db);
+  await seedResponder(db, seed.entityId);
   await db
     .update(agents)
     .set({ role: 'agent', systemAgent: false })
@@ -764,8 +766,10 @@ describe('ce qui ne change pas @cap:approuver-une-action/moteur', () => {
     const turn = currentTurnMessages(row!.messages as unknown[], row!.task);
     expect(turn.some((m) => personAnswerRequestId(m) !== null)).toBe(true);
     const without = turn.filter((m) => personAnswerRequestId(m) === null);
-    expect(answerOfRun(turn, false)).toBe('The page was declined; I will change it as asked.');
-    expect(answerOfRun(turn, false)).toBe(answerOfRun(without, false));
+    expect(answerOfRun(turn, NO_CHAT_SENDS)).toBe(
+      'The page was declined; I will change it as asked.',
+    );
+    expect(answerOfRun(turn, NO_CHAT_SENDS)).toBe(answerOfRun(without, NO_CHAT_SENDS));
     expect(row!.result).toBe('The page was declined; I will change it as asked.');
   }, 60_000);
 });
@@ -957,6 +961,7 @@ describe('le relevé suit le message d’outils à toute écriture de la transcr
       riskLevel: 'write',
       toolInput: {},
       toolOutput: null,
+      outcome: null,
       executionStarted: true,
       turn: 2,
       toolCallId: 'tc-cut',
@@ -987,7 +992,9 @@ describe('le relevé suit le message d’outils à toute écriture de la transcr
       .update(agentJobs)
       .set({
         status: 'processing',
-        updatedAt: new Date(Date.now() - RUNNER_LIVENESS_WINDOW_MS - 60_000),
+        updatedAt: new Date(Date.now() - JOB_LIVENESS.silentInstanceMs - 60_000),
+        // Tenu par un processus parti (#1204).
+        claimedBy: null,
       })
       .where(eq(agentJobs.id, jobId));
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});

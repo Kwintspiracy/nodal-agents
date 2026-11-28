@@ -8,6 +8,9 @@
 // once approved and resumed it makes exactly ONE, and the job completes without
 // asking again.
 
+// A connector test fakes its provider: reaching the network fails this file
+// (packages/test-kit/src/no-network.ts).
+import '@nodal-agents/test-kit/setup-no-network';
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { MockLanguageModelV3 } from 'ai/test';
 import { generateText } from 'ai';

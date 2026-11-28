@@ -15,6 +15,7 @@
 import { z } from 'zod';
 import type { ToolDefinition } from '../types';
 import { checksCard } from '../presenters';
+import { outcomeOfOkFlag } from '../outcome';
 
 const findingSchema = z.object({
   file: z
@@ -129,6 +130,7 @@ export const reviewVerdictTool: ToolDefinition<typeof reviewVerdictSchema, Revie
         severity: f.severity,
       })),
     }),
+  outcomeOf: outcomeOfOkFlag,
   execute: (input) => {
     const counts = { blocker: 0, major: 0, minor: 0 };
     for (const f of input.findings) counts[f.severity] += 1;

@@ -5,9 +5,7 @@
 // out of the top-N over time.
 
 import { z } from 'zod';
-import { and, eq } from '@nodal-agents/db';
-import { agentMemory } from '@nodal-agents/db';
-import { findMemoriesByFactSubstring, MemoryError } from '@nodal-agents/memory';
+import { findMemoriesByFactSubstring, mutateMemory, MemoryError } from '@nodal-agents/memory';
 import type { ToolDefinition } from '../types';
 
 export const MarkMemoryHelpfulInputSchema = z.object({
@@ -61,26 +59,32 @@ export const markMemoryHelpfulTool: ToolDefinition<
         };
       }
       const target = matches[0]!;
-      // F-9 (audit #2): a user-authored (source='manual') or importance-locked
-      // memory is the user's own call, not the agent's to overturn — same
-      // authority chain the curator respects (agent → curator → user, user
-      // always wins). Refuse instead of silently re-weighting it.
-      if (target.source === 'manual' || target.importance_locked) {
+      // The owner's marks (a fact the owner wrote, a pinned fact), the version
+      // this tool read, and the previous state kept: all in mutateMemory, the
+      // one function every path changes a fact through (#1144). An agent never
+      // changes an owner-marked fact, even when the owner asks in the
+      // conversation: it tells the owner, who changes it from the Memory page.
+      const newImportance = Math.min(5, target.importance + 1);
+      const res =
+        newImportance === target.importance
+          ? null // Already at the cap: nothing to change, still a success so the LLM moves on.
+          : await mutateMemory(ctx.db, {
+              entityId: ctx.entityId,
+              memoryId: target.id,
+              readVersion: target.version,
+              actor: { kind: 'agent', agentId: ctx.agentId },
+              change: { kind: 'rescore', importance: newImportance },
+              reason: 'marked helpful',
+            });
+      if (res && !res.ok) {
         return {
           marked: false,
           reason:
-            'This memory was set by the user (manual or importance-locked) — the agent cannot adjust its importance.',
+            res.reason === 'owner_protected'
+              ? 'This memory was set by the user (written or pinned by them, importance-locked): only the user changes it, from the Memory page. Tell the user what should change; do not retry.'
+              : res.detail,
         };
       }
-      const newImportance = Math.min(5, target.importance + 1);
-      if (newImportance === target.importance) {
-        // Already at the cap — no-op write, still return success so the LLM moves on.
-        return { marked: true, id: target.id, newImportance };
-      }
-      await ctx.db
-        .update(agentMemory)
-        .set({ importance: newImportance, updatedAt: new Date() })
-        .where(and(eq(agentMemory.id, target.id), eq(agentMemory.entityId, ctx.entityId)));
       return { marked: true, id: target.id, newImportance };
     } catch (err) {
       if (err instanceof MemoryError && err.code === 'INVALID_INPUT') {

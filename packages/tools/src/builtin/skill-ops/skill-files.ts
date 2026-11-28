@@ -25,10 +25,29 @@ import {
   relative,
 } from 'node:path';
 import { z } from 'zod';
+import { holdsMaskPlaceholder } from '@nodal-agents/shared';
 import type { ToolContext, ToolDefinition } from '../../types';
 import { failureText, filesCard, readCard, writtenFile } from '../../presenters';
 import { windowsPathViolation, MAX_READ_FILE_BYTES } from '../file-ops/workspace';
-import { readLinesWindowed, ReadLinesCapExceededError } from '../file-ops/read-lines';
+import {
+  readLinesWindowed,
+  ReadLinesCapExceededError,
+  ReadLinesNotTextError,
+} from '../file-ops/read-lines';
+import {
+  decodeText,
+  encodeText,
+  encodingLabel,
+  establishEncoding,
+  FORM_SAMPLE_BYTES,
+  formOfHead,
+  NEW_FILE_FORM,
+  notTextReason,
+  readExistingFile,
+  readFileHead,
+} from '../file-ops/text-file';
+import { outcomeOfOkFlag } from '../../outcome';
+import { refusePlaceholderWrite } from '../file-ops/mask-guard';
 
 /** Max bytes returned by a single skill_file_read call (same cap as file_read). */
 const MAX_READ_BYTES = 1024 * 1024;
@@ -185,6 +204,8 @@ export type SkillFileReadOutput =
       start_line: number;
       end_line: number;
       truncated: boolean;
+      /** L'encodage du fichier, « +bom » quand il porte une BOM (la couche texte). */
+      encoding: string;
     }
   | { ok: false; reason: string };
 
@@ -215,6 +236,7 @@ export const skillFileReadTool: ToolDefinition<
           sections: output.total_lines,
         })
       : failureText(output.reason),
+  outcomeOf: outcomeOfOkFlag,
   execute: async (input, ctx) => {
     try {
       const realRoot = await resolveSkillRoot(ctx, input.skill);
@@ -254,12 +276,23 @@ export const skillFileReadTool: ToolDefinition<
         // string. See file-ops/read-lines.ts for the parity contract. maxBytes
         // guards against the file growing past the stat() check above between
         // here and stream completion (TOCTOU on a concurrently-written skill folder).
+        // L'encodage s'établit sur le début du fichier (la couche texte,
+        // `file-ops/text-file.ts`), comme pour file_read.
+        const head = await readFileHead(path, FORM_SAMPLE_BYTES);
+        const est = establishEncoding(head, false);
+        if (!est.ok) {
+          return {
+            ok: false,
+            reason: await notTextReason(input.path, head, est, 'Nothing was read.', info.size),
+          };
+        }
         const { windowLines, totalLines, sha256 } = await readLinesWindowed(
           path,
           startIdx,
           startIdx + limit,
           undefined,
           MAX_READ_FILE_BYTES,
+          { encoding: est.encoding, bomLength: est.bomLength },
         );
         // Les octets LUS (tout le flux), rapportés au seam (tool_call_reads).
         ctx.reportReadContent?.(path, sha256);
@@ -271,14 +304,22 @@ export const skillFileReadTool: ToolDefinition<
           start_line: startIdx + 1,
           end_line: endIdx,
           truncated: endIdx < totalLines,
+          encoding: encodingLabel(est.encoding, est.bomLength > 0),
         };
       }
 
       const lu = await readFile(path);
-      // Les octets LUS, rapportés au seam (tool_call_reads) ; puis décodés comme avant.
+      // La couche texte : le texte dans l'encodage du fichier, ou le refus.
+      const decoded = decodeText(lu);
+      if (!decoded.ok) {
+        return {
+          ok: false,
+          reason: await notTextReason(input.path, lu, decoded, 'Nothing was read.'),
+        };
+      }
+      // Les octets LUS, rapportés au seam (tool_call_reads).
       ctx.reportReadContent?.(path, createHash('sha256').update(lu).digest('hex'));
-      const raw = lu.toString('utf8');
-      const allLines = raw.split('\n');
+      const allLines = decoded.text.split('\n');
       const endIdx = Math.min(allLines.length, startIdx + limit);
       return {
         ok: true,
@@ -287,10 +328,17 @@ export const skillFileReadTool: ToolDefinition<
         start_line: startIdx + 1,
         end_line: endIdx,
         truncated: endIdx < allLines.length,
+        encoding: encodingLabel(decoded.form.encoding, decoded.form.bom),
       };
     } catch (err) {
       if (err instanceof SkillFileError) return { ok: false, reason: err.message };
       if (err instanceof ReadLinesCapExceededError) return { ok: false, reason: err.message };
+      if (err instanceof ReadLinesNotTextError) {
+        return {
+          ok: false,
+          reason: `"${input.path}" cannot be read as text: ${err.detail}. Nothing was read.`,
+        };
+      }
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
         return { ok: false, reason: `File not found: "${input.path}".` };
       }
@@ -337,6 +385,7 @@ export const skillFileListTool: ToolDefinition<
           { truncated: output.truncated },
         )
       : failureText(output.reason),
+  outcomeOf: outcomeOfOkFlag,
   execute: async (input, ctx) => {
     try {
       const realRoot = await resolveSkillRoot(ctx, input.skill);
@@ -437,7 +486,10 @@ export const SkillFileWriteInputSchema = z.object({
   content: z
     .string()
     .max(MAX_WRITE_BYTES)
-    .describe('The full file content to write (UTF-8). Overwrites the file if it already exists.'),
+    .describe(
+      'The full file content to write. Overwrites the file if it already exists, keeping its ' +
+        'encoding, byte-order mark and line endings; a new file is UTF-8.',
+    ),
 });
 
 export type SkillFileWriteInput = z.infer<typeof SkillFileWriteInputSchema>;
@@ -472,6 +524,7 @@ export const skillFileWriteTool: ToolDefinition<
         })
       : failureText(output.reason),
   defaultApproval: 'require_approval',
+  outcomeOf: outcomeOfOkFlag,
   execute: async (input, ctx) => {
     try {
       // GATE — authorization: owner opted THIS skill's writes in for THIS agent.
@@ -497,14 +550,51 @@ export const skillFileWriteTool: ToolDefinition<
         if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
       }
 
+      // A masked read is never written back (file-ops/mask-guard.ts).
+      if (holdsMaskPlaceholder(input.content)) {
+        const current = overwritten ? await readFile(target, 'utf8') : null;
+        const refused = await refusePlaceholderWrite(ctx, {
+          path: target,
+          shownPath: input.path,
+          before: current ?? '',
+          after: input.content,
+          current,
+        });
+        if (refused !== null) return { ok: false, reason: refused };
+      }
+
       // Parent dirs are created within the boundary (dirname of an in-boundary
       // path is itself in-boundary, so this cannot escape).
       await mkdir(dirname(target), { recursive: true });
-      await writeFile(target, input.content, 'utf8');
+      // La couche texte (`file-ops/text-file.ts`) : un fichier qui existe est
+      // réécrit dans SA forme (encodage, BOM, fins de ligne) ; un nouveau en
+      // UTF-8. Un fichier qui n'est pas du texte n'est pas remplacé.
+      let form = NEW_FILE_FORM;
+      const existing = overwritten ? await readExistingFile(target) : null;
+      if (existing !== null) {
+        const found = formOfHead(existing.head, existing.size <= existing.head.length);
+        if (!found.ok) {
+          return {
+            ok: false,
+            reason: await notTextReason(input.path, existing.head, found, 'Nothing was written.'),
+          };
+        }
+        form = found.form;
+      }
+      const encoded = encodeText(input.content, form);
+      if (!encoded.ok) {
+        return {
+          ok: false,
+          reason:
+            `"${input.path}" is written in ${form.encoding}, and ${encoded.detail}. ` +
+            'Nothing was written. Use characters it has.',
+        };
+      }
+      await writeFile(target, encoded.bytes);
       return {
         ok: true,
         path: input.path,
-        bytes_written: Buffer.byteLength(input.content, 'utf8'),
+        bytes_written: encoded.bytes.length,
         overwritten,
       };
     } catch (err) {

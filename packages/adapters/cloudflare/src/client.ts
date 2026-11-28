@@ -18,14 +18,43 @@ export function wrapCloudflareError(err: unknown): CloudflareApiError {
   return new CloudflareApiError('cloudflare_unknown', message);
 }
 
+/** The longest wait the SDK's own retry may make; a longer one goes back to the caller. */
+const MAX_SDK_RETRY_WAIT_S = 5;
+
+/**
+ * The SDK retries a pace refusal after the wait its `Retry-After` names,
+ * however long (it would sleep through the call's bound and come back as a
+ * time-out). A refusal that asks for more than a short wait is marked with
+ * the header the SDK itself obeys (`x-should-retry: false`), so it goes back
+ * to the caller as `rate_limited`, with the provider's time.
+ */
+export function boundedRetries(transport?: typeof fetch): typeof fetch {
+  const send = transport ?? ((...args: Parameters<typeof fetch>) => fetch(...args));
+  return (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+    const response = await send(input, init);
+    const after = response.headers.get('retry-after');
+    if (after === null || !/^\d+$/.test(after) || Number(after) <= MAX_SDK_RETRY_WAIT_S) {
+      return response;
+    }
+    const headers = new Headers(response.headers);
+    headers.set('x-should-retry', 'false');
+    return new Response(response.body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers,
+    });
+  }) as typeof fetch;
+}
+
 export class CloudflareAccountContext {
   readonly apiToken: string;
   readonly client: Cloudflare;
   private resolved: ResolvedAccount | null = null;
 
-  constructor(apiToken: string) {
+  constructor(apiToken: string, transport?: typeof fetch) {
     this.apiToken = apiToken;
-    this.client = new Cloudflare({ apiToken });
+    // `fetch`: the connector contract's transport, given by the registry.
+    this.client = new Cloudflare({ apiToken, fetch: boundedRetries(transport) });
   }
 
   /**

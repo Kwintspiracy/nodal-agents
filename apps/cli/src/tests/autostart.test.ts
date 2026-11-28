@@ -115,8 +115,10 @@ WantedBy=default.target
   });
 
   it('Windows : le script de la tâche, un chemin à espaces entre guillemets', () => {
-    expect(windowsLauncherScript([...WIN_DEV, 'up'], 'C:\\Users\\q\\My Nodal')).toBe(
-      '@echo off\r\nset "NODALAI_HOME=C:\\Users\\q\\My Nodal"\r\n' +
+    expect(
+      windowsLauncherScript([...WIN_DEV, 'up'], 'C:\\Users\\q\\My Nodal').toString('utf8'),
+    ).toBe(
+      '@echo off\r\nchcp 65001 >nul\r\nset "NODALAI_HOME=C:\\Users\\q\\My Nodal"\r\n' +
         '"C:\\Program Files\\nodejs\\node.exe" --import ' +
         'file:///D:/APPS/NodalAI/node_modules/tsx/dist/loader.mjs ' +
         'D:\\APPS\\NodalAI\\apps\\cli\\src\\index.ts up\r\n',
@@ -276,7 +278,11 @@ function fauxSysteme(
       return null;
     },
     writeFile: async (p, t) => {
-      files.set(p, t);
+      files.set(p, typeof t === 'string' ? t : Buffer.from(t).toString('utf8'));
+    },
+    readFile: async (p) => {
+      const t = files.get(p);
+      return t === undefined ? null : Buffer.from(t, 'utf8');
     },
     removeFile: async (p) => {
       files.delete(p);
@@ -308,7 +314,7 @@ describe('Windows : la valeur Run, sans droits admin @cap:installer-et-demarrer/
     // un script batch (vérifiée le 30/09 sur Windows 11, voir autostart.ts).
     const line =
       `%SystemRoot%\\System32\\conhost.exe --headless ` +
-      `%SystemRoot%\\System32\\cmd.exe /c "${script}"`;
+      `%SystemRoot%\\System32\\cmd.exe /d /c if 1==1 "${script}"`;
     expect(sys.calls).toContain(`reg add ${RUN} /v Nodal Agents /t REG_EXPAND_SZ /d ${line} /f`);
     expect(sys.registry.get(RUN)?.get('Nodal Agents')).toEqual({
       type: 'REG_EXPAND_SZ',
@@ -440,7 +446,7 @@ describe('une inscription par instance (NODALAI_HOME) @cap:installer-et-demarrer
     const run = sys.registry.get(RUN)!;
     expect([...run.keys()].sort()).toEqual(['Nodal Agents', `Nodal Agents ${idB}`]);
     const scriptB = join(HOME_B_WIN, 'autostart.cmd');
-    expect(run.get(`Nodal Agents ${idB}`)?.data).toContain(`/c "${scriptB}"`);
+    expect(run.get(`Nodal Agents ${idB}`)?.data).toContain(`/c if 1==1 "${scriptB}"`);
     expect(sys.files.get(scriptB)).toContain(`set "NODALAI_HOME=${HOME_B_WIN}"`);
     const scriptA = join('C:\\Users\\q\\.nodalai', 'autostart.cmd');
     expect(sys.files.get(scriptA)).toContain('set "NODALAI_HOME=C:\\Users\\q\\.nodalai"');

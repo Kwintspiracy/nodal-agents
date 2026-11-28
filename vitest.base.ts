@@ -33,6 +33,13 @@ import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
 import { RunReportReporter } from './packages/test-kit/src/vitest-run-report.ts';
 import { exitReportingForks } from './packages/test-kit/src/vitest-worker-exit.ts';
+import { hideTestWindows } from './packages/test-kit/src/hidden-windows.ts';
+
+// NO WINDOW ON THE SCREEN (packages/test-kit/src/hidden-windows.ts). Here for
+// the vitest main process, where the config, the global setups (the shared
+// Postgres) and the workers are started; `HIDDEN_WINDOWS_SETUP` below does the
+// same in each worker.
+hideTestWindows();
 
 export const TEST_TIMEOUT_MS = 60_000;
 
@@ -55,6 +62,11 @@ export const WORKSPACES_ROOT_SETUP = fileURLToPath(
   new URL('./packages/test-kit/src/setup-workspaces-root.ts', import.meta.url),
 );
 
+/** The setup file that keeps every process a test starts windowless, in each worker. */
+export const HIDDEN_WINDOWS_SETUP = fileURLToPath(
+  new URL('./packages/test-kit/src/setup-hidden-windows.ts', import.meta.url),
+);
+
 /** Where CI wants the report files; unset everywhere else. */
 export const REPORT_DIR_ENV = 'NODAL_VITEST_REPORT_DIR';
 
@@ -74,6 +86,8 @@ export const baseConfig = defineConfig({
     globals: true,
     environment: 'node',
     exclude: EXCLUDE,
+    // Merged with each package's own `setupFiles` (mergeConfig concatenates).
+    setupFiles: [HIDDEN_WINDOWS_SETUP],
     testTimeout: TEST_TIMEOUT_MS,
     hookTimeout: TEST_TIMEOUT_MS,
     pool: exitReportingForks(

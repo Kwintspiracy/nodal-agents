@@ -19,7 +19,16 @@
 // être dans le bloc review prévu à cet effet »).
 
 import 'server-only';
-import { and, asc, eq, inArray, agentJobs, toolCalls } from '@nodal-agents/db';
+import {
+  and,
+  asc,
+  eq,
+  inArray,
+  agentJobs,
+  toolCalls,
+  outboundColumn,
+  serverOnly,
+} from '@nodal-agents/db';
 import { parseReviewVerdictOutput, REVIEW_VERDICT_TOOL } from '@nodal-agents/orchestration';
 import { redactSecretsInText } from '@nodal-agents/shared';
 import { redactReviewVerdict } from './redact-presented.ts';
@@ -85,7 +94,7 @@ export async function readReviewVerdicts(
 ): Promise<JobReviewVerdicts> {
   if (jobIds.length === 0) return { views: [], rawByJob: new Map() };
   const rows = await db
-    .select({ jobId: toolCalls.jobId, toolOutput: toolCalls.toolOutput })
+    .select({ jobId: toolCalls.jobId, toolOutput: serverOnly(toolCalls.toolOutput) })
     .from(toolCalls)
     .where(
       and(
@@ -131,7 +140,7 @@ export async function readReviewVerdicts(
   // c'est un chemin de lecture de plus sur les mêmes mots (SECRET-001).
   const reviewerIds = [...new Set(views.map((v) => v.jobId))];
   const reports = await db
-    .select({ id: agentJobs.id, result: agentJobs.result })
+    .select({ id: agentJobs.id, result: outboundColumn(agentJobs.result) })
     .from(agentJobs)
     .where(and(eq(agentJobs.entityId, entityId), inArray(agentJobs.id, reviewerIds)));
   const reportById = new Map(

@@ -30,12 +30,13 @@
 //     jeté. Sans texte frais, il EST la réponse ; après un texte écrit avec des
 //     appels (donc avant d'en voir les résultats), il le SUIT ; après un texte
 //     écrit seul dans son pas, il n'ajoute rien (le texte a tout vu). Sauf
-//     quand ce sont les outils d'envoi qui portent les réponses du job
-//     (#649) : là, la réponse est ce qui est parti, et la relecture du fil la
-//     lit dans les envois (#1075), jamais dans une phrase de signal. Ce fait
-//     est celui de la LIVRAISON du job (`replyTo`, la ligne `delivery:`), que
-//     l'appelant passe : un job qui répond par son résultat et envoie une image
-//     en passant ne répond pas par un envoi.
+//     quand la réponse est PARTIE par un envoi au chat qui a demandé, dans le
+//     pas qui la donne (#1215) : là, la réponse est ce qui est parti, et la
+//     relecture du fil la lit dans les envois (#1075), jamais dans une phrase
+//     de signal. Ce fait est lu sur les appels rangés (`sendsToChat`,
+//     chat-sends.ts), par pas et par destination, jamais sur un drapeau : un
+//     envoi plus tôt, un envoi à un autre chat, une image en passant ne disent
+//     rien de la réponse.
 //  3. Un tour de réparation répare un livrable ; il ne remplace pas la réponse.
 //     La réponse d'un job passé par N réparations est celle d'avant la preuve,
 //     SUIVIE de ce que chaque réparation a dit — composée ici, sans un mot du
@@ -46,9 +47,18 @@
 // plateforme. `dashboard_publish` donne aussi les mots de son pas : le texte
 // qu'il pose comme résultat (« Set this job's RESULT »).
 //
-// Ce module ne lit QUE la transcription. Une transcription relue après une
-// reprise (approbation, délégation) dit la même chose qu'en mémoire : aucun
-// compteur à reconstruire.
+// Ce module ne lit QUE la transcription, et les envois que l'appelant a lus sur
+// les lignes `tool_calls` (par identifiant d'appel). Une transcription relue
+// après une reprise (approbation, délégation, redémarrage) dit la même chose
+// qu'en mémoire : aucun compteur à reconstruire.
+//
+// LA RÉPONSE À LIVRER (#1215). Le harnais livre la réponse d'un job venu d'un
+// chat, sauf ce qu'un envoi du job a déjà porté à ce chat. Une section dont le
+// pas de réponse (le pas qui porte ses derniers mots ou son dernier travail,
+// et ceux qui le suivent) tient un envoi CONFIRMÉ à ce chat est livrée ; un
+// envoi dont l'issue est INCONNUE (la plateforme n'a pas répondu à une requête
+// transmise) ne compte pas comme livré : son texte est à renvoyer, et
+// l'appelant le dit.
 
 import { DELIVERY_TOOL_NAMES } from '@nodal-agents/tools';
 import { isRepairBrief } from '../verification/repair-brief.ts';
@@ -62,9 +72,22 @@ const PUBLISH = 'dashboard_publish';
 const SAYING: ReadonlySet<string> = new Set([END_SIGNAL, PUBLISH, ...DELIVERY_TOOL_NAMES]);
 
 interface ToolCallPart {
+  id: string | null;
   name: string;
   input: unknown;
 }
+
+/** Ce qu'on sait d'un envoi de texte au chat qui a demandé (chat-sends.ts). */
+export type SendOutcome = 'confirmed' | 'unknown';
+
+/** Les envois de texte au chat qui a demandé, par identifiant d'appel. */
+export type ChatSends = ReadonlyMap<string, SendOutcome>;
+
+/** Aucun envoi au chat : un job sans chat, ou qui n'a rien envoyé. */
+export const NO_CHAT_SENDS: ChatSends = new Map();
+
+/** L'outil qui envoie un texte : le seul dont un envoi peut porter une réponse. */
+const TEXT_SEND = 'telegram_send_message';
 
 interface Step {
   text: string;
@@ -84,12 +107,17 @@ function stepOf(message: unknown): Step | null {
       type?: unknown;
       text?: unknown;
       toolName?: unknown;
+      toolCallId?: unknown;
       input?: unknown;
     } | null;
     if (!part) continue;
     if (part.type === 'text' && typeof part.text === 'string') texts.push(part.text);
     if (part.type === 'tool-call' && typeof part.toolName === 'string') {
-      calls.push({ name: part.toolName, input: part.input });
+      calls.push({
+        id: typeof part.toolCallId === 'string' ? part.toolCallId : null,
+        name: part.toolName,
+        input: part.input,
+      });
     }
   }
   return { text: texts.join('').trim(), calls };
@@ -119,9 +147,11 @@ function successReason(step: Step): string | null {
 
 /**
  * La réponse d'UNE section de la transcription : du début du tour (ou d'un
- * brief de réparation) jusqu'à la section suivante.
+ * brief de réparation) jusqu'à la section suivante. `reasonCounts` : un
+ * `reason` peut-il être la réponse ? Pas quand la réponse est partie par un
+ * envoi, ni pour les replis qui ne lisent pas les envois.
  */
-function answerOfSection(steps: readonly Step[], repliesGoBySend: boolean): string {
+function answerOfSection(steps: readonly Step[], reasonCounts: boolean): string {
   // Les derniers mots qui ne sont suivis d'AUCUN travail d'un pas ultérieur.
   let words = '';
   // Le pas qui les porte a-t-il aussi agi ? Ses mots précèdent alors les
@@ -148,21 +178,70 @@ function answerOfSection(steps: readonly Step[], repliesGoBySend: boolean): stri
     const r = successReason(step);
     if (r !== null) reasonAfter = r;
   }
-  const reason = repliesGoBySend ? '' : reasonAfter;
+  const reason = reasonCounts ? reasonAfter : '';
   if (words === '') return reason;
   if (wordsActed && reason !== '' && reason !== words) return [words, reason].join('\n\n');
   return words;
 }
 
 /**
- * La réponse que le job a donnée en finissant, relue dans `turnMessages` — la
- * transcription DU TOUR COURANT (la tranche est celle de l'appelant :
- * `currentTurnMessages` ou `lastTextOfRun`). Les sections séparées par les
- * briefs de réparation sont mises bout à bout, chacune réduite à sa réponse ;
- * une section qui n'a rien dit n'ajoute rien, et une réponse identique à la
- * précédente n'est pas répétée. `''` : le job n'a donné aucune réponse.
+ * Les envois au chat du PAS DE RÉPONSE d'une section : le pas qui porte ses
+ * derniers mots ou son dernier travail, et ceux qui le suivent (ils ne font que
+ * dire). Un envoi d'avant (un accusé de réception suivi de travail ou de mots)
+ * n'est pas la réponse.
  */
-export function answerOfRun(turnMessages: readonly unknown[], repliesGoBySend: boolean): string {
+function answerStepSends(steps: readonly Step[], sends: ChatSends): SendOutcome[] {
+  let from = 0;
+  steps.forEach((step, i) => {
+    const works = step.calls.some((c) => !SAYING.has(c.name));
+    if (works || publishedText(step) !== '' || step.text !== '') from = i;
+  });
+  const out: SendOutcome[] = [];
+  for (const step of steps.slice(from)) {
+    for (const call of step.calls) {
+      if (call.name !== TEXT_SEND || call.id === null) continue;
+      const outcome = sends.get(call.id);
+      if (outcome !== undefined) out.push(outcome);
+    }
+  }
+  return out;
+}
+
+/** Le texte des envois au chat dont l'issue est inconnue, dans l'ordre. */
+function unconfirmedTexts(steps: readonly Step[], sends: ChatSends): string[] {
+  const texts: string[] = [];
+  for (const step of steps) {
+    for (const call of step.calls) {
+      if (call.name !== TEXT_SEND || call.id === null || sends.get(call.id) !== 'unknown') continue;
+      const text = (call.input as { text?: unknown } | null)?.text;
+      if (typeof text === 'string' && text.trim() !== '') texts.push(text.trim());
+    }
+  }
+  return texts;
+}
+
+/** La réponse du run, et ce qu'il reste à en livrer au chat qui a demandé. */
+export interface RunAnswer {
+  /** La réponse que le job a donnée en finissant : ce que son résultat porte. */
+  readonly text: string;
+  /**
+   * `null` : aucun envoi du job n'a porté de réponse au chat, la réponse à
+   * livrer est le résultat du job. Sinon, ce qui n'en est pas parti : les
+   * réponses des sections qu'aucun envoi n'a portées, et le texte des envois
+   * dont l'issue est inconnue (`''` : tout est parti).
+   */
+  readonly unsent: string | null;
+  /** Un envoi du pas de réponse a une issue inconnue : son texte est à renvoyer. */
+  readonly resendsUnconfirmed: boolean;
+}
+
+function joinAnswers(answers: readonly string[]): string {
+  const out: string[] = [];
+  for (const a of answers) if (a !== '' && a !== out[out.length - 1]) out.push(a);
+  return out.join('\n\n');
+}
+
+function sectionsOf(turnMessages: readonly unknown[]): Step[][] {
   const sections: Step[][] = [[]];
   for (const m of turnMessages) {
     if (isRepairBrief(m)) {
@@ -173,23 +252,65 @@ export function answerOfRun(turnMessages: readonly unknown[], repliesGoBySend: b
     if (!step) continue;
     sections[sections.length - 1]!.push(step);
   }
+  return sections;
+}
+
+/**
+ * La réponse que le job a donnée en finissant, relue dans `turnMessages` (la
+ * transcription DU TOUR COURANT : la tranche est celle de l'appelant,
+ * `currentTurnMessages` ou `lastTextOfRun`), et ce qu'il en reste à livrer au
+ * chat qui a demandé, d'après `sends` (les envois à ce chat, lus sur les
+ * lignes : `sendsToChat`). Les sections séparées par les briefs de réparation
+ * sont mises bout à bout, chacune réduite à sa réponse ; une section qui n'a
+ * rien dit n'ajoute rien, et une réponse identique à la précédente n'est pas
+ * répétée.
+ */
+export function readRunAnswer(turnMessages: readonly unknown[], sends: ChatSends): RunAnswer {
   const answers: string[] = [];
-  for (const steps of sections) {
-    const answer = answerOfSection(steps, repliesGoBySend);
-    if (answer !== '' && answer !== answers[answers.length - 1]) answers.push(answer);
+  const unsent: string[] = [];
+  let anySent = false;
+  let resendsUnconfirmed = false;
+  for (const steps of sectionsOf(turnMessages)) {
+    const atAnswer = answerStepSends(steps, sends);
+    if (atAnswer.includes('confirmed')) {
+      anySent = true;
+      answers.push(answerOfSection(steps, false));
+      continue;
+    }
+    if (atAnswer.includes('unknown')) {
+      anySent = true;
+      resendsUnconfirmed = true;
+      answers.push(answerOfSection(steps, false));
+      unsent.push(...unconfirmedTexts(steps, sends));
+      continue;
+    }
+    const answer = answerOfSection(steps, true);
+    answers.push(answer);
+    unsent.push(answer);
   }
-  return answers.join('\n\n');
+  return {
+    text: joinAnswers(answers),
+    unsent: anySent ? joinAnswers(unsent) : null,
+    resendsUnconfirmed,
+  };
+}
+
+/**
+ * La réponse que le job a donnée en finissant (`readRunAnswer`). `''` : le job
+ * n'a donné aucune réponse.
+ */
+export function answerOfRun(turnMessages: readonly unknown[], sends: ChatSends): string {
+  return readRunAnswer(turnMessages, sends).text;
 }
 
 /**
  * La réponse ÉCRITE du run, sans jamais promouvoir un `reason` : la lecture des
- * portes de repli qui ne tiennent pas la livraison du job (le remplissage de
+ * portes de repli qui ne lisent pas les envois (le remplissage de
  * `completeJob`, le repli de `finalizeJobSuccess`). Un `reason` ne devient la
- * réponse que là où la livraison est connue — la porte d'`execute.ts`, qui le
- * passe déjà quand le résultat est vide. Ainsi un seul endroit décide si un
- * `reason` compte (revue Nodal de #1087, F3) : les replis ne lisent pas la
- * livraison dans la transcription, ils ne la lisent pas du tout.
+ * réponse que là où les envois sont lus (la porte d'`execute.ts`, qui le passe
+ * déjà quand le résultat est vide). Ainsi un seul endroit décide si un
+ * `reason` compte (revue Nodal de #1087, F3).
  */
 export function writtenAnswerOfRun(turnMessages: readonly unknown[]): string {
-  return answerOfRun(turnMessages, true);
+  return joinAnswers(sectionsOf(turnMessages).map((steps) => answerOfSection(steps, false)));
 }

@@ -389,13 +389,10 @@ describe('POST /webhooks/:slug/:secret — notify (B2)', () => {
     expect(row!.triggerContext).toMatchObject({ type: 'webhook', notifyChannel: 'discord' });
   });
 
-  it('notify_channel=null (auto) never lands on whatsapp even when it is the only active channel', async () => {
-    // whatsapp has no outbound send tool (TOOL_ONLY_DELIVERY_CHANNELS,
-    // execute.ts) — auto-resolving to it here would force a tool-delivery
-    // requirement the agent can never satisfy. Proven by making whatsapp the
-    // ONLY active channel: if the exclusion were missing, resolveTransportChannel
-    // would pick it (CHANNEL_PRIORITY's last resort before the telegram
-    // default) and this job would carry a whatsapp chatId.
+  it('notify_channel=null (auto) lands on whatsapp when it is the only active channel (#1215)', async () => {
+    // whatsapp was excluded here because it had no send tool and a chat job
+    // could only be answered by one. The gate now sends the reply on every
+    // channel (job/answer-delivery.ts): whatsapp is a channel like the others.
     await db.insert(channelBindings).values({
       entityId: seed.entityId,
       agentId: seed.agentId,
@@ -410,10 +407,10 @@ describe('POST /webhooks/:slug/:secret — notify (B2)', () => {
     const { jobId } = (await res.json()) as { jobId: string };
 
     const [row] = await db.select().from(agentJobs).where(eq(agentJobs.id, jobId));
-    // Falls all the way through to the 'telegram' default (no owner
-    // conversation there either), never 'whatsapp'.
+    // The only active channel; no owner conversation there yet, so no chat:
+    // the job fires without one, and the log says why.
     expect((row!.triggerContext as { notifyChannel?: string | null })?.notifyChannel).toBe(
-      'telegram',
+      'whatsapp',
     );
     expect(row!.chatId).toBeNull();
   });

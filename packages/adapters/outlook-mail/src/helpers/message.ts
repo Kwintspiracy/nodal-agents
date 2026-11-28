@@ -6,10 +6,16 @@
 // buildRfc2822Message), there is no manual MIME assembly and no header-line
 // injection surface to guard against (CRLF in a JSON string field is just
 // data, never interpreted as a header line) — this module only turns the
-// adapter's comma-separated address strings into Graph's Recipient[] shape
-// and file specs into fileAttachment objects.
+// contract's parsed addresses into Graph's Recipient[] shape, a body of a
+// declared type into an ItemBody, and file specs into fileAttachment objects.
 
-import type { Recipient, Attachment, FileAttachment } from '@microsoft/microsoft-graph-types';
+import type {
+  Recipient,
+  Attachment,
+  FileAttachment,
+  ItemBody,
+} from '@microsoft/microsoft-graph-types';
+import type { MailAddress, MailBodyFormat } from '@nodal-agents/shared/mail-contract';
 import { OutlookAdapterError } from '../errors';
 
 export interface AttachmentSpec {
@@ -60,16 +66,18 @@ function inferMimeType(filename: string): string {
 }
 
 /**
- * Parse a comma-separated address string ("a@x.com, b@y.com") into Graph's
- * Recipient[] shape. Empty/whitespace-only input yields an empty array.
+ * Graph's Recipient[] for contract addresses (parsed by the contract's
+ * RFC 5322 address-list parser, display names kept).
  */
-export function parseRecipients(addresses: string | undefined): Recipient[] {
-  if (!addresses) return [];
-  return addresses
-    .split(',')
-    .map((a) => a.trim())
-    .filter((a) => a.length > 0)
-    .map((address) => ({ emailAddress: { address } }));
+export function toGraphRecipients(list: MailAddress[]): Recipient[] {
+  return list.map((a) => ({
+    emailAddress: a.name ? { name: a.name, address: a.address } : { address: a.address },
+  }));
+}
+
+/** Graph's ItemBody, of the DECLARED type: never guessed from the content (#1191). */
+export function graphBody(content: string, format: MailBodyFormat): ItemBody {
+  return { contentType: format, content };
 }
 
 /**
@@ -100,13 +108,4 @@ export function buildFileAttachments(specs: AttachmentSpec[] | undefined): Attac
       contentBytes: rawBytes.toString('base64'),
     };
   });
-}
-
-/**
- * Detect whether a body string looks like HTML (same heuristic as
- * adapter-gmail's buildRfc2822Message) so callers can set body.contentType
- * correctly without asking the caller to specify it explicitly.
- */
-export function detectBodyContentType(body: string): 'html' | 'text' {
-  return body.includes('<') && body.includes('>') && /<[a-zA-Z][^>]*>/.test(body) ? 'html' : 'text';
 }

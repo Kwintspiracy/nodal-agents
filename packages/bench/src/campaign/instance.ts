@@ -49,13 +49,15 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
 import { NodalConfigSchema, type NodalConfig } from '@nodal-agents/shared/nodal-config';
+import { createNodalConfigFile, readNodalConfigFile } from '@nodal-agents/shared/nodal-config-file';
+import { nodalConfigPath } from '@nodal-agents/shared/state-files';
 import {
   NODALAI_HOME_ENV,
   defaultNodalHome,
   nodalHomeEntry,
 } from '@nodal-agents/shared/nodal-home';
 import { readNodalInstances, unregisterNodalInstance } from '@nodal-agents/shared/nodal-instances';
-import { campaignHome, campaignsRoot } from './home';
+import { benchUserDir, campaignHome, campaignsRoot } from './home';
 import { isInside } from './keys';
 import type { CampaignKeys } from './keys';
 
@@ -181,7 +183,18 @@ export function campaignEnv(
   env[NODALAI_HOME_ENV] = home;
   env['NODALAI_NO_BROWSER'] = '1';
   env['NODALAI_WEB_HEALTH_MS'] = String(WEB_HEALTH_MS);
+  // Le moteur de rendu de pages (#1082) : UN pour toutes les campagnes, sous
+  // le dossier du banc. Sans lui, chaque campagne (un dossier de Nodal neuf)
+  // téléchargerait et dépaquetterait le sien au démarrage, ~400 Mo à chaque
+  // fois ; deux campagnes en même temps se partagent l'installation par le
+  // verrou de l'installateur.
+  env['NODALAI_RENDERER_DIR'] = benchRendererDir();
   return env;
+}
+
+/** Le moteur de rendu de pages que les campagnes partagent. */
+export function benchRendererDir(userHome: string = homedir()): string {
+  return join(benchUserDir(userHome), 'renderer');
 }
 
 export { pointProcessAt } from './home';
@@ -199,7 +212,7 @@ export function instancePaths(instance: CampaignInstance): {
 } {
   const env = { [NODALAI_HOME_ENV]: instance.home };
   return {
-    config: nodalHomeEntry('config.json', env),
+    config: nodalConfigPath(env),
     workspaces: nodalHomeEntry('workspaces', env),
     benchConfig: join(instance.home, 'bench.json'),
     marker: join(instance.home, 'campaign.json'),
@@ -266,18 +279,18 @@ export function createInstanceFiles(
   // Le marqueur d'abord : un banc tué juste après laisse une campagne que la
   // suivante sait effacer.
   writeFileSync(paths.marker, `${JSON.stringify(marker, null, 2)}\n`, 'utf8');
-  writeFileSync(paths.config, `${JSON.stringify(instanceConfig(instance), null, 2)}\n`, {
-    encoding: 'utf8',
-    mode: 0o600,
-  });
+  // Par l'écrivain du produit : création exclusive et atomique, 0600.
+  createNodalConfigFile(paths.config, instanceConfig(instance));
   writeFileSync(paths.benchConfig, `${JSON.stringify({ services: keys.services }, null, 2)}\n`);
   return marker;
 }
 
 /** Le secret du runner de l'instance (`config.json`), pour ses routes internes. */
 export function instanceWorkerSecret(instance: CampaignInstance): string {
-  return NodalConfigSchema.parse(JSON.parse(readFileSync(instancePaths(instance).config, 'utf8')))
-    .workerSecret;
+  const path = instancePaths(instance).config;
+  const config = readNodalConfigFile(path);
+  if (config === null) throw new Error(`campaign_config_missing: ${path} does not exist`);
+  return config.workerSecret;
 }
 
 // ─── Le CLI du produit ───────────────────────────────────────────────────────
@@ -476,11 +489,15 @@ const LAUNCHER_EXIT_MS = 60_000;
  * L'instance sert-elle ? Le runner répond 200 à `/api/health` (il sonde sa
  * base à chaque appel : 503 quand elle est morte), et le web et Postgres
  * répondent sur leurs ports. Rend ce qui manque, vide quand tout sert.
+ *
+ * Demandé avec le secret de l'instance : le runner n'admet aucun appelant
+ * sans lui, dans aucun mode.
  */
-export async function notServing(ports: InstancePorts): Promise<string[]> {
+export async function notServing(ports: InstancePorts, workerSecret: string): Promise<string[]> {
   const missing: string[] = [];
   try {
     const res = await fetch(`http://127.0.0.1:${ports.runner}/api/health`, {
+      headers: { authorization: `Bearer ${workerSecret}` },
       signal: AbortSignal.timeout(3_000),
     });
     if (res.status !== 200) missing.push(`runner /api/health HTTP ${res.status}`);
@@ -535,8 +552,9 @@ export async function startInstance(
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const timeoutMs = deps.upTimeoutMs ?? UP_TIMEOUT_MS;
   const deadline = Date.now() + timeoutMs;
+  const workerSecret = instanceWorkerSecret(instance);
   for (;;) {
-    const missing = await notServing(instance.ports);
+    const missing = await notServing(instance.ports, workerSecret);
     if (missing.length === 0) break;
     const gone = exited as CliRun | null;
     if (gone !== null) {

@@ -15,13 +15,14 @@ import { refreshCredentialAction } from '@/lib/credentials.ts';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
 import PrimaryButton from '@/components/ui/PrimaryButton.tsx';
 import RowActionButton from '@/components/ui/RowActionButton';
-import StatusPill from '@/components/ui/StatusPill.tsx';
+import ConnectionStatusPill from '@/components/ConnectionStatusPill.tsx';
 import TextInput from '@/components/ui/TextInput';
 import Select from '@/components/ui/Select';
 import FieldLabel from '@/components/ui/FieldLabel';
 import { ModalFooter } from '@/components/ui/Modal.tsx';
 import CredentialWizard, { type CredentialWizardType } from '../credentials/CredentialWizard.tsx';
 import { formatExpiry, isExpired } from '@/lib/format-time';
+import ReauthoriseButton from './ReauthoriseButton.tsx';
 
 /** One labelled row in the connector's metadata block — replaces the old
  *  unlabelled "gmail · oauth2" stack (UX-B7: raw values with no context). */
@@ -39,11 +40,8 @@ function MetaField({ label, value, mono }: { label: string; value: ReactNode; mo
 /** Credential types that do not support access-token refresh (Notion). */
 const OAUTH_NO_REFRESH_SLUGS: ReadonlySet<string> = new Set(['notion-oauth']);
 
-export type CompatibleCredential = {
-  id: string;
-  name: string;
-  accountName: string | null;
-};
+export type { CompatibleCredential } from '@/lib/connector-access-types.ts';
+import type { CompatibleCredential } from '@/lib/connector-access-types.ts';
 
 interface Props {
   instance: ConnectorRow;
@@ -85,7 +83,6 @@ export default function ConnectorForm({
 
   const isApiKey = instance.authType === 'api_key';
   const isOAuth = instance.authType === 'oauth2';
-  const isConnected = instance.active;
   const supportsRefresh = isOAuth && !OAUTH_NO_REFRESH_SLUGS.has(catalogEntry.credentialType ?? '');
   const credentialType = catalogEntry.credentialType as CredentialWizardType | undefined;
 
@@ -96,7 +93,19 @@ export default function ConnectorForm({
   const connectedScopes = instance.credentialScopes;
   const isTokenExpired = isExpired(connectedExpiresAt ?? null);
 
-  const status: 'connected' | 'inactive' = isConnected ? 'connected' : 'inactive';
+  // Same rows, same rule as a job's tool list (`instance.access`,
+  // `instance.connection`).
+  const missingAccess = instance.access?.kind === 'needs_access' ? instance.access : null;
+  // Reconnect repairs THIS connector: a credential that can be read is
+  // authorised again in place (every connector and agent on it works again);
+  // one that is gone or unreadable, or whose app credentials the provider
+  // refuses (the stored client secret would be sent again), is replaced by a
+  // new credential bound to this same row. Never a second connector.
+  const credentialReadable =
+    connectedCredentialId !== null &&
+    instance.connection.cause !== 'credential_removed' &&
+    instance.connection.cause !== 'undecryptable' &&
+    instance.connection.cause !== 'client_refused';
 
   function performDelete() {
     setConfirmOpen(false);
@@ -224,11 +233,7 @@ export default function ConnectorForm({
             </div>
           )}
         </div>
-        <StatusPill
-          variant={status === 'connected' ? 'done' : 'warn'}
-          label={status === 'connected' ? 'Connected' : 'Needs auth'}
-          className="shrink-0"
-        />
+        <ConnectionStatusPill connection={instance.connection} withReason className="shrink-0" />
       </div>
 
       {/* Labelled metadata — replaces the old unlabelled "gmail / oauth2 /
@@ -253,6 +258,15 @@ export default function ConnectorForm({
       <div className="flex flex-wrap items-center gap-2 pt-1">
         {isOAuth ? (
           <>
+            {missingAccess && connectedCredentialId && instance.credentialType && (
+              <ReauthoriseButton
+                label="Add access"
+                credentialType={instance.credentialType}
+                connector={instance.slug}
+                credentialId={connectedCredentialId}
+                returnTo={`/connectors?connected=${instance.slug}`}
+              />
+            )}
             {supportsRefresh && (
               <PrimaryButton
                 variant="neutral"
@@ -263,14 +277,24 @@ export default function ConnectorForm({
                 {isRefreshing ? 'Refreshing…' : 'Refresh now'}
               </PrimaryButton>
             )}
-            <PrimaryButton
-              variant="neutral"
-              size="sm"
-              onClick={() => setWizardOpen(true)}
-              disabled={isPending || isRefreshing}
-            >
-              Reconnect
-            </PrimaryButton>
+            {credentialReadable && connectedCredentialId && instance.credentialType ? (
+              <ReauthoriseButton
+                label="Reconnect"
+                credentialType={instance.credentialType}
+                connector={instance.slug}
+                credentialId={connectedCredentialId}
+                returnTo={`/connectors?connected=${instance.slug}`}
+              />
+            ) : (
+              <PrimaryButton
+                variant="neutral"
+                size="sm"
+                onClick={() => setWizardOpen(true)}
+                disabled={isPending || isRefreshing}
+              >
+                Reconnect
+              </PrimaryButton>
+            )}
             {compatibleCredentials.length > 0 && (
               <PrimaryButton
                 variant="neutral"
@@ -367,6 +391,14 @@ export default function ConnectorForm({
               ))}
             </div>
           )}
+          {missingAccess && (
+            <p className="text-xs text-warn">
+              {missingAccess.missingOperations.length} of{' '}
+              {missingAccess.missingOperations.length + missingAccess.grantedOperations.length}{' '}
+              operations are not available to agents until access is added. Missing:{' '}
+              <span className="font-mono">{missingAccess.missingScopes.join(', ')}</span>
+            </p>
+          )}
           {supportsRefresh && <p className="text-xs text-ink-3">Auto-refreshes when used</p>}
           {!supportsRefresh && connectedExpiresAt && (
             <p className={`text-xs ${isTokenExpired ? 'text-warn' : 'text-ink-3'}`}>
@@ -453,6 +485,7 @@ export default function ConnectorForm({
         <CredentialWizard
           initialType={credentialType}
           returnToConnectorSlug={catalogEntry.slug}
+          rebindConnectorId={instance.id}
           scopeDisclosure={catalogEntry.scopeDisclosure}
           onClose={() => setWizardOpen(false)}
         />

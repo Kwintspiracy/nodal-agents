@@ -73,7 +73,8 @@ vi.mock('@nodal-agents/memory', async () => {
     ...actual,
     listMemories: vi.fn(),
     deleteMemory: vi.fn(),
-    updateMemory: vi.fn(),
+    mutateMemory: vi.fn(),
+    latestMemoryVersions: vi.fn(async () => new Map()),
   };
 });
 
@@ -244,6 +245,7 @@ describe('listCodingProcessesAction', () => {
         toolName: 'cli:Edit',
         toolInput: { file_path: `${DEV_FOLDER}/src/auth.ts`, old_string: 'a', new_string: 'b' },
         toolOutput: 'ok',
+        outcome: 'done',
       },
       {
         entityId: _testEntityId,
@@ -251,6 +253,7 @@ describe('listCodingProcessesAction', () => {
         toolName: 'cli:Edit',
         toolInput: { file_path: `${DEV_FOLDER}/src/auth.ts`, old_string: 'b', new_string: 'c' },
         toolOutput: 'ok',
+        outcome: 'done',
       },
       {
         entityId: _testEntityId,
@@ -258,6 +261,7 @@ describe('listCodingProcessesAction', () => {
         toolName: 'cli:Write',
         toolInput: { file_path: `${DEV_FOLDER}/src/auth.test.ts`, content: 'test content' },
         toolOutput: 'ok',
+        outcome: 'done',
       },
     ]);
 
@@ -290,6 +294,8 @@ describe('listCodingProcessesAction', () => {
         toolInput: { file_path: `${DEV_FOLDER}/src/ghost.ts`, content: 'never written' },
         toolOutput:
           '<tool_use_error>Error: No such tool available: Write. Write is disabled for this session, in subagents as well as here.</tool_use_error>',
+        // The recorder writes the CLI's flag as the row's outcome (#1184).
+        outcome: 'failed',
       },
       {
         entityId: _testEntityId,
@@ -297,6 +303,7 @@ describe('listCodingProcessesAction', () => {
         toolName: 'cli:Read',
         toolInput: { file_path: `${DEV_FOLDER}/src/real.ts` },
         toolOutput: 'file contents',
+        outcome: 'done',
       },
     ]);
 
@@ -326,6 +333,7 @@ describe('listCodingProcessesAction', () => {
         toolName: 'cli:Write',
         toolInput: { file_path: `${DEV_FOLDER}/src/ghost.ts`, content: 'never written' },
         toolOutput: '<tool_use_error>Error: No such tool available: Write.</tool_use_error>',
+        outcome: 'failed',
       },
       {
         entityId: _testEntityId,
@@ -333,6 +341,7 @@ describe('listCodingProcessesAction', () => {
         toolName: 'cli:Write',
         toolInput: { file_path: `${DEV_FOLDER}/src/real.ts`, content: 'written for real' },
         toolOutput: 'File created successfully.',
+        outcome: 'done',
       },
     ]);
 
@@ -385,6 +394,7 @@ describe('listCodingProcessesAction', () => {
           content: '<!DOCTYPE html>v1',
         },
         toolOutput: 'ok',
+        outcome: 'done',
       },
       {
         entityId: _testEntityId,
@@ -392,6 +402,7 @@ describe('listCodingProcessesAction', () => {
         toolName: 'file_write',
         toolInput: { path: 'outputs/app/index.html', content: '<!DOCTYPE html>v2' },
         toolOutput: 'ok',
+        outcome: 'done',
       },
     ]);
 
@@ -438,6 +449,7 @@ describe('listCodingProcessesAction', () => {
         toolName: 'file_edit',
         toolInput: { path: `${DEV_FOLDER}/src/reviewed.ts`, old_string: 'a', new_string: 'b' },
         toolOutput: 'ok',
+        outcome: 'done',
       },
       {
         entityId: _testEntityId,
@@ -488,6 +500,7 @@ describe('listCodingProcessesAction', () => {
       toolName: 'cli:Write',
       toolInput: { file_path: `${DEV_FOLDER}/src/done.ts`, content: 'done' },
       toolOutput: 'ok',
+      outcome: 'done',
     });
 
     const { listCodingProcessesAction } = await import('../src/lib/actions.ts');
@@ -508,6 +521,7 @@ describe('listCodingProcessesAction', () => {
       toolName: 'code_task',
       toolInput: { provider: 'claude', mode: 'read', task: 'Explain this codebase' },
       toolOutput: JSON.stringify({ resultText: 'Here is an explanation…', isError: false }),
+      outcome: 'done',
     });
 
     const { listCodingProcessesAction } = await import('../src/lib/actions.ts');
@@ -531,6 +545,7 @@ describe('listCodingProcessesAction', () => {
       toolName: 'file_write',
       toolInput: { path: '/workspace/quarterly-report.pptx', content: 'binary-ish content' },
       toolOutput: 'ok',
+      outcome: 'done',
     });
 
     const { listCodingProcessesAction } = await import('../src/lib/actions.ts');
@@ -557,6 +572,7 @@ describe('listCodingProcessesAction', () => {
         new_string: 'const x = 2;',
       },
       toolOutput: 'ok',
+      outcome: 'done',
     });
 
     const { listCodingProcessesAction } = await import('../src/lib/actions.ts');
@@ -577,6 +593,7 @@ describe('listCodingProcessesAction', () => {
       toolName: 'file_write',
       toolInput: { path: 'deploy/Dockerfile', content: 'FROM node:22-slim' },
       toolOutput: 'ok',
+      outcome: 'done',
     });
 
     const { listCodingProcessesAction } = await import('../src/lib/actions.ts');
@@ -603,6 +620,7 @@ describe('listCodingProcessesAction', () => {
       toolName: 'cli:Read',
       toolInput: { file_path: `${DEV_FOLDER}/readme.md` },
       toolOutput: 'contents',
+      outcome: 'done',
     });
 
     const { listCodingProcessesAction } = await import('../src/lib/actions.ts');
@@ -629,6 +647,7 @@ describe('listCodingProcessesAction', () => {
       toolName: 'cli:Write',
       toolInput: { file_path: `${DEV_FOLDER}/x.ts`, content: 'x' },
       toolOutput: 'ok',
+      outcome: 'done',
     });
 
     const { listCodingProcessesAction } = await import('../src/lib/actions.ts');
@@ -667,6 +686,7 @@ describe('listCodingProcessesAction — v8, on range au lieu de deviner', () => 
         toolName: 'cli:Write',
         toolInput: { file_path: `${VAULT}/Notes/idees.md`, content: '# Idées' },
         toolOutput: 'ok',
+        outcome: 'done',
       },
       {
         entityId: _testEntityId,
@@ -678,6 +698,7 @@ describe('listCodingProcessesAction — v8, on range au lieu de deviner', () => 
           new_string: 'b',
         },
         toolOutput: 'ok',
+        outcome: 'done',
       },
     ]);
 
@@ -707,6 +728,7 @@ describe('listCodingProcessesAction — v8, on range au lieu de deviner', () => 
       toolName: 'file_write',
       toolInput: { path: `${projet}/bruit.md`, content: '# bruit' },
       toolOutput: '{"ok":true}',
+      outcome: 'done',
     });
 
     const avant = await listCodingProcessesAction();
@@ -747,6 +769,7 @@ describe('listCodingProcessesAction — v8, on range au lieu de deviner', () => 
       toolName: 'file_write',
       toolInput: { path: `${projet}/index.ts`, content: 'export {}' },
       toolOutput: '{"ok":true}',
+      outcome: 'done',
     });
 
     const avant = await listCodingProcessesAction();
@@ -788,6 +811,7 @@ describe('listCodingProcessesAction — v8, on range au lieu de deviner', () => 
       toolName: 'cli:Write',
       toolInput: { file_path: `${DEV_FOLDER}/monapp/README.md`, content: '# MonApp' },
       toolOutput: 'ok',
+      outcome: 'done',
     });
 
     const { listCodingProcessesAction } = await import('../src/lib/actions.ts');
@@ -813,6 +837,7 @@ describe('listCodingProcessesAction — v8, on range au lieu de deviner', () => 
       toolName: 'cli:Write',
       toolInput: { file_path: `${_tmpRoot}/nulle-part/export.py`, content: 'print(1)' },
       toolOutput: 'ok',
+      outcome: 'done',
     });
 
     const { listCodingProcessesAction } = await import('../src/lib/actions.ts');
@@ -841,6 +866,7 @@ describe('listCodingProcessesAction — v8, on range au lieu de deviner', () => 
       toolName: 'file_write',
       toolInput: { path: `${projet}/a.ts`, content: 'export {}' },
       toolOutput: '{"ok":true}',
+      outcome: 'done',
     });
 
     const { listCodingProcessesAction } = await import('../src/lib/actions.ts');
@@ -890,6 +916,7 @@ describe('listCodingProcessesAction — v8, on range au lieu de deviner', () => 
         toolName: 'cli:Write',
         toolInput: { file_path: `${DEV_FOLDER}/nouvelle-app/index.ts`, content: 'export {}' },
         toolOutput: '<tool_use_error>No such tool available: Write.</tool_use_error>',
+        outcome: 'failed',
       },
       {
         entityId: _testEntityId,
@@ -897,6 +924,7 @@ describe('listCodingProcessesAction — v8, on range au lieu de deviner', () => 
         toolName: 'cli:Write',
         toolInput: { file_path: `${DEV_FOLDER}/nouvelle-app/app.tsx`, content: 'export {}' },
         toolOutput: '<tool_use_error>No such tool available: Write.</tool_use_error>',
+        outcome: 'failed',
       },
     ]);
 
@@ -956,6 +984,7 @@ describe('listCodingProcessesAction — v8, on range au lieu de deviner', () => 
         toolName: 'file_write',
         toolInput: { path: `${VAULT}/${sujet}/note.md`, content: '# note' },
         toolOutput: '{"ok":true}',
+        outcome: 'done',
       });
     }
 
@@ -1011,6 +1040,7 @@ describe('listCodingProcessesAction — v8, on range au lieu de deviner', () => 
         ],
       },
       toolOutput: '{"ok":true}',
+      outcome: 'done',
     });
 
     const { listCodingProcessesAction, getCodingProcessDetailAction } =
@@ -1052,6 +1082,7 @@ describe('listCodingProcessesAction — v8, on range au lieu de deviner', () => 
       toolName: 'code_task',
       toolInput: { mode: 'write', task: 'range le coffre' },
       toolOutput: '{"ok":true}',
+      outcome: 'done',
     });
 
     const avant = await listCodingProcessesAction();
@@ -1096,6 +1127,7 @@ describe('listCodingProcessesAction — v8, on range au lieu de deviner', () => 
       toolName: 'code_task',
       toolInput: { mode: 'write', task: 'fais un truc' },
       toolOutput: '{"ok":true}',
+      outcome: 'done',
     });
 
     const res = await listCodingProcessesAction();
@@ -1172,6 +1204,7 @@ describe('listCodingProcessesAction — v8, on range au lieu de deviner', () => 
         toolName: 'cli:Write',
         toolInput: { file_path: `${DEV_FOLDER}/src/double.ts`, content: 'v1' },
         toolOutput: 'ok',
+        outcome: 'done',
       },
       {
         entityId: _testEntityId,
@@ -1179,6 +1212,7 @@ describe('listCodingProcessesAction — v8, on range au lieu de deviner', () => 
         toolName: 'file_edit',
         toolInput: { path: 'repo/src/double.ts', old_string: 'v1', new_string: 'v2' },
         toolOutput: '{"ok":true}',
+        outcome: 'done',
       },
     ]);
 
@@ -1213,6 +1247,7 @@ describe('listCodingProcessesAction — v8, on range au lieu de deviner', () => 
         toolName: 'file_write',
         toolInput: { path: `${DEV_FOLDER}/app/index.ts`, content: 'export {}' },
         toolOutput: '{"ok":true}',
+        outcome: 'done',
       },
       {
         entityId: _testEntityId,
@@ -1220,6 +1255,7 @@ describe('listCodingProcessesAction — v8, on range au lieu de deviner', () => 
         toolName: 'file_write',
         toolInput: { path: `${_tmpRoot}/dehors/note.md`, content: '# hors sujet' },
         toolOutput: '{"ok":true}',
+        outcome: 'done',
       },
     ]);
 
@@ -1251,6 +1287,7 @@ describe('listCodingProcessesAction — v8, on range au lieu de deviner', () => 
       toolName: 'file_write',
       toolInput: { path: 'src/feature.ts', content: 'export const x = 1;' },
       toolOutput: '{"ok":true}',
+      outcome: 'done',
     });
 
     const { listCodingProcessesAction } = await import('../src/lib/actions.ts');
@@ -1273,6 +1310,7 @@ describe('listCodingProcessesAction — v8, on range au lieu de deviner', () => 
       toolName: 'review_verdict',
       toolInput: { verdict: 'approve', summary: 'ok' },
       toolOutput: '{"ok":true}',
+      outcome: 'done',
     });
 
     const { listCodingProcessesAction } = await import('../src/lib/actions.ts');
@@ -1292,6 +1330,7 @@ describe('listCodingProcessesAction — v8, on range au lieu de deviner', () => 
       toolName: 'file_write',
       toolInput: { path: 'app/mock-data/users.json', content: '[{"id":1}]' },
       toolOutput: '{"ok":true}',
+      outcome: 'done',
     });
 
     const { listCodingProcessesAction } = await import('../src/lib/actions.ts');
@@ -1315,6 +1354,7 @@ describe('listCodingProcessesAction — v8, on range au lieu de deviner', () => 
         toolName: 'cli:Write',
         toolInput: { file_path: `${DEV_FOLDER}/README.md`, content: '# Doc' },
         toolOutput: 'ok',
+        outcome: 'done',
       },
       {
         entityId: _testEntityId,
@@ -1322,6 +1362,7 @@ describe('listCodingProcessesAction — v8, on range au lieu de deviner', () => 
         toolName: 'cli:Write',
         toolInput: { file_path: `${DEV_FOLDER}/src/feature.ts`, content: 'export {}' },
         toolOutput: 'ok',
+        outcome: 'done',
       },
     ]);
 
@@ -1354,6 +1395,7 @@ describe('listCodingProcessesAction — v8, on range au lieu de deviner', () => 
       toolName: 'review_verdict',
       toolInput: { verdict: 'approve', summary: 'ok' },
       toolOutput: '{"ok":true}',
+      outcome: 'done',
     });
 
     const { listCodingProcessesAction } = await import('../src/lib/actions.ts');
@@ -1386,6 +1428,7 @@ describe('listCodingProcessesAction — v8, on range au lieu de deviner', () => 
       toolName: 'review_verdict',
       toolInput: { verdict: 'approve' },
       toolOutput: '{"verdict":"approve","summary":"LGTM"}',
+      outcome: 'done',
     });
 
     // Une review classique — mêmes signaux, tâche sans référence de PR.
@@ -1405,6 +1448,7 @@ describe('listCodingProcessesAction — v8, on range au lieu de deviner', () => 
       toolName: 'review_verdict',
       toolInput: { verdict: 'request_changes' },
       toolOutput: '{"verdict":"request_changes","summary":"missing tests"}',
+      outcome: 'done',
     });
 
     const { listCodingProcessesAction } = await import('../src/lib/actions.ts');

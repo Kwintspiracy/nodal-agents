@@ -220,6 +220,12 @@ try {
   // lan/local-auth, which is the container preset, not the common path).
   config.bind = 'loopback';
   delete config.auth;
+  // The page renderer (#1082) is downloaded once at a real first start, AFTER
+  // the services are healthy. This gate boots, probes and stops: a 120 MB
+  // download there would be cut every time, on every leg. Turned off by the
+  // setting a person would use; `verify-install.mjs` above still proves the
+  // installer and the driver resolve and load from the pack.
+  config.pageRenderer = { autoInstall: false };
   writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
 
   // ── 6. THE GATE: boot it ───────────────────────────────────────────────────
@@ -268,7 +274,12 @@ try {
         );
       }
       try {
-        const res = await fetch(probe.url, { redirect: 'follow' });
+        // With the install's proof: both servers admit no caller without it,
+        // in every auth mode, the default one included.
+        const res = await fetch(probe.url, {
+          redirect: 'follow',
+          headers: { authorization: `Bearer ${config.workerSecret}` },
+        });
         lastStatus = `HTTP ${res.status}`;
         // A page must actually render, not merely respond: 0.8.0's dashboard
         // returned 500 on every route while health stayed green.

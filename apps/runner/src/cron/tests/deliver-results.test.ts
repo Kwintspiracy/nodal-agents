@@ -2,7 +2,7 @@
 // Acceptance criteria:
 //   - all tasks done → delivery called once, root job marked completed
 //   - second tick does NOT re-deliver (idempotency via completedAt guard)
-//   - mixed done/failed tasks → still triggers delivery
+//   - mixed done/failed tasks → finalized, and NOT as a success
 //   - tasks still in_progress → no delivery
 //   - compiled result includes all task titles + results
 //   - regression: inject_delegation.wrong_status — all tasks found, not just first
@@ -240,7 +240,7 @@ describe('deliverCompletedRoots', () => {
     expect(updated[0]?.completedAt).toBeNull();
   });
 
-  it('delivers when mix of done and blocked tasks (all terminal) — root stays completed, body tags the failure', async () => {
+  it('a mix of done and blocked tasks (all terminal) is finalized failed, counting what was done, and the body tags the failure @cap:organiser-equipe/moteur', async () => {
     const rootJob = await createRootJob();
     await db
       .update(agentJobs)
@@ -258,10 +258,10 @@ describe('deliverCompletedRoots', () => {
       .from(agentJobs)
       .where(eq(agentJobs.id, rootJob.id));
 
-    // At least one task succeeded — 'completed' is honest, and the body
-    // tags the failed section so the partial nature is not hidden.
-    expect(updated[0]?.status).toBe('completed');
-    expect(updated[0]?.error).toBeNull();
+    // One task of two did not deliver: that is not a success (FV1-07). The
+    // outcome counts what was done, and the body tags the failed section.
+    expect(updated[0]?.status).toBe('failed');
+    expect(updated[0]?.error).toBe('tasks_not_done (1 of 2 done)');
     expect(updated[0]?.result).toContain('Task A');
     expect(updated[0]?.result).toContain('Task B');
     expect(updated[0]?.result).toContain('[blocked]');
@@ -668,7 +668,7 @@ describe('deliverCompletedRoots', () => {
     });
   });
 
-  it('T12 root blocked ⇒ failed via failJob, résultat compilé, zéro ligne job_deliveries, marqueur levé', async () => {
+  it('T12 root blocked ⇒ failed via failJob, résultat compilé, UNE notice (ce résultat) sur le chat de la demande, marqueur levé', async () => {
     sendTelegramMessageMock.mockClear();
     await allowChat('t12-blocked');
     const rootJob = await createRootJob();
@@ -682,12 +682,19 @@ describe('deliverCompletedRoots', () => {
 
     const root = await rootRow(rootJob.id);
     expect(root.status).toBe('failed');
-    expect(root.error).toBe('all_tasks_failed (1)');
+    expect(root.error).toBe('tasks_not_done (0 of 1 done)');
     expect(root.completedAt).not.toBeNull();
     expect(root.finalizingAt).toBeNull();
     expect(root.result).toContain('ça a cassé');
-    expect(await deliveriesOf(rootJob.id)).toEqual([]);
-    expect(sendTelegramMessageMock).not.toHaveBeenCalled();
+    // #1180 : un root en échec prévient la personne, comme tout échec d'une
+    // tête — la notice est son résultat compilé, préparée par `failJob` dans
+    // la transaction de l'échec, puis envoyée sur le chat de la demande.
+    expect(await deliveriesOf(rootJob.id)).toEqual([
+      expect.objectContaining({ outcome: 'confirmed', payload: root.result, attempts: 1 }),
+    ]);
+    expect(sendTelegramMessageMock.mock.calls.map(([o]) => [o.chatId, o.text])).toEqual([
+      ['t12-blocked', root.result],
+    ]);
   });
 
   it('T12 root cancelled ⇒ cancelled + completedAt, marqueur levé', async () => {

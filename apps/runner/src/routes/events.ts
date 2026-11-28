@@ -35,8 +35,8 @@
 // l'ordre, ou un `resync`. Jamais rien en silence. `ready` et `resync` portent
 // un `id:` : le client a un point de reprise avant même le premier événement.
 //
-// La garde : `requireRunnerAuth` (server.ts), comme `/api/chat*`. Un appelant
-// de confiance (local-trust, WORKER_SECRET) a résolu l'espace lui-même ; un
+// La garde : l’admission (lib/admission.ts), comme `/api/chat*`. Un appelant
+// de confiance (WORKER_SECRET) a résolu l'espace lui-même ; un
 // porteur de session ne lit que le SIEN.
 //
 // Le flux d'un APPAREIL (#945, `GET /api/devices/:deviceId/events`,
@@ -45,6 +45,7 @@
 // inscrit (l'appareil) et la forme des événements (les gestes du protocole).
 
 import type { Context } from 'hono';
+import { outboundFields, outboundValue, type Outbound } from '@nodal-agents/shared';
 import { z } from 'zod';
 import { and, eq, conversations } from '@nodal-agents/db';
 import type { RunnerDeps } from '../deps.ts';
@@ -61,7 +62,7 @@ const EventsQuerySchema = z.object({
 export const EVENTS_PING_MS = 25_000;
 
 /** Un événement SSE avec son identifiant de reprise. */
-function sseWithId(id: string, event: string, data: unknown): string {
+function sseWithId(id: string, event: string, data: Outbound<unknown>): string {
   return `id: ${id}\n${sseEvent(event, data)}`;
 }
 
@@ -133,8 +134,8 @@ export function streamJobEvents(
       outs.forEach((out, i) =>
         write(
           i === outs.length - 1
-            ? sseWithId(e.id, out.event, out.data)
-            : sseEvent(out.event, out.data),
+            ? sseWithId(e.id, out.event, outboundValue(out.data))
+            : sseEvent(out.event, outboundValue(out.data)),
         ),
       );
     };
@@ -151,10 +152,16 @@ export function streamJobEvents(
     // `resync` à la place des deux.
     const { opening } = sub;
     if (opening.kind === 'resync') {
-      write(sseWithId(opening.headId, 'resync', { type: 'resync', reason: opening.reason }));
+      write(
+        sseWithId(
+          opening.headId,
+          'resync',
+          outboundValue({ type: 'resync', reason: opening.reason }),
+        ),
+      );
     } else {
       if (opening.kind === 'replay') for (const e of opening.events) send(e);
-      write(sseWithId(opening.headId, 'ready', {}));
+      write(sseWithId(opening.headId, 'ready', outboundFields({})));
     }
     return () => {
       sub.close();

@@ -54,6 +54,9 @@ describe('a runner booted without `up` @cap:installer-et-demarrer/moteur', () =>
       DATABASE_URL: 'postgresql://nodalai:x@127.0.0.1:1/nodalai',
       WHATSAPP_BRIDGE_ENABLED: 'false',
       CRON_TICKER_ENABLED: 'false',
+      // The install's secret: a runner admits no caller without one, and
+      // refuses to boot without it (the test below).
+      WORKER_SECRET: 'boot-test-secret-0123456789-0123456789',
     });
     let output = '';
     child = spawn(process.execPath, ['--import', 'tsx', 'src/server.ts'], {
@@ -76,5 +79,35 @@ describe('a runner booted without `up` @cap:installer-et-demarrer/moteur', () =>
     writeFileSync(join(homeB, 'secrets.key'), 'k');
     const denied = sandboxDeniedPaths([], { platform: process.platform, home: user, env: {} });
     expect(denied).toContain(join(homeB, 'secrets.key'));
+  }, 120_000);
+
+  it('refuses to boot without the install secret, says why, and touches nothing', async () => {
+    root = realpathSync.native(mkdtempSync(join(tmpdir(), 'nodal-boot-')));
+    const user = join(root, 'user');
+    const env: Record<string, string> = {};
+    for (const [k, v] of Object.entries(process.env)) {
+      if (v !== undefined && !k.startsWith('NODALAI_') && k !== 'WORKER_SECRET') env[k] = v;
+    }
+    Object.assign(env, {
+      USERPROFILE: user,
+      HOME: user,
+      NODALAI_HOME: join(root, 'nodal-c'),
+      DATABASE_URL: 'postgresql://nodalai:x@127.0.0.1:1/nodalai',
+      WHATSAPP_BRIDGE_ENABLED: 'false',
+      CRON_TICKER_ENABLED: 'false',
+    });
+    let output = '';
+    child = spawn(process.execPath, ['--import', 'tsx', 'src/server.ts'], {
+      cwd: RUNNER_DIR,
+      env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    child.stdout?.on('data', (d) => (output += String(d)));
+    child.stderr?.on('data', (d) => (output += String(d)));
+    const code = await new Promise<number | null>((resolve) => child!.on('exit', resolve));
+    expect(code, output.slice(-2000)).not.toBe(0);
+    expect(output).toContain('WORKER_SECRET is empty');
+    // Refused before the home is opened: no instance declared, no folder made.
+    expect(existsSync(join(root, 'nodal-c'))).toBe(false);
   }, 120_000);
 });

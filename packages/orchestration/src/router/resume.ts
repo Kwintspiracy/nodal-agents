@@ -1,7 +1,7 @@
 // router/resume.ts — inject child result into parent and resume
 // Called when a child job completes (by cron or worker completing a child job).
 
-import { eq, and } from '@nodal-agents/db';
+import { eq, and, sql } from '@nodal-agents/db';
 import { agentJobs } from '@nodal-agents/db';
 import type { JobFailureHint } from '@nodal-agents/shared';
 import { OrchestrationError } from '../errors';
@@ -684,6 +684,19 @@ export async function resumeDelegated(
 
   const toolUseId = pending.toolUseId;
 
+  // The parent must be waiting for THIS child (#1204, FT2-07). A row written
+  // before `subJobId` existed carries none and is accepted as before; any
+  // other mismatch would put this child's result in front of another
+  // delegation's tool call. The same condition guards the write below, so a
+  // parent that moved on to another delegation between this read and that
+  // write is refused too.
+  if (pending.subJobId !== undefined && pending.subJobId !== (childJobId as string)) {
+    throw new OrchestrationError(
+      'parent_waits_for_another_child',
+      `Parent job ${parentJobId} waits for child ${pending.subJobId}, not ${childJobId}`,
+    );
+  }
+
   // toolName is required by AI SDK v4 tool-result format. It was added to
   // pending_delegation by handleDelegation; legacy rows without it are
   // unrecoverable at this layer (we can't reconstruct the assign_<slug> tool
@@ -837,7 +850,23 @@ ${consignes}`,
     ? (parent.messages as unknown[])
     : (JSON.parse(String(parent.messages ?? '[]')) as unknown[]);
 
-  const updatedMessages = [...existingMessages, { role: 'tool', content: toolResultParts }];
+  // The child's record answers its call WHERE the call is answered. A
+  // delegation that a person had to approve first already has a block in the
+  // transcript (the approval marker, followed perhaps by more turns): the
+  // record replaces that block's output, and the rest of the transcript stays
+  // as it is. Otherwise the call has no answer yet, and its turn's results are
+  // appended together, as they always were.
+  const answered = replaceToolResultOutput(existingMessages, toolUseId, primaryOutput);
+  if (answered !== null && sideResults.length > 0) {
+    throw new OrchestrationError(
+      'missing_tool_use_id',
+      `Parent job ${parentJobId}: call ${toolUseId} is already answered in the transcript, yet side results were recorded with it`,
+    );
+  }
+  const updatedMessages = answered ?? [
+    ...existingMessages,
+    { role: 'tool', content: toolResultParts },
+  ];
 
   // 6. Update parent: inject messages, set status → pending, clear pending_delegation,
   // bump chain_count. Each resume from a delegation suspension counts as one
@@ -864,7 +893,13 @@ ${consignes}`,
       updatedAt: new Date(),
     })
     .where(
-      and(eq(agentJobs.id, parentJobId as string), eq(agentJobs.status, 'awaiting_delegation')),
+      and(
+        eq(agentJobs.id, parentJobId as string),
+        eq(agentJobs.status, 'awaiting_delegation'),
+        pending.subJobId !== undefined
+          ? sql`${agentJobs.pendingDelegation}->>'subJobId' = ${childJobId as string}`
+          : undefined,
+      ),
     )
     .returning();
 
@@ -894,6 +929,12 @@ ${consignes}`,
         chatId: parent.chatId,
       };
     }
+    if (current?.status === 'awaiting_delegation') {
+      throw new OrchestrationError(
+        'parent_waits_for_another_child',
+        `Parent job ${parentJobId} moved on to another delegation before child ${childJobId} could resume it`,
+      );
+    }
     throw new OrchestrationError('parent_not_found', `Failed to update parent job ${parentJobId}`);
   }
 
@@ -911,4 +952,33 @@ ${consignes}`,
     channel: updated.channel,
     chatId: updated.chatId,
   };
+}
+
+/**
+ * The transcript with the output of the block that answers `toolCallId`
+ * replaced by `output`, or null when no block answers that call yet.
+ */
+function replaceToolResultOutput(
+  messages: readonly unknown[],
+  toolCallId: string,
+  output: unknown,
+): unknown[] | null {
+  let found = false;
+  const next = messages.map((m) => {
+    const msg = m as { role?: string; content?: unknown };
+    if (msg.role !== 'tool' || !Array.isArray(msg.content)) return m;
+    if (!msg.content.some((p) => (p as { toolCallId?: string }).toolCallId === toolCallId)) {
+      return m;
+    }
+    found = true;
+    return {
+      ...msg,
+      content: msg.content.map((p) =>
+        (p as { toolCallId?: string }).toolCallId === toolCallId
+          ? { ...(p as Record<string, unknown>), output }
+          : p,
+      ),
+    };
+  });
+  return found ? next : null;
 }

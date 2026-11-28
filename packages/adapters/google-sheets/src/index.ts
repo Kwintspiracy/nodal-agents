@@ -1,7 +1,7 @@
 // @nodal-agents/adapter-google-sheets — public API
 // Single factory: createSheetsTools(opts) → ConnectorToolDefinition[]
 
-import type { ConnectorToolDefinition } from '@nodal-agents/tools';
+import type { ConnectorIo, ConnectorToolDefinition } from '@nodal-agents/tools';
 import type { z } from 'zod';
 import { createSheetsClient } from './client';
 
@@ -33,7 +33,7 @@ import { createSetBasicFilterTool } from './tools/filters';
 import { createClearBasicFilterTool } from './tools/filters';
 import { createSortRangeTool } from './tools/filters';
 
-export type SheetsAdapterOptions =
+export type SheetsAdapterOptions = (
   | {
       /**
        * Static OAuth2 access token, captured once for the tools' lifetime.
@@ -50,7 +50,11 @@ export type SheetsAdapterOptions =
        * from the DB instead of capturing one token for the tools' lifetime.
        */
       getAccessToken: () => Promise<string>;
-    };
+    }
+) & {
+  /** The connector contract's transport, which the provider's SDK uses (ConnectorIo). */
+  fetch?: ConnectorIo['fetch'];
+};
 
 /**
  * Create all 20 Google Sheets tools using the provided OAuth access token.
@@ -72,7 +76,7 @@ export function createSheetsTools(
 ): ConnectorToolDefinition<z.ZodTypeAny, unknown>[] {
   const getAccessToken =
     'getAccessToken' in opts ? opts.getAccessToken : async () => opts.accessToken;
-  const sheets = createSheetsClient(getAccessToken);
+  const sheets = createSheetsClient(getAccessToken, opts.fetch);
 
   return [
     // Read tools (5)

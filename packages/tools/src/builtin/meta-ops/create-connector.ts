@@ -20,6 +20,7 @@ import { connectors } from '@nodal-agents/db';
 import { CONNECTOR_CATALOG } from '@nodal-agents/shared';
 import type { ToolDefinition } from '../../types';
 import { resolveAgentId, linkConnectorToAgent } from './link-helpers';
+import { outcomeOfOkFlag } from '../../outcome';
 
 const CreateConnectorInput = z.object({
   slug: z
@@ -64,6 +65,7 @@ export const createConnectorTool: ToolDefinition<
   egress: 'none',
   card: 'text',
   defaultApproval: 'require_approval',
+  outcomeOf: outcomeOfOkFlag,
   execute: async (input, ctx) => {
     const provisioning = ctx.provisioning;
     if (!provisioning) {
@@ -129,8 +131,10 @@ export const createConnectorTool: ToolDefinition<
       if (!agentId) {
         suffix = ` (note: could not attach — no agent "${input.attachToAgentSlug}" found; attach it later with attach_connector).`;
       } else {
-        await linkConnectorToAgent(ctx.db, ctx.entityId, agentId, inserted.id);
-        suffix = ` Attached to agent "${input.attachToAgentSlug}" — its tools are now available to that agent.`;
+        const linked = await linkConnectorToAgent(ctx.db, ctx.entityId, agentId, inserted.id);
+        suffix = linked.ok
+          ? ` Attached to agent "${input.attachToAgentSlug}" — its tools are now available to that agent.`
+          : ` (note: NOT attached to agent "${input.attachToAgentSlug}": ${linked.error})`;
       }
     }
     return {

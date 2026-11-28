@@ -7,6 +7,8 @@
 // result), skipping binary/image fields so base64 never bloats the index. Pure,
 // bounded, never throws.
 
+import { isInboxMessage } from '@nodal-agents/shared';
+
 // Keep the searchable text bounded so the tsvector + GIN index stay small even for
 // a 50-turn job. Postgres tsvector tops out ~1MB; 60K chars is a safe, generous cap.
 const MAX_SEARCH_TEXT = 60_000;
@@ -113,4 +115,65 @@ export function flattenTranscript(messages: unknown, result?: string | null): st
   collectStrings(messages, out);
   if (typeof result === 'string' && result.trim()) out.push(result.trim());
   return toDbSafeString(out.join(' \n ').replace(/\s+/g, ' ').trim().slice(0, MAX_SEARCH_TEXT));
+}
+
+/**
+ * The text of a message, whatever its shape: a string, or the joined text parts.
+ * Here, with the other transcript readers, so that a reader of past answers
+ * (`thread-history.ts`) does not depend on the job's state machine.
+ */
+export function messageText(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  const parts: string[] = [];
+  for (const p of content) {
+    const part = p as { type?: unknown; text?: unknown } | null;
+    if (part && part.type === 'text' && typeof part.text === 'string') parts.push(part.text);
+  }
+  return parts.join('');
+}
+
+/**
+ * La tranche de la transcription qui appartient à CE tour : du message
+ * utilisateur qui porte la tâche du job jusqu'à la fin.
+ *
+ * Une transcription commence par l'historique rejoué du fil (thread-history.ts) :
+ * pour chaque tour passé, un message utilisateur, puis un message assistant
+ * SYNTHÉTIQUE qui porte la réponse d'alors — un texte assistant que rien ne
+ * distingue d'un texte écrit par l'agent à ce tour. Les lignes de grand livre
+ * (`[Delegated to X (…) — actions: …]`) ne sont plus dans ce message depuis
+ * #562 : elles suivent, dans un relevé `[système]` de rôle utilisateur. La
+ * frontière reste nécessaire pour la réponse rejouée elle-même.
+ *
+ * Issue #419 : un tour Telegram qui a répondu par `telegram_send_message` puis
+ * `return_result {status}` n'écrit aucun texte ; le « dernier texte assistant »
+ * balayé sur TOUTE la transcription était alors la dernière ligne de grand
+ * livre rejouée — la délégation du 15/09 devenait le résultat de chaque tour
+ * suivant, et l'historique du tour d'après la rejouait comme si l'agent
+ * l'avait envoyée sur Telegram.
+ *
+ * La frontière est la DERNIÈRE occurrence du message utilisateur égal à la
+ * tâche : l'historique la précède toujours, les relances système (`[système]`,
+ * les rappels de livrable) la suivent. Quand la tâche n'apparaît nulle part
+ * (une transcription qui n'a pas la forme d'un job), la tranche est la
+ * transcription entière : c'est l'ancien comportement, et il n'est pas caché —
+ * un job dont on ne retrouve pas la tâche est un cas que ce fichier ne sait
+ * pas mieux lire.
+ */
+export function findTaskBoundary(messages: readonly unknown[], task: string): number {
+  if (task.trim() === '') return -1;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i] as { role?: unknown; content?: unknown } | null;
+    // Un message remis pendant le run (#531) qui répète la tâche mot pour mot
+    // n'est pas le début du tour : il en fait partie. Sa marque est
+    // structurelle, jamais lue dans le texte.
+    if (isInboxMessage(m)) continue;
+    if (m && m.role === 'user' && messageText(m.content) === task) return i;
+  }
+  return -1;
+}
+
+export function currentTurnMessages<T>(messages: readonly T[], task: string): readonly T[] {
+  const i = findTaskBoundary(messages, task);
+  return i === -1 ? messages : messages.slice(i);
 }

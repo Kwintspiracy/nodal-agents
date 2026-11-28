@@ -30,7 +30,7 @@ import {
   approvalRequestAttachments,
 } from '@nodal-agents/db';
 import {
-  redactSecretsForAudit,
+  redactSecrets,
   renderExplanationText,
   readQuestionToolInput,
   quoteThirdPartyText,
@@ -569,11 +569,11 @@ export async function resolveDeviceOrigin(
  * able to break formatting or inject entities.
  */
 export function describeGatedAction(toolName: string, toolInput: unknown): string {
-  // NOUVEAU-1: mask secret-bearing fields before they reach the Telegram card.
-  // The default case below dumps the whole input as JSON — for create_connector
-  // / create_mcp / attach_mcp that would print the API key / stdio env values in
-  // clear. run_command's `command` is not a secret field, so it is untouched.
-  const input = redactSecretsForAudit(toolInput ?? {}) as Record<string, unknown>;
+  // NOUVEAU-1: mask secrets before they reach the card: secret field names
+  // (an API key, stdio env values) and credential shapes in every string (a
+  // token inside `command` or `args`). The cuts below come AFTER the mask, so
+  // no cut can leave the head of a value readable.
+  const input = redactSecrets(toolInput ?? {}) as Record<string, unknown>;
   const str = (v: unknown): string => (typeof v === 'string' ? v : JSON.stringify(v ?? null));
   switch (toolName) {
     case 'run_command':
@@ -587,6 +587,8 @@ export function describeGatedAction(toolName: string, toolInput: unknown): strin
       return `skill_file_write: ${str(input['skill'])} → ${str(input['path'])}`;
     case 'file_move':
       return `file_move: ${input['copy'] === true ? 'copy' : 'move'} ${str(input['source'])} → ${str(input['destination'])}`;
+    case 'render_pdf':
+      return `render_pdf: ${str(input['source'])} → ${str(input['output'])}`;
     default: {
       // Generic: tool name + a compact, truncated view of the input.
       const compact = str(input);

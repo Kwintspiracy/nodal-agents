@@ -116,52 +116,11 @@ export async function createMemory(
   return rowToMemory(row as MemoryRow);
 }
 
-// ─── Update ────────────────────────────────────────────────────────────────────
-
-export async function updateMemory(
-  db: AnyDrizzleDb,
-  id: string,
-  entityId: string,
-  updates: Partial<
-    Pick<
-      AgentMemory,
-      | 'fact'
-      | 'category'
-      | 'importance'
-      | 'importance_locked'
-      | 'skill_tags'
-      | 'archived'
-      | 'valid_to'
-    >
-  >,
-): Promise<AgentMemory> {
-  const payload: Record<string, unknown> = {
-    updatedAt: new Date(),
-  };
-
-  if (updates.fact !== undefined) payload['fact'] = updates.fact;
-  if (updates.category !== undefined) payload['category'] = updates.category;
-  if (updates.importance !== undefined) payload['importance'] = updates.importance;
-  if (updates.importance_locked !== undefined)
-    payload['importanceLocked'] = updates.importance_locked;
-  if (updates.skill_tags !== undefined) payload['skillTags'] = updates.skill_tags;
-  if (updates.archived !== undefined) payload['archived'] = updates.archived;
-  if (updates.valid_to !== undefined) {
-    payload['validTo'] = updates.valid_to ? new Date(updates.valid_to) : null;
-  }
-
-  const rows = await db
-    .update(agentMemory)
-    .set(payload)
-    .where(and(eq(agentMemory.id, id), eq(agentMemory.entityId, entityId)))
-    .returning();
-
-  const row = rows[0];
-  if (!row) {
-    throw new MemoryNotFoundError(id);
-  }
-  return rowToMemory(row as MemoryRow);
-}
+// ─── Changes ───────────────────────────────────────────────────────────────────
+//
+// A saved fact is changed by `mutateMemory` (mutate.ts) and nothing else: it
+// checks the version the caller read, honours the owner's marks, and keeps the
+// previous state. There is no unguarded update here on purpose.
 
 // ─── Delete ────────────────────────────────────────────────────────────────────
 
@@ -197,6 +156,7 @@ export function rowToMemory(row: MemoryRow): AgentMemory {
     fact_hash: row.factHash ?? null,
     archived: row.archived ?? false,
     importance_locked: row.importanceLocked ?? false,
+    version: row.version ?? 1,
     last_accessed_at: row.lastAccessedAt?.toISOString() ?? null,
     access_count: row.accessCount ?? 0,
     created_at: row.createdAt?.toISOString() ?? new Date().toISOString(),

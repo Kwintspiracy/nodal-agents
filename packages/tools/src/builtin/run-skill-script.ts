@@ -28,6 +28,7 @@ import { join } from 'node:path';
 import { z } from 'zod';
 import type { ToolDefinition, ToolContext } from '../types';
 import { terminalCard } from '../presenters';
+import { outcomeOfCommand } from '../outcome';
 import { resolveSkillRoot, resolveWithinSkill } from './skill-ops/skill-files';
 import { jobProcessScope, noWorkspaceSandbox, openProcessScope } from '@nodal-agents/sandbox';
 import { workspaceSandboxReader } from '@nodal-agents/db';
@@ -267,6 +268,8 @@ export const runSkillScriptTool: ToolDefinition<typeof runSkillScriptSchema, Run
         path: w.path,
         deliverableType: 'code_project' as const,
       })),
+    // The same reading as `run_command` (#1184): the exit status is data.
+    outcomeOf: outcomeOfCommand,
     execute: async (
       input: RunSkillScriptInput,
       ctx: ToolContext,

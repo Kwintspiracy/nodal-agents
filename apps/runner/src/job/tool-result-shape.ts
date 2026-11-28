@@ -1,14 +1,14 @@
-// job/tool-result-shape.ts — ce que le runner écrit comme résultat d'outil, et
-// la SEULE lecture de son issue.
+// job/tool-result-shape.ts — ce que le runner écrit comme résultat d'outil.
 //
-// La garde de la boucle qui retient un `return_result` à côté d'un outil en
-// échec (`isToolErrorBlock`, execute.ts) lit l'issue d'un appel ici, et nulle
-// part ailleurs : deux grammaires avaient divergé (revue Nodal de la PR #740,
-// passe 1), `{ error: 500 }` étant une erreur pour l'une et un résultat rendu
-// pour l'autre.
+// L'ISSUE d'un appel ne se lit plus ici (#1184) : elle est écrite une fois par
+// la porte, dans `tool_calls.outcome`, et lue par `readCallOutcome`
+// (@nodal-agents/shared). La forme d'un bloc de transcription ne dit plus si un
+// appel a marché ; deux grammaires de cette forme avaient divergé (revue Nodal
+// de la PR #740, passe 1), et une troisième rangeait en succès tout outil qui
+// RENDAIT son échec.
 //
-// Les marques écrites par le runner vivent ici aussi : la boucle les écrit et
-// les relit, et un texte recopié à deux endroits finit par diverger.
+// Les marques écrites par le runner vivent ici : la boucle les écrit et les
+// relit, et un texte recopié à deux endroits finit par diverger.
 
 import { fileURLToPath } from 'node:url';
 
@@ -67,44 +67,12 @@ export function toolResultOutputText(output: { type?: unknown; value?: unknown }
   return JSON.stringify(output.value ?? null);
 }
 
-export type ToolResultShape =
-  /** Ce que l'outil a rendu. */
-  | 'ok'
-  /** Un échec : un bloc `{ error }`, ou son texte coupé au budget (préfixe gardé). */
-  | 'error'
-  /** Un échec ambigu : l'envoi a peut-être eu lieu (`mayHaveDelivered`). */
-  | 'may_have_delivered'
-  | 'awaiting_approval'
-  | 'rejected'
-  | 'deferred'
-  | 'expired'
-  /** Retiré par la compaction : l'issue n'est plus dans la transcription. */
-  | 'elided';
-
 /**
- * L'issue d'un résultat d'outil, lue sur la forme que le runner écrit.
- *
- * Un `{ error }` trop long pour le budget arrive en TEXTE : `truncateForContext`
- * ne touche que ce qui suit le préfixe `{"error":`, qui reste donc un repère
- * sûr. Un `mayHaveDelivered` n'est pas un échec à corriger : le traiter comme
- * tel pousserait le modèle à renvoyer un message probablement parti.
+ * Was this result removed from the transcript by the compaction (Guard 1c)?
+ * A fact of the TRANSCRIPT, not of the call: what became of a call is its
+ * row's outcome (`tool_calls.outcome`, #1184), and nothing here reads it.
  */
-export function toolResultShape(output: unknown): ToolResultShape {
+export function isElidedToolResult(output: unknown): boolean {
   const out = output as { type?: unknown; value?: unknown } | null | undefined;
-  const value = out?.value;
-  if (out?.type === 'json') {
-    if (value === null || typeof value !== 'object') return 'ok';
-    const v = value as Record<string, unknown>;
-    if (v['mayHaveDelivered'] === true) return 'may_have_delivered';
-    return 'error' in v ? 'error' : 'ok';
-  }
-  if (out?.type === 'text' && typeof value === 'string') {
-    if (value.startsWith('{"error":')) return 'error';
-    if (value === EVICTED_TOOL_RESULT_MARKER) return 'elided';
-    if (value.startsWith(AWAITING_APPROVAL_MARK)) return 'awaiting_approval';
-    if (value.startsWith(REJECTED_MARK)) return 'rejected';
-    if (value.startsWith(DEFERRED_MARK)) return 'deferred';
-    if (value.startsWith(EXPIRED_MARK)) return 'expired';
-  }
-  return 'ok';
+  return out?.type === 'text' && out.value === EVICTED_TOOL_RESULT_MARKER;
 }

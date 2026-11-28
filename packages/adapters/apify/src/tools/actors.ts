@@ -188,6 +188,15 @@ export function makeApifyRunActorTool(
     description:
       'Start an Apify actor run and wait for it to finish (blocking, bounded — default 30 min, override with waitSecs). Returns the run ID, output dataset ID, and final status (which may still be RUNNING if the wait elapsed first). This tool consumes Apify platform credits — use apify_get_dataset_items to retrieve results after the run succeeds.',
     inputSchema: RunActorInput,
+    // What Apify says of the run when the wait ends (#1184): finished, failed,
+    // or still running on its side (the credits are spent, the result is not
+    // there yet, and a second call starts a second run).
+    outcomeOf: (output) =>
+      output.status === 'SUCCEEDED'
+        ? 'done'
+        : TERMINAL_RUN_STATUSES.has(output.status)
+          ? 'failed'
+          : 'unknown',
     async execute(input) {
       try {
         const run = await client.actor(input.actorId).call(input.input, {

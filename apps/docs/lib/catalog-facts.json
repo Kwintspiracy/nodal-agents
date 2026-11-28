@@ -86,8 +86,8 @@
     "custom-stdio-mcp"
   ],
   "models": 71,
-  "builtinTools": 75,
-  "alwaysOnTools": 21,
+  "builtinTools": 76,
+  "alwaysOnTools": 22,
   "gatedTools": 54,
   "channelTools": 7
 }

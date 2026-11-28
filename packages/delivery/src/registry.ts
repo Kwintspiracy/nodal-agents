@@ -7,11 +7,15 @@
 // rather than falling back to a default channel (invariant #4).
 
 import { DeliveryError } from './errors.ts';
-import { telegramAdapter } from './channels/telegram-adapter.ts';
-import { discordAdapter } from './channels/discord-adapter.ts';
-import { slackAdapter } from './channels/slack-adapter.ts';
-import { whatsappAdapter } from './channels/whatsapp-adapter.ts';
-import { deviceAdapter } from './channels/device-adapter.ts';
+// The adapters of the seam (outbound-channel.ts): every text they post is
+// masked. A raw adapter is never resolved.
+import {
+  telegramAdapter,
+  discordAdapter,
+  slackAdapter,
+  whatsappAdapter,
+  deviceAdapter,
+} from './outbound-channel.ts';
 import type { ChannelAdapter, ChannelKind, TextDelivery } from './channel-adapter.ts';
 
 // A Record, not a list: a ChannelKind without its adapter does not compile.

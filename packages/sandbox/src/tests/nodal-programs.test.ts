@@ -20,6 +20,16 @@ import { createSandbox } from '../status';
 import type { SandboxBackend } from '../types';
 
 const isWindows = process.platform === 'win32';
+
+/**
+ * L'environnement du processus, tel quel : un `ProgramRunner` lance AVEC
+ * l'environnement qu'on lui donne, jamais un autre (le lanceur de git de Nodal
+ * lui passe le sien, nettoyé). Le témoin ci-dessous lance git EN DIRECT, comme
+ * Nodal le faisait avant le lanceur.
+ */
+const processEnv = Object.fromEntries(
+  Object.entries(process.env).filter((e): e is [string, string] => e[1] !== undefined),
+);
 const fwd = (p: string): string => p.split('\\').join('/');
 
 /** Le git de la machine, par son chemin absolu. */
@@ -75,6 +85,7 @@ describe('hostPrograms — the host path, unchanged @cap:executer-une-commande/m
   it('TÉMOIN : sur l’hôte, git exécute le piège (le marqueur de l’hôte apparaît)', async () => {
     const r = await hostPrograms.execFile(gitPath(), ['status', '--porcelain'], {
       cwd: repo,
+      env: processEnv,
       writableRoots: [],
       readableRoots: [repo],
     });
@@ -85,12 +96,17 @@ describe('hostPrograms — the host path, unchanged @cap:executer-une-commande/m
   it('rejette comme execFile : code non nul dans `code`, borne de temps dans `killed`', async () => {
     const node = process.execPath;
     const fail = await hostPrograms
-      .execFile(node, ['-e', 'process.exit(3)'], { writableRoots: [], readableRoots: [] })
+      .execFile(node, ['-e', 'process.exit(3)'], {
+        env: processEnv,
+        writableRoots: [],
+        readableRoots: [],
+      })
       .catch((e: unknown) => e as { code?: unknown; killed?: boolean });
     expect(fail).toMatchObject({ code: 3 });
     const slow = await hostPrograms
       .execFile(node, ['-e', 'setTimeout(() => {}, 30000)'], {
         timeout: 300,
+        env: processEnv,
         writableRoots: [],
         readableRoots: [],
       })
@@ -114,7 +130,7 @@ describe.runIf(confined)(
         // travail, ce que MXC refuse en lecture seule (nodal-programs.ts).
         const r = await programs.execFile(gitPath(), ['status', '--porcelain'], {
           cwd: repo,
-          env: { ...process.env, GIT_TRACE: '2' },
+          env: { ...processEnv, GIT_TRACE: '2' },
           writableRoots: [repo],
           readableRoots: [],
         });
@@ -135,12 +151,17 @@ describe.runIf(confined)(
       try {
         const node = process.execPath;
         const fail = await programs
-          .execFile(node, ['-e', 'process.exit(3)'], { writableRoots: [], readableRoots: [] })
+          .execFile(node, ['-e', 'process.exit(3)'], {
+            env: processEnv,
+            writableRoots: [],
+            readableRoots: [],
+          })
           .catch((e: unknown) => e as { code?: unknown });
         expect(fail).toMatchObject({ code: 3 });
         const slow = await programs
           .execFile(node, ['-e', 'setTimeout(() => {}, 30000)'], {
             timeout: 500,
+            env: processEnv,
             writableRoots: [],
             readableRoots: [],
           })
@@ -179,6 +200,7 @@ describe('openNodalPrograms — the workspace switch @cap:executer-une-commande/
     try {
       expect(programs.confined).toBe(false);
       const r = await programs.execFile(process.execPath, ['-e', 'process.stdout.write("host")'], {
+        env: processEnv,
         writableRoots: [],
         readableRoots: [],
       });
@@ -197,7 +219,11 @@ describe('openNodalPrograms — the workspace switch @cap:executer-une-commande/
     try {
       expect(programs.confined).toBe(true);
       await expect(
-        programs.execFile(process.execPath, ['-e', '0'], { writableRoots: [], readableRoots: [] }),
+        programs.execFile(process.execPath, ['-e', '0'], {
+          env: processEnv,
+          writableRoots: [],
+          readableRoots: [],
+        }),
       ).rejects.toThrow('CONTAINER_OPENED');
     } finally {
       await programs.close();

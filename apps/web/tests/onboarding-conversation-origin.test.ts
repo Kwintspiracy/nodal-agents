@@ -61,7 +61,8 @@ vi.mock('@nodal-agents/memory', async () => {
     ...actual,
     listMemories: vi.fn(),
     deleteMemory: vi.fn(),
-    updateMemory: vi.fn(),
+    mutateMemory: vi.fn(),
+    latestMemoryVersions: vi.fn(async () => new Map()),
   };
 });
 
