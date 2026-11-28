@@ -14,7 +14,7 @@ export function databaseNewerRefusal(
   err: DatabaseNewerThanProgramError,
   programVersion: string,
 ): string {
-  const newest = new Date(Math.max(...err.unknown)).toISOString();
+  const newest = new Date(Math.max(...err.ahead)).toISOString();
   const who =
     err.openedBy === null
       ? 'a newer version of Nodal-Agents (one from before versions were recorded, so it is not named)'
@@ -28,9 +28,9 @@ export function databaseNewerRefusal(
       : '    npm install -g nodal-agents@latest';
   return [
     `This database was last migrated by ${who}.`,
-    `It holds ${err.unknown.length} migration${err.unknown.length === 1 ? '' : 's'} this program ` +
-      `(${programVersion}, newest migration ${err.programLastMigration ?? 'none'}) does not know, ` +
-      `the newest applied at ${newest}.`,
+    `It holds ${err.ahead.length} migration${err.ahead.length === 1 ? '' : 's'} later than any ` +
+      `this program (${programVersion}, newest migration ${err.programLastMigration ?? 'none'}) ` +
+      `knows, the newest applied at ${newest}.`,
     '',
     '  This program would run on a schema it does not know and fail query by query,',
     '  so it will not open the database. Nothing was changed.',
@@ -43,6 +43,21 @@ export function databaseNewerRefusal(
     '',
     '    nodal-agents rollback',
   ].join('\n');
+}
+
+/**
+ * History rows no journal entry claims, older than the newest one: what a
+ * development branch leaves once its migration is renumbered or dropped. Not
+ * "newer", not repaired, not rewritten: said, on one line, at each start.
+ */
+export function unclaimedHistoryNotice(unclaimed: readonly number[]): string {
+  const one = unclaimed.length === 1;
+  const dates = unclaimed.map((w) => new Date(w).toISOString()).join(', ');
+  return (
+    `${unclaimed.length} applied migration${one ? '' : 's'} in the database's history ` +
+    `${one ? 'is' : 'are'} in no journal of this program and older than its newest migration ` +
+    `(applied at ${dates}): ignored, as the migrator ignores ${one ? 'it' : 'them'}.`
+  );
 }
 
 /** The copy could not be made, so the schema did not move. */

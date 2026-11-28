@@ -102,7 +102,7 @@ import {
   type BackupSequence,
 } from './backup-archive.ts';
 import { migrationsFolderFor, readProgramJournal, type RunMigrationsOptions } from './migrate.ts';
-import { readOpenedBy, readSchemaState } from './schema-state.ts';
+import { readOpenedBy, readSchemaState, schemaStateOf } from './schema-state.ts';
 import { migrateDatabase, type MigrateDatabaseResult } from './safe-migrate.ts';
 import {
   completeSnapshot,
@@ -516,14 +516,18 @@ export async function createBackup(
       'this database was never migrated: it holds no Nodal-Agents schema to back up.',
     );
   }
-  if (state.unknown.length > 0) {
+  // Newer means a migration LATER than this program's newest one. A history
+  // row no journal claims that is older (a development branch's migration,
+  // renumbered or dropped since) is not newer: it is backed up with the rest
+  // of the history, as `up` starts on it (schema-state.ts).
+  if (state.ahead.length > 0) {
     const opened = await readOpenedBy(connectionString);
     const who =
       opened !== null && opened !== 'unreadable' ? `version ${opened.version}` : 'a newer version';
     throw new BackupError(
       'BACKUP_NEWER_THAN_PROGRAM',
-      `this database holds ${state.unknown.length} migration(s) this program (${opts.programVersion}) ` +
-        `does not know: it was migrated by ${who}. A backup made by this program could not be ` +
+      `this database holds ${state.ahead.length} migration(s) later than any this program (${opts.programVersion}) knows: ` +
+        `it was migrated by ${who}. A backup made by this program could not be ` +
         'restored by it. Back it up with the version that migrated it. Nothing was written.',
     );
   }
@@ -601,7 +605,10 @@ export async function createBackup(
           database: decodeURIComponent(new URL(connectionString).pathname.replace(/^\//, '')),
           schema: {
             history,
-            lastMigration: state.journal.find((e) => Number(e.when) === newest)?.tag ?? null,
+            lastMigration:
+              state.journal.find((e) => Number(e.when) === newest)?.tag ??
+              state.lastClaimed?.tag ??
+              null,
           },
           vector: await hasVector(tx),
           workspaces: opts.workspacesDir !== undefined,
@@ -903,15 +910,20 @@ export async function restoreBackup(
     manifest = first.manifest;
 
     // 1. A schema this program can rebuild.
+    // The same rule as a start (schema-state.ts): only a migration LATER than
+    // this program's newest one makes the archive newer. An older row no
+    // journal claims is restored with the rest of the history.
     const journal = readProgramJournal(opts);
-    const known = new Set(journal.map((e) => Number(e.when)));
-    const unknown = manifest.schema.history.filter((w) => !known.has(Number(w)));
-    if (unknown.length > 0) {
+    const ahead = schemaStateOf(
+      journal,
+      manifest.schema.history.map((w) => Number(w)),
+    ).ahead;
+    if (ahead.length > 0) {
       throw new BackupError(
         'BACKUP_NEWER_THAN_PROGRAM',
         `${opts.archive} was made by version ${manifest.madeBy}, its schema up to ` +
           `${manifest.schema.lastMigration ?? '(unknown)'}; this program (${opts.programVersion}) ` +
-          `knows migrations up to ${journal.at(-1)?.tag ?? '(none)'}, and ${unknown.length} of the ` +
+          `knows migrations up to ${journal.at(-1)?.tag ?? '(none)'}, and ${ahead.length} of the ` +
           `archive's are not among them. Install version ${manifest.madeBy} or newer to restore ` +
           'it. Nothing was changed.',
       );

@@ -837,6 +837,33 @@ describe('restore: refused before anything is replaced @cap:installer-et-demarre
     expect(readFileSync(target.keyPath, 'utf-8')).toBe(keyBefore);
   }, 300_000);
 
+  it('an install whose history holds a row no journal claims, older than the journal: backed up, restored, the row comes back', async () => {
+    // What a development branch leaves once its migration is renumbered or
+    // dropped: not newer than the program, so neither side refuses it.
+    const unclaimed = readProgramJournal().at(0)!.when + 1;
+    const source = newHome();
+    const url = await install(source);
+    await withSql(
+      url,
+      (sql) =>
+        sql`INSERT INTO drizzle.__drizzle_migrations (hash, created_at) VALUES ('from-another-branch', ${unclaimed})`,
+    );
+    const made = await createBackup(url, backupOptions(source));
+
+    const target = newHome();
+    const targetUrl = await install(target);
+    await restoreBackup(targetUrl, restoreOptions(target, made.path));
+    const history = await withSql(targetUrl, async (sql) =>
+      (
+        await sql<
+          { created_at: string }[]
+        >`SELECT created_at::text FROM drizzle.__drizzle_migrations`
+      ).map((r) => Number(r.created_at)),
+    );
+    expect(history).toContain(unclaimed);
+    expect(await probe(targetUrl)).toBe(`installed ${source.root}`);
+  }, 300_000);
+
   it('an archive with a wrong key, or with none: refused, the copy it filled dropped, the live database and key untouched', async () => {
     const source = newHome();
     const url = await install(source);
