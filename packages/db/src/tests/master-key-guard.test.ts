@@ -3,12 +3,14 @@
 // Uses pglite (spinUpTestDb) so no external DB is needed.
 
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
 import {
   encrypt,
+  masterKeyMatchesCheck,
+  readMasterKeyFile,
   _setMasterKeyForTests,
   _resetMasterKeyCacheForTests,
 } from '@nodal-agents/secrets';
@@ -22,8 +24,12 @@ import {
   channelBindings,
   agents,
   webhookTriggers,
+  appSettings,
 } from '../schema/index.ts';
-import { assertMasterKeyRestorable } from '../queries/master-key-guard.ts';
+import {
+  assertMasterKeyRestorable,
+  MASTER_KEY_CHECK_SETTING,
+} from '../queries/master-key-guard.ts';
 
 let db: TestDb;
 let userId: string;
@@ -225,5 +231,109 @@ describe('assertMasterKeyRestorable', () => {
     );
 
     await db.delete(webhookTriggers).where(eq(webhookTriggers.agentId, seed.agentId));
+  });
+});
+
+// ── The key check value (FA-07): a key file that is THERE but is not THE key ──
+
+describe('assertMasterKeyRestorable: the key check value @cap:installer-et-demarrer/moteur', () => {
+  const keyA = Buffer.alloc(32, 0xa1);
+  const keyB = Buffer.alloc(32, 0xb2);
+  let checkDb: TestDb;
+  let checkUser: string;
+  let dir: string;
+
+  beforeAll(async () => {
+    checkDb = (await spinUpTestDb()).db;
+    checkUser = (await seedMinimal(checkDb)).userId;
+  });
+
+  afterEach(() => {
+    if (dir) rmSync(dir, { recursive: true, force: true });
+  });
+
+  function keyFile(key: Buffer | null): string {
+    // A space and non-ASCII characters, as a real profile folder can have.
+    dir = mkdtempSync(join(tmpdir(), 'nodal clé '));
+    const path = join(dir, 'secrets.key');
+    if (key) writeFileSync(path, key.toString('base64'), 'utf-8');
+    return path;
+  }
+
+  async function storedCheck(): Promise<string> {
+    const [row] = await checkDb
+      .select({ value: appSettings.value })
+      .from(appSettings)
+      .where(eq(appSettings.key, MASTER_KEY_CHECK_SETTING));
+    return row?.value ?? '';
+  }
+
+  async function reset(): Promise<void> {
+    await checkDb.delete(appSettings).where(eq(appSettings.key, MASTER_KEY_CHECK_SETTING));
+    await checkDb.delete(credentials).where(eq(credentials.ownerUserId, checkUser));
+  }
+
+  it('a new install: the key file is created at start and the database gets its check value', async () => {
+    await reset();
+    const path = keyFile(null);
+    await assertMasterKeyRestorable(checkDb, { keyPath: path });
+    const created = readMasterKeyFile(path);
+    expect(created).not.toBeNull();
+    expect(masterKeyMatchesCheck(await storedCheck(), created!)).toBe(true);
+  });
+
+  it('a REPLACED key file is refused at start, with the file named, and nothing is rewritten', async () => {
+    await reset();
+    await checkDb.insert(credentials).values({
+      ownerUserId: checkUser,
+      name: 'cred-a',
+      type: 'google-oauth',
+      payload: encrypt('{"accessToken":"x"}', keyA),
+    });
+    await assertMasterKeyRestorable(checkDb, { keyPath: keyFile(keyA) });
+    const check = await storedCheck();
+    expect(masterKeyMatchesCheck(check, keyA)).toBe(true);
+
+    const replaced = keyFile(keyB);
+    await expect(assertMasterKeyRestorable(checkDb, { keyPath: replaced })).rejects.toThrow(
+      `The master key file ${replaced} is not the key this database was encrypted with`,
+    );
+    expect(await storedCheck()).toBe(check);
+  });
+
+  it('an install from before the check value: the right key is recognised by its secrets', async () => {
+    await reset();
+    await checkDb.insert(credentials).values({
+      ownerUserId: checkUser,
+      name: 'cred-old',
+      type: 'google-oauth',
+      payload: encrypt('{"accessToken":"y"}', keyA),
+    });
+    await assertMasterKeyRestorable(checkDb, { keyPath: keyFile(keyA) });
+    expect(masterKeyMatchesCheck(await storedCheck(), keyA)).toBe(true);
+  });
+
+  it('an install from before the check value, with another key: refused, no check written', async () => {
+    await reset();
+    await checkDb.insert(credentials).values({
+      ownerUserId: checkUser,
+      name: 'cred-old',
+      type: 'google-oauth',
+      payload: encrypt('{"accessToken":"y"}', keyA),
+    });
+    await expect(assertMasterKeyRestorable(checkDb, { keyPath: keyFile(keyB) })).rejects.toThrow(
+      /none of the secrets stored in the database opens with it/,
+    );
+    expect(await storedCheck()).toBe('');
+  });
+
+  it('a key file that exists but is malformed is refused as such, never as "missing"', async () => {
+    await reset();
+    const path = keyFile(null);
+    writeFileSync(path, 'not-a-key');
+    await expect(assertMasterKeyRestorable(checkDb, { keyPath: path })).rejects.toThrow(
+      /malformed/,
+    );
+    expect(readFileSync(path, 'utf-8')).toBe('not-a-key');
   });
 });

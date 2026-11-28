@@ -48,6 +48,12 @@
 
 import { join } from 'path';
 import { NODALAI_HOME_ENV, nodalInstanceId } from '@nodal-agents/shared/nodal-home';
+import {
+  batchScriptBytes,
+  batchScriptReadable,
+  checkPathsFor,
+  WINDOWS_RUN_LINE_READER,
+} from './path-handoff.ts';
 
 export const AUTOSTART_LABEL = 'ai.nodal.agents';
 /** Le nom de la valeur sous Run (celui que `reg query` affiche). */
@@ -135,18 +141,44 @@ export function autostartArgv(cliArgv: readonly string[] | null): string[] | { r
   return [...cliArgv, 'up'];
 }
 
+/**
+ * Un texte littéral dans une ligne de `.cmd` : `%` doublé, car cmd développe
+ * `%X%` dans un script, et `%` est permis dans un nom de dossier Windows (un
+ * dossier « 100% Nodal » perdait son `%`). Le `"` n'a pas à l'être : aucun nom
+ * de fichier Windows n'en contient.
+ */
+function cmdLiteral(text: string): string {
+  return text.replace(/%/g, '%%');
+}
+
 /** Un argument dans une ligne de `.cmd` Windows. */
 function cmdArg(arg: string): string {
-  return /^[\w@%+=:,./\\-]+$/.test(arg) ? arg : `"${arg.replace(/"/g, '""')}"`;
+  return /^[\w@+=:,./\\-]+$/.test(arg) ? arg : `"${cmdLiteral(arg)}"`;
 }
 
 /**
- * Le script `.cmd` que la valeur Run lance. `set "X=…"` : la forme de cmd qui
- * garde un chemin à espaces entier, guillemets exclus de la valeur.
+ * Le script `.cmd` que la valeur Run lance, en OCTETS : cmd.exe le lit dans la
+ * page de code de la console, pas en UTF-8, et un dossier hors ASCII y
+ * devenait un autre dossier (#1231). `batchScriptBytes` (path-handoff.ts) le
+ * fait commencer par le passage en UTF-8 et refuse ce qu'aucun encodage ne
+ * porte. `set "X=…"` : la forme de cmd qui garde un chemin à espaces entier,
+ * guillemets exclus de la valeur.
  */
-export function windowsLauncherScript(argv: readonly string[], home: string): string {
-  return `@echo off\r\nset "${NODALAI_HOME_ENV}=${home}"\r\n${argv.map(cmdArg).join(' ')}\r\n`;
+export function windowsLauncherScript(argv: readonly string[], home: string): Buffer {
+  return batchScriptBytes(
+    [`set "${NODALAI_HOME_ENV}=${cmdLiteral(home)}"`, argv.map(cmdArg).join(' ')],
+    [home, ...argv],
+  );
 }
+
+export const WINDOWS_ENTRY_CANNOT_START_REASON =
+  'The startup entry was registered by an earlier version in a form Windows cannot start ' +
+  'from this folder. Turn this on again to rewrite it.';
+export const WINDOWS_SCRIPT_MISSING_REASON =
+  'The startup entry points to a script that is not there. Turn this on again to rewrite it.';
+export const WINDOWS_SCRIPT_UNREADABLE_REASON =
+  'The startup script was written by an earlier version in an encoding Windows reads ' +
+  'differently for this folder, so it would not start. Turn this on again to rewrite it.';
 
 /**
  * La ligne écrite sous Run, en REG_EXPAND_SZ : Windows y développe
@@ -163,9 +195,51 @@ export function windowsLauncherScript(argv: readonly string[], home: string): st
  * `powershell -WindowStyle Hidden` en montre une le temps de se cacher, et
  * sous Windows Terminal elle reste ; `wscript` + `.vbs` dépend de VBScript,
  * que Microsoft retire de Windows.
+ *
+ * `/d /c if 1==1 "<script>"` et non `/c "<script>"` (#1231). Quand la
+ * commande de `/c` COMMENCE par un guillemet et qu'un caractère spécial est
+ * entre les guillemets, cmd retire le premier et le dernier (`cmd /?`) : un
+ * dossier « R&D » ou « a^b » coupait la ligne en deux (mesuré le 28/11/2026 :
+ * « 'C:\…\h' is not recognized »). Les remèdes habituels ne survivent pas à
+ * conhost, qui redécoupe sa ligne et remet ses propres guillemets : `""…""`
+ * y devient deux arguments, `\"…\"` y reste échappé (mesuré), et `call`
+ * double les `^`. `if 1==1` est une commande qui ne commence pas par un
+ * guillemet et exécute la suivante telle quelle : mesurée avec espace, `&`,
+ * `^`, `!`, `(`, `)`, `@`, `%`, `'`, `;`, `,`, `=`, accent, grec, chinois et
+ * emoji dans le dossier. `/d` : aucune commande AutoRun de l'utilisateur ne
+ * s'intercale.
+ *
+ * Le chemin passe par `checkPathsFor` : la valeur est développée par Windows
+ * (REG_EXPAND_SZ) puis par cmd, et aucun des deux n'a d'échappement pour
+ * `%NOM%`. Un dossier qui en contient un est refusé par son nom, il ne devient
+ * pas un autre dossier.
  */
 export function windowsRunCommand(script: string): string {
-  return `%SystemRoot%\\System32\\conhost.exe --headless %SystemRoot%\\System32\\cmd.exe /c "${script}"`;
+  checkPathsFor(WINDOWS_RUN_LINE_READER, [script]);
+  return (
+    `%SystemRoot%\\System32\\conhost.exe --headless ` +
+    `%SystemRoot%\\System32\\cmd.exe /d /c if 1==1 "${script}"`
+  );
+}
+
+/**
+ * La ligne lancée sous Run démarrera-t-elle `script` ? Oui pour celle que
+ * cette version écrit. Pour une autre, la règle de cmd : une commande `/c` qui
+ * commence par un guillemet perd ses guillemets dès qu'un caractère spécial
+ * est entre eux (mesuré pour `&`, `^` et `@` ; `<`, `>` et `|` n'existent pas
+ * dans un nom de dossier Windows).
+ */
+export function windowsRunLineStarts(line: string, script: string): boolean {
+  let current: string;
+  try {
+    current = windowsRunCommand(script);
+  } catch {
+    return false; // aucune ligne ne peut porter ce chemin (voir windowsRunCommand)
+  }
+  if (line === current) return true;
+  if (!line.includes(script)) return false;
+  const command = /\/c\s+(.*)$/i.exec(line)?.[1] ?? '';
+  return !(command.startsWith('"') && /[&^@]/.test(script));
 }
 
 function xmlEscape(s: string): string {
@@ -299,7 +373,9 @@ export type AutostartEffects = {
    */
   nodalDir: string;
   run: (cmd: string, args: readonly string[]) => Promise<CommandAnswer | null>;
-  writeFile: (path: string, text: string) => Promise<void>;
+  writeFile: (path: string, data: string | Uint8Array) => Promise<void>;
+  /** Le contenu d'un fichier, ou null quand il n'existe pas. */
+  readFile: (path: string) => Promise<Uint8Array | null>;
   removeFile: (path: string) => Promise<void>;
   exists: (path: string) => Promise<boolean>;
   mkdir: (path: string) => Promise<void>;
@@ -366,7 +442,22 @@ export async function readAutostartStatus(fx: AutostartEffects): Promise<Autosta
     if (run === null || approved === null) {
       return { state: 'unsupported', reason: 'reg.exe gave no answer on this machine.' };
     }
-    return readWindowsStatus(run, approved);
+    const status = readWindowsStatus(run, approved);
+    if (status.state !== 'at_login') return status;
+    // « Activé » veut dire que l'inscription PEUT démarrer (#1231) : une ligne
+    // Run que cmd couperait, un script absent, ou un script écrit dans un
+    // encodage que cmd.exe lit autrement pour ce dossier ne démarrent rien.
+    const scriptPath = windowsScriptPath(fx.nodalDir);
+    const line = /REG_(?:EXPAND_)?SZ {4}(.*?)\s*$/m.exec(run.stdout)?.[1] ?? '';
+    if (!windowsRunLineStarts(line, scriptPath)) {
+      return { state: 'off', reason: WINDOWS_ENTRY_CANNOT_START_REASON };
+    }
+    const script = await fx.readFile(scriptPath);
+    if (script === null) return { state: 'off', reason: WINDOWS_SCRIPT_MISSING_REASON };
+    if (!batchScriptReadable(script)) {
+      return { state: 'off', reason: WINDOWS_SCRIPT_UNREADABLE_REASON };
+    }
+    return status;
   }
   if (fx.platform === 'darwin') return readMacStatus(await fx.exists(macPlistPath(fx)));
   if (fx.platform === 'linux') {

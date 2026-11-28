@@ -107,6 +107,20 @@ function deleteByHandCommand(dir: string): string {
 }
 
 /**
+ * What `reset` says before it asks: the home goes whole, the backups kept in
+ * it included, and how to keep a copy first.
+ */
+export function resetWarning(home: string): string {
+  return [
+    `Everything in ${home} is deleted, the backups in ${join(home, 'backups')} included.`,
+    'To keep a copy, first run:',
+    '',
+    '  nodal-agents backup --to <a folder outside it>',
+    '',
+  ].join('\n');
+}
+
+/**
  * `down` and `disk` are parameters so that the decision on `down`'s result, and
  * the failure of the delete, can be tested on every platform.
  */
@@ -116,11 +130,14 @@ export async function runReset(
   disk: ResetDisk = realDisk,
 ): Promise<void> {
   if (!options.yes) {
+    // The backups kept in the home go with it: said before the question, with
+    // the way to keep a copy (`nodal-agents backup --to <a folder elsewhere>`).
+    console.log(chalk.yellow(resetWarning(CONFIG_DIR)));
     const { confirm } = await prompts({
       type: 'confirm',
       name: 'confirm',
       message: chalk.red(
-        `This will delete ALL Nodal-Agents data at ${CONFIG_DIR} (config, database, logs). Are you sure?`,
+        `This will delete ALL Nodal-Agents data at ${CONFIG_DIR} (config, master key, database, logs, backups). Are you sure?`,
       ),
       initial: false,
     });

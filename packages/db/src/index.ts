@@ -20,7 +20,7 @@ export {
   readConnectionStates,
   readConnectionState,
 } from './queries/connection-states.ts';
-export { assertMasterKeyRestorable } from './queries/master-key-guard.ts';
+export { assertMasterKeyRestorable, MASTER_KEY_CHECK_SETTING } from './queries/master-key-guard.ts';
 export type { AssertMasterKeyRestorableOptions } from './queries/master-key-guard.ts';
 export { designateChat, resolveScheduleNotifyChat } from './queries/designated-chat.ts';
 export type { DesignatedChat } from './queries/designated-chat.ts';

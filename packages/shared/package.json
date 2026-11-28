@@ -11,12 +11,15 @@
     "./git-binary": "./src/git-binary.ts",
     "./nodal-home": "./src/nodal-home.ts",
     "./nodal-config": "./src/nodal-config.ts",
+    "./nodal-config-file": "./src/nodal-config-file.ts",
+    "./state-files": "./src/state-files.ts",
     "./nodal-instances": "./src/nodal-instances.ts",
     "./sandbox-settings": "./src/sandbox-settings.ts",
     "./node-guard": "./src/node-guard.ts",
     "./node-version": "./src/node-version.ts",
     "./schedule-change-cases": "./src/tests/schedule-change-cases.ts",
-    "./mail-contract": "./src/mail-contract.ts"
+    "./mail-contract": "./src/mail-contract.ts",
+    "./version-compare": "./src/version-compare.ts"
   },
   "scripts": {
     "lint": "eslint src",

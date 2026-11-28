@@ -1,7 +1,9 @@
 // postgres.ts — start/stop embedded Postgres using the embedded-postgres package
 
+import type { MigrateDatabaseOptions, MigrateDatabaseResult } from '@nodal-agents/db/safe-migrate';
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync, unlinkSync } from 'node:fs';
-import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
 import { PG_DATA_DIR } from './config.ts';
 import { runWindowsPowerShell } from './windows-powershell.ts';
 import {
@@ -12,6 +14,12 @@ import {
   type DetachedSpawnArm,
 } from './embedded-postgres-module.ts';
 import { applyPostgresLoggingConfig, postgresLogDirFor } from './pg-logging.ts';
+import { checkPathsFor, decodeFromReader, type PathReader } from './path-handoff.ts';
+import {
+  POSTGRES_PROGRAMS,
+  postgresPathReader,
+  type PostgresBinaryPaths,
+} from './postgres-code-page.ts';
 import {
   formatForeignSkip,
   judgeClaimedPostmaster,
@@ -78,8 +86,13 @@ export function readPostmasterPid(dataDir: string = PG_DATA_DIR): number | null 
 export function readPostmasterClaim(dataDir: string = PG_DATA_DIR): LockfileClaim | null {
   const pidFile = join(dataDir, 'postmaster.pid');
   if (!existsSync(pidFile)) return null;
+  // Written by the postmaster, line 2 in the code page it reads paths in
+  // (#1231): decoded as UTF-8, "é" in code page 1252 named another folder, and
+  // our own cluster was taken for a foreign one. Resolved OUTSIDE the catch: a
+  // code page Windows will not tell is said, not turned into "no lockfile".
+  const reader = postgresPathReader();
   try {
-    const lines = readFileSync(pidFile, 'utf-8').split('\n');
+    const lines = decodeFromReader(reader, readFileSync(pidFile)).split('\n');
     const pid = Number.parseInt(lines[0]?.trim() ?? '', 10);
     if (!Number.isInteger(pid) || pid <= 0) return null;
     const recorded = lines[1]?.trim();
@@ -636,6 +649,26 @@ export async function stopOrphanPostgres(
  * paths. Everything is checked rather than assumed: a layout that stops
  * exposing `pg_ctl` returns null here and the caller says so with a code.
  */
+/**
+ * The three PostgreSQL programs, as absolute paths. A package that stops
+ * exposing one of them is said, by name, rather than started half-checked.
+ */
+export async function postgresBinaryPaths(): Promise<PostgresBinaryPaths> {
+  const found = await importEmbeddedPostgresBinaries();
+  const out: Partial<Record<(typeof POSTGRES_PROGRAMS)[number], string>> = {};
+  for (const name of POSTGRES_PROGRAMS) {
+    const path = found?.[name];
+    if (typeof path !== 'string' || !existsSync(path)) {
+      throw new Error(
+        `EMBEDDED_POSTGRES_BINARY_MISSING: the embedded-postgres package does not provide ${name} ` +
+          `(got ${typeof path === 'string' ? path : String(path)}).`,
+      );
+    }
+    out[name] = path;
+  }
+  return out as PostgresBinaryPaths;
+}
+
 export async function resolvePgCtl(): Promise<string | null> {
   try {
     const pgCtl = (await importEmbeddedPostgresBinaries())?.pg_ctl;
@@ -691,6 +724,20 @@ const READY_TIMEOUT_MS = 180_000;
  * when the postmaster exits during startup, which is a failure this poll would
  * otherwise sit through until the deadline.
  */
+/**
+ * The cluster started and refused the password it was given (SQLSTATE class
+ * 28). The cluster has been stopped again when this is thrown, so the caller
+ * may start it once more with another password it legitimately holds (a
+ * password change left half-way, `up.ts`).
+ */
+export class PostgresAuthError extends Error {
+  readonly code = 'PG_AUTH_FAILED';
+  constructor(message: string) {
+    super(message);
+    this.name = 'PostgresAuthError';
+  }
+}
+
 /**
  * Is this connection error an AUTHENTICATION refusal rather than "not ready
  * yet"?
@@ -833,7 +880,7 @@ export async function startAndWaitUntilReady(
       if (isPostgresAuthFailure(err)) {
         await stopQuietly(pg, watchers);
         const code = (err as { code?: string }).code;
-        throw new Error(
+        throw new PostgresAuthError(
           `Postgres refused the connection: authentication failed (SQLSTATE ${code}). ` +
             'The cluster started and was stopped again. The password the CLI holds does not ' +
             'match the one this data directory was initialised with.',
@@ -894,11 +941,36 @@ export async function startEmbeddedPostgres(
   // is spawned detached at OS level; `handle.outliveLauncher()` then removes the
   // package's stop-at-exit. A foreground start leaves both alone, so that
   // Ctrl+C and a crash of the launcher still take the cluster with them.
-  options: { detached?: boolean } = {},
+  options: {
+    detached?: boolean;
+    /**
+     * The reader the PostgreSQL programs are. Resolved from the machine when
+     * absent (`resolvePostgresPathReader`); a test passes a narrower one to
+     * prove the refusal.
+     */
+    pathReader?: PathReader;
+  } = {},
 ): Promise<PostgresHandle> {
   // Dynamic import — embedded-postgres is a runtime-only dep, loaded through
   // the one helper that keeps it from rewriting the process exit code
   const EmbeddedPostgres = await importEmbeddedPostgres();
+
+  // EVERY path the PostgreSQL programs will be given, checked against what
+  // they decode BEFORE anything is created (#1231): the data directory (`-D`
+  // of initdb, postgres and pg_ctl), the log directory (written into
+  // postgresql.auto.conf), the folder the package writes initdb's password
+  // file into, and the folder the programs themselves live in (PostgreSQL
+  // finds its share/ and lib/ from its own path). A path the reader would not
+  // get back exactly is refused by name: a best-fit spelling would have put
+  // the cluster in ANOTHER folder and reported success.
+  const binaries = await postgresBinaryPaths();
+  const reader = options.pathReader ?? postgresPathReader();
+  checkPathsFor(reader, [
+    resolve(dataDir),
+    resolve(logDirectory),
+    tmpdir(),
+    dirname(binaries.postgres),
+  ]);
 
   // embedded-postgres@18.3.0-beta.17 sometimes rejects `pg.start()` with
   // literal `undefined` — the real diagnostic only flows through `onLog`
@@ -963,7 +1035,7 @@ export async function startEmbeddedPostgres(
     // crashes is exactly the start whose log is worth having, and until
     // 2026-09-15 that log did not exist. The only trace of two crashes that day
     // was the runner's side of the disconnect.
-    applyPostgresLoggingConfig(dataDir, logDirectory);
+    applyPostgresLoggingConfig(dataDir, logDirectory, reader);
     arm = options.detached ? await armDetachedPostgresSpawn() : null;
     try {
       await startAndWaitUntilReady(pg, {
@@ -1038,12 +1110,17 @@ export async function startEmbeddedPostgres(
   const url = buildPgUrl(port, password);
 
   // Try to enable pgvector; if unavailable, warn and continue
+  //
+  // The client is closed whatever happens. The embedded cluster ships no
+  // pgvector, so this query fails on every start of a stock install, and the
+  // client used to stay connected to the database from then on: a session
+  // nobody owned, on the database `up` is about to copy before migrating
+  // (a copy needs no other session on its source, PostgreSQL's own rule).
   let vectorAvailable = false;
+  const client = pg.getPgClient(PG_DATABASE);
   try {
-    const client = pg.getPgClient(PG_DATABASE);
     await client.connect();
     await client.query('CREATE EXTENSION IF NOT EXISTS vector');
-    await client.end();
     vectorAvailable = true;
   } catch {
     process.stderr.write(
@@ -1051,6 +1128,8 @@ export async function startEmbeddedPostgres(
         '  To enable: install pgvector (Mac: brew install pgvector; Win: see README).\n' +
         '  Continuing in keyword-only memory mode (vector columns rewritten to text).\x1b[0m\n',
     );
+  } finally {
+    await client.end().catch(() => undefined);
   }
 
   return {
@@ -1119,42 +1198,17 @@ async function stopThisCluster(dataDir: string): Promise<boolean> {
 // ─── Drizzle migrations ───────────────────────────────────────────────────────
 
 /**
- * Run Drizzle migrations against the given database URL.
- * Delegates to @nodal-agents/db/migrate to respect the architecture rule:
- * only packages/db may import drizzle-orm or postgres directly.
- *
- * @param patchVectorAsText when true, rewrite `vector(N)` columns to `text`
- *   in migration SQL — used when pgvector wasn't loaded (keyword-only mode).
+ * Move the database's schema to this program's journal, the ONE way it is
+ * done (`@nodal-agents/db/safe-migrate`): a database newer than this program
+ * is refused, a skipped migration is refused unless repair is asked, and the
+ * schema never moves over rows without a copy taken first inside the cluster,
+ * with the state files beside it. Lazy, like every database call of the CLI:
+ * only packages/db imports the driver.
  */
-export async function runMigrations(
+export async function migrateDatabase(
   databaseUrl: string,
-  opts: { patchVectorAsText?: boolean } = {},
-): Promise<void> {
-  const { runMigrations: migrate } = await import('@nodal-agents/db/migrate');
-  await migrate(databaseUrl, opts);
-}
-
-/**
- * Les migrations que le journal annonce et que cette base n'a jamais reçues.
- *
- * Le migrateur de drizzle saute en silence une migration mergée après une
- * plus récente (issue #298) ; c'est ce contrôle qui le dit. La règle et sa
- * raison vivent dans `@nodal-agents/db/migrate` — seul `packages/db` importe
- * le pilote Postgres.
- */
-export async function findMigrationGaps(
-  databaseUrl: string,
-  opts: { patchVectorAsText?: boolean } = {},
-): Promise<{ idx: number; tag: string; when: number }[]> {
-  const { findMigrationGaps: chercher } = await import('@nodal-agents/db/migrate');
-  return chercher(databaseUrl, opts);
-}
-
-/** Applique les migrations manquantes, dans l'ordre du journal. Rend la liste. */
-export async function repairMigrations(
-  databaseUrl: string,
-  opts: { patchVectorAsText?: boolean } = {},
-): Promise<{ idx: number; tag: string; when: number }[]> {
-  const { repairMigrations: reparer } = await import('@nodal-agents/db/migrate');
-  return reparer(databaseUrl, opts);
+  opts: MigrateDatabaseOptions,
+): Promise<MigrateDatabaseResult> {
+  const { migrateDatabase: migrate } = await import('@nodal-agents/db/safe-migrate');
+  return migrate(databaseUrl, opts);
 }

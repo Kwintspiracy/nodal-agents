@@ -35,6 +35,9 @@ import { mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSy
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { applyPostgresLoggingConfig, tempConfPath } from '../lib/pg-logging.ts';
+import type { PathReader } from '../lib/path-handoff.ts';
+
+const UTF8_READER: PathReader = { program: 'PostgreSQL', codePage: 65001 };
 
 const mockWrite = vi.mocked(writeFileSync);
 const mockRename = vi.mocked(renameSync);
@@ -62,7 +65,7 @@ describe('applyPostgresLoggingConfig — atomic replace @cap:installer-et-demarr
     const logDir = join(tempDir(), 'logs');
     const target = join(dataDir, 'postgresql.auto.conf');
 
-    applyPostgresLoggingConfig(dataDir, logDir);
+    applyPostgresLoggingConfig(dataDir, logDir, UTF8_READER);
 
     // The bytes never go to the target directly — that is the whole fix.
     expect(writtenPaths()).toContain(tempConfPath(target));
@@ -77,7 +80,7 @@ describe('applyPostgresLoggingConfig — atomic replace @cap:installer-et-demarr
     const dataDir = tempDir();
     const logDir = join(tempDir(), 'logs');
 
-    applyPostgresLoggingConfig(dataDir, logDir);
+    applyPostgresLoggingConfig(dataDir, logDir, UTF8_READER);
 
     expect(readdirSync(dataDir)).toEqual(['postgresql.auto.conf']);
     const written = readFileSync(join(dataDir, 'postgresql.auto.conf'), 'utf-8');
@@ -102,7 +105,7 @@ describe('applyPostgresLoggingConfig — atomic replace @cap:installer-et-demarr
       throw new Error('EPERM: the file is held open');
     });
 
-    expect(() => applyPostgresLoggingConfig(dataDir, logDir)).toThrow(/EPERM/);
+    expect(() => applyPostgresLoggingConfig(dataDir, logDir, UTF8_READER)).toThrow(/EPERM/);
     // Nothing half-written is left lying next to the data directory.
     expect(readdirSync(dataDir)).toEqual(['postgresql.auto.conf']);
     // And it is the OLD one, untouched: a failed replace replaces nothing.
