@@ -1,5 +1,11 @@
-// spawn-turn-tool-cap.test.ts — le budget d'appels par tour sur un runtime CLI
-// (invariant #8, revue Codex de #568).
+// spawn-turn-tool-cap.test.ts — le budget d'appels d'UNE réponse du modèle sur
+// un runtime CLI (invariant #8, revue Codex de #568, #1177).
+//
+// L'unité est la réponse du modèle, jamais la session : une session de CLI est
+// toute la boucle d'une demande, et la compter entière tuait au 51e appel un
+// travail que la boucle de Nodal mène sur cinquante réponses. Claude nomme ses
+// réponses (`message.id`, le même sur chaque bloc d'une réponse) ; Codex n'en
+// nomme aucune, et ses appels ne sont donc pas comptés.
 //
 // Un runtime CLI (Claude Code, Codex) exécute SES outils dans SON processus :
 // le runner ne les voit qu'au fil du flux, et le nombre d'appels d'un tour
@@ -36,11 +42,16 @@ afterAll(() => scope.close());
 
 const BUDGET = DEFAULT_LIMITS.maxToolCallsPerTurn;
 
-/** Une ligne d'appel au format stream-json de Claude (un ou plusieurs blocs parallèles). */
-function claudeOpenLine(ids: string[]): string {
+/**
+ * Une ligne d'appel au format stream-json de Claude (un ou plusieurs blocs
+ * parallèles), dans la réponse `responseId` : Claude émet un événement par bloc,
+ * et tous les blocs d'une réponse portent le même `message.id`.
+ */
+function claudeOpenLine(ids: string[], responseId: string): string {
   return JSON.stringify({
     type: 'assistant',
     message: {
+      id: responseId,
       role: 'assistant',
       content: ids.map((id) => ({ type: 'tool_use', id, name: 'Bash', input: { command: 'x' } })),
     },
@@ -130,13 +141,14 @@ async function runFakeCli(
   };
 }
 
-describe('spawnCliTurn — budget d appels par tour d un runtime CLI @cap:suivre-execution/moteur', () => {
-  it('Claude : le processus est tué à l ouverture du 51e appel, son effet et son résultat n arrivent jamais', async () => {
-    // 45 appels un à un, puis 6 parallèles dans UN événement (45 + 6 = 51).
+describe('spawnCliTurn — budget d appels d une réponse du modèle sur un runtime CLI @cap:suivre-execution/moteur', () => {
+  it('Claude : 51 appels dans UNE réponse, le processus est tué à l ouverture du 51e, son effet et son résultat n arrivent jamais', async () => {
+    // 45 appels un à un, puis 6 parallèles dans UN événement (45 + 6 = 51), tous
+    // dans la même réponse du modèle.
     const ids = Array.from({ length: BUDGET + 1 }, (_, i) => `toolu_${i}`);
     const opens = [
-      ...ids.slice(0, 45).map((id) => claudeOpenLine([id])),
-      claudeOpenLine(ids.slice(45)),
+      ...ids.slice(0, 45).map((id) => claudeOpenLine([id], 'msg_one')),
+      claudeOpenLine(ids.slice(45), 'msg_one'),
     ];
     const state = newStreamParseState();
     const run = await runFakeCli(opens, claudeResultLine(ids[BUDGET]!), (l, g) => {
@@ -148,23 +160,38 @@ describe('spawnCliTurn — budget d appels par tour d un runtime CLI @cap:suivre
     expect(run.linesSeen.some((l) => l.includes('"tool_result"'))).toBe(false);
   }, 30_000);
 
-  it('Codex : le processus est tué à l item.started du 51e appel, son effet et son résultat n arrivent jamais', async () => {
-    const ids = Array.from({ length: BUDGET + 1 }, (_, i) => `item_${i}`);
+  it('Claude : 120 appels répartis sur dix réponses ne sont pas tués, l effet du dernier a lieu', async () => {
+    const ids = Array.from({ length: 120 }, (_, i) => `toolu_${i}`);
+    // Douze appels par réponse : dix réponses, chacune sous le budget, et
+    // 120 au total, plus du double du budget d'une réponse.
+    const opens = ids.map((id, i) => claudeOpenLine([id], `msg_${Math.floor(i / 12)}`));
+    const state = newStreamParseState();
+    const run = await runFakeCli(opens, claudeResultLine(ids[119]!), (l, g) => {
+      countToolUses(state, l, undefined, g);
+    });
+
+    expect(run.toolCapExceeded).toBeUndefined();
+    expect(run.effectHappened).toBe(true);
+    expect(run.linesSeen.some((l) => l.includes('"tool_result"'))).toBe(true);
+  }, 30_000);
+
+  it('Codex : un flux qui ne nomme aucune réponse n est pas compté, 120 appels passent et l effet a lieu', async () => {
+    const ids = Array.from({ length: 120 }, (_, i) => `item_${i}`);
     const state = newCodexParseState();
-    const run = await runFakeCli(ids.map(codexOpenLine), codexResultLine(ids[BUDGET]!), (l, g) => {
+    const run = await runFakeCli(ids.map(codexOpenLine), codexResultLine(ids[119]!), (l, g) => {
       handleCodexLine(state, l, undefined, g);
     });
 
-    expect(run.toolCapExceeded).toBe(BUDGET);
-    expect(run.effectHappened, 'l appel au-delà du budget a produit son effet').toBe(false);
-    expect(run.linesSeen.some((l) => l.includes('item.completed'))).toBe(false);
+    expect(run.toolCapExceeded).toBeUndefined();
+    expect(run.effectHappened).toBe(true);
+    expect(run.linesSeen.some((l) => l.includes('item.completed'))).toBe(true);
   }, 30_000);
 
-  it('contrôle : au budget exact, la CLI n est pas tuée et l effet a lieu', async () => {
+  it('contrôle : au budget exact dans une réponse, la CLI n est pas tuée et l effet a lieu', async () => {
     const ids = Array.from({ length: BUDGET }, (_, i) => `toolu_${i}`);
     const state = newStreamParseState();
     const run = await runFakeCli(
-      ids.map((id) => claudeOpenLine([id])),
+      ids.map((id) => claudeOpenLine([id], 'msg_one')),
       claudeResultLine(ids[BUDGET - 1]!),
       (l, g) => {
         countToolUses(state, l, undefined, g);
@@ -187,7 +214,7 @@ describe('spawnCliTurn — budget d appels par tour d un runtime CLI @cap:suivre
   async function runOnePacket(
     packet: string[],
     onLine: (line: string, gate: ToolCallGate) => void,
-  ): Promise<{ toolCapExceeded?: number }> {
+  ): Promise<{ toolCapExceeded?: number; toolCapCalls?: number }> {
     const script = join(dir, 'fake-cli-packet.cjs');
     await writeFile(
       script,
@@ -209,45 +236,24 @@ describe('spawnCliTurn — budget d appels par tour d un runtime CLI @cap:suivre
       finish: (o) => o,
     });
     return outcome.toolCapExceeded !== undefined
-      ? { toolCapExceeded: outcome.toolCapExceeded }
+      ? {
+          toolCapExceeded: outcome.toolCapExceeded,
+          ...(outcome.toolCapCalls !== undefined ? { toolCapCalls: outcome.toolCapCalls } : {}),
+        }
       : {};
   }
 
-  it('Codex, un seul paquet : le résultat du 50e appel (ouvert avant le cap) arrive, rien du 51e ni de la fin du tour', async () => {
-    const ids = Array.from({ length: BUDGET + 1 }, (_, i) => `item_${i}`);
-    const call50 = ids[BUDGET - 1]!;
-    const call51 = ids[BUDGET]!;
-    const packet = [
-      ...ids.map(codexOpenLine),
-      codexResultLine(call50),
-      codexResultLine(call51),
-      JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 10, output_tokens: 5 } }),
-    ];
-    const state = newCodexParseState();
-    const events: Array<{ kind: string; toolUseId?: string }> = [];
-    const run = await runOnePacket(packet, (l, g) => {
-      handleCodexLine(state, l, (e) => events.push(e), g);
-    });
-
-    expect(run.toolCapExceeded).toBe(BUDGET);
-    // Le 50e appel a son résultat : l'audit a sa ligne.
-    expect(events.filter((e) => e.kind === 'tool_result').map((e) => e.toolUseId)).toEqual([
-      call50,
-    ]);
-    // Rien du 51e : ni son ouverture, ni son résultat.
-    expect(events.filter((e) => e.toolUseId === call51)).toEqual([]);
-    expect(events.filter((e) => e.kind === 'tool_use')).toHaveLength(BUDGET);
-    // La fin du tour n'est pas lue.
-    expect(state.sawTurnCompleted).toBe(false);
-  }, 30_000);
-
   it('Claude, un seul paquet et des appels parallèles : les appels admis du lot ont leur résultat, pas le 51e', async () => {
-    // 45 appels un à un, puis 6 parallèles dans UN événement : les 5 premiers
-    // du lot sont sous le budget, le 6e (le 51e) au-delà.
+    // Une première réponse de 30 appels, puis une seconde : 45 appels un à
+    // un et 6 parallèles dans UN événement. Les 5 premiers du lot sont sous le
+    // budget de LEUR réponse, le 6e (le 51e de la réponse) au-delà. La
+    // première réponse ne compte pas pour la seconde.
+    const first = Array.from({ length: 30 }, (_, i) => `toolu_a${i}`);
     const ids = Array.from({ length: BUDGET + 1 }, (_, i) => `toolu_${i}`);
     const packet = [
-      ...ids.slice(0, 45).map((id) => claudeOpenLine([id])),
-      claudeOpenLine(ids.slice(45)),
+      ...first.flatMap((id) => [claudeOpenLine([id], 'msg_a'), claudeResultLine(id)]),
+      ...ids.slice(0, 45).map((id) => claudeOpenLine([id], 'msg_b')),
+      claudeOpenLine(ids.slice(45), 'msg_b'),
       claudeResultLine(ids[47]!),
       claudeResultLine(ids[BUDGET]!),
       JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: 'done' }),
@@ -259,11 +265,14 @@ describe('spawnCliTurn — budget d appels par tour d un runtime CLI @cap:suivre
     });
 
     expect(run.toolCapExceeded).toBe(BUDGET);
+    // Les appels comptés dans la réponse qui a dépassé : les 51 de `msg_b`.
+    expect(run.toolCapCalls).toBe(BUDGET + 1);
     expect(events.filter((e) => e.kind === 'tool_result').map((e) => e.toolUseId)).toEqual([
+      ...first,
       ids[47],
     ]);
     expect(events.filter((e) => e.toolUseId === ids[BUDGET])).toEqual([]);
-    expect(events.filter((e) => e.kind === 'tool_use')).toHaveLength(BUDGET);
+    expect(events.filter((e) => e.kind === 'tool_use')).toHaveLength(30 + BUDGET);
     expect(state.finalResult).toBeNull();
   }, 30_000);
 });

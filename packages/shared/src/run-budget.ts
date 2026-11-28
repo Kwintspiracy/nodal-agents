@@ -10,6 +10,15 @@
 export const RUN_COST_MAX_USD = 1000;
 /** `entities.max_run_hours` : 0 (aucune limite) à 72 h. */
 export const RUN_HOURS_MAX = 72;
+/**
+ * Le temps de travail d'une session de CLI de code (Claude Code, Codex) quand
+ * l'espace règle `max_run_hours` à 0. La boucle de Nodal reste bornée sans lui
+ * par ce qu'elle compte (tours, jetons, coût) ; une session de CLI garde sa
+ * boucle et ne rapporte rien avant la fin, donc elle reçoit cette borne-ci.
+ * Écrite sous le réglage (RunBudgetSection) et lue par le runner
+ * (`cliSessionTimeLimitMs`) : un seul nombre, aux deux endroits.
+ */
+export const CLI_SESSION_HOURS_WITHOUT_TIME_LIMIT = 2;
 /** `agents.idle_timeout_seconds` : 30 s à 1 h, ou NULL (la plateforme décide). */
 export const FIRST_TOKEN_WAIT_MIN_S = 30;
 export const FIRST_TOKEN_WAIT_MAX_S = 3600;

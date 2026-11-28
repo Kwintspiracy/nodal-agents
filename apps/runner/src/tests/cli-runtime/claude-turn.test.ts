@@ -156,6 +156,43 @@ describe('le garde anti-boucle compte les appels PARALLÈLES', () => {
   });
 });
 
+describe('countToolUses : la réponse du modèle de chaque appel (invariant #8, #1177)', () => {
+  it('sur le flux enregistré, chaque appel est remis à la porte sous le message.id de SA réponse', () => {
+    const state = newStreamParseState();
+    const seen: Array<string | null> = [];
+    const gate = {
+      admit: (response: string | null) => {
+        seen.push(response);
+        return true;
+      },
+      capped: false,
+    };
+    for (const line of FIXTURE.split('\n')) countToolUses(state, line, undefined, gate);
+    // Le flux réel : une réponse avec pensée, texte et un appel (trois
+    // événements, un même message.id), puis une réponse de texte seul.
+    expect(seen).toEqual(['msg_011CeBhZFYMXrMqfY19hrQsE']);
+    expect(state.unknownEventTypes.size).toBe(0);
+  });
+
+  it('un événement assistant sans message.id : l appel passe sans réponse nommée, et la dérive est notée', () => {
+    const state = newStreamParseState();
+    const seen: Array<string | null> = [];
+    const ligne = JSON.stringify({
+      type: 'assistant',
+      message: { content: [{ type: 'tool_use', id: 'toolu_x', name: 'Read', input: {} }] },
+    });
+    countToolUses(state, ligne, undefined, {
+      admit: (response) => {
+        seen.push(response);
+        return true;
+      },
+      capped: false,
+    });
+    expect(seen).toEqual([null]);
+    expect([...state.unknownEventTypes]).toEqual(['assistant(no message.id)']);
+  });
+});
+
 describe('finishTurn anti-loop guard (invariant #8)', () => {
   it('a hit cap forces isError with tool_call_limit_exceeded — even if a result raced in', () => {
     const state = newStreamParseState();

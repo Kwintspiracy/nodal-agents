@@ -41,7 +41,13 @@ import {
   parseLiveToolEvent,
 } from '@nodal-agents/tools';
 import { spawnCliTurn, OPEN_GATE, type ToolCallGate } from './spawn-turn.ts';
-import type { ClaudeTurnEvent, ClaudeTurnResult, ClaudeTurnOptions } from './claude-turn.ts';
+import {
+  cliToolCallCap,
+  toolCallCapDetail,
+  type ClaudeTurnEvent,
+  type ClaudeTurnResult,
+  type ClaudeTurnOptions,
+} from './claude-turn.ts';
 
 /** Même forme d'événement live que le chemin Claude — l'appelant ne trie pas. */
 export type CodexTurnEvent = ClaudeTurnEvent;
@@ -340,7 +346,12 @@ export function handleCodexLine(
     (type === 'item.started' ||
       (type === 'item.completed' && itemId !== null && !state.countedToolIds.has(itemId)));
   if (opens && itemId !== null) state.countedToolIds.add(itemId);
-  const admitted = opens ? gate.admit() : true;
+  // Le budget d'appels est celui d'UNE réponse du modèle (invariant #8). Le
+  // flux de `codex exec --json` ne dit pas où une réponse finit : des items,
+  // puis un `turn.completed` qui clôt la session entière. L'appel passe donc
+  // sans réponse nommée (`null`) et n'est pas compté ; c'est la limite de
+  // temps du run qui borne une session Codex (cliSessionTimeLimitMs).
+  const admitted = opens ? gate.admit(null) : true;
 
   // Les outils ensuite, par le lecteur que `code_task` utilise déjà.
   if (live && admitted) {
@@ -464,12 +475,10 @@ export function finishCodexTurn(
   durationMs: number,
   stderrExcerpt: string,
   toolCapExceeded?: number,
+  toolCapCalls?: number,
 ): CodexTurnResult {
-  const capDetail =
-    toolCapExceeded !== undefined
-      ? `tool_call_limit_exceeded: the CLI exceeded ${String(toolCapExceeded)} tool calls in one ` +
-        `turn and was killed (anti-loop guard, invariant #8)`
-      : null;
+  const toolCallCap = cliToolCallCap(toolCapExceeded, toolCapCalls);
+  const capDetail = toolCallCap ? toolCallCapDetail(toolCallCap) : null;
 
   const finalText = state.messages.join('\n\n');
   const streamIncomplete = !state.sawTurnCompleted && state.failure === null;
@@ -517,6 +526,7 @@ export function finishCodexTurn(
     // ce qu'on ne sait pas.
     permissionDenials: 0,
     unknownEventTypes: [...state.unknownEventTypes],
+    toolCallCap,
   };
 }
 
@@ -557,14 +567,22 @@ export async function runCodexTurn(opts: CodexTurnOptions): Promise<CodexTurnRes
     onLine: (line, gate) => {
       handleCodexLine(state, line, opts.onEvent, gate);
     },
-    finish: ({ exitCode, timedOut, durationMs, stderr, toolCapExceeded }) => {
+    finish: ({ exitCode, timedOut, durationMs, stderr, toolCapExceeded, toolCapCalls }) => {
       if (state.unknownEventTypes.size > 0) {
         console.warn(
           `[cli-runtime] unknown codex event types (CLI drift?): ` +
             [...state.unknownEventTypes].join(', '),
         );
       }
-      return finishCodexTurn(state, exitCode, timedOut, durationMs, stderr, toolCapExceeded);
+      return finishCodexTurn(
+        state,
+        exitCode,
+        timedOut,
+        durationMs,
+        stderr,
+        toolCapExceeded,
+        toolCapCalls,
+      );
     },
   });
 }
