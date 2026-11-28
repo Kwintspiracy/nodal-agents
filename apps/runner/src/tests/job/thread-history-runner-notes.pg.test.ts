@@ -26,6 +26,7 @@ import {
   eq,
   agentJobs,
   agents,
+  channelBindings,
   conversations,
   entities,
   users,
@@ -183,8 +184,23 @@ describe('migration 0137 fills runner_notes on rows written before it @cap:repre
         .returning();
       const [agent] = await db
         .insert(agents)
-        .values({ entityId: entity!.id, name: 'Root', slug: 'root-multi0137', personality: 'p' })
+        .values({
+          entityId: entity!.id,
+          name: 'Root',
+          slug: 'root-multi0137',
+          personality: 'p',
+          telegramBotToken: 'fake-token',
+        })
         .returning();
+      // The agent is connected to WhatsApp, the channel of the chat its jobs
+      // come from: their end can be sent there (#1180, #1215).
+      await db.insert(channelBindings).values({
+        entityId: entity!.id,
+        agentId: agent!.id,
+        channel: 'whatsapp',
+        credentials: JSON.stringify({ sessionDir: '/sessions/pg-test' }),
+        enabled: true,
+      });
       const [conv] = await db
         .insert(conversations)
         .values({

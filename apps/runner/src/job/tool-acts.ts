@@ -16,7 +16,7 @@
 import type { ModelMessage } from 'ai';
 import { isInboxMessage, redactSecretsInText, unwrapUntrusted } from '@nodal-agents/shared';
 import { returnResultTool } from '@nodal-agents/tools';
-import { toolResultOutputText, toolResultShape } from './tool-result-shape.ts';
+import { isElidedToolResult, toolResultOutputText } from './tool-result-shape.ts';
 
 /** Au plus ce nombre de caractères par résultat cité. */
 export const RESULT_HEAD_MAX_CHARS = 200;
@@ -257,7 +257,7 @@ export function toolNames(acts: JobActs): string {
  */
 export function resultHead(output: unknown): string {
   if (output === undefined) return '(no result recorded)';
-  if (toolResultShape(output) === 'elided') return '(result no longer in the transcript)';
+  if (isElidedToolResult(output)) return '(result no longer in the transcript)';
   const lines = redactSecretsInText(unframedText(output))
     .split(LINE_BREAK)
     .map((l) => oneLine(l).trim())

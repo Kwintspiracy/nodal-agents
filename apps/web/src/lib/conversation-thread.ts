@@ -43,7 +43,7 @@ import type { JobResultKind } from '@nodal-agents/shared';
 import { lineCountsOfCall, sumLineCounts } from './coding-changes.ts';
 import { concludeProof, type ThreadDeclaredDeliverable } from './declared-proof.ts';
 import { fileChangesOfAuditRows } from './file-change-groups.ts';
-import { callHappened, outcomeOfToolOutput } from './tool-card-payload.ts';
+import { callHappened, stepOutcomeOf } from './tool-card-payload.ts';
 import type { ProducedItem, ProductionVerdict } from './chat-or-work.ts';
 import type { CallsCost } from './space-cost.ts';
 // La règle « une relecture interdit-elle d'annoncer livré ? » vit dans
@@ -220,6 +220,8 @@ export type ThreadAuditRow = {
   toolName: string;
   toolInput: unknown;
   toolOutput: string | null;
+  /** What became of the call (`tool_calls.outcome`, #1184), read by `stepOutcomeOf`. */
+  outcome: string | null;
   presented: unknown;
   /**
    * Les chemins des fichiers de la carte AVANT masquage, dans l'ordre exact de
@@ -530,8 +532,8 @@ function deliverySummary(job: ThreadJob): DeliverySummary {
     ...(g.from !== undefined ? { from: g.from } : {}),
   }));
   const counted = job.audit
-    .filter((row) => callHappened(outcomeOfToolOutput(row.toolOutput)))
-    .map((row) => lineCountsOfCall(row.toolName, row.toolInput, row.toolOutput));
+    .filter((row) => callHappened(stepOutcomeOf(row.outcome)))
+    .map((row) => lineCountsOfCall(row.toolName, row.toolInput, row.outcome));
   const reviews: DeliveryReview[] = [];
 
   const walk = (items: readonly FeedItem[], depth: number): void => {

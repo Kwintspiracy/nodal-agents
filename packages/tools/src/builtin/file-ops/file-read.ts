@@ -22,6 +22,7 @@ import {
   formatBytes,
   sniffAttachmentMediaType,
 } from '../../model-images';
+import { outcomeOfOkFlag } from '../../outcome';
 
 export const FileReadInputSchema = z.object({
   path: z
@@ -308,6 +309,7 @@ export const fileReadTool: ToolDefinition<typeof FileReadInputSchema, FileReadOu
               sections: output.total_lines,
             })
           : failureText(output.reason),
+  outcomeOf: outcomeOfOkFlag,
   execute: async (input, ctx) => {
     try {
       const path = await resolveAndCheckPath(ctx, input.path);

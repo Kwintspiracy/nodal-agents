@@ -6,14 +6,12 @@ import {
   ChainCounters,
   assertTurnToolCallBudget,
   DEFAULT_LIMITS,
-  NON_PROGRESS_SAME_TOOL_NUDGE_AT,
-  NON_PROGRESS_SAME_TOOL_FAIL_AT,
   NON_PROGRESS_ERROR_STREAK_NUDGE_AT,
   NON_PROGRESS_ERROR_STREAK_FAIL_AT,
-  recordSameToolCall,
   recordToolOutcome,
-  INITIAL_SAME_TOOL_STREAK_STATE,
   INITIAL_ERROR_STREAK_STATE,
+  remainingDelegationResumes,
+  delegationResumeLimitMessage,
 } from '../chain-counters';
 import {
   ChainLimitExceededError,
@@ -322,102 +320,32 @@ describe('ChainCounters', () => {
 // ComfyUI install; watcher agents retried attach_mcp/create_mcp after failures
 // instead of reporting. See chain-counters.ts for the full write-up.
 
-describe('recordSameToolCall (S1)', () => {
-  it('has thresholds 12 (nudge) / 24 (fail)', () => {
-    expect(NON_PROGRESS_SAME_TOOL_NUDGE_AT).toBe(12);
-    expect(NON_PROGRESS_SAME_TOOL_FAIL_AT).toBe(24);
+// S1 (the same tool NAME called N times in a row, any inputs, success
+// included) is gone: it killed legitimate batch work. Its absence is proved on
+// the real job loop (apps/runner/src/tests/job/execute.test.ts, "Guard 1f").
+
+describe('remainingDelegationResumes / delegationResumeLimitMessage @cap:organiser-equipe/moteur', () => {
+  it('leaves room for a delegation while its resume stays under maxChains', () => {
+    // maxChains = 15: a job is refused at entry once chain_count reaches 15,
+    // so a delegation is admitted while chain_count + 1 < 15.
+    expect(remainingDelegationResumes(0)).toBe(14);
+    expect(remainingDelegationResumes(13)).toBe(1);
+    expect(remainingDelegationResumes(14)).toBe(0);
+    expect(remainingDelegationResumes(40)).toBe(0);
   });
 
-  it('starts a streak of 1 on the first call', () => {
-    const { state, signal } = recordSameToolCall(INITIAL_SAME_TOOL_STREAK_STATE, 'file_list');
-    expect(state).toEqual({ toolName: 'file_list', streak: 1, nudged: false });
-    expect(signal).toBe('none');
+  it('follows the limits it is given, not only the defaults', () => {
+    const limits = { ...DEFAULT_LIMITS, maxChains: 3 };
+    expect(remainingDelegationResumes(1, limits)).toBe(1);
+    expect(remainingDelegationResumes(2, limits)).toBe(0);
   });
 
-  it('extends the streak on repeated calls to the same tool', () => {
-    let state = INITIAL_SAME_TOOL_STREAK_STATE;
-    for (let i = 0; i < 5; i++) {
-      ({ state } = recordSameToolCall(state, 'file_list'));
-    }
-    expect(state.streak).toBe(5);
-  });
-
-  it('resets the streak to 1 when a different tool is called', () => {
-    let state = INITIAL_SAME_TOOL_STREAK_STATE;
-    for (let i = 0; i < 5; i++) {
-      ({ state } = recordSameToolCall(state, 'file_list'));
-    }
-    ({ state } = recordSameToolCall(state, 'file_read'));
-    expect(state).toEqual({ toolName: 'file_read', streak: 1, nudged: false });
-  });
-
-  it('signals "nudge" exactly once when the streak reaches nudgeAt=12, then "none" until failAt', () => {
-    let state = INITIAL_SAME_TOOL_STREAK_STATE;
-    let nudgeCount = 0;
-    for (let i = 0; i < 20; i++) {
-      const r = recordSameToolCall(state, 'run_command');
-      state = r.state;
-      if (r.signal === 'nudge') nudgeCount++;
-    }
-    expect(state.streak).toBe(20);
-    expect(nudgeCount).toBe(1); // fired once at streak 12, not again through 20
-  });
-
-  it('signals "fail" at streak 24', () => {
-    let state = INITIAL_SAME_TOOL_STREAK_STATE;
-    let lastSignal: 'none' | 'nudge' | 'fail' = 'none';
-    for (let i = 0; i < 24; i++) {
-      const r = recordSameToolCall(state, 'run_command');
-      state = r.state;
-      lastSignal = r.signal;
-    }
-    expect(state.streak).toBe(24);
-    expect(lastSignal).toBe('fail');
-  });
-
-  it('a new streak after a reset gets its own fresh nudge', () => {
-    let state = INITIAL_SAME_TOOL_STREAK_STATE;
-    for (let i = 0; i < 12; i++) ({ state } = recordSameToolCall(state, 'a'));
-    expect(state.nudged).toBe(true);
-    // Different tool breaks the streak — nudged resets for the new streak.
-    ({ state } = recordSameToolCall(state, 'b'));
-    expect(state.nudged).toBe(false);
-    let secondNudgeFired = false;
-    for (let i = 0; i < 11; i++) {
-      const r = recordSameToolCall(state, 'b');
-      state = r.state;
-      if (r.signal === 'nudge') secondNudgeFired = true;
-    }
-    expect(state.streak).toBe(12);
-    expect(secondNudgeFired).toBe(true);
-  });
-
-  it('exempts return_result and telegram_send_message — transparent to the streak', () => {
-    let state = INITIAL_SAME_TOOL_STREAK_STATE;
-    for (let i = 0; i < 6; i++) ({ state } = recordSameToolCall(state, 'file_list'));
-    expect(state.streak).toBe(6);
-    // 5 exempt calls in a row — must not touch the running streak.
-    for (const exempt of ['return_result', 'telegram_send_message', 'return_result']) {
-      const r = recordSameToolCall(state, exempt);
-      expect(r.signal).toBe('none');
-      state = r.state;
-    }
-    expect(state).toEqual({ toolName: 'file_list', streak: 6, nudged: false });
-    // The file_list streak resumes exactly where it left off.
-    ({ state } = recordSameToolCall(state, 'file_list'));
-    expect(state.streak).toBe(7);
-  });
-
-  it('honors custom thresholds (not just the defaults)', () => {
-    let state = INITIAL_SAME_TOOL_STREAK_STATE;
-    let signal: 'none' | 'nudge' | 'fail' = 'none';
-    for (let i = 0; i < 3; i++) {
-      const r = recordSameToolCall(state, 'x', 2, 3);
-      state = r.state;
-      signal = r.signal;
-    }
-    expect(state.streak).toBe(3);
-    expect(signal).toBe('fail');
+  it('names the cap and the count, and gives no instruction to call again', () => {
+    const msg = delegationResumeLimitMessage(14);
+    expect(msg).toMatch(/^delegation_limit_reached: /);
+    expect(msg).toContain('resumed 14 times');
+    expect(msg).toContain('at most 14 times');
+    expect(msg).not.toMatch(/call it again|try again|retry/i);
   });
 });
 

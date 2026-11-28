@@ -424,3 +424,19 @@ describe('makeApifyWebBrowseTool', () => {
     );
   });
 });
+
+// #1184 — what Apify says of the run when the wait ends is the call's outcome.
+describe('apify_run_actor declares what it returned @cap:connecter-un-service/moteur', () => {
+  it('SUCCEEDED is done, FAILED / ABORTED / TIMED-OUT failed, still RUNNING unknown', () => {
+    const tool = makeApifyRunActorTool({} as never);
+    const of = (status: string) => tool.outcomeOf!({ runId: 'r', datasetId: 'd', status });
+    expect(['SUCCEEDED', 'FAILED', 'ABORTED', 'TIMED-OUT', 'RUNNING', 'READY'].map(of)).toEqual([
+      'done',
+      'failed',
+      'failed',
+      'failed',
+      'unknown',
+      'unknown',
+    ]);
+  });
+});

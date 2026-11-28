@@ -27,6 +27,8 @@ import {
   RUNNER_NON_TERMINAL_SENDERS,
   scanFilesForDeliverableTypeLiterals,
   formatViolations,
+  scanForOutcomeGuesses,
+  assertNoViolations,
 } from '@nodal-agents/test-kit';
 import { join } from 'node:path';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
@@ -278,5 +280,155 @@ describe('architecture — une porte par transition poussée (#944) @cap:suivre-
     }
     const used = new Set(calls.map((v) => rel(v.file)));
     expect(Object.keys(OUT_OF_PROCESS_WRITERS).filter((f) => !used.has(f))).toEqual([]);
+  });
+});
+
+// ─── #1180 : un seul écrivain de `failed`, et c'est lui qui prépare la notice ──
+//
+// Une trentaine de sorties d'échec (la boucle, le runtime CLI, le tableau, les
+// faucheurs) ; seules quelques-unes prévenaient la personne, chacune à sa façon.
+// La règle : `failed` s'écrit à UN endroit (`writeFailure`, job/state.ts, sous
+// `failJob`), et cet endroit prépare la notice dans la transaction qui l'écrit.
+// Une sortie nouvelle n'a donc rien à faire pour que la personne l'apprenne ;
+// une écriture de `failed` ailleurs serait un échec que personne n'apprend.
+
+/** `.update(agentJobs).set({ … status: 'failed' … })`, avant son WHERE. */
+const JOB_FAILED_WRITE =
+  /\.update\(agentJobs\)\s*\.set\(\{(?:(?!\.where\()[\s\S]){0,600}?\bstatus:\s*'failed'/g;
+
+describe('architecture — un seul écrivain de `failed`, qui prépare la notice (#1180) @cap:parler-par-canal-externe/moteur', () => {
+  it('`failed` n’est écrit sur agent_jobs qu’une fois, dans writeFailure, qui prépare la notice avant d’annoncer', () => {
+    const files = scanRoots(new RegExp(JOB_FAILED_WRITE.source), 'job-failed-write').map((v) =>
+      rel(v.file),
+    );
+    expect([...new Set(files)]).toEqual(['apps/runner/src/job/state.ts']);
+
+    const src = readFileSync(join(REPO, 'apps/runner/src/job/state.ts'), 'utf-8');
+    expect([...src.matchAll(JOB_FAILED_WRITE)]).toHaveLength(1);
+    const start = src.indexOf('async function writeFailure(');
+    const end = src.indexOf('\n}\n', start);
+    const body = src.slice(start, end);
+    expect(start).toBeGreaterThan(-1);
+    expect(body).toMatch(new RegExp(JOB_FAILED_WRITE.source));
+    const prepare = body.indexOf('await prepareFailureNotice(');
+    const announce = body.indexOf('await announceTransitions(');
+    expect(prepare).toBeGreaterThan(-1);
+    expect(announce).toBeGreaterThan(prepare);
+  });
+
+  it('aucune sortie d’échec ne prépare sa propre notice : la clé de la notice n’a qu’un auteur', () => {
+    const outside = WRITER_ROOTS.flatMap((root) =>
+      scanForPattern(
+        { srcDir: join(REPO, root) },
+        {
+          pattern: /failureNoticeKey\(|:harness:|notifyJobFailure\(/,
+          rule: 'failure-notice-elsewhere',
+        },
+      ),
+    )
+      .filter((v) => !isTestFile(v.file))
+      .map((v) => rel(v.file))
+      .filter((f) => f !== 'apps/runner/src/job/failure-notice.ts');
+    expect(outside).toEqual([]);
+  });
+});
+
+// ─── #1215 : un seul écrivain de `completed`, et c'est lui qui prépare la réponse ──
+//
+// Quatre façons coexistaient de répondre dans le chat de la demande : un outil
+// d'envoi surveillé par un drapeau en mémoire (Telegram, Discord, Slack), la
+// réponse du runtime CLI relayée par l'outbox, la synthèse du tableau, et rien
+// (WhatsApp). La règle : `completed` s'écrit à UN endroit (`completeJob`,
+// job/state.ts), et cet endroit prépare la réponse dans la transaction qui
+// l'écrit (job/answer-delivery.ts). Une fin nouvelle, un canal nouveau n'ont
+// rien à faire pour que la personne reçoive la réponse.
+
+/** `.update(agentJobs).set({ … status: 'completed' … })`, avant son WHERE. */
+const JOB_COMPLETED_WRITE =
+  /\.update\(agentJobs\)\s*\.set\(\{(?:(?!\.where\()[\s\S]){0,600}?\bstatus:\s*'completed'/g;
+
+/**
+ * Ce qui remet un texte à un adaptateur de canal, hors de l'outbox, des outils
+ * d'envoi et des cartes d'approbation : chacun nommé, avec ce qu'il envoie.
+ * Aucun ne porte la réponse ni l'échec d'un job.
+ */
+const OTHER_CHANNEL_SENDERS: Readonly<Record<string, string>> = {
+  'apps/runner/src/cron/run-schedules.ts': "the owner notice of a routine's spent daily budget",
+  'apps/runner/src/notify/code-transitions.ts': 'a transition of the Code tab',
+  'apps/runner/src/telegram/poller.ts': 'the pairing and membership replies of the bot',
+};
+
+/** Les lieux où un texte peut être remis à un canal par construction. */
+const SENDER_HOMES = [
+  // Les adaptateurs eux-mêmes.
+  'packages/delivery/src/',
+  // L'outbox : la réponse et l'échec de tout job.
+  'apps/runner/src/delivery/outbox.ts',
+  // Les outils d'envoi : ce qu'un agent envoie de lui-même (un fichier, un autre chat).
+  'packages/tools/src/communication/',
+  // Les cartes d'approbation et les questions d'un serveur MCP.
+  'apps/runner/src/approvals/',
+];
+
+describe('architecture — un seul écrivain de `completed`, qui prépare la réponse (#1215) @cap:parler-par-canal-externe/moteur', () => {
+  it('`completed` n’est écrit sur agent_jobs qu’une fois, dans completeJob, qui prépare la réponse avant d’annoncer', () => {
+    const files = scanRoots(new RegExp(JOB_COMPLETED_WRITE.source), 'job-completed-write').map(
+      (v) => rel(v.file),
+    );
+    expect([...new Set(files)]).toEqual(['apps/runner/src/job/state.ts']);
+
+    const src = readFileSync(join(REPO, 'apps/runner/src/job/state.ts'), 'utf-8');
+    expect([...src.matchAll(JOB_COMPLETED_WRITE)]).toHaveLength(1);
+    const start = src.indexOf('export async function completeJob(');
+    const end = src.indexOf('\n}\n', start);
+    const body = src.slice(start, end);
+    expect(start).toBeGreaterThan(-1);
+    expect(body).toMatch(new RegExp(JOB_COMPLETED_WRITE.source));
+    const prepare = body.indexOf('await prepareAnswerDelivery(');
+    const announce = body.indexOf('await announceTransitions(');
+    expect(prepare).toBeGreaterThan(-1);
+    expect(announce).toBeGreaterThan(prepare);
+  });
+
+  it('une livraison ne se prépare qu’aux deux portes de fin : la réponse et l’échec', () => {
+    const outside = WRITER_ROOTS.flatMap((root) =>
+      scanForPattern(
+        { srcDir: join(REPO, root) },
+        { pattern: /\bprepareDelivery\(|answerDeliveryKey\(/, rule: 'delivery-prepared-elsewhere' },
+      ),
+    )
+      .filter((v) => !isTestFile(v.file))
+      .map((v) => rel(v.file))
+      .filter(
+        (f) =>
+          ![
+            'apps/runner/src/delivery/outbox.ts',
+            'apps/runner/src/job/answer-delivery.ts',
+            'apps/runner/src/job/failure-notice.ts',
+          ].includes(f),
+      );
+    expect(outside).toEqual([]);
+  });
+
+  it('rien hors de l’outbox, des outils d’envoi et des cartes d’approbation ne remet un texte à un canal ; les autres envois sont nommés', () => {
+    const senders = WRITER_ROOTS.flatMap((root) =>
+      scanForPattern(
+        { srcDir: join(REPO, root) },
+        { pattern: /\.sendText\(|\.sendMedia\(|\bsendTelegramMessage\(/, rule: 'channel-send' },
+      ),
+    )
+      .filter((v) => !isTestFile(v.file))
+      .map((v) => rel(v.file))
+      .filter((f) => !SENDER_HOMES.some((home) => f.startsWith(home)));
+    expect([...new Set(senders)].sort()).toEqual(Object.keys(OTHER_CHANNEL_SENDERS).sort());
+  });
+});
+
+describe('architecture — the outcome of a call is read on its row (#1184)', () => {
+  it('no production file decides a call’s outcome from its output', () => {
+    assertNoViolations(
+      'outcome guessed from a tool output',
+      scanForOutcomeGuesses({ srcDir: SRC_DIR }),
+    );
   });
 });

@@ -19,6 +19,7 @@ import {
   MAX_WRITE_BYTES,
   WorkspaceError,
 } from './workspace';
+import { outcomeOfOkFlag } from '../../outcome';
 
 export const FileWriteInputSchema = z.object({
   path: z
@@ -134,6 +135,7 @@ export const fileWriteTool: ToolDefinition<typeof FileWriteInputSchema, FileWrit
     }
     return (await computeSharedOverwriteApproval(ctx, input.path)) === 'require_approval';
   },
+  outcomeOf: outcomeOfOkFlag,
   execute: async (input, ctx) => {
     try {
       const bytes = Buffer.byteLength(input.content, 'utf8');

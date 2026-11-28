@@ -17,7 +17,6 @@ import {
   codeRuntime,
   codeStats,
   codeStatus,
-  isRefusedCall,
   toolStepOfCall,
   turnModelLines,
 } from '../[id]/code-run-view.ts';
@@ -58,6 +57,7 @@ const call = (over: Partial<Extract<CodingActivityItem, { kind: 'call' }>> = {})
     toolName: 'cli:Bash',
     toolInput: { command: 'pnpm test' },
     toolOutput: 'ok',
+    outcome: 'done',
     durationMs: 400,
     createdAt: null,
     delegatedFrom: null,
@@ -331,11 +331,22 @@ describe('code-run-view — l’activité @cap:suivre-execution/ecran', () => {
   });
 
   it('un appel REFUSÉ par le harnais garde son issue — il ne passe pas pour un succès', () => {
-    expect(isRefusedCall('<tool_use_error>not allowed</tool_use_error>')).toBe(true);
-    expect(isRefusedCall('{"ok":false,"error":"denied"}')).toBe(true);
-    expect(isRefusedCall('all good')).toBe(false);
+    // The outcome is the row's column (#1184), written as `failed` by the
+    // recorder; the text of the output decides nothing, either way.
+    expect(toolStepOfCall(call({ toolOutput: 'all good', outcome: 'failed' }), JOB).outcome).toBe(
+      'error',
+    );
     expect(
-      toolStepOfCall(call({ toolOutput: '<tool_use_error>nope</tool_use_error>' }), JOB).outcome,
+      toolStepOfCall(
+        call({ toolOutput: '<tool_use_error>x</tool_use_error>', outcome: 'done' }),
+        JOB,
+      ).outcome,
+    ).toBe('success');
+    expect(
+      toolStepOfCall(
+        call({ toolOutput: '<tool_use_error>nope</tool_use_error>', outcome: 'failed' }),
+        JOB,
+      ).outcome,
     ).toBe('error');
   });
 

@@ -89,6 +89,7 @@ beforeAll(async () => {
       toolName: 'file_write',
       toolInput: { path: 'Dev/app1/src/index.ts', content: '' },
       toolOutput: '{"ok":true}',
+      outcome: 'done',
       createdAt: new Date('2026-08-01T10:00:00.000Z'),
     },
     {
@@ -97,6 +98,7 @@ beforeAll(async () => {
       toolName: 'file_write',
       toolInput: { path: 'Dev/app1/src/util.ts', content: '' },
       toolOutput: '{"ok":true}',
+      outcome: 'done',
       createdAt: new Date('2026-08-02T10:00:00.000Z'),
     },
     {
@@ -105,6 +107,7 @@ beforeAll(async () => {
       toolName: 'cli:Edit',
       toolInput: { file_path: `${dev}/app2/main.py` },
       toolOutput: '{"ok":true}',
+      outcome: 'done',
       createdAt: new Date('2026-08-03T10:00:00.000Z'),
     },
     {
@@ -113,6 +116,7 @@ beforeAll(async () => {
       toolName: 'file_write',
       toolInput: { path: 'Dev/vrac/note.md', content: '' },
       toolOutput: '{"ok":true}',
+      outcome: 'done',
       createdAt: new Date('2026-08-04T10:00:00.000Z'),
     },
     {
@@ -121,6 +125,7 @@ beforeAll(async () => {
       toolName: 'file_write',
       toolInput: { path: 'Coffre/secret/index.ts', content: '' },
       toolOutput: '{"ok":true}',
+      outcome: 'done',
       createdAt: new Date('2026-08-05T10:00:00.000Z'),
     },
     {
@@ -129,6 +134,7 @@ beforeAll(async () => {
       toolName: 'file_write',
       toolInput: { path: 'Dev2/app3/main.py', content: '' },
       toolOutput: '{"ok":true}',
+      outcome: 'done',
       createdAt: new Date('2026-08-06T10:00:00.000Z'),
     },
   ]);

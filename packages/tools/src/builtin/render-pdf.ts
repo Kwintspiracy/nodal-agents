@@ -66,6 +66,7 @@ import {
   WORKFLOW_TEMPLATE_PROTECTED_MESSAGE,
   WorkspaceError,
 } from './file-ops/workspace';
+import { outcomeOfOkFlag } from '../outcome';
 
 /** Le plus gros PDF que l'outil écrit (le plafond de lecture de `file_read`). */
 export const MAX_PDF_BYTES = MAX_READ_FILE_BYTES;
@@ -303,6 +304,7 @@ export const renderPdfTool: ToolDefinition<typeof RenderPdfInputSchema, RenderPd
     }
     return (await computeSharedOverwriteApproval(ctx, target)) === 'require_approval';
   },
+  outcomeOf: outcomeOfOkFlag,
   execute: async (input, ctx) => {
     const target = pdfPath(input.output);
     if (target === null) {

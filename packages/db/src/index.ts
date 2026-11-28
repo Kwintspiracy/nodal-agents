@@ -187,6 +187,7 @@ export {
   decidePendingRequest,
   expirePendingRequests,
   inTransaction,
+  isOpenTransaction,
   listenToTransitions,
 } from './repos/transitions.ts';
 export type { TransitionListener, Transitions } from './repos/transitions.ts';

@@ -26,6 +26,9 @@ import {
 } from './delivery-guard';
 import type { ToolDefinition, ToolContext } from '../types';
 import { sentCard } from '../presenters';
+import type { SendResult } from '@nodal-agents/delivery';
+import { RECEIPT_KEY, sendReceipt, withSendAttempt, type SendReceipt } from './receipt';
+import { chatItemTarget } from '@nodal-agents/shared';
 
 const MB = 1024 * 1024;
 
@@ -64,7 +67,7 @@ const MediaInput = z.object({
 });
 
 type MediaInput = z.infer<typeof MediaInput>;
-type MediaOutput = { ok: true; bytes: number; filename: string };
+type MediaOutput = { ok: true; bytes: number; filename: string; receipt: SendReceipt };
 
 type MediaSpec = {
   name: string;
@@ -86,6 +89,7 @@ function makeSendMediaTool(spec: MediaSpec): ToolDefinition<typeof MediaInput, M
     summary: spec.summary,
     inputSchema: MediaInput,
     riskLevel: 'write',
+    keptFromModel: [RECEIPT_KEY],
     egress: 'channel',
     // Les trois outils média (vidéo, audio, voix) sortent de cette fabrique :
     // une seule déclaration, quelque chose est parti vers le canal.
@@ -116,6 +120,9 @@ function makeSendMediaTool(spec: MediaSpec): ToolDefinition<typeof MediaInput, M
         'no_recipient',
         input.channel,
       );
+      // What this call acts on (#1184): THIS item in the chat it resolved. A
+      // later send of another file to the same chat does not make up for it.
+      ctx.reportTarget?.(chatItemTarget(channel, chatId, input.source));
 
       // 2. Bot token — the runner's resolved token wins (B3: a delegated worker
       // inheriting its entity's root agent's token); otherwise fall back to this
@@ -163,18 +170,27 @@ function makeSendMediaTool(spec: MediaSpec): ToolDefinition<typeof MediaInput, M
       // 5. Upload via the channel-neutral adapter (server-side, zero bytes in context).
       const filename = input.filename ?? derivedName;
       const adapter = getAdapter(channel);
+      let res: SendResult;
       try {
-        await adapter.sendMedia({ botToken }, chatId, {
+        res = await adapter.sendMedia({ botToken }, chatId, {
           kind: spec.mediaKind,
           bytes,
           filename,
           caption: input.caption,
         });
       } catch (err) {
-        throw await withoutConversationId(err, ctx, { chatId, channel });
+        throw withSendAttempt(await withoutConversationId(err, ctx, { chatId, channel }), {
+          chatId,
+          channel,
+        });
       }
 
-      return { ok: true, bytes: bytes.byteLength, filename };
+      return {
+        ok: true,
+        bytes: bytes.byteLength,
+        filename,
+        receipt: sendReceipt({ chatId, channel }, res),
+      };
     },
   };
 }

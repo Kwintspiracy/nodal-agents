@@ -192,6 +192,7 @@ beforeAll(async () => {
     riskLevel: 'read',
     toolInput: { path: 'notes.md' },
     toolOutput: '# notes',
+    outcome: 'done',
   });
 
   // P2bis, passe 49 — vingt et un délégués PLUS ANCIENS du même job A, sans
@@ -253,6 +254,7 @@ beforeAll(async () => {
     riskLevel: 'write',
     toolInput: { path: 'bilan-septembre.md' },
     toolOutput: 'written',
+    outcome: 'done',
   });
 
   // ── Un fil de chat PUR : l'agent répond sans jamais créer de job ──────────
@@ -470,6 +472,7 @@ beforeAll(async () => {
         turn: 1,
         toolInput: {},
         toolOutput: 'ok',
+        outcome: 'done',
         // Les lignes du SECOND sont les plus anciennes : mises en commun,
         // c'est le premier travail qui les prendrait.
         createdAt: new Date(Date.UTC(2026, 8, 3, 9, t.audit + k)),
@@ -1429,6 +1432,7 @@ describe('getConversationThreadAction — les secrets d’une carte (#150)', () 
       riskLevel: 'write',
       toolInput: { path: `cles/${secret}.txt` },
       toolOutput: 'written',
+      outcome: 'done',
     });
 
     const { getConversationThreadAction } = await actions();

@@ -17,6 +17,7 @@ import {
   scanForProjectKeyCopies,
   scanForMcpToolPrefixCopies,
   scanForNodalHomeCopies,
+  scanForOutcomeGuesses,
 } from '@nodal-agents/test-kit';
 
 const srcDir = join(fileURLToPath(import.meta.url), '..', '..');
@@ -78,5 +79,11 @@ describe('architecture invariants', () => {
       'copie de projectKey',
       scanForProjectKeyCopies({ srcDir, skipFiles: ['project-key.ts'] }),
     );
+  });
+});
+
+describe('architecture — the outcome of a call is read on its row (#1184)', () => {
+  it('no production file decides a call’s outcome from its output', () => {
+    assertNoViolations('outcome guessed from a tool output', scanForOutcomeGuesses({ srcDir }));
   });
 });

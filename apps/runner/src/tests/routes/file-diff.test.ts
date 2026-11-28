@@ -130,6 +130,7 @@ async function callRow(over: {
     toolName: over.toolName,
     toolInput: over.toolInput,
     toolOutput: '{"ok":true}',
+    outcome: 'done',
     turn: over.turn,
     card: 'files',
     presented: over.presented ?? null,

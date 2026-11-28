@@ -21,6 +21,11 @@ export type {
   UserInputResponse,
 } from './types';
 
+// What a tool declares of a result it returned, and the seam's keys for what a
+// call acted on (#1184): one outcome per call, written by `executeTool`.
+export { outcomeOfOkFlag, outcomeOfCommand, callInputTarget, cliCallVerdict } from './outcome';
+export { outcomeUnknownInstruction } from './execute';
+
 // Files (images, PDFs) a tool hands to the model with its result: one rule for every tool
 // (file_read on an image or a PDF, an MCP server's image block).
 export {

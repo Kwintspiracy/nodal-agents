@@ -37,10 +37,8 @@ export const agentSchedules = pgTable(
     // Choosing a channel here LINKS chatId resolution to it: the owner
     // conversation resolved at fire time is the owner's conversation ON THIS
     // CHANNEL, not whichever channel happened to win priority. 'whatsapp' is
-    // accepted at the DB layer for forward-compat but the UI does not offer it
-    // yet — no outbound send tool exists for whatsapp (TOOL_ONLY_DELIVERY_CHANNELS,
-    // channel-delivery.ts), so a whatsapp notify would only ever reach the user through
-    // deliver-results.ts's adapter-direct path, never a mid-run agent send.
+    // accepted at the DB layer, and the runner answers a whatsapp chat like any
+    // other (the gate sends the reply, #1215), but the UI does not offer it yet.
     notifyChannel: text('notify_channel'),
     // Per-schedule daily cost ceiling in USD (Event Triggers, Brique 3). Rolled
     // up against agent_jobs.total_cost_usd for this schedule since the start

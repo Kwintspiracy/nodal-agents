@@ -6,6 +6,7 @@
 import { agentSchedules, agents, eq, desc } from '@nodal-agents/db';
 import { z } from 'zod';
 import type { ToolDefinition } from '../types';
+import { outcomeOfOkFlag } from '../outcome';
 
 export const ListSchedulesInputSchema = z.object({
   agentSlug: z
@@ -46,6 +47,7 @@ export const listSchedulesTool: ToolDefinition<
   egress: 'none',
   loading: 'eager',
   card: 'text',
+  outcomeOf: outcomeOfOkFlag,
   execute: async (input, ctx) => {
     const rows = await ctx.db
       .select({

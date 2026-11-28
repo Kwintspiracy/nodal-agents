@@ -24,6 +24,7 @@
 import { z } from 'zod';
 import type { ToolDefinition } from '../types';
 import { terminalCard } from '../presenters';
+import { outcomeOfCommand } from '../outcome';
 import {
   assertWorkspacesConfigured,
   resolveAndCheckPath,
@@ -216,6 +217,9 @@ export const runCommandTool: ToolDefinition<typeof runCommandSchema, RunCommandO
       return roots;
     }
   },
+  // A command that ran is `done` whatever its exit status; one killed at its
+  // timeout, stopped or never started is `failed` (#1184).
+  outcomeOf: outcomeOfCommand,
   execute: async (input, ctx) => {
     // Fail loud when the agent has no workspace — same contract as the file_* tools.
     assertWorkspacesConfigured(ctx);

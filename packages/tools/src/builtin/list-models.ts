@@ -9,6 +9,7 @@ import { z } from 'zod';
 import { entityLlmKeys, eq, and } from '@nodal-agents/db';
 import { MODEL_CATALOG } from '@nodal-agents/shared';
 import type { ToolDefinition } from '../types';
+import { outcomeOfOkFlag } from '../outcome';
 
 export const ListModelsInputSchema = z.object({
   provider: z
@@ -37,6 +38,7 @@ export const listModelsTool: ToolDefinition<typeof ListModelsInputSchema, ListMo
   riskLevel: 'read',
   egress: 'none',
   card: 'text',
+  outcomeOf: outcomeOfOkFlag,
   execute: async (input, ctx) => {
     let provider = input.provider;
     if (!provider) {

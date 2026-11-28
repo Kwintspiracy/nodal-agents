@@ -167,7 +167,11 @@ describe('resolveDeliveryTarget', () => {
     }
   });
 
-  it('un chat Telegram désigné, jeton retiré, Discord actif ⇒ Telegram, jamais Discord', async () => {
+  // #1215 : le chat est joint sur SON canal, ou la cible est refusée par son
+  // nom avant toute ligne d'outbox. Avant, la cible restait Telegram et le
+  // drain échouait faute de jeton ; une demande VENUE de Telegram passait même
+  // dès qu'un autre canal, n'importe lequel, était actif.
+  it('un chat Telegram désigné, jeton retiré, Discord actif ⇒ refus channel_inactive, jamais Discord', async () => {
     await clearChannels();
     await giveDiscordBinding();
     const outcome = await resolveDeliveryTarget(db as unknown as AnyDrizzleDb, {
@@ -177,8 +181,39 @@ describe('resolveDeliveryTarget', () => {
       chatChannel: 'telegram',
       triggerContext: null,
     });
-    // La cible reste le canal du chat ; le drain relit la credential et échoue
-    // fort s'il n'y en a pas — jamais un chat id Telegram envoyé sur Discord.
-    expect(outcome).toEqual({ channel: 'telegram', chatId: '199791464' });
+    expect(outcome).toEqual({ refused: 'channel_inactive' });
+  });
+
+  it('une demande venue de Telegram, jeton retiré, Discord actif ⇒ refus channel_inactive', async () => {
+    await clearChannels();
+    await giveDiscordBinding();
+    const outcome = await resolveDeliveryTarget(db as unknown as AnyDrizzleDb, {
+      chatId: '199791464',
+      agentId: seed.agentId,
+      channel: 'telegram',
+      chatChannel: 'telegram',
+      triggerContext: null,
+    });
+    expect(outcome).toEqual({ refused: 'channel_inactive' });
+  });
+
+  it('une demande venue de WhatsApp, WhatsApp connecté ⇒ ce chat, sur WhatsApp', async () => {
+    await clearChannels();
+    await giveTelegramBinding();
+    await db.insert(channelBindings).values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      channel: 'whatsapp',
+      credentials: JSON.stringify({ sessionDir: '/sessions/target-test' }),
+      enabled: true,
+    });
+    const outcome = await resolveDeliveryTarget(db as unknown as AnyDrizzleDb, {
+      chatId: '111@s.whatsapp.net',
+      agentId: seed.agentId,
+      channel: 'whatsapp',
+      chatChannel: 'whatsapp',
+      triggerContext: null,
+    });
+    expect(outcome).toEqual({ channel: 'whatsapp', chatId: '111@s.whatsapp.net' });
   });
 });

@@ -310,10 +310,18 @@ export const codeTaskTool: ToolDefinition<typeof codeTaskSchema, CodeTaskOutput>
     assertSandboxEnforced(input.provider, input.mode);
     await resolveAndCheckPath(ctx, input.cwd ?? '.');
   },
+  // A coding run that ended in error (the CLI's own error, or a non-zero
+  // exit) did not do what it was asked: `failed`, said by the tool, so the
+  // harness never reports it as finished (#1184, FV1-03).
+  outcomeOf: (output) => (output.isError ? 'failed' : 'done'),
   execute: async (input, ctx) => {
     // Same workspace contract as run_command: no workspace → fail loud.
     assertWorkspacesConfigured(ctx);
     const cwd = await resolveAndCheckPath(ctx, input.cwd ?? '.');
+    // What a coding run acts on (#1184): the folder it works in. A later run
+    // that ends `done` in the same folder redoes a failed one, whatever its
+    // prompt; a run elsewhere does not.
+    ctx.reportTarget?.(`dir:${cwd}`);
 
     // The agent's budget (#447) BEFORE any spawn (fail loud, run never starts).
     const cliConfig = await assertAgentBudget(ctx.db, ctx.agentId);

@@ -177,9 +177,9 @@ export function reviewerVerificationRecord(
   }
   if (!parsed || typeof parsed !== 'object') return null;
   const out = parsed as Record<string, unknown>;
-  // Une issue d'outil : l'appel a été refusé, bloqué, ou attend une
-  // approbation. Rien n'a tourné.
-  if ('outcome' in out) return null;
+  // Un appel refusé, bloqué ou en attente n'a rien fait tourner : sa ligne ne
+  // porte pas le résultat d'une commande (pas de `exitCode`), et ce qu'il est
+  // devenu se lit sur sa colonne `outcome` (#1184), jamais ici.
   if (!('exitCode' in out) || typeof out['timedOut'] !== 'boolean') return null;
   const exitCode = out['exitCode'];
   if (exitCode !== null && typeof exitCode !== 'number') return null;

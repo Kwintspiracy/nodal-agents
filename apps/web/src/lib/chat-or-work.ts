@@ -57,7 +57,7 @@
 // réel ; la garder en « travail » est précisément le faux vert que #196 vient
 // de retirer de l'autre côté.
 
-import { parsePresented, outcomeOfToolOutput, isBlockedByRule } from './tool-card-payload.ts';
+import { parsePresented, stepOutcomeOf, isRefusedOutcome } from './tool-card-payload.ts';
 
 /** Une ligne `tool_calls`, réduite à ce que le classement lit. */
 export type ClassifiableRow = {
@@ -81,6 +81,8 @@ export type ClassifiableRow = {
    * quand rien n'est sorti.
    */
   toolOutput: string | null;
+  /** What became of the call (`tool_calls.outcome`, #1184), read by `stepOutcomeOf`. */
+  outcome: string | null;
 };
 
 export type ProducedItem =
@@ -323,7 +325,7 @@ export function classifyProduction(input: {
     // d'approbation n'a RIEN produit — sa ligne existe, et sa carte est celle
     // qu'il AURAIT remplie. La classer afficherait « Produced » pour une
     // écriture que le propriétaire vient justement de refuser.
-    const outcome = outcomeOfToolOutput(row.toolOutput);
+    const outcome = stepOutcomeOf(row.outcome);
     if (outcome !== 'success') {
       // UNE COMMANDE REFUSÉE PAR UNE RÈGLE EST LISTÉE QUAND MÊME (#395). Elle
       // n'a rien exécuté, donc elle ne produit rien et ne décide rien
@@ -335,7 +337,7 @@ export function classifyProduction(input: {
       //
       // Sa carte n'a pas de charge utile : `present()` ne tourne que sur une
       // exécution réussie, donc la commande se lit dans l'ENTRÉE de l'appel.
-      if (row.card === 'terminal' && isBlockedByRule(row.toolOutput)) {
+      if (row.card === 'terminal' && isRefusedOutcome(row.outcome)) {
         items.push({
           kind: 'command',
           label: commandFromInput(row.toolInput) ?? row.toolName,

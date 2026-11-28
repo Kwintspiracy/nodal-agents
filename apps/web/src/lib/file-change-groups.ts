@@ -25,7 +25,7 @@ import {
   isRefusedToolCall,
   type CodingChangeView,
 } from './coding-changes.ts';
-import { callHappened, outcomeOfToolOutput, parsePresented } from './tool-card-payload.ts';
+import { callHappened, stepOutcomeOf, parsePresented } from './tool-card-payload.ts';
 import type { ConstatedChangeKind } from '@nodal-agents/shared';
 
 /**
@@ -165,6 +165,8 @@ export type AuditRowForChanges = {
   toolName: string;
   toolInput: unknown;
   toolOutput: string | null;
+  /** What became of the call (`tool_calls.outcome`, #1184), read by `stepOutcomeOf`. */
+  outcome: string | null;
   presented: unknown;
   /**
    * Les chemins de la carte AVANT masquage, dans l'ordre exact de
@@ -217,7 +219,7 @@ function displayedFiles(
 ): Map<string, DisplayedFile> {
   const display = new Map<string, DisplayedFile>();
   for (const row of rows) {
-    if (!callHappened(outcomeOfToolOutput(row.toolOutput))) continue;
+    if (!callHappened(stepOutcomeOf(row.outcome))) continue;
     const p = parsePresented(row.presented);
     if (p === null || p.card !== 'files') continue;
     p.files.forEach((f, i) => {
@@ -266,8 +268,8 @@ export function fileChangesOfAuditRows(
   const display = displayedFiles(rows, workspaceRoots);
   const calls: FileChangeCall[] = [];
   for (const row of rows) {
-    if (!callHappened(outcomeOfToolOutput(row.toolOutput))) continue;
-    if (isRefusedToolCall(row.toolOutput)) continue;
+    if (!callHappened(stepOutcomeOf(row.outcome))) continue;
+    if (isRefusedToolCall(row.outcome)) continue;
     const change = extractChange(row.toolName, row.toolInput);
     if (change !== null) calls.push({ change });
   }

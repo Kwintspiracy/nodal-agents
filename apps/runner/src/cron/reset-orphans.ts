@@ -11,49 +11,18 @@ import { agentJobs, agentTasks, approvalRequests, CALL_GATE_KINDS } from '@nodal
 import { expirePendingRequests } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { appendDeliveredVerdicts, readJobDeliverable } from '@nodal-agents/orchestration';
-import { sendTelegramMessage } from '@nodal-agents/delivery';
 import { failJob } from '../job/state.ts';
 import { resumeJobAfterApprovalResolution } from '../approvals/resume.ts';
 import { closeElicitationsOfLostJobs } from '../approvals/elicitation.ts';
 import { takeLostRun } from './take-lost-run.ts';
-import { resolveTelegramDeliveryTarget } from '../approvals/notify.ts';
-import type { RunnerDeps } from '../deps.ts';
+import { sweptJobStopLine } from './stop-line.ts';
 import type { RunnerEnv } from '../env.ts';
 
-// User-facing failure notices for the cron reapers. These are the deliberate,
-// minimal exceptions to invariant #2 that invariant #4 (no silent failures)
-// requires: a job the reaper finalizes must never leave the user with nothing.
-const ORPHAN_RESET_NOTICE =
-  "⚠️ Cette tâche a été interrompue (le service a redémarré ou s'est arrêté en cours d'exécution) et n'a pas pu être terminée. Relancez-la si besoin.";
-const STALE_PENDING_NOTICE =
-  "⚠️ Cette tâche n'a jamais été prise en charge par un worker (démarrage manqué) et a été abandonnée. Relancez-la si besoin.";
-
-/**
- * Best-effort: deliver a finalized job's failure notice to its Telegram chat so
- * the reaper's outcome is never silent (D1, audit followup). No-ops for jobs
- * with no bot/chat (dashboard/api/cron). A delivery failure only logs.
- *
- * Exportée depuis #186 : la reprise des jobs d'un runner mort
- * (`reclaim-jobs.ts`) finalise elle aussi des jobs, et son issue ne doit pas
- * être plus silencieuse que celle du faucheur.
- */
-export async function notifyJobFailure(
-  db: AnyDrizzleDb,
-  jobId: string,
-  notice: string,
-): Promise<void> {
-  try {
-    const target = await resolveTelegramDeliveryTarget(db as unknown as RunnerDeps['db'], jobId);
-    if (!target) return;
-    await sendTelegramMessage({ botToken: target.botToken, chatId: target.chatId, text: notice });
-  } catch (err) {
-    console.warn(
-      `[reset-orphans] failed to deliver failure notice for job ${jobId}: ${
-        err instanceof Error ? err.message : String(err)
-      }`,
-    );
-  }
-}
+// What a reaper says when it fails a job is what the row tells it (the status,
+// how long since the last update, how a delegated job it waited on ended), in
+// the runner's stop-line form (`sweptJobStopLine`, cron/stop-line.ts), never a
+// guessed cause. The person reads it where they asked: `failJob` prepares the
+// notice of every failure, in its own transaction (#1180, #1086).
 
 // ─── resetOrphanedTasks ───────────────────────────────────────────────────────
 
@@ -179,6 +148,7 @@ export async function resetOrphanedJobs(db: AnyDrizzleDb, staleMinutes = 5): Pro
       status: agentJobs.status,
       claimGeneration: agentJobs.claimGeneration,
       pendingDelegation: agentJobs.pendingDelegation,
+      updatedAt: agentJobs.updatedAt,
     })
     .from(agentJobs)
     .where(
@@ -199,10 +169,20 @@ export async function resetOrphanedJobs(db: AnyDrizzleDb, staleMinutes = 5): Pro
     'awaiting_tasks',
   ];
 
-  const toReset: { id: string; status: string; claimGeneration: number }[] = [];
+  const toReset: {
+    id: string;
+    status: string;
+    claimGeneration: number;
+    /** What the sweeper read, for the line the person reads. */
+    line: string;
+  }[] = [];
   const toBump: string[] = [];
 
+  const now = Date.now();
   for (const c of candidates) {
+    // Le fait lu sur l'enfant attendu, quand il y en a un : il entre dans la
+    // ligne d'arrêt (#1086 : « le service a redémarré » pour un enfant annulé).
+    let awaitedJob: { status: string | null } | undefined;
     if (c.status === 'awaiting_delegation') {
       const pending = c.pendingDelegation as { subJobId?: string } | null;
       const subId = pending?.subJobId;
@@ -212,6 +192,7 @@ export async function resetOrphanedJobs(db: AnyDrizzleDb, staleMinutes = 5): Pro
           .from(agentJobs)
           .where(eq(agentJobs.id, subId))
           .limit(1);
+        awaitedJob = { status: sub ? (sub.status ?? null) : null };
         if (sub && ACTIVE_SUBJOB_STATUSES.includes(sub.status ?? '')) {
           // Sub still running — parent waits legitimately. Skip the reset
           // AND bump updated_at so the next cron tick doesn't immediately
@@ -248,6 +229,11 @@ export async function resetOrphanedJobs(db: AnyDrizzleDb, staleMinutes = 5): Pro
       id: c.id,
       status: c.status ?? 'processing',
       claimGeneration: c.claimGeneration,
+      line: sweptJobStopLine({
+        status: c.status ?? 'processing',
+        idleMs: now - (c.updatedAt?.getTime() ?? now),
+        ...(awaitedJob ? { awaitedJob } : {}),
+      }),
     });
   }
 
@@ -260,7 +246,7 @@ export async function resetOrphanedJobs(db: AnyDrizzleDb, staleMinutes = 5): Pro
   // job that legitimately finished between the snapshot above and now is NOT
   // clobbered from completed→failed (D2 — the old bulk UPDATE keyed only on id),
   // and (b) fills the user-facing `result` with an explanation so the outcome is
-  // never silent (D1). Then deliver that notice to the job's channel.
+  // never silent (D1), and prepares its notice where the request was made.
   let reset = 0;
   for (const seen of toReset) {
     const jobId = seen.id;
@@ -273,12 +259,15 @@ export async function resetOrphanedJobs(db: AnyDrizzleDb, staleMinutes = 5): Pro
       'orphan_job_reset',
       undefined,
       undefined,
-      ORPHAN_RESET_NOTICE,
+      seen.line,
+      undefined,
+      {
+        runnerLines: [seen.line],
+      },
     );
     if (landed) {
       reset += 1;
       await closeElicitationsOfLostJobs(db, [jobId]);
-      await notifyJobFailure(db, jobId, ORPHAN_RESET_NOTICE);
     }
   }
 
@@ -367,30 +356,40 @@ export async function failStalePendingJobs(
   // failJob's non-terminal guard also protects against a job that flipped out of
   // pending between this select and the write.
   const stale = await db
-    .select({ id: agentJobs.id, claimGeneration: agentJobs.claimGeneration })
+    .select({
+      id: agentJobs.id,
+      claimGeneration: agentJobs.claimGeneration,
+      updatedAt: agentJobs.updatedAt,
+    })
     .from(agentJobs)
     .where(and(eq(agentJobs.status, 'pending'), lt(agentJobs.updatedAt, cutoff)));
 
   let failed = 0;
-  for (const { id, claimGeneration } of stale) {
+  const now = Date.now();
+  for (const { id, claimGeneration, updatedAt } of stale) {
     // Avant l'écriture, la règle des faucheurs (`takeLostRun`) : la ligne
     // prise (un job prenable est pris, comme un worker le prendrait) et ses
     // processus morts, ou rien — un worker l'a pris entre-temps.
     if ((await takeLostRun(db, { id, status: 'pending', claimGeneration }, cutoff)) === null) {
       continue;
     }
+    const line = sweptJobStopLine({
+      status: 'pending',
+      idleMs: now - (updatedAt?.getTime() ?? now),
+    });
     const landed = await failJob(
       db,
       id,
       'stale_pending_abandoned',
       undefined,
       undefined,
-      STALE_PENDING_NOTICE,
+      line,
+      undefined,
+      {
+        runnerLines: [line],
+      },
     );
-    if (landed) {
-      failed += 1;
-      await notifyJobFailure(db, id, STALE_PENDING_NOTICE);
-    }
+    if (landed) failed += 1;
   }
   return failed;
 }

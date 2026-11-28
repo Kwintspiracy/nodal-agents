@@ -78,6 +78,7 @@ import {
   WORKFLOW_TEMPLATE_PROTECTED_MESSAGE,
   WorkspaceError,
 } from './workspace';
+import { outcomeOfOkFlag } from '../../outcome';
 
 export const FileMoveInputSchema = z.object({
   source: z
@@ -997,6 +998,7 @@ export const fileMoveTool: ToolDefinition<typeof FileMoveInputSchema, FileMoveOu
     }
     return false;
   },
+  outcomeOf: outcomeOfOkFlag,
   execute: async (input, ctx) => {
     let paths: MovePaths;
     try {

@@ -5,6 +5,7 @@
 import { z } from 'zod';
 import { attachAgentToOrchestrator } from '@nodal-agents/db';
 import type { ToolDefinition } from '../../types';
+import { outcomeOfOkFlag } from '../../outcome';
 
 const AttachAgentInput = z.object({
   agentSlug: z
@@ -29,6 +30,7 @@ export const attachAgentTool: ToolDefinition<typeof AttachAgentInput, AttachAgen
   egress: 'none',
   card: 'text',
   defaultApproval: 'require_approval',
+  outcomeOf: outcomeOfOkFlag,
   execute: async (input, ctx) => {
     const result = await attachAgentToOrchestrator(
       ctx.db,

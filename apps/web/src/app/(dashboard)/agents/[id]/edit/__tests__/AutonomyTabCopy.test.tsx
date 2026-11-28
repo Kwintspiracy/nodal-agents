@@ -50,7 +50,7 @@ const INTERNAL_TOOLS: InternalTool[] = [
     slug: 'return_result',
     label: 'Finish a task',
     summary:
-      'Report that a task succeeded or is blocked. It sends no answer by itself: the agent delivers its answer in the same step, through the right channel.',
+      'Report that a task succeeded or is blocked. It sends no answer by itself: the answer is what the agent wrote, and Nodal sends it where the request was made.',
     risk: 'write',
     unblockableReason:
       'Always available. The agent needs this tool to finish a job or explain why it is stuck. ' +

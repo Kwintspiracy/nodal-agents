@@ -779,10 +779,15 @@ describe('un appel approuvé ne tourne qu’une fois quand le job change de run 
     const issueA = await runA;
 
     expect(ceQuiATourne).toEqual([FAIT]);
-    expect(issueB.status).toBe('completed');
+    // B ends while A is still inside the call: its row says `unknown` (the
+    // mark of a call that started, #1184), and B was told so. A job does not
+    // end as a plain success over a call whose effect is unknown: it ends as
+    // work not done, the call named, and the person reads it.
+    expect(issueB.status).toBe('failed');
     expect(issueA.status).toBe('already_handled');
     const r = await ligne(jobId);
-    expect(r.status).toBe('completed');
+    expect(r.status).toBe('failed');
+    expect(r.error).toBe('calls_not_done (1 unresolved: save_memory)');
     expect(resultatDe(r.messages, 'ap-1')).toContain('approved_call_outcome_unknown');
     const q = await demande(demandeId);
     expect(q.executedAt).not.toBeNull();

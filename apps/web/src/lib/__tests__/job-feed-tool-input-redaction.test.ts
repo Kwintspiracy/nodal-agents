@@ -123,6 +123,7 @@ beforeAll(async () => {
     toolName: 'run_command',
     toolInput: { command: `curl -H "authorization: Bearer ${CLE}" https://api.example` },
     toolOutput: `200 OK — la clé ${CLE} est encore dans le log`,
+    outcome: 'done',
     durationMs: 12,
     turn: 1,
     toolCallId: 'c_feed_212',

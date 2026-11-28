@@ -13,7 +13,7 @@
 import type { CodingActivityItem, CodingProcessDetail, CodingToolCallView } from '@/lib/actions.ts';
 import type { StatusVariant } from '@/components/ui/StatusPill';
 import type { DeliverySummary, Step, TurnUsage } from '@/lib/conversation-feed.ts';
-import { outcomeOfToolOutput } from '@/lib/tool-card-payload.ts';
+import { stepOutcomeOf } from '@/lib/tool-card-payload.ts';
 import { lastReviewVerdict } from '@/lib/review-state.ts';
 import { lastSequenceViewPerDeliverable } from '@/lib/verification-repairs.ts';
 import { concludeProof } from '@/lib/declared-proof.ts';
@@ -271,22 +271,6 @@ export function codeDelivery(detail: CodingProcessDetail): DeliverySummary | nul
 }
 
 /**
- * Un appel que le harnais a REFUSÉ — il n'a rien fait. Lu sur l'enveloppe
- * `<tool_use_error>` du CLI, ou sur le `{"ok":false}` d'un outil Nodal. Gardé
- * VISIBLE et signalé plutôt que caché : « cet agent a tenté d'écrire et a été
- * bloqué » est le signal qui dit que sa posture est mauvaise — celui qui
- * manquait pendant qu'un agent en lecture seule avait l'air de coder.
- *
- * `outcomeOfToolOutput` ne le voit pas : il lit un champ `outcome` dans du
- * JSON, et l'enveloppe du CLI n'en est pas. Les deux se composent donc.
- */
-export function isRefusedCall(toolOutput: string | null): boolean {
-  if (toolOutput === null) return false;
-  const head = toolOutput.slice(0, 400);
-  return head.includes('<tool_use_error>') || /^\s*\{"ok"\s*:\s*false\b/.test(head);
-}
-
-/**
  * Un appel d'outil du process, dans la forme d'un BLOC DU FIL.
  *
  * C'est la traduction qui permet de dessiner l'activité d'un run de code avec
@@ -295,8 +279,8 @@ export function isRefusedCall(toolOutput: string | null): boolean {
  *
  * `card` et `presented` restent nuls : un appel de CLI n'a pas de carte
  * persistée, et le bloc le DIT (« no card recorded ») au lieu de résumer une
- * charge utile qui n'existe pas. L'issue se lit sur la sortie brute, par la
- * même fonction que le fil (`outcomeOfToolOutput`) : un appel refusé par le
+ * charge utile qui n'existe pas. L'issue se lit sur la colonne de la ligne,
+ * par la même fonction que le fil (`stepOutcomeOf`) : un appel refusé par le
  * harnais se voit, il ne se devine pas.
  */
 export function toolStepOfCall(
@@ -312,7 +296,9 @@ export function toolStepOfCall(
     presented: null,
     input: tc.toolInput,
     outputText: tc.toolOutput,
-    outcome: isRefusedCall(tc.toolOutput) ? 'error' : outcomeOfToolOutput(tc.toolOutput),
+    // L'issue est celle de la ligne (#1184) : un appel que le harnais a refusé
+    // y est `failed`, écrit par son enregistreur, jamais lu dans sa sortie.
+    outcome: stepOutcomeOf(tc.outcome),
     durationMs: tc.durationMs,
     lineCounts: {},
     question: null,

@@ -178,6 +178,7 @@ const toolCalls: FeedToolCallRow[] = [
     turn: 1,
     toolInput: { url: 'https://example.test/CHANGELOG.md' },
     toolOutput: '"# Changelog…"',
+    outcome: 'done',
     createdAt: at('2026-09-05T15:01:48.248Z'),
   },
   {
@@ -189,6 +190,7 @@ const toolCalls: FeedToolCallRow[] = [
     turn: 1,
     toolInput: { query: 'changelog' },
     toolOutput: '[]',
+    outcome: 'done',
     createdAt: at('2026-09-05T15:01:48.259Z'),
   },
   {
@@ -200,6 +202,7 @@ const toolCalls: FeedToolCallRow[] = [
     turn: 3,
     toolInput: { text: 'Rien de neuf.' },
     toolOutput: '{"messageId":"42"}',
+    outcome: 'done',
     createdAt: at('2026-09-05T15:02:15.943Z'),
   },
 ];
@@ -535,6 +538,7 @@ describe('la réponse finale ne se dit pas deux fois (P2bis) — une règle de s
           turn: 1,
           toolInput: { text: 'Tout est prêt.' },
           toolOutput: '{"ok":true}',
+          outcome: 'done',
           createdAt: at('2026-09-07T10:00:00Z'),
         },
       ],
@@ -578,6 +582,7 @@ describe('la réponse finale ne se dit pas deux fois (P2bis) — une règle de s
           turn: 1,
           toolInput: { path: 'rapport.pdf' },
           toolOutput: '{"ok":true}',
+          outcome: 'done',
           createdAt: at('2026-09-07T10:00:00Z'),
         },
       ],
@@ -769,6 +774,7 @@ describe('buildConversationFeed — lignes anciennes, échecs, enfants', () => {
         turn: 1,
         toolInput: {},
         toolOutput: '{"ok":true}',
+        outcome: 'done',
         createdAt: null,
       },
     ];
@@ -811,6 +817,7 @@ describe('buildConversationFeed — lignes anciennes, échecs, enfants', () => {
         turn: 1,
         toolInput: {},
         toolOutput: '{"outcome":"error","error":"blocked"}',
+        outcome: 'failed',
         createdAt: null,
       },
     ];
@@ -849,7 +856,13 @@ describe('buildConversationFeed — lignes anciennes, échecs, enfants', () => {
         },
       ],
     };
-    const row = (toolCallId: string, toolOutput: string | null): FeedToolCallRow => ({
+    // The outcome is the row's column (#1184): the envelope beside it is what
+    // the screen shows, never what it reads to decide.
+    const row = (
+      toolCallId: string,
+      toolOutput: string | null,
+      outcome: string | null,
+    ): FeedToolCallRow => ({
       toolCallId,
       toolName: 'file_edit',
       card: 'files',
@@ -858,15 +871,16 @@ describe('buildConversationFeed — lignes anciennes, échecs, enfants', () => {
       turn: 1,
       toolInput: {},
       toolOutput,
+      outcome,
       createdAt: null,
     });
     const feed = buildConversationFeed(
       j,
       [
-        row('c1', '{"outcome":"awaiting_approval"}'),
-        row('c2', '{"outcome":"blocked"}'),
-        row('c3', '{"outcome":"error","error":"boom"}'),
-        row('c4', '{"ok":true,"path":"notes/bonjour.html"}'),
+        row('c1', '{"outcome":"awaiting_approval"}', 'awaiting_approval'),
+        row('c2', '{"outcome":"error","error":"blocked: a rule"}', 'refused'),
+        row('c3', '{"outcome":"error","error":"boom"}', 'failed'),
+        row('c4', '{"ok":true,"path":"notes/bonjour.html"}', 'done'),
       ],
       [],
     );
@@ -911,6 +925,7 @@ describe('buildConversationFeed — lignes anciennes, échecs, enfants', () => {
         turn: 1,
         toolInput: { path: '1' },
         toolOutput: '{"ok":true}',
+        outcome: 'done',
         createdAt: null,
       },
       {
@@ -922,6 +937,7 @@ describe('buildConversationFeed — lignes anciennes, échecs, enfants', () => {
         turn: 1,
         toolInput: { path: '2' },
         toolOutput: '{"ok":true}',
+        outcome: 'done',
         createdAt: null,
       },
     ];
@@ -1165,6 +1181,7 @@ describe('buildConversationFeed — historique préfixé et alignement des tours
         turn: 1,
         toolInput: {},
         toolOutput: '{"results":[]}',
+        outcome: 'done',
         createdAt: null,
       },
     ];
@@ -1332,6 +1349,7 @@ describe('buildConversationFeed — historique préfixé et alignement des tours
         turn: 1,
         toolInput: {},
         toolOutput: '{"ok":true}',
+        outcome: 'done',
         createdAt: null,
       },
       {
@@ -1343,6 +1361,7 @@ describe('buildConversationFeed — historique préfixé et alignement des tours
         turn: 3,
         toolInput: {},
         toolOutput: '{"ok":true}',
+        outcome: 'done',
         createdAt: null,
       },
     ];

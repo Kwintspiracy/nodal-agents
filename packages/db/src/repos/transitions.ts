@@ -141,6 +141,16 @@ export async function inTransaction<T>(
   return result;
 }
 
+/**
+ * `db` est-elle une transaction encore ouverte ? Ce qui doit suivre un COMMIT
+ * (un envoi, qui peut durer des minutes et ne tient jamais de transaction) ne
+ * part que de l'appel qui a ouvert la plus externe : dans une transaction,
+ * c'est à celui qui la commet de le faire.
+ */
+export function isOpenTransaction(db: AnyDrizzleDb): boolean {
+  return db instanceof PgTransaction;
+}
+
 function unfollowable(t: Transitions): void {
   if (isEmpty(t)) return;
   const what =

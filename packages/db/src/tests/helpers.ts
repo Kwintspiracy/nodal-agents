@@ -446,6 +446,9 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       read_only_hint boolean,
       -- mirrors migration 0133 (#443)
       execution_started boolean,
+      -- mirrors migration 0170 (#1184): the call's outcome, and what it acted on
+      outcome text CHECK (outcome IS NULL OR outcome IN ('done','failed','unknown','refused','awaiting_approval')),
+      target text,
       -- 0110 : l'ordre d'ECRITURE. Ni l'uuid, ni le tour, ni created_at ne
       -- disent laquelle de deux lignes d'un meme tour est arrivee la derniere.
       seq bigserial,

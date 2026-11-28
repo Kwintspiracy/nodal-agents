@@ -15,6 +15,7 @@ import {
   scanForProjectKeyCopies,
   scanForDirectTerminalCompleted,
   assertNoViolations,
+  scanForOutcomeGuesses,
 } from '@nodal-agents/test-kit';
 import { scanForServerUsesOfClientValues } from './scan-server-uses-client-value.ts';
 
@@ -54,4 +55,10 @@ describe('architecture invariants', () => {
   // Invariant #2 is deliberately NOT asserted here. It governs the RUNNER —
   // "the LLM speaks or the runner stays silent". This package ships prose to
   // humans by design, so the same scan would flag its whole reason to exist.
+});
+
+describe('architecture — the outcome of a call is read on its row (#1184)', () => {
+  it('no production file decides a call’s outcome from its output', () => {
+    assertNoViolations('outcome guessed from a tool output', scanForOutcomeGuesses({ srcDir }));
+  });
 });
