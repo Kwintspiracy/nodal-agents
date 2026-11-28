@@ -36,14 +36,27 @@ import { createApifyTools, APIFY_OPERATIONS } from '@nodal-agents/adapter-apify'
 import { createTavilyTools, TAVILY_OPERATIONS } from '@nodal-agents/adapter-tavily';
 import { createPoyoTools, POYO_OPERATIONS } from '@nodal-agents/adapter-poyo';
 import type { z } from 'zod';
-import type { ConnectorToolDefinition, ToolDefinition } from '@nodal-agents/tools';
+import type { ConnectorIo, ConnectorToolDefinition, ToolDefinition } from '@nodal-agents/tools';
 import type { CredentialType, OperationDescriptor } from '@nodal-agents/shared';
+import {
+  contractTransport,
+  holdToContract,
+  type ContractOptions,
+} from './connector-contract-layer';
 
 export type AdapterCredentialSource = CredentialType | 'api_key';
 
 export type AdapterEntry = {
   credentialType: AdapterCredentialSource;
-  toolFactory: (accessToken: string) => ToolDefinition<z.ZodTypeAny, unknown>[];
+  /**
+   * The adapter's tools, each held to the connector contract
+   * (connector-contract-layer.ts). `options` is for tests: a fake provider as
+   * `fetch`, a short bound. The runner passes none.
+   */
+  toolFactory: (
+    accessToken: string,
+    options?: ContractOptions,
+  ) => ToolDefinition<z.ZodTypeAny, unknown>[];
   /**
    * Present only for adapters whose OAuth access token can expire mid-job —
    * currently the 5 Google adapters (~1h token TTL) and airtable-oauth
@@ -60,18 +73,33 @@ export type AdapterEntry = {
    */
   toolFactoryWithResolver?: (
     getAccessToken: () => Promise<string>,
+    options?: ContractOptions,
   ) => ToolDefinition<z.ZodTypeAny, unknown>[];
   operations: OperationDescriptor[];
 };
 
 type ConnectorTool = ConnectorToolDefinition<z.ZodTypeAny, unknown>;
 
-/** An adapter as written: its factories build tools without risk or approval. */
+/**
+ * An adapter as written: its factories build tools without risk or approval,
+ * over the transport `io` gives them.
+ */
 type ConnectorSource = {
   credentialType: AdapterCredentialSource;
-  toolFactory: (accessToken: string) => ConnectorTool[];
-  toolFactoryWithResolver?: (getAccessToken: () => Promise<string>) => ConnectorTool[];
+  toolFactory: (accessToken: string, io: ConnectorIo) => ConnectorTool[];
+  toolFactoryWithResolver?: (
+    getAccessToken: () => Promise<string>,
+    io: ConnectorIo,
+  ) => ConnectorTool[];
   operations: OperationDescriptor[];
+  /**
+   * The factory hands `io.fetch` to its provider's SDK, so every request of
+   * a call goes through the contract's transport. Absent: the adapter's SDK
+   * takes no such transport yet (contract-ratchet.ts says which, and what each
+   * needs); the bound, the stop and the error's class still hold, from the
+   * call itself.
+   */
+  passesTransport?: true;
 };
 
 /**
@@ -113,16 +141,32 @@ export function bindOperationDescriptors(
   return bound;
 }
 
+/**
+ * Every tool of a connector, as a job receives it: its descriptor's risk and
+ * approval (`bindOperationDescriptors`), then held to the connector contract
+ * (`holdToContract`), every request of every call through one transport.
+ */
 function bindSource(slug: string, source: ConnectorSource): AdapterEntry {
   const { toolFactory, toolFactoryWithResolver, operations } = source;
+  const contract = { passesTransport: source.passesTransport === true };
+  const bySlug = new Map(operations.map((op) => [op.slug, op]));
+  const hold = (tools: ConnectorTool[], options: ContractOptions = {}) =>
+    bindOperationDescriptors(slug, operations, tools).map((tool) =>
+      holdToContract(tool, bySlug.get(tool.name)!, contract, options),
+    );
+  const ioFor = (options: ContractOptions = {}): ConnectorIo => ({
+    // Read at each request, so the process's fetch is the one current then.
+    fetch: contractTransport(() => options.fetch ?? globalThis.fetch),
+  });
   return {
     credentialType: source.credentialType,
-    toolFactory: (accessToken) =>
-      bindOperationDescriptors(slug, operations, toolFactory(accessToken)),
+    toolFactory: (accessToken, options) => hold(toolFactory(accessToken, ioFor(options)), options),
     ...(toolFactoryWithResolver
       ? {
-          toolFactoryWithResolver: (getAccessToken: () => Promise<string>) =>
-            bindOperationDescriptors(slug, operations, toolFactoryWithResolver(getAccessToken)),
+          toolFactoryWithResolver: (
+            getAccessToken: () => Promise<string>,
+            options?: ContractOptions,
+          ) => hold(toolFactoryWithResolver(getAccessToken, ioFor(options)), options),
         }
       : {}),
     operations,
@@ -132,46 +176,58 @@ function bindSource(slug: string, source: ConnectorSource): AdapterEntry {
 const CONNECTOR_SOURCES: Record<string, ConnectorSource> = {
   'google-drive': {
     credentialType: 'google-oauth',
-    toolFactory: (t) => createDriveTools({ accessToken: t }),
-    toolFactoryWithResolver: (getAccessToken) => createDriveTools({ getAccessToken }),
+    toolFactory: (t, io) => createDriveTools({ accessToken: t, fetch: io.fetch }),
+    toolFactoryWithResolver: (getAccessToken, io) =>
+      createDriveTools({ getAccessToken, fetch: io.fetch }),
     operations: DRIVE_OPERATIONS,
+    passesTransport: true,
   },
   gmail: {
     credentialType: 'google-oauth',
-    toolFactory: (t) => createGmailTools({ accessToken: t }),
-    toolFactoryWithResolver: (getAccessToken) => createGmailTools({ getAccessToken }),
+    toolFactory: (t, io) => createGmailTools({ accessToken: t, fetch: io.fetch }),
+    toolFactoryWithResolver: (getAccessToken, io) =>
+      createGmailTools({ getAccessToken, fetch: io.fetch }),
     operations: GMAIL_OPERATIONS,
+    passesTransport: true,
   },
   'google-calendar': {
     credentialType: 'google-oauth',
-    toolFactory: (t) => createGoogleCalendarTools({ accessToken: t }),
-    toolFactoryWithResolver: (getAccessToken) => createGoogleCalendarTools({ getAccessToken }),
+    toolFactory: (t, io) => createGoogleCalendarTools({ accessToken: t, fetch: io.fetch }),
+    toolFactoryWithResolver: (getAccessToken, io) =>
+      createGoogleCalendarTools({ getAccessToken, fetch: io.fetch }),
     operations: GOOGLE_CALENDAR_OPERATIONS,
+    passesTransport: true,
   },
   'google-sheets': {
     credentialType: 'google-oauth',
-    toolFactory: (t) => createSheetsTools({ accessToken: t }),
-    toolFactoryWithResolver: (getAccessToken) => createSheetsTools({ getAccessToken }),
+    toolFactory: (t, io) => createSheetsTools({ accessToken: t, fetch: io.fetch }),
+    toolFactoryWithResolver: (getAccessToken, io) =>
+      createSheetsTools({ getAccessToken, fetch: io.fetch }),
     operations: SHEETS_OPERATIONS,
+    passesTransport: true,
   },
   'google-docs': {
     credentialType: 'google-oauth',
-    toolFactory: (t) => createDocsTools({ accessToken: t }),
-    toolFactoryWithResolver: (getAccessToken) => createDocsTools({ getAccessToken }),
+    toolFactory: (t, io) => createDocsTools({ accessToken: t, fetch: io.fetch }),
+    toolFactoryWithResolver: (getAccessToken, io) =>
+      createDocsTools({ getAccessToken, fetch: io.fetch }),
     operations: DOCS_OPERATIONS,
+    passesTransport: true,
   },
   // notion-oauth: Public Integration (browser OAuth roundtrip)
   'notion-oauth': {
     credentialType: 'notion-oauth',
-    toolFactory: (t) => createNotionTools({ accessToken: t }),
+    toolFactory: (t, io) => createNotionTools({ accessToken: t, fetch: io.fetch }),
     operations: NOTION_OPERATIONS,
+    passesTransport: true,
   },
   // notion: Internal Integration api_key — wire format identical on the Notion API.
   // Token is the decrypted connectors.api_key (no credentials row).
   notion: {
     credentialType: 'api_key',
-    toolFactory: (t) => createNotionTools({ accessToken: t }),
+    toolFactory: (t, io) => createNotionTools({ accessToken: t, fetch: io.fetch }),
     operations: NOTION_OPERATIONS,
+    passesTransport: true,
   },
   // outlook-mail: Microsoft Graph delegated OAuth access token via
   // credentials.payload.accessToken. Microsoft access tokens live ~60-90min
@@ -180,9 +236,11 @@ const CONNECTOR_SOURCES: Record<string, ConnectorSource> = {
   // Graph request instead of a one-shot token.
   'outlook-mail': {
     credentialType: 'microsoft-oauth',
-    toolFactory: (t) => createOutlookMailTools({ accessToken: t }),
-    toolFactoryWithResolver: (getAccessToken) => createOutlookMailTools({ getAccessToken }),
+    toolFactory: (t, io) => createOutlookMailTools({ accessToken: t, fetch: io.fetch }),
+    toolFactoryWithResolver: (getAccessToken, io) =>
+      createOutlookMailTools({ getAccessToken, fetch: io.fetch }),
     operations: OUTLOOK_MAIL_OPERATIONS,
+    passesTransport: true,
   },
   // airtable-oauth: OAuth access token via credentials.payload.accessToken.
   // Airtable OAuth2 tokens live ~60min, same class of bug as the 5 Google
@@ -190,16 +248,19 @@ const CONNECTOR_SOURCES: Record<string, ConnectorSource> = {
   // credential before every request instead of a one-shot token.
   'airtable-oauth': {
     credentialType: 'airtable-oauth',
-    toolFactory: (t) => createAirtableTools({ accessToken: t }),
-    toolFactoryWithResolver: (getAccessToken) => createAirtableTools({ getAccessToken }),
+    toolFactory: (t, io) => createAirtableTools({ accessToken: t, fetch: io.fetch }),
+    toolFactoryWithResolver: (getAccessToken, io) =>
+      createAirtableTools({ getAccessToken, fetch: io.fetch }),
     operations: AIRTABLE_OPERATIONS,
+    passesTransport: true,
   },
   // airtable: Personal Access Token via connectors.api_key. Same Bearer wire
   // format as the OAuth path — the adapter doesn't distinguish.
   airtable: {
     credentialType: 'api_key',
-    toolFactory: (t) => createAirtableTools({ accessToken: t }),
+    toolFactory: (t, io) => createAirtableTools({ accessToken: t, fetch: io.fetch }),
     operations: AIRTABLE_OPERATIONS,
+    passesTransport: true,
   },
   firecrawl: {
     credentialType: 'api_key',
@@ -210,8 +271,9 @@ const CONNECTOR_SOURCES: Record<string, ConnectorSource> = {
   // connectors.api_key. Deploy runs wrangler; list/delete use the official SDK.
   cloudflare: {
     credentialType: 'api_key',
-    toolFactory: (t) => createCloudflareTools({ accessToken: t }),
+    toolFactory: (t, io) => createCloudflareTools({ accessToken: t, fetch: io.fetch }),
     operations: CLOUDFLARE_OPERATIONS,
+    passesTransport: true,
   },
   apify: {
     credentialType: 'api_key',
@@ -225,8 +287,9 @@ const CONNECTOR_SOURCES: Record<string, ConnectorSource> = {
   },
   poyo: {
     credentialType: 'api_key',
-    toolFactory: (t) => createPoyoTools({ accessToken: t }),
+    toolFactory: (t, io) => createPoyoTools({ accessToken: t, fetch: io.fetch }),
     operations: POYO_OPERATIONS,
+    passesTransport: true,
   },
 };
 

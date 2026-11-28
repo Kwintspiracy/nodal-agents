@@ -42,6 +42,8 @@ export type AirtableClient = {
 export type AirtableClientOptions = {
   /** Per-request timeout in ms (audit#2 M-15). Defaults to 30s. */
   timeoutMs?: number;
+  /** The connector contract's transport (the registry gives it); the global fetch otherwise. */
+  fetch?: typeof fetch;
 };
 
 /**
@@ -65,6 +67,7 @@ export function createAirtableClient(
   options: AirtableClientOptions = {},
 ): AirtableClient {
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const send = options.fetch ?? ((...args: Parameters<typeof fetch>) => fetch(...args));
   const headers = async (): Promise<Record<string, string>> => ({
     Authorization: `Bearer ${await getAccessToken()}`,
     'Content-Type': 'application/json',
@@ -77,7 +80,7 @@ export function createAirtableClient(
     for (let attempt = 0; ; attempt += 1) {
       let response: Response;
       try {
-        response = await fetch(url, {
+        response = await send(url, {
           method,
           headers: await headers(),
           ...(body !== undefined && { body: JSON.stringify(body) }),

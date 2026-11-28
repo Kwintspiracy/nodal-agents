@@ -305,12 +305,14 @@ export function networkFailure(err: unknown, now: Date = new Date()): Connection
 
 /**
  * The state an error raised by a provider call says: a connection error
- * already classified, the HTTP status the error carries (every adapter error
+ * already classified, a failure the connector contract already classified (it
+ * carries its state), the HTTP status the error carries (every adapter error
  * keeps the provider's `status`), or a transport failure. Null when the error
  * is about the call, not the connection.
  */
 export function callFailure(err: unknown, now: Date = new Date()): ConnectionState | null {
   if (err instanceof ConnectionUnavailableError) return err.connection;
+  if (isClassifiedCallFailure(err)) return err.failure.connection;
   if (typeof err === 'object' && err !== null) {
     const status = (err as Record<string, unknown>)['status'];
     if (typeof status === 'number') {
@@ -319,6 +321,249 @@ export function callFailure(err: unknown, now: Date = new Date()): ConnectionSta
     }
   }
   return networkFailure(err, now);
+}
+
+// ─── A connector call's failure, in one closed set ───────────────────────────
+//
+// What a connector tool's failure IS, for every adapter (the connector
+// contract, connector-contract.ts): one kind of a closed set, the provider's
+// retry time when it gave one, and the connection's state when the failure
+// says something about the connection. Classified here, beside the
+// connection's states, by the same protocols: the HTTP status and its
+// `Retry-After` header (RFC 9110 §10.2.3, RFC 6585 §4), the error model of
+// AIP-193 (`google.rpc.Status`: its `RESOURCE_EXHAUSTED` status, its
+// `ErrorInfo` reasons, and their JSON v1 form `errors[].reason`), whose APIs
+// answer a pace refusal with 403 as well as 429, and the operating system's
+// network codes. No line names a provider.
+
+/**
+ * The closed set of a connector call's failures.
+ *   reauth_required  the provider refused the grant or the key: only the
+ *                    person can repair it, by authorising again;
+ *   not_permitted    the grant stands but does not allow this call;
+ *   not_found        the object the call names does not exist (or no longer);
+ *   rate_limited     the provider refused for pace or quota: try again after
+ *                    `retryAfter` (null when the provider gave no time);
+ *   temporary        the provider could not answer now (network, time-out,
+ *                    5xx, the call's bound): the same call may succeed later;
+ *   invalid_input    the provider refused the request as written (400, 409,
+ *                    412, 413, 422): the same call will fail again;
+ *   failed           the provider answered with an error none of the above
+ *                    names, or the adapter failed: said as such, never
+ *                    guessed into another kind.
+ */
+export const CONNECTOR_ERROR_KINDS = [
+  'reauth_required',
+  'not_permitted',
+  'not_found',
+  'rate_limited',
+  'temporary',
+  'invalid_input',
+  'failed',
+] as const;
+export type ConnectorErrorKind = (typeof CONNECTOR_ERROR_KINDS)[number];
+
+/** One answer of a provider, as its transport received it (the body as text). */
+export interface ProviderAnswer {
+  readonly status: number;
+  /** Header names in lower case. */
+  readonly headers: Readonly<Record<string, string>>;
+  readonly body: string;
+}
+
+/** What a connector call's failure is, in the closed set. */
+export interface CallFailureClass {
+  readonly kind: ConnectorErrorKind;
+  /** The provider's HTTP status, when an answer came. */
+  readonly status: number | null;
+  /** The provider's own code for it (an AIP-193 reason, an error `code`), as data. */
+  readonly providerCode: string | null;
+  /** `rate_limited` / `temporary`: when the provider said to try again. */
+  readonly retryAfter: Date | null;
+  /** What the failure says of the connection, or null when it is about the call. */
+  readonly connection: ConnectionState | null;
+}
+
+const CLASSIFIED = Symbol.for('nodal.connector.classified-failure');
+
+/** An error that already carries its class (the contract's error). */
+export function isClassifiedCallFailure(err: unknown): err is { failure: CallFailureClass } {
+  return (
+    typeof err === 'object' &&
+    err !== null &&
+    (err as Record<symbol, unknown>)[CLASSIFIED] === true &&
+    typeof (err as { failure?: unknown }).failure === 'object'
+  );
+}
+
+/** Brand an error as carrying its class, so no later layer classifies it again. */
+export function markClassified(err: object): void {
+  Object.defineProperty(err, CLASSIFIED, { value: true, enumerable: false });
+}
+
+/**
+ * `Retry-After` (RFC 9110 §10.2.3): a number of seconds or an HTTP date.
+ * Null when absent or unreadable: never a guessed delay.
+ */
+export function retryAfterOf(
+  headers: Readonly<Record<string, string>> | null,
+  now: Date = new Date(),
+): Date | null {
+  const raw = headers?.['retry-after']?.trim();
+  if (!raw) return null;
+  if (/^\d+$/.test(raw)) return new Date(now.getTime() + Number(raw) * 1000);
+  const at = Date.parse(raw);
+  return Number.isNaN(at) ? null : new Date(at);
+}
+
+// AIP-193: the reasons a pace or quota refusal carries, whatever its status.
+const PACE_REASONS = new Set([
+  'rateLimitExceeded',
+  'userRateLimitExceeded',
+  'dailyLimitExceeded',
+  'quotaExceeded',
+  'RATE_LIMIT_EXCEEDED',
+  'RESOURCE_EXHAUSTED',
+]);
+
+/** The codes an error body carries: AIP-193's reasons and status, or an error `code`. */
+function bodyCodes(body: string): string[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return [];
+  }
+  if (typeof parsed !== 'object' || parsed === null) return [];
+  const root = parsed as Record<string, unknown>;
+  const out: string[] = [];
+  const error = root['error'];
+  if (typeof error === 'object' && error !== null) {
+    const e = error as Record<string, unknown>;
+    for (const list of [e['errors'], e['details']]) {
+      if (!Array.isArray(list)) continue;
+      for (const item of list) {
+        const reason = (item as Record<string, unknown> | null)?.['reason'];
+        if (typeof reason === 'string') out.push(reason);
+      }
+    }
+    if (typeof e['status'] === 'string') out.push(e['status']);
+    if (typeof e['code'] === 'string') out.push(e['code']);
+  } else if (typeof error === 'string') {
+    out.push(error);
+  }
+  if (typeof root['code'] === 'string') out.push(root['code']);
+  return out;
+}
+
+function kindOfStatus(
+  status: number,
+  codes: readonly string[],
+  hasRetryAfter: boolean,
+): ConnectorErrorKind {
+  if (status === 429 || codes.some((c) => PACE_REASONS.has(c))) return 'rate_limited';
+  if (status === 401) return 'reauth_required';
+  if (status >= 500 || status === 408 || status === 425) return 'temporary';
+  // A refusal that says when to try again is a pace refusal (RFC 9110).
+  if (hasRetryAfter && status >= 400) return 'rate_limited';
+  if (status === 403) return 'not_permitted';
+  if (status === 404 || status === 410) return 'not_found';
+  if (status === 400 || status === 409 || status === 412 || status === 413 || status === 422) {
+    return 'invalid_input';
+  }
+  return 'failed';
+}
+
+/** The HTTP status an error carries itself, under any of the names SDKs use. */
+function statusOf(err: unknown, depth = 0): number | null {
+  if (depth > 4 || typeof err !== 'object' || err === null) return null;
+  const e = err as Record<string, unknown>;
+  for (const key of ['status', 'statusCode']) {
+    const v = e[key];
+    if (typeof v === 'number' && v >= 100 && v <= 599) return v;
+  }
+  // googleapis' errors carry the status as a numeric `code`.
+  const code = e['code'];
+  if (typeof code === 'number' && code >= 100 && code <= 599) return code;
+  const response = e['response'];
+  if (typeof response === 'object' && response !== null) {
+    const v = (response as Record<string, unknown>)['status'];
+    if (typeof v === 'number' && v >= 100 && v <= 599) return v;
+  }
+  return statusOf(e['cause'], depth + 1);
+}
+
+/**
+ * The class of a connector call's failure. `answer` is the provider's error
+ * answer this call's transport received, when the adapter's transport is the
+ * contract's: it holds the status, the headers and the body that the
+ * adapter's own error may have dropped. Read in that order: a failure already
+ * classified, a connection already known unusable, the provider's answer (its
+ * status, then the codes its body carries, then its `Retry-After`), the
+ * status the error carries, a transport failure; anything else is `failed`.
+ */
+export function classifyCallFailure(
+  err: unknown,
+  answer: ProviderAnswer | null,
+  now: Date = new Date(),
+): CallFailureClass {
+  if (isClassifiedCallFailure(err)) return err.failure;
+  if (err instanceof ConnectionUnavailableError) {
+    return {
+      kind: err.connection.state === 'unreachable' ? 'temporary' : 'reauth_required',
+      status: null,
+      providerCode: null,
+      retryAfter: err.connection.retryAfter,
+      connection: err.connection,
+    };
+  }
+  const message = err instanceof Error ? err.message : String(err);
+  const status = answer?.status ?? statusOf(err);
+  if (status !== null) {
+    const codes = answer ? bodyCodes(answer.body) : [];
+    const retryAfter = retryAfterOf(answer?.headers ?? null, now);
+    const kind = kindOfStatus(status, codes, retryAfter !== null);
+    return {
+      kind,
+      status,
+      providerCode: codes[0] ?? null,
+      retryAfter: kind === 'rate_limited' || kind === 'temporary' ? retryAfter : null,
+      // A pace refusal says nothing of the grant; any other status says what
+      // `httpFailure` reads in it (401: the grant; 5xx: the provider).
+      connection: kind === 'rate_limited' ? null : httpFailure(status, message, now),
+    };
+  }
+  const network = networkFailure(err, now);
+  if (network) {
+    return {
+      kind: 'temporary',
+      status: null,
+      providerCode: null,
+      retryAfter: null,
+      connection: network,
+    };
+  }
+  return { kind: 'failed', status: null, providerCode: null, retryAfter: null, connection: null };
+}
+
+// The network codes that say a request never left this machine: no
+// connection was made, so no provider can have acted on it. Any other
+// failure of a request in flight (a reset, a closed socket, a time-out, an
+// abort) may have come after the provider received it.
+const NEVER_SENT_CODES = new Set([
+  'ECONNREFUSED',
+  'ENOTFOUND',
+  'EAI_AGAIN',
+  'EHOSTUNREACH',
+  'ENETUNREACH',
+  'UND_ERR_CONNECT_TIMEOUT',
+]);
+
+/** Whether a transport failure proves the request never reached the provider. */
+export function neverSent(err: unknown): boolean {
+  const codes = codesOf(err);
+  // A wrapper keeps the code of the connect that failed in its chain.
+  return codes.some((c) => NEVER_SENT_CODES.has(c));
 }
 
 // ─── What the model reads ─────────────────────────────────────────────────────

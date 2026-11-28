@@ -6,6 +6,9 @@
 //    Asserts the tool_calls row is written with tool_name = 'drive_list_files'.
 //  - enabledOperations=null (all tools available) — job succeeds with drive tool called.
 
+// A connector test fakes its provider: reaching the network fails this file
+// (packages/test-kit/src/no-network.ts).
+import '@nodal-agents/test-kit/setup-no-network';
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { offeredToolNames } from './offered-tools.ts';
 import { MockLanguageModelV3 } from 'ai/test';
@@ -273,12 +276,16 @@ describe('job-with-adapter: Drive connector fully enabled (enabledOperations=nul
       })
       .onConflictDoNothing();
 
-    // Mock Google Drive API so drive_list_files doesn't make real HTTP calls
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response(JSON.stringify({ files: [{ id: 'file-1', name: 'doc.txt' }] }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      }),
+    // The fake Drive API. Every connector's provider client sends through the
+    // connector contract's transport, which is the process's `fetch` in a
+    // job: this spy is the Drive the tool reaches (before the contract,
+    // googleapis used its own HTTP stack and this call went to the network).
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(
+      async () =>
+        new Response(JSON.stringify({ files: [{ id: 'file-1', name: 'doc.txt' }] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
     );
 
     const [job] = await db
@@ -308,13 +315,9 @@ describe('job-with-adapter: Drive connector fully enabled (enabledOperations=nul
       {
         toolCalls: [
           {
-            // The mocked Drive call errors under this harness (googleapis uses
-            // its own HTTP transport, not the global fetch spy), so the honest
-            // terminal is 'blocked' — and Guard 3b (no-false-success) would
-            // correctly refuse a 'success' claim while drive_list_files is
-            // unresolved. This test only verifies wiring (the tool_calls row).
-            // A blocked result must carry a reason; it finalizes as 'failed'
-            // (error='agent_blocked') with the reason surfaced to the user.
+            // This test verifies wiring (the tool_calls row and what Drive
+            // received); the agent's terminal is kept 'blocked', which
+            // finalizes as 'failed' (error='agent_blocked').
             toolCallId: 'tc-rr',
             toolName: 'return_result',
             args: { status: 'blocked', reason: 'Drive call failed under this harness' },
@@ -335,6 +338,20 @@ describe('job-with-adapter: Drive connector fully enabled (enabledOperations=nul
 
     const toolNames = tcRows.map((r) => r.toolName);
     expect(toolNames).toContain('drive_list_files');
+
+    // What the fake Drive received, and what the tool returned: one page in
+    // the connector contract's list shape.
+    const driveCall = fetchMock.mock.calls
+      .map(([input]) => String(input instanceof Request ? input.url : input))
+      .find((url) => url.startsWith('https://www.googleapis.com/drive/v3/files'));
+    expect(new URL(driveCall!).searchParams.get('q')).toBe('name contains "doc"');
+    const driveRow = (
+      await db
+        .select({ output: toolCalls.toolOutput, toolName: toolCalls.toolName })
+        .from(toolCalls)
+        .where(eq(toolCalls.jobId, job.id))
+    ).find((r) => r.toolName === 'drive_list_files');
+    expect(driveRow?.output).toContain('"items":[{"id":"file-1"');
 
     fetchMock.mockRestore();
 

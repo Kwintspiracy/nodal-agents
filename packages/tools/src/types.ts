@@ -117,6 +117,13 @@ export interface ToolContext {
    */
   toolCallId?: string;
   /**
+   * A connector write's idempotency key, derived by the registry from
+   * `toolCallId` (the same for every request of the call, different for every
+   * call). An adapter whose provider documents a client-supplied key passes it
+   * on; no other tool receives one.
+   */
+  idempotencyKey?: string;
+  /**
    * The job's chat (`agent_jobs.chat_id`): the conversation a request came
    * from, or the one its trigger named. null when the job has none (dashboard,
    * API, a routine that runs silently). Never read alone: a chat id does not
@@ -826,6 +833,19 @@ export type ConnectorToolDefinition<TInput extends z.ZodTypeAny, TOutput> = Omit
   ToolDefinition<TInput, TOutput>,
   'riskLevel' | 'defaultApproval'
 >;
+
+/**
+ * What the registry gives every connector adapter's factory (the connector
+ * contract, @nodal-agents/shared connector-contract.ts): the transport its
+ * provider's SDK must use. Through it every request of a call carries the
+ * job's stop and the call's bound, and the provider's answer is kept for the
+ * error. An adapter passes `fetch` to its SDK (googleapis'
+ * `fetchImplementation`, the Notion and Cloudflare clients' `fetch`, a Graph
+ * middleware) or uses it for its own requests.
+ */
+export interface ConnectorIo {
+  readonly fetch: typeof fetch;
+}
 
 /**
  * The value the model reads for a successful call of `tool`: its declared

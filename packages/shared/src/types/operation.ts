@@ -39,4 +39,24 @@ export type OperationDescriptor = {
    * provider has no scopes (API keys, Notion's capabilities).
    */
   scopes?: readonly ScopeRequirement[];
+  /**
+   * `list`: the operation returns the connector contract's list shape,
+   * `{ items, next, truncated, total? }`, and takes `cursor`
+   * (connector-contract.ts). Declared, so the registry shapes and cuts its
+   * result and the conformance suite reads it through three pages.
+   */
+  returns?: 'list';
+  /**
+   * How long one call may take, in ms, when it is longer than the contract's
+   * default (DEFAULT_CALL_BOUND_MS in runner-adapters): an operation that
+   * waits for the provider's own work (an actor run, a deployment).
+   */
+  timeBoundMs?: number;
+  /**
+   * The operation's effect is carried out by something other than the
+   * connector contract's transport (a child process). A call cut before its
+   * end then reports its outcome as unknown, since no request record can say
+   * whether the effect happened.
+   */
+  effectOutsideTransport?: true;
 };
