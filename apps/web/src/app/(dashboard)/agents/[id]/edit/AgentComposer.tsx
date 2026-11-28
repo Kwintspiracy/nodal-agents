@@ -137,6 +137,7 @@ import AgentBudgetSection from './AgentBudgetSection.tsx';
 import { ProviderRow } from './CodeTaskProviderRow.tsx';
 import type { OperationDescriptor } from '@nodal-agents/shared';
 import { READONLY_PRESET_TOOLS } from '@nodal-agents/shared';
+import type { ConnectionState } from '@nodal-agents/shared';
 
 /**
  * One built-in tool as returned by listInternalToolsAction.
@@ -285,6 +286,8 @@ interface Props {
   slackCfg: SlackConfigRow | null;
   slackAllowedConversations: ChannelAllowedConversationView[];
   whatsappStatus: 'connected' | 'disconnected';
+  /** What the runner last learnt about the WhatsApp link (connection_states). */
+  whatsappLink: ConnectionState;
   whatsappAllowedConversations: ChannelAllowedConversationView[];
 }
 
@@ -308,6 +311,7 @@ export default function AgentComposer({
   slackCfg,
   slackAllowedConversations,
   whatsappStatus,
+  whatsappLink,
   whatsappAllowedConversations,
 }: Props) {
   const router = useRouter();
@@ -653,6 +657,7 @@ export default function AgentComposer({
             slackCfg={slackCfg}
             slackAllowedConversations={slackAllowedConversations}
             whatsappStatus={whatsappStatus}
+            whatsappLink={whatsappLink}
             whatsappAllowedConversations={whatsappAllowedConversations}
           />
         )}

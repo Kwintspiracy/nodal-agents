@@ -52,6 +52,7 @@ import {
   reportRepeatingRecovery,
 } from '../../lib/repeat-log.ts';
 import { handleWhatsAppMessage, triggerJobWorker, type WhatsAppHandleResult } from './handler.ts';
+import { recordChannelLink, type ChannelLinkSignal } from '../link-state.ts';
 
 export interface WhatsAppManagerOpts {
   env: RunnerEnv;
@@ -99,6 +100,29 @@ interface ActiveSocket {
 }
 
 const DEFAULT_REFRESH_MS = 30_000;
+
+/**
+ * The link signal of a WhatsApp socket status (@nodal-agents/delivery's
+ * socket-manager, from Baileys' `connection.update`): `open` is up;
+ * `logged_out` is Baileys' `DisconnectReason.loggedOut` (the linked device was
+ * removed from the phone, the session is void and must be paired again), the
+ * link refused for good; `closed` is any other disconnect, which the socket
+ * reconnects with backoff, the link lost for now. `connecting` and
+ * `qr_pending` say nothing about a link that existed.
+ */
+export function whatsappLinkSignal(status: WhatsAppStatus): ChannelLinkSignal | null {
+  switch (status) {
+    case 'open':
+      return { link: 'up' };
+    case 'logged_out':
+      return { link: 'refused', detail: 'logged out (DisconnectReason.loggedOut)' };
+    case 'closed':
+      return { link: 'lost', detail: 'connection closed' };
+    case 'connecting':
+    case 'qr_pending':
+      return null;
+  }
+}
 
 /**
  * Le message au PROPRIÉTAIRE pour une demande d'accès. Il cite QUI demande,
@@ -269,6 +293,8 @@ export function startWhatsAppManager(
     handle.events.on('status', (status) => {
       const priorQr = pairing.get(agentId)?.qr ?? null;
       pairing.set(agentId, { status, qr: status === 'open' ? null : priorQr });
+      const signal = whatsappLinkSignal(status);
+      if (signal) void recordChannelLink(deps.db, agentId, 'whatsapp', signal);
     });
     handle.events.on('message', (message) => {
       void onMessage(agentId, message).catch((err) => {

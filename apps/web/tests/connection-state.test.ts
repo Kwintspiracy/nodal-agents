@@ -23,8 +23,12 @@ import {
   readConnectionState,
   recordConnectionState,
 } from '@nodal-agents/db';
-import { getOAuthProvider } from '@nodal-agents/shared';
-import { listConnectorsAction, listMcpServersAction } from '../src/lib/actions.ts';
+import { CHANNELS, channelConnectionId, getOAuthProvider } from '@nodal-agents/shared';
+import {
+  getAgentChannelsAction,
+  listConnectorsAction,
+  listMcpServersAction,
+} from '../src/lib/actions.ts';
 import { listCredentialsAction, refreshCredentialAction } from '../src/lib/credentials.ts';
 
 let _testDb: TestDb | null = null;
@@ -494,5 +498,35 @@ describe('Reconnect repairs the row it was clicked on @cap:connecter-un-service/
       'has not been granted access to Gmail',
     );
     expect(await connectorRows()).toEqual([{ id: orphan, credentialId: null }]);
+  });
+});
+
+describe('the channels status reads the link state of every channel @cap:parler-par-canal-externe/moteur', () => {
+  it('each of the four channels returns the state the runner recorded for its link', async () => {
+    const recorded = {
+      telegram: { state: 'needs_reauth', cause: 'grant_refused' },
+      discord: { state: 'needs_reauth', cause: 'rights_missing' },
+      slack: { state: 'unreachable', cause: 'provider_unavailable' },
+      whatsapp: { state: 'working', cause: 'succeeded' },
+    } as const;
+    for (const channel of CHANNELS) {
+      await recordConnectionState(
+        _testDb!,
+        { kind: 'channel', id: channelConnectionId(_agentId, channel) },
+        {
+          ...recorded[channel],
+          detail: null,
+          observedAt: new Date(),
+          retryAfter:
+            recorded[channel].state === 'unreachable' ? new Date(Date.now() + 60_000) : null,
+        },
+      );
+    }
+    const r = await getAgentChannelsAction(_agentId);
+    if (!r.ok) throw new Error(r.message);
+    for (const channel of CHANNELS) {
+      const summary = r.data.channels.find((c) => c.channel === channel)!;
+      expect(summary.link, channel).toMatchObject(recorded[channel]);
+    }
   });
 });

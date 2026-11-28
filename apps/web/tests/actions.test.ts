@@ -556,35 +556,53 @@ describe('getAgentChannelsAction (S4)', () => {
   });
 
   it('telegram connected, discord/slack/whatsapp disconnected (connectable, unbound)', async () => {
-    currentDb = makeDb([
-      {
-        id: 'aaaaaaaa-0000-0000-0000-000000000051',
-        slug: 'agent-ch',
-        name: 'Agent Ch',
-        botToken: 'tok',
-      },
-    ]) as typeof currentDb;
+    currentDb = makeDbMixed({
+      // agent, channel bindings, connection_states (nothing learnt yet).
+      selectQueue: [
+        [
+          {
+            id: 'aaaaaaaa-0000-0000-0000-000000000051',
+            slug: 'agent-ch',
+            name: 'Agent Ch',
+            botToken: 'tok',
+          },
+        ],
+        [],
+        [],
+      ],
+    }) as typeof currentDb;
     const { getAgentChannelsAction } = await import('../src/lib/actions.ts');
     const r = await getAgentChannelsAction('aaaaaaaa-0000-0000-0000-000000000051');
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    expect(r.data.channels).toEqual([
+    expect(r.data.channels.map(({ channel, status }) => ({ channel, status }))).toEqual([
       { channel: 'telegram', status: 'connected' },
       { channel: 'discord', status: 'disconnected' },
       { channel: 'slack', status: 'disconnected' },
       { channel: 'whatsapp', status: 'disconnected' },
     ]);
+    // Every channel carries its link state; nothing learnt reads not_checked.
+    for (const c of r.data.channels) {
+      expect(c.link).toMatchObject({ state: 'working', cause: 'not_checked' });
+    }
   });
 
   it('telegram disconnected when the agent has no bot token', async () => {
-    currentDb = makeDb([
-      {
-        id: 'aaaaaaaa-0000-0000-0000-000000000052',
-        slug: 'agent-ch2',
-        name: 'Agent Ch2',
-        botToken: null,
-      },
-    ]) as typeof currentDb;
+    currentDb = makeDbMixed({
+      // agent, channel bindings, connection_states (nothing learnt yet).
+      selectQueue: [
+        [
+          {
+            id: 'aaaaaaaa-0000-0000-0000-000000000052',
+            slug: 'agent-ch2',
+            name: 'Agent Ch2',
+            botToken: null,
+          },
+        ],
+        [],
+        [],
+      ],
+    }) as typeof currentDb;
     const { getAgentChannelsAction } = await import('../src/lib/actions.ts');
     const r = await getAgentChannelsAction('aaaaaaaa-0000-0000-0000-000000000052');
     expect(r.ok).toBe(true);
@@ -781,7 +799,8 @@ describe('Discord channel actions (D3)', () => {
     currentDb = makeDbMixed({
       selectQueue: [
         [{ id: AGENT_ID, slug: 'agent-d2', name: 'Agent D2', botToken: null }],
-        [{ channel: 'discord', enabled: true }],
+        [{ channel: 'discord', enabled: true }], // connection_states: nothing learnt yet.
+        [],
       ],
     }) as typeof currentDb;
     const { getAgentChannelsAction } = await import('../src/lib/actions.ts');
@@ -976,7 +995,8 @@ describe('Slack channel actions (K3)', () => {
     currentDb = makeDbMixed({
       selectQueue: [
         [{ id: AGENT_ID, slug: 'agent-s2', name: 'Agent S2', botToken: null }],
-        [{ channel: 'slack', enabled: true }],
+        [{ channel: 'slack', enabled: true }], // connection_states: nothing learnt yet.
+        [],
       ],
     }) as typeof currentDb;
     const { getAgentChannelsAction } = await import('../src/lib/actions.ts');

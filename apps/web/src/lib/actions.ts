@@ -3063,6 +3063,8 @@ export type ChannelUiStatus = 'connected' | 'disconnected' | 'coming_soon';
 export interface AgentChannelSummary {
   channel: MessagingChannelKind;
   status: ChannelUiStatus;
+  /** What the runner last learnt about the link (connection_states), every channel alike. */
+  link: ConnectionState;
 }
 
 export interface AgentChannelsOverview {
@@ -3104,15 +3106,27 @@ export async function getAgentChannelsAction(
 
     const bindings = await listChannelBindings(db, agentId);
     const boundChannels = new Set(bindings.filter((b) => b.enabled).map((b) => b.channel));
+    const links = await readConnectionStates(
+      db,
+      CHANNEL_ORDER.map((channel) => ({
+        kind: 'channel' as const,
+        id: channelConnectionId(agentId, channel),
+      })),
+    );
+    const linkOf = (channel: MessagingChannelKind): ConnectionState =>
+      links.get(connectionKey({ kind: 'channel', id: channelConnectionId(agentId, channel) })) ??
+      NOT_CHECKED;
 
     const channels: AgentChannelSummary[] = CHANNEL_ORDER.map((channel) => {
+      const link = linkOf(channel);
       if (channel === 'telegram') {
-        return { channel, status: row.botToken ? 'connected' : 'disconnected' };
+        return { channel, status: row.botToken ? 'connected' : 'disconnected', link };
       }
-      if (boundChannels.has(channel)) return { channel, status: 'connected' };
+      if (boundChannels.has(channel)) return { channel, status: 'connected', link };
       return {
         channel,
         status: CONNECTABLE_CHANNELS.has(channel) ? 'disconnected' : 'coming_soon',
+        link,
       };
     });
 

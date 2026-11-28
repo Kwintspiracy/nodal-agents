@@ -11,7 +11,7 @@ import {
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
 import PrimaryButton from '@/components/ui/PrimaryButton';
 import TextInput from '@/components/ui/TextInput';
-import ConnectionStatusPill from '@/components/ConnectionStatusPill.tsx';
+import ChannelLinkStatus from './ChannelLinkStatus.tsx';
 
 export default function TelegramConfigForm({
   agentId,
@@ -93,13 +93,7 @@ export default function TelegramConfigForm({
             {connected ? 'Connected' : 'Not connected'}
           </span>
         </div>
-        {/* The link's state as the runner last learnt it: a token the platform
-            refused, or a platform it could not reach, is said here. */}
-        {connected && config.link.state !== 'working' && (
-          <div className="mt-2">
-            <ConnectionStatusPill connection={config.link} withReason />
-          </div>
-        )}
+        <ChannelLinkStatus connected={connected} link={config.link} />
         {config.botUsername && (
           <p className="text-xs text-ink-3 mt-1.5">
             Bot:{' '}

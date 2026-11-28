@@ -37,7 +37,7 @@ import {
   buildAuthConfirmKeyboard,
 } from './auth-callback.ts';
 import { stopReaction } from '../channels/turn.ts';
-import { recordChannelLink } from '../channels/link-state.ts';
+import { deliveryLinkSignal, recordChannelLink } from '../channels/link-state.ts';
 
 export interface PollerOpts {
   agentId: string;
@@ -252,12 +252,12 @@ export async function runTelegramPoller(opts: PollerOpts): Promise<PollerExit> {
         // (re)configuration via the dashboard will respawn this poller. The
         // link's state says it, on the agent's Channels tab.
         console.warn(`[telegram-poller agent=${agentId}] invalid_token; stopping`);
-        await recordChannelLink(deps.db, agentId, 'telegram', err);
+        await recordChannelLink(deps.db, agentId, 'telegram', deliveryLinkSignal(err));
         return { reason: 'invalid_token', finalOffset: offset };
       }
       if (link !== 'failed') {
         link = 'failed';
-        await recordChannelLink(deps.db, agentId, 'telegram', err);
+        await recordChannelLink(deps.db, agentId, 'telegram', deliveryLinkSignal(err));
       }
 
       // Transient error — back off and retry. Don't burn CPU on hard failures.
@@ -275,7 +275,7 @@ export async function runTelegramPoller(opts: PollerOpts): Promise<PollerExit> {
     backoffMs = BACKOFF_INITIAL_MS;
     if (link !== 'working') {
       link = 'working';
-      await recordChannelLink(deps.db, agentId, 'telegram', null);
+      await recordChannelLink(deps.db, agentId, 'telegram', { link: 'up' });
     }
 
     for (const update of updates) {
