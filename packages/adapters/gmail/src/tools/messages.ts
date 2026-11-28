@@ -1,19 +1,40 @@
 // @nodal-agents/adapter-gmail — message tools
 // send, list, get, reply, modify-labels, forward, trash, untrash, delete
+//
+// Send, reply and forward implement the mail contract of
+// @nodal-agents/shared/mail-contract (#1191, #1192, #1193): the body's type is
+// declared, a reply goes where a mail client sends it, a forward carries the
+// original whole, and each returns what it did.
 
 import { z } from 'zod';
 import type { ConnectorToolDefinition } from '@nodal-agents/tools';
 import type { gmail_v1 } from 'googleapis';
+import {
+  forwardSubject,
+  mailBodyFormatSchema,
+  parseMailAddressList,
+  replySubject,
+  resolveMailBodyFormat,
+  resolveReplyRecipients,
+} from '@nodal-agents/shared/mail-contract';
+import type { MailAttachmentReport, MailSendReport } from '@nodal-agents/shared/mail-contract';
 import { mapGmailError, GmailAdapterError } from '../errors';
 import { paginateGmail } from '../helpers/pagination';
 import { mapWithConcurrency } from '../helpers/concurrency';
 import {
   extractTextFromPayload,
   extractAttachmentInfos,
+  extractCarriedFiles,
   parseGmailHeaders,
 } from '../helpers/parse-payload';
-import { buildRfc2822Message } from '../helpers/rfc2822';
-import type { AttachmentSpec } from '../helpers/rfc2822';
+import {
+  attachmentSpecsToMime,
+  buildMimeMessage,
+  toGmailRaw,
+  type AttachmentSpec,
+  type MimeAttachment,
+} from '../helpers/mime';
+import { listOwnAddresses } from '../helpers/own-addresses';
 
 // Max body chars to return (avoid context overload)
 const BODY_CHAR_CAP = 10000;
@@ -25,7 +46,7 @@ const HYDRATE_CONCURRENCY = 15;
 
 // ── Attachment schema (reused across send/reply/draft) ─────────────────────
 
-const AttachmentItemSchema = z.object({
+export const AttachmentItemSchema = z.object({
   filename: z.string().describe("File name shown in the email, e.g. 'report.html'."),
   content: z
     .string()
@@ -40,15 +61,24 @@ const AttachmentItemSchema = z.object({
     .describe("How content is encoded. Default 'text'. Use 'base64' for pre-encoded binaries."),
 });
 
+function reportAttachments(parts: MimeAttachment[]): MailAttachmentReport[] {
+  return parts.map((p) => ({ filename: p.filename, mimeType: p.contentType, inline: false }));
+}
+
 // ── gmail_send_email ──────────────────────────────────────────────────────────
 
 const SendEmailInput = z.object({
-  to: z.string().describe('Recipient email address or comma-separated list.'),
+  to: z
+    .string()
+    .describe('Recipient(s): an address list, e.g. "Jane Doe <jane@x.com>, bob@y.com".'),
   subject: z.string().describe('Email subject line.'),
-  body: z.string().describe('Email body — plain text or HTML.'),
-  cc: z.string().optional().describe('CC address(es), comma-separated.'),
-  bcc: z.string().optional().describe('BCC address(es), comma-separated.'),
-  reply_to: z.string().optional().describe('Reply-To header.'),
+  body: z
+    .string()
+    .describe('Email body, sent exactly as written, in the format given by body_format.'),
+  body_format: mailBodyFormatSchema,
+  cc: z.string().optional().describe('CC address list.'),
+  bcc: z.string().optional().describe('BCC address list.'),
+  reply_to: z.string().optional().describe('Reply-To address list.'),
   attachments: z
     .array(AttachmentItemSchema)
     .optional()
@@ -59,10 +89,7 @@ const SendEmailInput = z.object({
     ),
 });
 
-export type SendEmailOutput = {
-  messageId: string;
-  threadId: string;
-};
+export type SendEmailOutput = MailSendReport;
 
 export function createSendEmailTool(
   gmail: gmail_v1.Gmail,
@@ -70,27 +97,42 @@ export function createSendEmailTool(
   return {
     name: 'gmail_send_email',
     description:
-      'Send an email via Gmail. Supports plain text and HTML bodies, CC, BCC, Reply-To, and file attachments. ' +
-      'Use attachments to send reports, CSVs, or HTML files as real files rather than pasting content inline.',
+      'Send an email via Gmail. The body is plain text unless body_format is html. Supports CC, BCC, ' +
+      'Reply-To, and file attachments. Returns the recipients, subject and attachments actually sent.',
     inputSchema: SendEmailInput,
     async execute(input) {
       try {
-        const raw = buildRfc2822Message({
-          to: input.to,
+        const bodyFormat = resolveMailBodyFormat(input.body_format);
+        const to = parseMailAddressList(input.to);
+        const cc = parseMailAddressList(input.cc);
+        const bcc = parseMailAddressList(input.bcc);
+        const attachments = attachmentSpecsToMime(
+          input.attachments as AttachmentSpec[] | undefined,
+        );
+        const message = await buildMimeMessage({
+          to,
+          cc,
+          bcc,
+          replyTo: parseMailAddressList(input.reply_to),
           subject: input.subject,
           body: input.body,
-          cc: input.cc,
-          bcc: input.bcc,
-          replyTo: input.reply_to,
-          attachments: input.attachments as AttachmentSpec[] | undefined,
+          bodyFormat,
+          attachments,
         });
         const res = await gmail.users.messages.send({
           userId: 'me',
-          requestBody: { raw },
+          requestBody: { raw: toGmailRaw(message) },
         });
         return {
-          messageId: res.data.id ?? '',
-          threadId: res.data.threadId ?? '',
+          sent: true,
+          to,
+          cc,
+          bcc,
+          subject: input.subject,
+          bodyFormat,
+          messageId: res.data.id ?? null,
+          threadId: res.data.threadId ?? null,
+          attachments: reportAttachments(attachments),
         };
       } catch (err) {
         throw mapGmailError(err);
@@ -294,18 +336,33 @@ export function createGetMessageTool(
 
 const ReplyMessageInput = z.object({
   message_id: z.string().describe('ID of the message to reply to.'),
-  body: z.string().describe('Reply body — plain text or HTML.'),
-  cc: z.string().optional().describe('CC address(es), comma-separated.'),
+  body: z
+    .string()
+    .describe('Reply body, sent exactly as written, in the format given by body_format.'),
+  body_format: mailBodyFormatSchema,
+  reply_all: z
+    .boolean()
+    .optional()
+    .describe(
+      'Reply to every participant (the sender and the other To/Cc recipients) instead of only the sender ' +
+        '(default false). This mailbox is never among the recipients.',
+    ),
+  cc: z
+    .string()
+    .optional()
+    .describe('Extra CC address list, added to the recipients the reply resolves.'),
   attachments: z
     .array(AttachmentItemSchema)
     .optional()
     .describe('Optional attachments to include with the reply.'),
 });
 
-export type ReplyMessageOutput = {
-  messageId: string;
-  threadId: string;
-};
+export type ReplyMessageOutput = MailSendReport;
+
+/** Message-IDs listed in a References / In-Reply-To / Message-ID header, in order. */
+function messageIdList(value: string | undefined): string[] {
+  return (value ?? '').match(/<[^<>\s]+>/g) ?? [];
+}
 
 export function createReplyMessageTool(
   gmail: gmail_v1.Gmail,
@@ -313,46 +370,58 @@ export function createReplyMessageTool(
   return {
     name: 'gmail_reply_message',
     description:
-      'Reply to a Gmail message in-thread. Automatically sets In-Reply-To, References, subject (Re: prefix), and threadId. ' +
-      'Fetches the original message headers to build correct threading.',
+      'Reply to a Gmail message in its thread. The recipients are resolved the way a mail client does: ' +
+      "the message's Reply-To, else its sender; a reply to a message this mailbox sent goes to that " +
+      "message's recipients; reply_all adds the other participants. Returns the recipients actually used.",
     inputSchema: ReplyMessageInput,
     async execute(input) {
       try {
-        // Fetch original message metadata for threading headers
+        const bodyFormat = resolveMailBodyFormat(input.body_format);
         const metaRes = await gmail.users.messages.get({
           userId: 'me',
           id: input.message_id,
           format: 'metadata',
-          metadataHeaders: ['Subject', 'From', 'To', 'Message-ID', 'Message-Id', 'References'],
+          metadataHeaders: ['Subject', 'From', 'Reply-To', 'To', 'Cc', 'Message-ID', 'References'],
         });
         const meta = metaRes.data;
         const headers = parseGmailHeaders(meta.payload ?? undefined);
-        const threadId = meta.threadId ?? undefined;
+        const threadId = meta.threadId ?? null;
 
-        const origSubject = headers['subject'] ?? '';
-        const replySubject = origSubject.toLowerCase().startsWith('re:')
-          ? origSubject
-          : `Re: ${origSubject}`;
-        const replyTo = headers['from'] ?? '';
-        const originalMsgId = headers['message-id'] ?? headers['message-id'] ?? '';
-        const priorRefs = headers['references'] ?? '';
-        const references = originalMsgId
-          ? priorRefs
-            ? `${priorRefs} ${originalMsgId}`
-            : originalMsgId
-          : priorRefs;
+        const recipients = resolveReplyRecipients(
+          {
+            from: parseMailAddressList(headers['from']),
+            replyTo: parseMailAddressList(headers['reply-to']),
+            to: parseMailAddressList(headers['to']),
+            cc: parseMailAddressList(headers['cc']),
+          },
+          await listOwnAddresses(gmail),
+          input.reply_all ?? false,
+        );
+        const cc = [...recipients.cc, ...parseMailAddressList(input.cc)];
 
-        const raw = buildRfc2822Message({
-          to: replyTo,
-          subject: replySubject,
+        // Threading (Gmail "Managing threads"): the threadId on the message
+        // resource, References and In-Reply-To set per RFC 2822, and a
+        // matching Subject.
+        const subject = replySubject(headers['subject'] ?? '');
+        const originalMsgId = messageIdList(headers['message-id'])[0];
+        const references = messageIdList(headers['references']);
+        if (originalMsgId && !references.includes(originalMsgId)) references.push(originalMsgId);
+
+        const attachments = attachmentSpecsToMime(
+          input.attachments as AttachmentSpec[] | undefined,
+        );
+        const message = await buildMimeMessage({
+          to: recipients.to,
+          cc,
+          subject,
           body: input.body,
-          cc: input.cc,
-          inReplyTo: originalMsgId || undefined,
-          references: references || undefined,
-          attachments: input.attachments as AttachmentSpec[] | undefined,
+          bodyFormat,
+          ...(originalMsgId ? { inReplyTo: originalMsgId } : {}),
+          references,
+          attachments,
         });
 
-        const sendBody: gmail_v1.Schema$Message = { raw };
+        const sendBody: gmail_v1.Schema$Message = { raw: toGmailRaw(message) };
         if (threadId) sendBody.threadId = threadId;
 
         const res = await gmail.users.messages.send({
@@ -360,8 +429,15 @@ export function createReplyMessageTool(
           requestBody: sendBody,
         });
         return {
-          messageId: res.data.id ?? '',
-          threadId: res.data.threadId ?? '',
+          sent: true,
+          to: recipients.to,
+          cc,
+          bcc: [],
+          subject,
+          bodyFormat,
+          messageId: res.data.id ?? null,
+          threadId: res.data.threadId ?? threadId,
+          attachments: reportAttachments(attachments),
         };
       } catch (err) {
         throw mapGmailError(err);
@@ -374,15 +450,24 @@ export function createReplyMessageTool(
 
 const ForwardMessageInput = z.object({
   message_id: z.string().describe('ID of the message to forward.'),
-  to: z.string().describe('Recipient(s), comma-separated.'),
-  note: z.string().optional().describe('Optional note prepended before the forwarded body.'),
-  cc: z.string().optional().describe('CC address(es), comma-separated.'),
+  to: z.string().describe('Recipient address list.'),
+  note: z
+    .string()
+    .optional()
+    .describe('Optional plain-text note sent above the forwarded message, exactly as written.'),
+  cc: z.string().optional().describe('CC address list.'),
 });
 
-export type ForwardMessageOutput = {
-  messageId: string;
-  threadId: string;
-};
+export type ForwardMessageOutput = MailSendReport;
+
+/** A file name for the attached original: its subject, made safe for a file name. */
+function originalFileName(subject: string): string {
+  const base = subject
+    .replace(/[\\/:*?"<>|\r\n\t]+/g, ' ')
+    .trim()
+    .slice(0, 120);
+  return `${base || 'message'}.eml`;
+}
 
 export function createForwardMessageTool(
   gmail: gmail_v1.Gmail,
@@ -390,46 +475,67 @@ export function createForwardMessageTool(
   return {
     name: 'gmail_forward_message',
     description:
-      'Forward a Gmail message to new recipients. Quotes the original body and prepends Fwd: to the subject.',
+      'Forward a Gmail message to new recipients. The original message is carried whole, as an attached ' +
+      'message (its body as it was, its attachments and inline images), with an optional note above it. ' +
+      'Returns the recipients and the files the forwarded original carried.',
     inputSchema: ForwardMessageInput,
     async execute(input) {
       try {
-        const original = await gmail.users.messages.get({
-          userId: 'me',
-          id: input.message_id,
-          format: 'full',
-        });
-        const payload = original.data.payload ?? undefined;
+        const to = parseMailAddressList(input.to);
+        const cc = parseMailAddressList(input.cc);
+
+        // The original's structure (to report what it carries) and its exact
+        // bytes (to carry it): Gmail's `raw` format is the message as stored.
+        const [full, rawRes] = await Promise.all([
+          gmail.users.messages.get({ userId: 'me', id: input.message_id, format: 'full' }),
+          gmail.users.messages.get({ userId: 'me', id: input.message_id, format: 'raw' }),
+        ]);
+        const raw = rawRes.data.raw;
+        if (!raw) {
+          throw new GmailAdapterError(
+            'gmail_forward_unavailable',
+            `Gmail returned no content for message ${input.message_id}: nothing was forwarded.`,
+          );
+        }
+        const payload = full.data.payload ?? undefined;
         const headers = parseGmailHeaders(payload);
-        const origSubject = headers['subject'] ?? '';
-        const fwdSubject = origSubject.toLowerCase().startsWith('fwd:')
-          ? origSubject
-          : `Fwd: ${origSubject}`;
+        const subject = forwardSubject(headers['subject'] ?? '');
 
-        const origBody = extractTextFromPayload(payload).trim();
-        const note = input.note ? `${input.note}\n\n` : '';
-        const quoted =
-          `${note}---------- Forwarded message ----------\n` +
-          `From: ${headers['from'] ?? ''}\n` +
-          `Date: ${headers['date'] ?? ''}\n` +
-          `Subject: ${origSubject}\n` +
-          `To: ${headers['to'] ?? ''}\n\n` +
-          origBody;
-
-        const raw = buildRfc2822Message({
-          to: input.to,
-          subject: fwdSubject,
-          body: quoted,
-          cc: input.cc,
+        // RFC 2046 §5.2.1: an encapsulated message is a message/rfc822 part.
+        const message = await buildMimeMessage({
+          to,
+          cc,
+          subject,
+          body: input.note ?? '',
+          bodyFormat: 'text',
+          attachments: [
+            {
+              filename: originalFileName(headers['subject'] ?? ''),
+              contentType: 'message/rfc822',
+              content: Buffer.from(raw, 'base64url'),
+              transferEncoding: '8bit',
+            },
+          ],
         });
 
         const res = await gmail.users.messages.send({
           userId: 'me',
-          requestBody: { raw },
+          requestBody: { raw: toGmailRaw(message) },
         });
         return {
-          messageId: res.data.id ?? '',
-          threadId: res.data.threadId ?? '',
+          sent: true,
+          to,
+          cc,
+          bcc: [],
+          subject,
+          bodyFormat: 'text',
+          messageId: res.data.id ?? null,
+          threadId: res.data.threadId ?? null,
+          attachments: [],
+          forwarded: {
+            messageId: input.message_id,
+            attachments: extractCarriedFiles(payload),
+          },
         };
       } catch (err) {
         throw mapGmailError(err);

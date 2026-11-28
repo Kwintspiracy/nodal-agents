@@ -15,7 +15,8 @@
     "./sandbox-settings": "./src/sandbox-settings.ts",
     "./node-guard": "./src/node-guard.ts",
     "./node-version": "./src/node-version.ts",
-    "./schedule-change-cases": "./src/tests/schedule-change-cases.ts"
+    "./schedule-change-cases": "./src/tests/schedule-change-cases.ts",
+    "./mail-contract": "./src/mail-contract.ts"
   },
   "scripts": {
     "lint": "eslint src",
@@ -24,9 +25,11 @@
   },
   "dependencies": {
     "cron-parser": "^5.5.0",
+    "nodemailer": "10.4.1",
     "zod": "^4.6.6"
   },
   "devDependencies": {
-    "@nodal-agents/test-kit": "workspace:*"
+    "@nodal-agents/test-kit": "workspace:*",
+    "@types/nodemailer": "8.0.2"
   }
 }
