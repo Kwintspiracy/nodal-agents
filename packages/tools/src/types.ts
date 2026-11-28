@@ -16,6 +16,8 @@ import type {
   OperationRiskLevel,
   ToolCard,
   ToolCardPayload,
+  DeclaredToolOutcome,
+  ToolCallOutcome,
   VoiceFailureCode,
   VoiceSource,
 } from '@nodal-agents/shared';
@@ -114,6 +116,13 @@ export interface ToolContext {
    * approval_requests.
    */
   toolCallId?: string;
+  /**
+   * A connector write's idempotency key, derived by the registry from
+   * `toolCallId` (the same for every request of the call, different for every
+   * call). An adapter whose provider documents a client-supplied key passes it
+   * on; no other tool receives one.
+   */
+  idempotencyKey?: string;
   /**
    * The job's chat (`agent_jobs.chat_id`): the conversation a request came
    * from, or the one its trigger named. null when the job has none (dashboard,
@@ -331,6 +340,16 @@ export interface ToolContext {
    */
   confirmMove?: (source: string, destination: string) => void;
   /**
+   * What THIS call acts on, as a key (`chatTarget`, `chatItemTarget` of
+   * `@nodal-agents/shared`), reported by the tool as soon as it knows it: a
+   * send reports the chat it resolved, and the item it sends there. Set by
+   * the seam on the context it hands to `execute()`; the seam writes it in
+   * `tool_calls.target`, whatever the call then becomes (done, failed,
+   * unknown). A tool that reports nothing is keyed by the files it names, or
+   * by its arguments.
+   */
+  reportTarget?: (target: string) => void;
+  /**
    * Rapporte l'empreinte (sha-256) des OCTETS qu'un outil vient de LIRE à
    * `absPath`, le chemin résolu qu'il a ouvert (le pendant de
    * `reportWrittenContent`). Le seam la range dans `tool_call_reads` : c'est
@@ -338,6 +357,14 @@ export interface ToolContext {
    * a été lu, et dans quel état. Appelée seulement quand la lecture a réussi.
    */
   reportReadContent?: (absPath: string, sha256: string) => void;
+  /**
+   * The lines (1-based) of `text`, the content of a file, in which the
+   * tool-result mask hides something from this agent. Set by
+   * `executeTool` from the agent's policy, for the write tools: a write that
+   * would put the mask's placeholder in a file is refused, and the refusal
+   * names these lines. Never a way for a tool to mask its own output.
+   */
+  maskedLinesOf?: (text: string) => Promise<number[]>;
   /**
    * What the model this job's tool results go to takes: images, PDFs, and why
    * not. Set by the runner from the job's model; read by `executeTool`
@@ -762,6 +789,30 @@ export interface ToolDefinition<TInput extends z.ZodTypeAny, TOutput> {
   // Method syntax, like `present`: TOutput sits in a parameter, and a property
   // arrow would make every ToolDefinition<_, X> unassignable to <_, unknown>.
   toModelOutput?(output: TOutput): string;
+  /**
+   * The keys of a successful result that the row keeps and the model never
+   * reads: a fact of the platform about the call, not something the tool tells
+   * the model. A send tool records the platform's receipt here (where the
+   * message went, the platform's message id): the outbox keeps the same receipt
+   * on its rows, and a message id handed to a model was once read as words of
+   * the person (2026-09-08).
+   *
+   * Applied by `toolOutputForModel`, like `toModelOutput`, which wins when a
+   * tool declares both.
+   */
+  readonly keptFromModel?: readonly string[];
+  /**
+   * What a result this tool RETURNED means (#1184): `done`, `failed` or
+   * `unknown` (it may or may not have taken effect). Absent, a returned result
+   * is `done` and a thrown one `failed`: most tools report a failure by
+   * throwing, and need nothing. A tool that RETURNS its failures as data (a
+   * file tool's `{ ok: false, reason }`, a command that timed out, a coding
+   * run that ended in error) declares it here, so the seam writes the outcome
+   * once (`tool_calls.outcome`) and no reader has to guess it from the output.
+   * A command's non-zero exit is not a failure: it ran, its status is data.
+   */
+  // Method syntax, like `present`: TOutput sits in a parameter.
+  outcomeOf?(output: TOutput): DeclaredToolOutcome;
   execute: (input: z.infer<TInput>, ctx: ToolContext) => Promise<TOutput>;
 }
 
@@ -784,14 +835,31 @@ export type ConnectorToolDefinition<TInput extends z.ZodTypeAny, TOutput> = Omit
 >;
 
 /**
+ * What the registry gives every connector adapter's factory (the connector
+ * contract, @nodal-agents/shared connector-contract.ts): the transport its
+ * provider's SDK must use. Through it every request of a call carries the
+ * job's stop and the call's bound, and the provider's answer is kept for the
+ * error. An adapter passes `fetch` to its SDK (googleapis'
+ * `fetchImplementation`, the Notion and Cloudflare clients' `fetch`, a Graph
+ * middleware) or uses it for its own requests.
+ */
+export interface ConnectorIo {
+  readonly fetch: typeof fetch;
+}
+
+/**
  * The value the model reads for a successful call of `tool`: its declared
- * `toModelOutput` rendering, or the output itself.
+ * `toModelOutput` rendering, or the output itself without the keys it keeps
+ * from the model (`keptFromModel`).
  */
 export function toolOutputForModel<TOutput>(
-  tool: { toModelOutput?: (output: TOutput) => string },
+  tool: { toModelOutput?: (output: TOutput) => string; keptFromModel?: readonly string[] },
   output: TOutput,
 ): unknown {
-  return tool.toModelOutput ? tool.toModelOutput(output) : output;
+  if (tool.toModelOutput) return tool.toModelOutput(output);
+  const kept = tool.keptFromModel;
+  if (!kept || kept.length === 0 || output === null || typeof output !== 'object') return output;
+  return Object.fromEntries(Object.entries(output).filter(([key]) => !kept.includes(key)));
 }
 
 // ─── ToolRegistry ─────────────────────────────────────────────────────────────
@@ -913,13 +981,27 @@ export type ToolExecutionResult =
    * (`ctx.attachForModel`), in order, absent when it attached none. Never on
    * the `tool_calls` row.
    */
-  | { outcome: 'success'; output: unknown; attachments?: ToolAttachment[] }
+  | {
+      outcome: 'success';
+      output: unknown;
+      attachments?: ToolAttachment[];
+      /**
+       * What became of the call (#1184): `done`, or what the tool declared of
+       * the result it returned (`outcomeOf`: `failed`, `unknown`). The same
+       * value as the row's `outcome`, written once by the seam. `outcome`
+       * above only says what the model reads: a result, not an error text.
+       */
+      callOutcome: DeclaredToolOutcome;
+      /** What the call acted on, as the row's `target` (see `tool-call-outcome.ts`). */
+      target: string | null;
+    }
   /**
-   * `mayHaveDelivered` — set when a DELIVERY tool timed out after the request
-   * was transmitted (DeliveryError.mayHaveDelivered): the message may well
-   * have reached the user. The runner's delivery guard treats this as a
-   * delivery (no re-send nudge) and the error text tells the LLM not to
-   * resend — a blind retry is exactly what duplicates messages.
+   * `callOutcome` — `failed`, `refused` (a rule of the owner, a person's
+   * earlier refusal), or `unknown`: a tool that threw with
+   * `mayHaveDelivered` (DeliveryError.mayHaveDelivered: a request transmitted
+   * and never answered). The message may well have reached the user, and the
+   * error text tells the LLM not to resend: a blind retry is exactly what
+   * duplicates messages.
    *
    * `raisedByTool` — the error came out of the tool's own `execute()`, so its
    * text is the tool's, not the gate's: for a third-party tool it may carry a
@@ -927,8 +1009,19 @@ export type ToolExecutionResult =
    * tool's success (INJECT-001). Absent on every error the gate writes itself
    * (invalid input, a `block` rule, a refused approval).
    */
-  | { outcome: 'error'; error: string; mayHaveDelivered?: boolean; raisedByTool?: true }
-  | { outcome: 'awaiting_approval'; approvalRequestId: string };
+  | {
+      outcome: 'error';
+      error: string;
+      callOutcome: Extract<ToolCallOutcome, 'failed' | 'unknown' | 'refused'>;
+      target: string | null;
+      raisedByTool?: true;
+    }
+  | {
+      outcome: 'awaiting_approval';
+      approvalRequestId: string;
+      callOutcome: 'awaiting_approval';
+      target: string | null;
+    };
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 

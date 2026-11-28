@@ -65,6 +65,7 @@ import type { RunnerEnv } from '../../env.ts';
 import { TITLE_SYSTEM_PROMPT } from '../../chat/conversation-title.ts';
 import { ACTION_RECHECK } from '../../llm/action-recheck.ts';
 import { REDACTED_TEXT } from '@nodal-agents/shared';
+import { fakeHex, fakeSecret } from '@nodal-agents/test-kit';
 import { REPLY_FORM_NOTES } from '@nodal-agents/orchestration';
 import { openUtterances, VOICE_LIMITS } from '../../chat/voice-utterances.ts';
 import { finalizeJobFailure, finalizeJobSuccess } from '../../job/finalize.ts';
@@ -973,7 +974,7 @@ describe('the voice turn route — the runner gate @cap:se-connecter/moteur', ()
     ] as const) {
       const res = await call(app, method, path, body, none);
       expect(res.status, `${method} ${path}`).toBe(401);
-      expect(await res.json()).toEqual({ error: 'AUTH_REQUIRED' });
+      expect(await res.json()).toEqual({ error: 'proof_required' });
     }
     expect(openUtterances()).toBe(0);
   });
@@ -1490,8 +1491,8 @@ describe('the voice turn route — the reply spoken as it is written (#943) @cap
   // Mutation verified: the redaction moved back below `say()` (the live relay
   // fed raw deltas) → both cases below are red; the voice still masked.
   describe('a secret read from /api/chat/live during the turn', () => {
-    const KEY = 'sk-or-v1-abcdefghijklmnopqrstu';
-    const MASKED = `Your key is ${REDACTED_TEXT} (sk-). Keep it safe.`;
+    const KEY = fakeSecret('openRouter', fakeHex(64));
+    const MASKED = `Your key is ${REDACTED_TEXT}. Keep it safe.`;
 
     /** start.text, then every delta, until `end`: what a live reader saw. */
     async function readLive(res: Response): Promise<string> {
@@ -1509,7 +1510,7 @@ describe('the voice turn route — the reply spoken as it is written (#943) @cap
       // The key arrives split across two deltas; the second waits for the gate.
       return network({
         front: {
-          parts: ['Your key is sk-or-v1-abcdefgh', 'ijklmnopqrstu. Keep it safe.'],
+          parts: [`Your key is ${KEY.slice(0, 17)}`, `${KEY.slice(17)}. Keep it safe.`],
           holdBefore: 1,
           hold: held,
         },
@@ -1540,7 +1541,7 @@ describe('the voice turn route — the reply spoken as it is written (#943) @cap
       expect(liveText).toBe(MASKED);
       expect(liveText).not.toContain('abcdefgh');
       expect(sent.speech.map((r) => r['input'])).toEqual([
-        `Your key is ${REDACTED_TEXT} (sk-).`,
+        `Your key is ${REDACTED_TEXT}.`,
         'Keep it safe.',
       ]);
       expect(await storedReply(conv)).toBe(`Your key is ${KEY}. Keep it safe.`);
@@ -1585,15 +1586,15 @@ describe('the voice turn route — the reply spoken as it is written (#943) @cap
   it('a secret in the reply is masked on every way out — the text, done, and what the voice SAYS — and stored intact', async () => {
     const app = createApp(makeDeps(), testEnv);
     const conv = await conversation();
-    const key = 'sk-or-v1-abcdefghijklmnopqrstu';
+    const key = fakeSecret('openRouter', fakeHex(64));
     // The key arrives split across two deltas: no fragment holds it whole.
     const sent = network({
-      front: { parts: ['Your key is sk-or-v1-abcdefgh', 'ijklmnopqrstu. Keep it safe.'] },
+      front: { parts: [`Your key is ${key.slice(0, 17)}`, `${key.slice(17)}. Keep it safe.`] },
     });
 
     const { body, events: evs } = await say(app, conv, FIXTURE, { format: 'audio/wav' });
 
-    const masked = `Your key is ${REDACTED_TEXT} (sk-). Keep it safe.`;
+    const masked = `Your key is ${REDACTED_TEXT}. Keep it safe.`;
     const deltas = evs
       .filter((e) => e.event === 'delta')
       .map((e) => String(e.data['text']))
@@ -1602,7 +1603,7 @@ describe('the voice turn route — the reply spoken as it is written (#943) @cap
     expect(body['reply']).toBe(masked);
     // What the speech vendor was asked to SAY.
     expect(sent.speech.map((r) => r['input'])).toEqual([
-      `Your key is ${REDACTED_TEXT} (sk-).`,
+      `Your key is ${REDACTED_TEXT}.`,
       'Keep it safe.',
     ]);
     for (const e of evs) expect(JSON.stringify(e.data)).not.toContain('abcdefgh');
@@ -1865,13 +1866,13 @@ describe('the voice turn speaks with the workspace voice (#969) @cap:parler-a-un
     const refusal = JSON.stringify(await saved.json());
     expect(saved.status).toBe(409);
     expect(refusal).not.toContain(KEY);
-    expect(refusal).toContain('Incorrect API key provided: [secret masqué] (sk-)');
+    expect(refusal).toContain('Incorrect API key provided: [secret hidden]');
 
     const turn = await say(app, conv, FIXTURE, { format: 'audio/wav' });
     expect(turn.body['speechError']).toEqual({
       code: 'speech_provider_error',
       detail:
-        'openrouter google/gemini-3.8-flash-tts: HTTP 401 — Incorrect API key provided: [secret masqué] (sk-)',
+        'openrouter google/gemini-3.8-flash-tts: HTTP 401 — Incorrect API key provided: [secret hidden]',
     });
     expect(JSON.stringify(turn.events)).not.toContain(KEY);
   });

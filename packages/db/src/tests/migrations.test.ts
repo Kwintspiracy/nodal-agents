@@ -27,6 +27,8 @@ const expectedTables = [
   'approval_card_messages',
   'approval_rules',
   'agent_memory',
+  // the state of a fact before each change (migration 0172).
+  'agent_memory_versions',
   'webhook_triggers',
   'agent_skills',
   'skill_versions',

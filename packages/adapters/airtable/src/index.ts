@@ -1,7 +1,7 @@
 // @nodal-agents/adapter-airtable — public API
 // Single factory: createAirtableTools(opts) → ConnectorToolDefinition[]
 
-import type { ConnectorToolDefinition } from '@nodal-agents/tools';
+import type { ConnectorIo, ConnectorToolDefinition } from '@nodal-agents/tools';
 import type { z } from 'zod';
 import { createAirtableClient } from './client.ts';
 import { makeAirtableListBasesTool, makeAirtableListTablesTool } from './tools/bases.ts';
@@ -20,7 +20,7 @@ import {
  * Both OAuth access tokens and Personal Access Tokens are sent as
  * `Authorization: Bearer <token>` — the Airtable API makes no wire distinction.
  */
-export type AirtableAdapterOptions =
+export type AirtableAdapterOptions = (
   | {
       /**
        * Static access token (OAuth or PAT), captured once for the tools'
@@ -39,7 +39,11 @@ export type AirtableAdapterOptions =
        * tools' lifetime.
        */
       getAccessToken: () => Promise<string>;
-    };
+    }
+) & {
+  /** The connector contract's transport, which the provider's SDK uses (ConnectorIo). */
+  fetch?: ConnectorIo['fetch'];
+};
 
 /**
  * Create all 8 Airtable tools using the provided access token or PAT.
@@ -62,7 +66,7 @@ export function createAirtableTools(
 
   const getAccessToken =
     'getAccessToken' in opts ? opts.getAccessToken : async () => opts.accessToken;
-  const client = createAirtableClient(getAccessToken);
+  const client = createAirtableClient(getAccessToken, opts.fetch ? { fetch: opts.fetch } : {});
 
   return [
     // Read tools (4)

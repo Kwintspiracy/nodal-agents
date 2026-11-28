@@ -58,9 +58,9 @@ export type DeliveryTargetRefusal = {
   /**
    * `no_chat` : le job ne porte pas de chat (ou pas d'agent à qui attribuer
    * un transport) — il n'y a rien à livrer, ce n'est pas une panne.
-   * `channel_inactive` : l'agent existe mais n'a AUCUN canal de transport
-   * actif (ni token Telegram ni binding activé), donc aucun transport ne peut
-   * porter ce résultat.
+   * `channel_inactive` : l'agent n'est pas connecté au canal du chat (ni
+   * token Telegram pour un chat Telegram, ni binding activé pour un autre) :
+   * aucun transport ne peut porter ce résultat jusqu'à ce chat.
    * `channel_unknown` : le chat a été désigné sans que personne n'enregistre
    * sa plateforme (#649) ; le runner ne la devine pas.
    * `read_from_stream` : le chat est sur un canal qui lit le résultat sur son
@@ -104,14 +104,11 @@ export function isDeliveryFault(refusal: DeliveryTargetRefusal): boolean {
  *      nom (`channel_unknown`) : le deviner envoyait un chat id Telegram sur
  *      Discord.
  *
- * Divergence assumée avec le code d'aujourd'hui, et la seule : quand l'agent
- * n'a aucun canal actif, `resolveTransportChannel` rend `'telegram'` par
- * défaut historique ; les deux appelants poursuivent alors jusqu'à
- * `getBindingCredentials`, qui rend `null`, et rien n'est envoyé — en silence.
- * Ici ce cas est refusé PAR SON NOM (`channel_inactive`) avant d'écrire une
- * ligne d'outbox, plutôt que d'inscrire une livraison qui ne peut pas aboutir
- * et de la faire échouer trois fois. Le résultat observable est le même (rien
- * n'est envoyé) ; ce qui change, c'est qu'il est dit.
+ * Quand l'agent n'est pas connecté au canal du chat, le cas est refusé PAR
+ * SON NOM (`channel_inactive`) avant d'écrire une ligne d'outbox, plutôt que
+ * d'inscrire une livraison qui ne peut pas aboutir et de la faire échouer
+ * trois fois au drain (faute de credential). Rien n'est envoyé dans les deux
+ * cas ; ce qui change, c'est qu'il est dit.
  */
 export async function resolveDeliveryTarget(
   db: AnyDrizzleDb,
@@ -135,13 +132,15 @@ export async function resolveDeliveryTarget(
   const cameFromChat = job.channel !== null && resolveTransportChannel(job.channel) === job.channel;
   if (!cameFromChat && !notifyChannelOverride) return { refused: 'channel_unknown' };
 
-  if (!notifyChannelOverride && activeChannels.length === 0) {
-    return { refused: 'channel_inactive' };
-  }
-
   const channel = notifyChannelOverride ?? (job.channel as ChannelKind);
   // Un résultat n'est POUSSÉ qu'à une plateforme de messagerie ; un appareil
   // le lit sur son flux.
   if (!isMessagingChannel(channel)) return { refused: 'read_from_stream' };
+  // Le chat est sur SON canal, ou il n'est pas joint : un autre canal actif ne
+  // le porte pas (#1215). Avant, « au moins un canal actif » suffisait, et une
+  // demande Telegram d'un agent qui n'avait plus que Discord donnait une ligne
+  // que le drain refusait faute de jeton ; un chat désigné n'était même pas
+  // vérifié. Le refus est dit ici, par son nom, avant toute ligne d'outbox.
+  if (!activeChannels.includes(channel)) return { refused: 'channel_inactive' };
   return { channel, chatId };
 }

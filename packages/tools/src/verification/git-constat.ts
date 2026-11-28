@@ -76,7 +76,7 @@ import {
   type ProgramRunner,
   type WorkspaceSandboxReader,
 } from '@nodal-agents/sandbox';
-import { resolveGitBinary } from '@nodal-agents/shared/git-binary';
+import { runInternalGit } from '@nodal-agents/shared/internal-git';
 import type { ConstatedChangeKind, ConstatedWrite } from '@nodal-agents/shared';
 import { fingerprint, type FileFingerprint } from './observed';
 import {
@@ -88,12 +88,6 @@ import {
 
 /** Une sonde qui pend ne doit pas tenir un appel d'outil. */
 const GIT_TIMEOUT_MS = 5_000;
-
-// QUEL `git` EST LANCÉ : la réponse vit dans `@nodal-agents/shared/git-binary`,
-// parce que `apps/web` pose git dans le dossier d'un projet (issue #200) et que
-// c'est la même question, posée avec le même `cwd`. Réexporté ici pour les
-// appelants qui l'avaient déjà.
-export { resolveGitBinary, _resetGitBinaryCache } from '@nodal-agents/shared/git-binary';
 
 /**
  * Au-delà, le constat par git décline (borne nº 4 de l'en-tête). Mille lignes
@@ -159,13 +153,12 @@ interface GitReader {
 const hostReader = (roots: readonly string[]): GitReader => ({ programs: hostPrograms, roots });
 
 async function git(reader: GitReader, cwd: string, args: string[]): Promise<string | null> {
-  // Le chemin ABSOLU, jamais le nom nu : voir `resolveGitBinary`. Sans lui,
-  // `cwd` — le dossier du projet, donc un dossier où des agents écrivent —
-  // entre dans la recherche du programme sous Windows.
-  const binaire = await resolveGitBinary();
-  if (binaire === null) return null;
   try {
-    const { stdout } = await reader.programs.execFile(binaire, args, {
+    // Par LE lanceur de git de Nodal : le chemin ABSOLU du git du système
+    // (jamais le nom nu, sinon `cwd` — le dossier du projet, où des agents
+    // écrivent — entre dans la recherche du programme sous Windows), la
+    // configuration fixe et l'environnement nettoyé.
+    const { stdout } = await runInternalGit(reader.programs, args, {
       cwd,
       timeout: GIT_TIMEOUT_MS,
       maxBuffer: 16 * 1024 * 1024,
@@ -174,9 +167,9 @@ async function git(reader: GitReader, cwd: string, args: string[]): Promise<stri
     });
     return stdout;
   } catch {
-    // Pas un dépôt, pas de git sur le PATH, délai dépassé, bac à sable qui
-    // refuse : aucune réponse utilisable. L'appelant retombe sur le disque et
-    // le DIT.
+    // Pas un dépôt, pas de git sur le PATH, configuration illisible, délai
+    // dépassé, bac à sable qui refuse : aucune réponse utilisable. L'appelant
+    // retombe sur le disque et le DIT.
     return null;
   }
 }

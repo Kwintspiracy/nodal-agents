@@ -14,9 +14,22 @@ import {
   scanForDbDriverImports,
   scanForUserFacingStrings,
   assertNoViolations,
+  OUTBOUND_BRAND_CAST,
+  scanForOutboundBypass,
+  type OutboundExit,
 } from '@nodal-agents/test-kit';
 
 const srcDir = join(fileURLToPath(import.meta.url), '..', '..');
+
+/** A value import (or re-export) of a module of `channels/`: a sender beside the seam. */
+const CHANNEL_VALUE_IMPORT: OutboundExit = {
+  rule: 'channel-module-beside-seam',
+  pattern: /^\s*(?:import|export)\s+(?!type\b)[^;]*?\bfrom\s+['"](?:\.\.?\/)+channels\//m,
+};
+const CHANNEL_DYNAMIC_IMPORT: OutboundExit = {
+  rule: 'channel-module-beside-seam',
+  pattern: /\bimport\(\s*['"](?:\.\.?\/)+channels\//,
+};
 
 describe('architecture invariants', () => {
   it('no agent or server slug hardcoded in source (invariant #1)', () => {
@@ -33,5 +46,17 @@ describe('architecture invariants', () => {
 
   it('no hardcoded user-facing prose (invariant #2)', () => {
     assertNoViolations('texte utilisateur en dur', scanForUserFacingStrings({ srcDir }));
+  });
+});
+
+describe('what a channel posts leaves through the outbound seam @cap:parler-par-canal-externe/moteur', () => {
+  it('only the seam (outbound-channel.ts) reaches a channel module by value', () => {
+    assertNoViolations(
+      'module de canal atteint à côté de la couture de sortie',
+      scanForOutboundBypass(
+        { srcDir, skipDirs: ['tests', 'channels'], skipFiles: ['outbound-channel.ts'] },
+        [CHANNEL_VALUE_IMPORT, CHANNEL_DYNAMIC_IMPORT, OUTBOUND_BRAND_CAST],
+      ),
+    );
   });
 });

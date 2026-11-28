@@ -174,7 +174,8 @@ export interface FakeCli extends NodalCli {
 
 /**
  * Le script du faux lanceur : il sert `/api/health` en HTTP sur le port du
- * runner (200, comme un runner dont la base répond), écoute sur les deux
+ * runner (200, comme un runner dont la base répond, à qui porte le secret de
+ * l'instance ; 401 sans lui, comme le vrai), écoute sur les deux
  * autres, et vit jusqu'à ce qu'on le tue. `FAKE_MODE=exit` : il sort aussitôt
  * en écrivant une erreur ; `FAKE_MODE=silent` : il vit sans rien servir ;
  * `FAKE_MODE=unhealthy` : tout écoute, mais `/api/health` rend 503 (la base
@@ -186,7 +187,9 @@ const FAKE_LAUNCHER = [
   "if(process.env.FAKE_MODE!=='silent'){",
   "const [w,r,p]=process.env.FAKE_PORTS.split(',').map(Number);",
   "const ok=process.env.FAKE_MODE==='unhealthy'?503:200;",
-  "h.createServer((q,s)=>{s.statusCode=q.url==='/api/health'?ok:404;s.end(ok===200?'{}':'{\"db\":\"error\"}');}).listen(r,'127.0.0.1');",
+  // Comme le vrai runner, il n'admet que le secret de l'instance (son config.json).
+  "const sec=JSON.parse(require('fs').readFileSync(require('path').join(process.env.NODALAI_HOME,'config.json'),'utf8')).workerSecret;",
+  "h.createServer((q,s)=>{if(q.headers.authorization!=='Bearer '+sec){s.statusCode=401;s.end('{\"error\":\"proof_required\"}');return;}s.statusCode=q.url==='/api/health'?ok:404;s.end(ok===200?'{}':'{\"db\":\"error\"}');}).listen(r,'127.0.0.1');",
   "for(const x of [w,p])n.createServer(s=>s.end()).listen(x,'127.0.0.1');}",
   'setInterval(()=>{},1e6);',
 ].join('');

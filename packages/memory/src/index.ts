@@ -21,7 +21,18 @@ export {
 export type { MemoryErrorCode } from './errors';
 
 // CRUD
-export { getMemory, createMemory, updateMemory, deleteMemory, rowToMemory } from './crud';
+export { getMemory, createMemory, deleteMemory, rowToMemory } from './crud';
+
+// The one function that changes a saved fact, and its previous versions
+export { mutateMemory, listMemoryVersions, latestMemoryVersions } from './mutate';
+export type {
+  MemoryActor,
+  MemoryChange,
+  MutateMemoryInput,
+  MutateMemoryResult,
+  MutateMemoryRefusal,
+  MemoryVersion,
+} from './mutate';
 export type { MemoryRow } from './crud';
 
 // Sanitation + hashing (pure)
@@ -38,14 +49,9 @@ export { searchMemories, keywordSearchMemories } from './search';
 export { backfillEmbeddings } from './backfill';
 export type { BackfillResult } from './backfill';
 
-// Tier-2 memory curator (deterministic lifecycle + provenance-guarded mutations)
-export {
-  transitionMemoryLifecycle,
-  archiveAgentMemory,
-  updateAgentMemoryFact,
-  updateAgentMemoryImportance,
-} from './curator';
-export type { MemoryLifecycleResult, MemoryCuratorError } from './curator';
+// Tier-2 memory curator, Phase 1 (deterministic lifecycle, through mutateMemory)
+export { transitionMemoryLifecycle } from './curator';
+export type { MemoryLifecycleResult } from './curator';
 
 // Filter (pure functions)
 export { applySkillFilter, filterByTags } from './filter';

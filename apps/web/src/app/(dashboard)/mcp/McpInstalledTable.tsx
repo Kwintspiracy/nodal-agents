@@ -15,7 +15,7 @@ import Table, {
   CellMuted,
   CellActions,
 } from '@/components/ui/Table';
-import StatusPill from '@/components/ui/StatusPill';
+import ConnectionStatusPill from '@/components/ConnectionStatusPill.tsx';
 import RowActionButton from '@/components/ui/RowActionButton';
 import Modal from '@/components/ui/Modal';
 import McpServerRow from './McpServerRow.tsx';
@@ -55,7 +55,7 @@ export default function McpInstalledTable({ instances, catalog }: Props) {
               instance={inst}
               catalogLabel={catalogItem?.label ?? inst.name}
               description={catalogItem?.description ?? ''}
-              transport={catalogItem?.transport ?? 'http'}
+              transport={inst.transport}
             />
           );
         })}
@@ -103,10 +103,7 @@ function McpRow({
         </Td>
 
         <Td>
-          <StatusPill
-            variant={instance.active ? 'done' : 'warn'}
-            label={instance.active ? 'Connected' : 'Inactive'}
-          />
+          <ConnectionStatusPill connection={instance.connection} />
         </Td>
 
         <Td align="right">

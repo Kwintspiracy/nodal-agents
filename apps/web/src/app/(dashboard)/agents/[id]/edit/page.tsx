@@ -17,6 +17,7 @@ import {
   getChannelAllowedConversationsAction,
 } from '@/lib/actions.ts';
 import AgentComposer from './AgentComposer.tsx';
+import { NOT_CHECKED } from '@nodal-agents/shared';
 
 export const dynamic = 'force-dynamic';
 
@@ -112,6 +113,12 @@ export default async function EditAgentPage({ params }: { params: Promise<{ id: 
       'connected'
       ? 'connected'
       : 'disconnected';
+  // The link's state, read from the rows the runner writes, like the three
+  // other channels' (their config rows carry it as `link`).
+  const whatsappLink =
+    (channelsOverviewResult.ok &&
+      channelsOverviewResult.data.channels.find((c) => c.channel === 'whatsapp')?.link) ||
+    NOT_CHECKED;
 
   return (
     <AgentComposer
@@ -138,6 +145,7 @@ export default async function EditAgentPage({ params }: { params: Promise<{ id: 
         slackAllowedConversationsResult.ok ? slackAllowedConversationsResult.data : []
       }
       whatsappStatus={whatsappStatus}
+      whatsappLink={whatsappLink}
       whatsappAllowedConversations={
         whatsappAllowedConversationsResult.ok ? whatsappAllowedConversationsResult.data : []
       }

@@ -208,7 +208,8 @@ vi.mock('@nodal-agents/db', async () => {
 const memoryMocks = {
   listMemories: vi.fn(),
   deleteMemory: vi.fn(),
-  updateMemory: vi.fn(),
+  mutateMemory: vi.fn(),
+  latestMemoryVersions: vi.fn(async () => new Map()),
   createMemory: vi.fn(),
   keywordSearchMemories: vi.fn(),
 };
@@ -220,7 +221,8 @@ vi.mock('@nodal-agents/memory', async () => {
     ...actual,
     listMemories: (...args: unknown[]) => memoryMocks.listMemories(...args),
     deleteMemory: (...args: unknown[]) => memoryMocks.deleteMemory(...args),
-    updateMemory: (...args: unknown[]) => memoryMocks.updateMemory(...args),
+    mutateMemory: (...args: unknown[]) => memoryMocks.mutateMemory(...args),
+    latestMemoryVersions: (...args: unknown[]) => memoryMocks.latestMemoryVersions(...args),
     createMemory: (...args: unknown[]) => memoryMocks.createMemory(...args),
     keywordSearchMemories: (...args: unknown[]) => memoryMocks.keywordSearchMemories(...args),
   };
@@ -556,35 +558,53 @@ describe('getAgentChannelsAction (S4)', () => {
   });
 
   it('telegram connected, discord/slack/whatsapp disconnected (connectable, unbound)', async () => {
-    currentDb = makeDb([
-      {
-        id: 'aaaaaaaa-0000-0000-0000-000000000051',
-        slug: 'agent-ch',
-        name: 'Agent Ch',
-        botToken: 'tok',
-      },
-    ]) as typeof currentDb;
+    currentDb = makeDbMixed({
+      // agent, channel bindings, connection_states (nothing learnt yet).
+      selectQueue: [
+        [
+          {
+            id: 'aaaaaaaa-0000-0000-0000-000000000051',
+            slug: 'agent-ch',
+            name: 'Agent Ch',
+            botToken: 'tok',
+          },
+        ],
+        [],
+        [],
+      ],
+    }) as typeof currentDb;
     const { getAgentChannelsAction } = await import('../src/lib/actions.ts');
     const r = await getAgentChannelsAction('aaaaaaaa-0000-0000-0000-000000000051');
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    expect(r.data.channels).toEqual([
+    expect(r.data.channels.map(({ channel, status }) => ({ channel, status }))).toEqual([
       { channel: 'telegram', status: 'connected' },
       { channel: 'discord', status: 'disconnected' },
       { channel: 'slack', status: 'disconnected' },
       { channel: 'whatsapp', status: 'disconnected' },
     ]);
+    // Every channel carries its link state; nothing learnt reads not_checked.
+    for (const c of r.data.channels) {
+      expect(c.link).toMatchObject({ state: 'working', cause: 'not_checked' });
+    }
   });
 
   it('telegram disconnected when the agent has no bot token', async () => {
-    currentDb = makeDb([
-      {
-        id: 'aaaaaaaa-0000-0000-0000-000000000052',
-        slug: 'agent-ch2',
-        name: 'Agent Ch2',
-        botToken: null,
-      },
-    ]) as typeof currentDb;
+    currentDb = makeDbMixed({
+      // agent, channel bindings, connection_states (nothing learnt yet).
+      selectQueue: [
+        [
+          {
+            id: 'aaaaaaaa-0000-0000-0000-000000000052',
+            slug: 'agent-ch2',
+            name: 'Agent Ch2',
+            botToken: null,
+          },
+        ],
+        [],
+        [],
+      ],
+    }) as typeof currentDb;
     const { getAgentChannelsAction } = await import('../src/lib/actions.ts');
     const r = await getAgentChannelsAction('aaaaaaaa-0000-0000-0000-000000000052');
     expect(r.ok).toBe(true);
@@ -781,7 +801,8 @@ describe('Discord channel actions (D3)', () => {
     currentDb = makeDbMixed({
       selectQueue: [
         [{ id: AGENT_ID, slug: 'agent-d2', name: 'Agent D2', botToken: null }],
-        [{ channel: 'discord', enabled: true }],
+        [{ channel: 'discord', enabled: true }], // connection_states: nothing learnt yet.
+        [],
       ],
     }) as typeof currentDb;
     const { getAgentChannelsAction } = await import('../src/lib/actions.ts');
@@ -809,6 +830,8 @@ describe('Discord channel actions (D3)', () => {
       selectQueue: [
         [{ id: AGENT_ID, slug: 'agent-d4', name: 'Agent D4' }],
         [{ enabled: true, botIdentity: { id: '111222333444555666', username: 'nodalbot' } }],
+        // connection_states: nothing learnt about the link yet.
+        [],
       ],
     }) as typeof currentDb;
     const { getAgentDiscordConfigAction } = await import('../src/lib/actions.ts');
@@ -817,6 +840,7 @@ describe('Discord channel actions (D3)', () => {
     if (!r.ok) return;
     expect(r.data.status).toBe('connected');
     expect(r.data.identityLabel).toBe('nodalbot#111222333444555666');
+    expect(r.data.link).toMatchObject({ state: 'working', cause: 'not_checked' });
   });
 
   it('getChannelAllowedConversationsAction lists a channel-neutral allowlist for discord', async () => {
@@ -973,7 +997,8 @@ describe('Slack channel actions (K3)', () => {
     currentDb = makeDbMixed({
       selectQueue: [
         [{ id: AGENT_ID, slug: 'agent-s2', name: 'Agent S2', botToken: null }],
-        [{ channel: 'slack', enabled: true }],
+        [{ channel: 'slack', enabled: true }], // connection_states: nothing learnt yet.
+        [],
       ],
     }) as typeof currentDb;
     const { getAgentChannelsAction } = await import('../src/lib/actions.ts');
@@ -1001,6 +1026,8 @@ describe('Slack channel actions (K3)', () => {
       selectQueue: [
         [{ id: AGENT_ID, slug: 'agent-s4', name: 'Agent S4' }],
         [{ enabled: true, botIdentity: { id: 'U9998887776', username: 'nodalbot' } }],
+        // connection_states: nothing learnt about the link yet.
+        [],
       ],
     }) as typeof currentDb;
     const { getAgentSlackConfigAction } = await import('../src/lib/actions.ts');
@@ -1819,15 +1846,21 @@ describe('getAgentTelegramConfigAction', () => {
   });
 
   it('returns disconnected when agent has no token', async () => {
-    currentDb = makeDb([
-      {
-        id: 'aaaaaaaa-0000-0000-0000-000000000010',
-        slug: 'my-agent',
-        name: 'My Agent',
-        botToken: null,
-        botUsername: null,
-      },
-    ]) as typeof currentDb;
+    currentDb = makeDbMixed({
+      selectQueue: [
+        [
+          {
+            id: 'aaaaaaaa-0000-0000-0000-000000000010',
+            slug: 'my-agent',
+            name: 'My Agent',
+            botToken: null,
+            botUsername: null,
+          },
+        ],
+        // connection_states: nothing learnt about the link yet.
+        [],
+      ],
+    }) as typeof currentDb;
     const { getAgentTelegramConfigAction } = await import('../src/lib/actions.ts');
     const r = await getAgentTelegramConfigAction('aaaaaaaa-0000-0000-0000-000000000010');
     expect(r.ok).toBe(true);
@@ -1838,21 +1871,28 @@ describe('getAgentTelegramConfigAction', () => {
   });
 
   it('returns connected when agent has a token', async () => {
-    currentDb = makeDb([
-      {
-        id: 'aaaaaaaa-0000-0000-0000-000000000011',
-        slug: 'my-agent',
-        name: 'My Agent',
-        botToken: 'tok',
-        botUsername: 'my_bot',
-      },
-    ]) as typeof currentDb;
+    currentDb = makeDbMixed({
+      selectQueue: [
+        [
+          {
+            id: 'aaaaaaaa-0000-0000-0000-000000000011',
+            slug: 'my-agent',
+            name: 'My Agent',
+            botToken: 'tok',
+            botUsername: 'my_bot',
+          },
+        ],
+        // connection_states: nothing learnt about the link yet.
+        [],
+      ],
+    }) as typeof currentDb;
     const { getAgentTelegramConfigAction } = await import('../src/lib/actions.ts');
     const r = await getAgentTelegramConfigAction('aaaaaaaa-0000-0000-0000-000000000011');
     expect(r.ok).toBe(true);
     if (r.ok) {
       expect(r.data.status).toBe('connected');
       expect(r.data.botUsername).toBe('my_bot');
+      expect(r.data.link).toMatchObject({ state: 'working', cause: 'not_checked' });
     }
   });
 });
@@ -2187,51 +2227,6 @@ describe('listMemoriesAction', () => {
   });
 });
 
-describe('archiveMemoryAction', () => {
-  it('rejects non-uuid id', async () => {
-    const { archiveMemoryAction } = await import('../src/lib/actions.ts');
-    const r = await archiveMemoryAction('bad');
-    expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.code).toBe('validation_failed');
-  });
-
-  it('translates MemoryNotFoundError into not_found', async () => {
-    const { MemoryNotFoundError } = await import('@nodal-agents/memory');
-    memoryMocks.updateMemory.mockRejectedValueOnce(new MemoryNotFoundError('id'));
-    const { archiveMemoryAction } = await import('../src/lib/actions.ts');
-    const r = await archiveMemoryAction('aaaaaaaa-0000-0000-0000-000000000050');
-    expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.code).toBe('not_found');
-  });
-
-  it('calls updateMemory with archived: true', async () => {
-    memoryMocks.updateMemory.mockResolvedValueOnce({});
-    const { archiveMemoryAction } = await import('../src/lib/actions.ts');
-    const r = await archiveMemoryAction('aaaaaaaa-0000-0000-0000-000000000051');
-    expect(r.ok).toBe(true);
-    const call = memoryMocks.updateMemory.mock.calls.at(-1)!;
-    expect((call[3] as { archived: boolean }).archived).toBe(true);
-  });
-});
-
-describe('unarchiveMemoryAction', () => {
-  it('rejects non-uuid id', async () => {
-    const { unarchiveMemoryAction } = await import('../src/lib/actions.ts');
-    const r = await unarchiveMemoryAction('bad');
-    expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.code).toBe('validation_failed');
-  });
-
-  it('calls updateMemory with archived: false', async () => {
-    memoryMocks.updateMemory.mockResolvedValueOnce({});
-    const { unarchiveMemoryAction } = await import('../src/lib/actions.ts');
-    const r = await unarchiveMemoryAction('aaaaaaaa-0000-0000-0000-000000000052');
-    expect(r.ok).toBe(true);
-    const call = memoryMocks.updateMemory.mock.calls.at(-1)!;
-    expect((call[3] as { archived: boolean }).archived).toBe(false);
-  });
-});
-
 describe('deleteMemoryAction', () => {
   it('rejects non-uuid id', async () => {
     const { deleteMemoryAction } = await import('../src/lib/actions.ts');
@@ -2254,78 +2249,6 @@ describe('deleteMemoryAction', () => {
     const { deleteMemoryAction } = await import('../src/lib/actions.ts');
     const r = await deleteMemoryAction('aaaaaaaa-0000-0000-0000-000000000061');
     expect(r.ok).toBe(true);
-  });
-});
-
-describe('updateMemoryImportanceAction', () => {
-  it('rejects a non-uuid id', async () => {
-    const { updateMemoryImportanceAction } = await import('../src/lib/actions.ts');
-    const r = await updateMemoryImportanceAction('bad', 4);
-    expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.code).toBe('validation_failed');
-  });
-
-  it('rejects an importance outside 1-5', async () => {
-    const { updateMemoryImportanceAction } = await import('../src/lib/actions.ts');
-    const tooHigh = await updateMemoryImportanceAction('aaaaaaaa-0000-0000-0000-000000000070', 6);
-    expect(tooHigh.ok).toBe(false);
-    if (!tooHigh.ok) expect(tooHigh.code).toBe('validation_failed');
-
-    const tooLow = await updateMemoryImportanceAction('aaaaaaaa-0000-0000-0000-000000000070', 0);
-    expect(tooLow.ok).toBe(false);
-    if (!tooLow.ok) expect(tooLow.code).toBe('validation_failed');
-  });
-
-  it('translates MemoryNotFoundError into not_found (e.g. a fact scoped to another entity)', async () => {
-    const { MemoryNotFoundError } = await import('@nodal-agents/memory');
-    memoryMocks.updateMemory.mockRejectedValueOnce(new MemoryNotFoundError('id'));
-    const { updateMemoryImportanceAction } = await import('../src/lib/actions.ts');
-    const r = await updateMemoryImportanceAction('aaaaaaaa-0000-0000-0000-000000000071', 5);
-    expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.code).toBe('not_found');
-  });
-
-  it('pins the fact: sets importance AND importance_locked=true, scoped to the session entity', async () => {
-    memoryMocks.updateMemory.mockResolvedValueOnce({});
-    const { updateMemoryImportanceAction } = await import('../src/lib/actions.ts');
-    const r = await updateMemoryImportanceAction('aaaaaaaa-0000-0000-0000-000000000072', 5);
-    expect(r.ok).toBe(true);
-    const call = memoryMocks.updateMemory.mock.calls.at(-1)!;
-    // updateMemory(db, id, entityId, updates)
-    expect(call[1]).toBe('aaaaaaaa-0000-0000-0000-000000000072');
-    expect(call[2]).toBe(LOCAL_ENTITY_ID);
-    expect(call[3]).toEqual({ importance: 5, importance_locked: true });
-  });
-});
-
-describe('unpinMemoryImportanceAction', () => {
-  it('rejects a non-uuid id', async () => {
-    const { unpinMemoryImportanceAction } = await import('../src/lib/actions.ts');
-    const r = await unpinMemoryImportanceAction('bad');
-    expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.code).toBe('validation_failed');
-  });
-
-  it('translates MemoryNotFoundError into not_found', async () => {
-    const { MemoryNotFoundError } = await import('@nodal-agents/memory');
-    memoryMocks.updateMemory.mockRejectedValueOnce(new MemoryNotFoundError('id'));
-    const { unpinMemoryImportanceAction } = await import('../src/lib/actions.ts');
-    const r = await unpinMemoryImportanceAction('aaaaaaaa-0000-0000-0000-000000000073');
-    expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.code).toBe('not_found');
-  });
-
-  it('clears importance_locked WITHOUT touching importance, scoped to the session entity', async () => {
-    memoryMocks.updateMemory.mockResolvedValueOnce({});
-    const { unpinMemoryImportanceAction } = await import('../src/lib/actions.ts');
-    const r = await unpinMemoryImportanceAction('aaaaaaaa-0000-0000-0000-000000000074');
-    expect(r.ok).toBe(true);
-    const call = memoryMocks.updateMemory.mock.calls.at(-1)!;
-    expect(call[1]).toBe('aaaaaaaa-0000-0000-0000-000000000074');
-    expect(call[2]).toBe(LOCAL_ENTITY_ID);
-    expect(call[3]).toEqual({ importance_locked: false });
-    // Importance itself is deliberately absent from the update payload.
-    expect(call[3]).not.toHaveProperty('importance');
   });
 });
 
@@ -2453,23 +2376,29 @@ describe('listConnectorsAction', () => {
 
   it('attaches a connector row to its catalog slug', async () => {
     const id = 'aaaaaaaa-0000-0000-0000-000000000070';
-    currentDb = makeDb([
-      {
-        id,
-        slug: 'notion',
-        name: 'Notion',
-        authType: 'api_key',
-        active: true,
-        apiKey: 'secret_xxx',
-        oauthAccessToken: null,
-        oauthRefreshToken: null,
-        oauthClientId: null,
-        oauthAccountName: null,
-        oauthScopes: null,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      },
-    ]) as typeof currentDb;
+    currentDb = makeDbMixed({
+      selectQueue: [
+        [
+          {
+            id,
+            slug: 'notion',
+            name: 'Notion',
+            authType: 'api_key',
+            active: true,
+            apiKey: 'secret_xxx',
+            oauthAccessToken: null,
+            oauthRefreshToken: null,
+            oauthClientId: null,
+            oauthAccountName: null,
+            oauthScopes: null,
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          },
+        ],
+        // connection_states: nothing learnt yet.
+        [],
+      ],
+    }) as typeof currentDb;
     const { listConnectorsAction } = await import('../src/lib/actions.ts');
     const r = await listConnectorsAction();
     expect(r.ok).toBe(true);
@@ -2610,6 +2539,9 @@ describe('createOrAssignOAuthConnectorAction — I-10 error detail leak (audit #
         id: credentialId,
         ownerUserId: '00000000-0000-0000-0000-000000000001',
         type: 'google-oauth',
+        // A grant that covers Drive, so the action reaches its INSERT (the
+        // path this test is about) instead of stopping at the grant check.
+        payload: JSON.stringify({ scopes: 'https://www.googleapis.com/auth/drive' }),
       },
     ]) as unknown as { insert: unknown };
     db.insert = vi.fn(() => {
@@ -4476,14 +4408,31 @@ describe('updateNetworkSettingsAction', () => {
   });
 
   it('returns cli_config_missing when mergeNodalaiConfig signals the file is absent', async () => {
+    const { StateFileError } = await import('@nodal-agents/shared/state-files');
     cliConfigMocks.merge.mockReset();
     cliConfigMocks.merge.mockImplementation(() => {
-      throw new Error('cli_config_missing');
+      throw new StateFileError('STATE_FILE_ABSENT', '/h/config.json', 'absent');
     });
     const { updateNetworkSettingsAction } = await import('../src/lib/actions.ts');
     const r = await updateNetworkSettingsAction({ bind: 'lan' });
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.code).toBe('cli_config_missing');
+  });
+
+  it('an UNUSABLE config is reported as unusable, with the reader’s message, never as missing', async () => {
+    const { StateFileError } = await import('@nodal-agents/shared/state-files');
+    const message = "Nodal's configuration file at /h/config.json exists but is not valid: …";
+    cliConfigMocks.merge.mockReset();
+    cliConfigMocks.merge.mockImplementation(() => {
+      throw new StateFileError('STATE_FILE_INVALID', '/h/config.json', message);
+    });
+    const { updateNetworkSettingsAction } = await import('../src/lib/actions.ts');
+    const r = await updateNetworkSettingsAction({ bind: 'loopback' });
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.code).toBe('cli_config_invalid');
+      expect(r.message).toBe(message);
+    }
   });
 });
 
@@ -6407,9 +6356,11 @@ describe('listAgentConnectorsAction — db path', () => {
     // it" branch, not to pin a specific catalog entry. (Brique 34quinquies
     // shipped concrete adapters for every real catalog slug.)
     const fakeSlug = 'unregistered-test-slug';
-    currentDb = makeDb([
-      { id: agentId, slug: fakeSlug, name: 'Fake', credentialId: null, active: true },
-    ]) as typeof currentDb;
+    const fakeRow = { id: agentId, slug: fakeSlug, name: 'Fake', credentialId: null, active: true };
+    // agent, connectors, assignments, connection_states.
+    currentDb = makeDbMixed({
+      selectQueue: [[fakeRow], [fakeRow], [], []],
+    }) as typeof currentDb;
     const { listAgentConnectorsAction } = await import('../src/lib/actions.ts');
     const r = await listAgentConnectorsAction(agentId);
     expect(r.ok).toBe(true);
@@ -6424,22 +6375,29 @@ describe('listAgentConnectorsAction — db path', () => {
     const agentId = 'aaaaaaaa-0000-0000-0000-000000000006';
     const connectorId = 'cccccccc-0000-0000-0000-000000000001';
     // Return a connector with a slug that IS in ADAPTER_REGISTRY
-    currentDb = makeDb([
-      {
-        id: connectorId,
-        slug: 'google-drive',
-        name: 'My Drive',
-        credentialId: null,
-        active: true,
-        agentId,
-      },
-    ]) as typeof currentDb;
+    const driveRow = {
+      id: connectorId,
+      slug: 'google-drive',
+      name: 'My Drive',
+      credentialId: null,
+      active: true,
+      agentId,
+    };
+    // agent, connectors, assignments, connection_states.
+    currentDb = makeDbMixed({
+      selectQueue: [[driveRow], [driveRow], [], []],
+    }) as typeof currentDb;
     const { listAgentConnectorsAction } = await import('../src/lib/actions.ts');
     const r = await listAgentConnectorsAction(agentId);
     expect(r.ok).toBe(true);
     if (r.ok) {
       const driveEntry = r.data.find((c) => c.slug === 'google-drive');
       expect(driveEntry).toBeDefined();
+      // An OAuth connector with no credential cannot work: the tab says so.
+      expect(driveEntry!.connection).toMatchObject({
+        state: 'needs_reauth',
+        cause: 'credential_removed',
+      });
       expect(Array.isArray(driveEntry?.availableOperations)).toBe(true);
       expect(driveEntry!.availableOperations.length).toBeGreaterThan(0);
       // Every availableOperation must have required fields

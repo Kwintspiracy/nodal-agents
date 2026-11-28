@@ -311,6 +311,7 @@ describe('AgentMemorySchema round-trip', () => {
       fact_hash: 'abc123',
       archived: false,
       importance_locked: false,
+      version: 1,
       last_accessed_at: now,
       access_count: 5,
       created_at: now,
@@ -339,7 +340,7 @@ describe('AgentMemorySchema round-trip', () => {
       created_at: now,
       updated_at: now,
     };
-    expect(AgentMemorySchema.parse(raw)).toEqual({ ...raw, importance_locked: false });
+    expect(AgentMemorySchema.parse(raw)).toEqual({ ...raw, importance_locked: false, version: 1 });
   });
 
   it('accepts an explicit importance_locked=true (user pin)', () => {
@@ -358,6 +359,7 @@ describe('AgentMemorySchema round-trip', () => {
       fact_hash: 'abc123',
       archived: false,
       importance_locked: true,
+      version: 3,
       last_accessed_at: now,
       access_count: 5,
       created_at: now,

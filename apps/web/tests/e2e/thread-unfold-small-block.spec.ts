@@ -169,6 +169,7 @@ async function seedLiveThreadWithASmallBlock(): Promise<{
       toolCallId,
       toolInput: {},
       toolOutput: 'ok',
+      outcome: 'done',
       card: 'generic',
       presented: { card: 'generic' },
       durationMs: 900,

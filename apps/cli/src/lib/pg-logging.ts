@@ -64,6 +64,7 @@ import {
 import { join, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
 import { LOG_DIR } from './config.ts';
+import { encodePathFor, type PathReader } from './path-handoff.ts';
 
 /** The root all cluster logs live under. Absolute: Postgres never guesses. */
 export const PG_LOG_DIR = join(LOG_DIR, 'postgres');
@@ -154,9 +155,17 @@ function managedKeys(): Set<string> {
   return new Set(Object.keys(postgresLoggingSettings('x')));
 }
 
-/** A GUC string literal: single-quoted, inner quotes doubled. */
+/**
+ * A GUC string literal: single-quoted, inner quotes doubled, and backslashes
+ * doubled — the configuration lexer reads a backslash as an escape and keeps
+ * only the next character (measured on PostgreSQL 18: `'../logs\pgd'` logged
+ * into `../logspgd`, `'../logs\\pgd'` into `../logs/pgd`). It is applied to
+ * the BYTES of the value (see `applyPostgresLoggingConfig`): in a double-byte
+ * code page the second byte of a character can be 0x5C, the backslash ("表"
+ * is 95 5C in code page 932), and that byte must survive too.
+ */
 export function quoteGuc(value: string): string {
-  return `'${value.replace(/'/g, "''")}'`;
+  return `'${value.replace(/\\/g, '\\\\').replace(/'/g, "''")}'`;
 }
 
 /**
@@ -207,18 +216,31 @@ export function mergeAutoConf(existing: string, settings: Record<string, string>
  * WRITE failure propagates: a start that silently keeps no log is exactly the
  * situation #111 is about.
  */
-export function applyPostgresLoggingConfig(dataDir: string, logDirectory: string): string {
+export function applyPostgresLoggingConfig(
+  dataDir: string,
+  logDirectory: string,
+  // Who reads the file: `log_directory` is a path, and PostgreSQL decodes it
+  // in ITS code page, not Node's (#1231). See `postgres-code-page.ts`.
+  reader: PathReader,
+): string {
+  // The path, in the reader's code page, BEFORE anything is created: a path
+  // it cannot carry is refused by name (path-handoff.ts). The bytes are then
+  // carried through the merge as a "binary" (latin1) string, one char per
+  // byte, which also keeps every other line of the file byte for byte.
+  const settings = postgresLoggingSettings(logDirectory);
+  const encodedLogDirectory = encodePathFor(reader, settings['log_directory'] ?? '');
   mkdirSync(logDirectory, { recursive: true });
   const target = join(dataDir, 'postgresql.auto.conf');
   let existing = '';
   if (existsSync(target)) {
     try {
-      existing = readFileSync(target, 'utf-8');
+      existing = readFileSync(target, 'latin1');
     } catch {
       existing = '';
     }
   }
-  writeAtomically(target, mergeAutoConf(existing, postgresLoggingSettings(logDirectory)));
+  const asBytes = { ...settings, log_directory: encodedLogDirectory.toString('latin1') };
+  writeAtomically(target, Buffer.from(mergeAutoConf(existing, asBytes), 'latin1'));
   return logDirectory;
 }
 
@@ -244,9 +266,9 @@ export function tempConfPath(target: string): string {
  * first shape of this fix was caught, by the third case in
  * `pg-logging-atomic.test.ts`.
  */
-function writeAtomically(target: string, contents: string): void {
+function writeAtomically(target: string, contents: Uint8Array): void {
   const tmp = tempConfPath(target);
-  writeFileSync(tmp, contents, 'utf-8');
+  writeFileSync(tmp, contents);
   try {
     renameSync(tmp, target);
   } catch (err) {

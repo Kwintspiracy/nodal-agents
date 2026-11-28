@@ -16,10 +16,11 @@
 
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
-import { StringDecoder } from 'node:string_decoder';
 
 /** Default chunk size fed to the decoder per read. Exported for testability. */
 export const DEFAULT_CHUNK_BYTES = 256 * 1024;
+
+const NUL = String.fromCharCode(0);
 
 export interface WindowedLinesResult {
   /** Lines with 0-based index in [startIdx, endIdxCeiling) that exist in the file. */
@@ -46,6 +47,27 @@ export class ReadLinesCapExceededError extends Error {
 }
 
 /**
+ * Le flux n'est pas du texte dans l'encodage établi sur son début (la couche
+ * texte, `text-file.ts`) : une séquence invalide plus loin, ou un caractère
+ * NUL. `detail` le dit sans le chemin ; l'appelant le préfixe.
+ */
+export class ReadLinesNotTextError extends Error {
+  constructor(
+    readonly kind: 'binary' | 'invalid',
+    readonly detail: string,
+  ) {
+    super(detail);
+    this.name = 'ReadLinesNotTextError';
+  }
+}
+
+/** Comment décoder le flux : l'encodage établi par la couche texte, et sa BOM à sauter. */
+export interface StreamTextForm {
+  readonly encoding: string;
+  readonly bomLength: number;
+}
+
+/**
  * Stream `path` and collect only the lines whose 0-based index falls inside
  * [startIdx, endIdxCeiling), returning them alongside the total line count.
  * Never materializes the full line array or the full file content in memory.
@@ -69,8 +91,24 @@ export async function readLinesWindowed(
   endIdxCeiling: number,
   chunkBytes: number = DEFAULT_CHUNK_BYTES,
   maxBytes?: number,
+  form: StreamTextForm = { encoding: 'utf-8', bomLength: 0 },
 ): Promise<WindowedLinesResult> {
-  const decoder = new StringDecoder('utf8');
+  // Le décodeur de la plateforme, en mode `fatal` : une séquence invalide lève
+  // au lieu de devenir U+FFFD en silence (la couche texte, `text-file.ts`).
+  const decoder = new TextDecoder(form.encoding, { fatal: true, ignoreBOM: true });
+  let toSkip = form.bomLength;
+  const decode = (chunk: Uint8Array | undefined): string => {
+    let text: string;
+    try {
+      text = chunk === undefined ? decoder.decode() : decoder.decode(chunk, { stream: true });
+    } catch {
+      throw new ReadLinesNotTextError('invalid', `its bytes are not valid ${form.encoding}`);
+    }
+    if (text.includes(NUL)) {
+      throw new ReadLinesNotTextError('binary', 'it contains NUL characters');
+    }
+    return text;
+  };
   const windowLines: string[] = [];
   let lineIdx = 0;
   let partial = '';
@@ -97,10 +135,25 @@ export async function readLinesWindowed(
         );
         return;
       }
-      // decoder.write() buffers any dangling multi-byte sequence internally
-      // and only returns fully-decoded characters — so a character split
-      // across this chunk and the next decodes correctly either way.
-      const text = partial + decoder.write(chunk);
+      // decode() (stream: true) buffers any dangling multi-byte sequence
+      // internally and only returns fully-decoded characters — so a character
+      // split across this chunk and the next decodes correctly either way.
+      let body: Uint8Array = chunk;
+      if (toSkip > 0) {
+        const skipped = Math.min(toSkip, body.length);
+        body = body.subarray(skipped);
+        toSkip -= skipped;
+      }
+      let decoded: string;
+      try {
+        decoded = decode(body);
+      } catch (err) {
+        aborted = true;
+        stream.destroy();
+        reject(err);
+        return;
+      }
+      const text = partial + decoded;
       const parts = text.split('\n');
       partial = parts.pop() ?? '';
       for (const line of parts) {
@@ -110,7 +163,12 @@ export async function readLinesWindowed(
     });
     stream.on('end', () => {
       if (aborted) return;
-      partial += decoder.end();
+      try {
+        partial += decode(undefined);
+      } catch (err) {
+        reject(err);
+        return;
+      }
       // The tail after the last '\n' (or the whole file, if it has none) is
       // always its own line — this is what gives an empty file exactly one
       // line and a trailing '\n' its extra empty final line.

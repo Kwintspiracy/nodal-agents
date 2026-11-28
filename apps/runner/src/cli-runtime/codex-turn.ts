@@ -41,7 +41,13 @@ import {
   parseLiveToolEvent,
 } from '@nodal-agents/tools';
 import { spawnCliTurn, OPEN_GATE, type ToolCallGate } from './spawn-turn.ts';
-import type { ClaudeTurnEvent, ClaudeTurnResult, ClaudeTurnOptions } from './claude-turn.ts';
+import {
+  cliToolCallCap,
+  toolCallCapDetail,
+  type ClaudeTurnEvent,
+  type ClaudeTurnResult,
+  type ClaudeTurnOptions,
+} from './claude-turn.ts';
 
 /** Même forme d'événement live que le chemin Claude — l'appelant ne trie pas. */
 export type CodexTurnEvent = ClaudeTurnEvent;
@@ -280,29 +286,6 @@ export function expandToolCalls(
 }
 
 /**
- * L'enveloppe que les surfaces Code reconnaissent comme un ÉCHEC.
- *
- * `isRefusedToolCall` (onglet Code) et le scan des projets ne connaissent que
- * deux formes : `<tool_use_error>` et `{"ok":false}`. Codex, lui, dit son échec
- * dans un champ `status` de son item — que personne ne lit. Un `file_change`
- * échoué était donc compté comme un fichier CHANGÉ, affiché dans le panneau
- * Changes, et pouvait faire naître un projet dans le contexte des agents (revue
- * Codex, 27/08).
- *
- * On n'apprend pas à deux consommateurs une troisième forme : on traduit à la
- * source, une fois, dans celle qu'ils connaissent déjà. La sortie d'origine est
- * conservée derrière l'enveloppe — l'audit doit rester lisible.
- */
-const REFUSED_MARKER = '<tool_use_error>';
-
-export function markRefusedIfFailed(item: unknown, output: string): string {
-  const status = (item as Record<string, unknown> | undefined)?.['status'];
-  if (status !== 'failed') return output;
-  if (output.startsWith(REFUSED_MARKER)) return output;
-  return `${REFUSED_MARKER}${output}`;
-}
-
-/**
  * Traite UNE ligne du flux. Rend `true` quand la ligne ouvre un appel d'outil ;
  * cet appel passe par `gate.admit()`, le garde anti-boucle de `spawn-turn.ts`.
  * Un appel refusé n'est jamais remis à `onEvent`, ni son ouverture ni sa fin.
@@ -344,7 +327,11 @@ export function handleCodexLine(
         onEvent?.({
           kind: 'tool_result',
           toolUseId,
-          output: markRefusedIfFailed(item, (live.event.output ?? '').slice(0, OUTPUT_CAP)),
+          output: (live.event.output ?? '').slice(0, OUTPUT_CAP),
+          // Codex dit son échec dans le `status` de son item : c'est le fait que
+          // la ligne garde (`outcome`, #1184), jamais une enveloppe ajoutée au
+          // texte pour que des lecteurs la reconnaissent.
+          isError: (item as Record<string, unknown> | undefined)?.['status'] === 'failed',
         });
       }
     }
@@ -359,7 +346,12 @@ export function handleCodexLine(
     (type === 'item.started' ||
       (type === 'item.completed' && itemId !== null && !state.countedToolIds.has(itemId)));
   if (opens && itemId !== null) state.countedToolIds.add(itemId);
-  const admitted = opens ? gate.admit() : true;
+  // Le budget d'appels est celui d'UNE réponse du modèle (invariant #8). Le
+  // flux de `codex exec --json` ne dit pas où une réponse finit : des items,
+  // puis un `turn.completed` qui clôt la session entière. L'appel passe donc
+  // sans réponse nommée (`null`) et n'est pas compté ; c'est la limite de
+  // temps du run qui borne une session Codex (cliSessionTimeLimitMs).
+  const admitted = opens ? gate.admit(null) : true;
 
   // Les outils ensuite, par le lecteur que `code_task` utilise déjà.
   if (live && admitted) {
@@ -398,7 +390,11 @@ export function handleCodexLine(
         onEvent?.({
           kind: 'tool_result',
           toolUseId: call.toolUseId,
-          output: markRefusedIfFailed(item, (live.event.output ?? '').slice(0, OUTPUT_CAP)),
+          output: (live.event.output ?? '').slice(0, OUTPUT_CAP),
+          // Codex dit son échec dans le `status` de son item : c'est le fait que
+          // la ligne garde (`outcome`, #1184), jamais une enveloppe ajoutée au
+          // texte pour que des lecteurs la reconnaissent.
+          isError: (item as Record<string, unknown> | undefined)?.['status'] === 'failed',
         });
       }
     }
@@ -479,12 +475,10 @@ export function finishCodexTurn(
   durationMs: number,
   stderrExcerpt: string,
   toolCapExceeded?: number,
+  toolCapCalls?: number,
 ): CodexTurnResult {
-  const capDetail =
-    toolCapExceeded !== undefined
-      ? `tool_call_limit_exceeded: the CLI exceeded ${String(toolCapExceeded)} tool calls in one ` +
-        `turn and was killed (anti-loop guard, invariant #8)`
-      : null;
+  const toolCallCap = cliToolCallCap(toolCapExceeded, toolCapCalls);
+  const capDetail = toolCallCap ? toolCallCapDetail(toolCallCap) : null;
 
   const finalText = state.messages.join('\n\n');
   const streamIncomplete = !state.sawTurnCompleted && state.failure === null;
@@ -532,6 +526,7 @@ export function finishCodexTurn(
     // ce qu'on ne sait pas.
     permissionDenials: 0,
     unknownEventTypes: [...state.unknownEventTypes],
+    toolCallCap,
   };
 }
 
@@ -572,14 +567,22 @@ export async function runCodexTurn(opts: CodexTurnOptions): Promise<CodexTurnRes
     onLine: (line, gate) => {
       handleCodexLine(state, line, opts.onEvent, gate);
     },
-    finish: ({ exitCode, timedOut, durationMs, stderr, toolCapExceeded }) => {
+    finish: ({ exitCode, timedOut, durationMs, stderr, toolCapExceeded, toolCapCalls }) => {
       if (state.unknownEventTypes.size > 0) {
         console.warn(
           `[cli-runtime] unknown codex event types (CLI drift?): ` +
             [...state.unknownEventTypes].join(', '),
         );
       }
-      return finishCodexTurn(state, exitCode, timedOut, durationMs, stderr, toolCapExceeded);
+      return finishCodexTurn(
+        state,
+        exitCode,
+        timedOut,
+        durationMs,
+        stderr,
+        toolCapExceeded,
+        toolCapCalls,
+      );
     },
   });
 }

@@ -166,10 +166,10 @@ describe('createOutlookMailTools integration', () => {
   it('outlook_reply_message schema validates reply_all as boolean', () => {
     const tool = tools.find((t) => t.name === 'outlook_reply_message')!;
     expect(() =>
-      tool.inputSchema.parse({ message_id: 'm-1', comment: 'Thanks', reply_all: 'yes' }),
+      tool.inputSchema.parse({ message_id: 'm-1', body: 'Thanks', reply_all: 'yes' }),
     ).toThrow(z.ZodError);
     expect(() =>
-      tool.inputSchema.parse({ message_id: 'm-1', comment: 'Thanks', reply_all: true }),
+      tool.inputSchema.parse({ message_id: 'm-1', body: 'Thanks', reply_all: true }),
     ).not.toThrow();
   });
 

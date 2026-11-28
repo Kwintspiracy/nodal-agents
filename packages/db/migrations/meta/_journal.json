@@ -1156,6 +1156,48 @@
       "when": 1786437400000,
       "tag": "0168_render_pdf_rules",
       "breakpoints": true
+    },
+    {
+      "idx": 170,
+      "version": "7",
+      "when": 1786437600000,
+      "tag": "0170_tool_call_outcome",
+      "breakpoints": true
+    },
+    {
+      "idx": 171,
+      "version": "7",
+      "when": 1786437700000,
+      "tag": "0171_connection_states",
+      "breakpoints": true
+    },
+    {
+      "idx": 172,
+      "version": "7",
+      "when": 1786437800000,
+      "tag": "0172_memory_versions",
+      "breakpoints": true
+    },
+    {
+      "idx": 173,
+      "version": "7",
+      "when": 1786437900000,
+      "tag": "0173_job_holder_liveness",
+      "breakpoints": true
+    },
+    {
+      "idx": 174,
+      "version": "7",
+      "when": 1786438000000,
+      "tag": "0174_skill_installed_files",
+      "breakpoints": true
+    },
+    {
+      "idx": 175,
+      "version": "7",
+      "when": 1786438100000,
+      "tag": "0175_tool_result_mask",
+      "breakpoints": true
     }
   ]
 }

@@ -531,6 +531,7 @@ describe('run-job : le REGISTRE des projets, APRÈS binding.run (revue passe 27)
         toolInput: { file_path: `${alpha}/index.ts` },
         // `tool_output` est du TEXTE, pas du jsonb — voir le schéma.
         toolOutput: '{"ok":true}',
+        outcome: 'done',
       });
       return { ...greenTurn(), isError: true, errorDetail: 'tests failed' };
     });
@@ -570,6 +571,7 @@ describe('run-job : le REGISTRE des projets, APRÈS binding.run (revue passe 27)
         toolName: 'cli:Write',
         toolInput: { file_path: `${alpha}/index.ts` },
         toolOutput: '{"ok":true}',
+        outcome: 'done',
       });
       // Pendant le tour, le job est remis en file et repris par un autre run.
       await db.update(agentJobs).set({ status: 'pending' }).where(eq(agentJobs.id, jobId));
@@ -623,6 +625,7 @@ describe('run-job : le REGISTRE des projets, APRÈS binding.run (revue passe 27)
         toolName: 'cli:Read',
         toolInput: { file_path: `${alpha}/index.ts` },
         toolOutput: '{"ok":true}',
+        outcome: 'done',
       });
       return { ...greenTurn(), isError: true, errorDetail: 'stop' };
     });
@@ -672,6 +675,7 @@ describe('run-job : le registre se remplit tout seul (P5b) @cap:travailler-sur-d
       toolName: 'cli:Write',
       toolInput: { file_path: filePath },
       toolOutput: '{"ok":true}',
+      outcome: 'done',
     });
 
   it('deux fichiers écrits dans alpha/src : `alpha` (manifeste) est DÉCLARÉ et le job rattaché — pas le terrain', async () => {
@@ -736,6 +740,9 @@ describe('run-job : le registre se remplit tout seul (P5b) @cap:travailler-sur-d
         toolName: 'cli:Write',
         toolInput: { file_path: `${alpha}/src/a.ts` },
         toolOutput: '<tool_use_error>refused</tool_use_error>',
+        // What the recorder writes of a result the CLI flagged (#1184): the
+        // outcome is the column's, never read back from the text above.
+        outcome: 'failed',
       });
       return { ...greenTurn(), isError: true, errorDetail: 'stop' };
     });
@@ -927,5 +934,83 @@ describe('run-job : les écritures d’audit en vol sont attendues avant de lire
     expect(outcome?.status).toBe('completed');
     // L'écriture n'a jamais été posée : alpha n'est pas déclaré.
     expect(await ligneDeclaree(alpha)).toBeNull();
+  }, 20_000);
+});
+
+// #1184 — a CLI runtime's own calls are written with the same columns, and
+// its job is judged by the same verdict as a job of Nodal's own loop.
+describe('run-job : a CLI session’s own failed call leaves the work not done @cap:verifier-un-livrable/moteur', () => {
+  const rowsOf = (jobId: string) =>
+    db
+      .select({
+        toolName: toolCalls.toolName,
+        outcome: toolCalls.outcome,
+        target: toolCalls.target,
+      })
+      .from(toolCalls)
+      .where(eq(toolCalls.jobId, jobId))
+      .orderBy(toolCalls.seq);
+  const jobOf = async (jobId: string) => {
+    const [row] = await db
+      .select({ status: agentJobs.status, error: agentJobs.error, result: agentJobs.result })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, jobId));
+    return row!;
+  };
+
+  it('a write the stream flags as an error: the row says failed on the file, and the job ends not done', async () => {
+    const jobId = await newJob();
+    const file = `${alpha}/src/a.ts`;
+    fakeRun.mockImplementationOnce(async (opts: unknown) => {
+      const { onEvent } = opts as { onEvent: (e: ClaudeTurnEvent) => void };
+      onEvent({ kind: 'tool_use', toolUseId: 'w1', toolName: 'Write', input: { file_path: file } });
+      onEvent({ kind: 'tool_result', toolUseId: 'w1', output: 'EACCES', isError: true });
+      // A command that exits non-zero RAN: its flag is the exit status, data.
+      onEvent({
+        kind: 'tool_use',
+        toolUseId: 'b1',
+        toolName: 'Bash',
+        input: { command: 'grep x y' },
+      });
+      onEvent({ kind: 'tool_result', toolUseId: 'b1', output: 'Exit code 1', isError: true });
+      return greenTurn();
+    });
+
+    const outcome = await runJob(jobId, 'write', [root]);
+
+    expect(await rowsOf(jobId)).toEqual([
+      { toolName: 'cli:Write', outcome: 'failed', target: `file:${projectKey(file)}` },
+      { toolName: 'cli:Bash', outcome: 'done', target: expect.stringMatching(/^input:cli:Bash:/) },
+    ]);
+    expect(outcome?.status).toBe('failed');
+    const job = await jobOf(jobId);
+    expect(job.status).toBe('failed');
+    expect(job.error).toBe('calls_not_done (1 unresolved: cli:Write)');
+    expect(job.result).toContain(
+      `[stopped: tool calls not done — cli:Write → file:${projectKey(file)}: failed]`,
+    );
+  }, 20_000);
+
+  it('the same write redone and done in the same session: resolved, the job completes', async () => {
+    const jobId = await newJob();
+    const file = `${alpha}/src/b.ts`;
+    fakeRun.mockImplementationOnce(async (opts: unknown) => {
+      const { onEvent } = opts as { onEvent: (e: ClaudeTurnEvent) => void };
+      onEvent({ kind: 'tool_use', toolUseId: 'w1', toolName: 'Edit', input: { file_path: file } });
+      onEvent({
+        kind: 'tool_result',
+        toolUseId: 'w1',
+        output: 'old_string not found',
+        isError: true,
+      });
+      onEvent({ kind: 'tool_use', toolUseId: 'w2', toolName: 'Write', input: { file_path: file } });
+      onEvent({ kind: 'tool_result', toolUseId: 'w2', output: 'ok' });
+      return greenTurn();
+    });
+
+    const outcome = await runJob(jobId, 'write', [root]);
+
+    expect((await rowsOf(jobId)).map((r) => r.outcome)).toEqual(['failed', 'done']);
+    expect(outcome?.status).toBe('completed');
   }, 20_000);
 });

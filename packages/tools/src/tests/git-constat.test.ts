@@ -31,12 +31,11 @@ import {
   parsePorcelainZ,
   perimetreGit,
   repoRootOf,
-  resolveGitBinary,
   snapshotGitAvant,
   snapshotRepo,
   MAX_STATUS_ENTRIES,
-  _resetGitBinaryCache,
 } from '../verification/git-constat';
+import { resolveGitBinary, _resetGitBinaryCache } from '@nodal-agents/shared/git-binary';
 import { noWorkspaceSandbox } from '@nodal-agents/sandbox';
 import { writeManyFiles } from '@nodal-agents/test-kit';
 

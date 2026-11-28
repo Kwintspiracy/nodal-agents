@@ -63,7 +63,7 @@ describe('notion_query_database', () => {
     client = makeClient();
   });
 
-  it('returns rows with extracted properties', async () => {
+  it('returns one page of rows with extracted properties, and no cursor on the last page', async () => {
     (client.databases.query as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       results: [fakeDbRow],
       has_more: false,
@@ -71,13 +71,12 @@ describe('notion_query_database', () => {
     });
 
     const tool = createQueryDatabaseTool(client);
-    const result = await tool.execute(
-      { database_id: 'db-1', page_size: 50, max_rows: 500 },
-      {} as never,
-    );
+    const result = await tool.execute({ database_id: 'db-1', page_size: 50 }, {} as never);
 
-    expect(result.total).toBe(1);
-    expect(result.rows[0]).toMatchObject({
+    expect(result.next).toBeNull();
+    expect(result.truncated).toBeNull();
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0]).toMatchObject({
       id: 'row-1',
       url: 'https://notion.so/row-1',
       Name: 'Acme Corp',
@@ -85,44 +84,26 @@ describe('notion_query_database', () => {
     });
   });
 
-  it('paginates across multiple pages', async () => {
-    (client.databases.query as ReturnType<typeof vi.fn>)
-      .mockResolvedValueOnce({
-        results: [fakeDbRow],
-        has_more: true,
-        next_cursor: 'cursor-1',
-      })
-      .mockResolvedValueOnce({
-        results: [{ ...fakeDbRow, id: 'row-2' }],
-        has_more: false,
-        next_cursor: null,
-      });
-
-    const tool = createQueryDatabaseTool(client);
-    const result = await tool.execute(
-      { database_id: 'db-1', page_size: 1, max_rows: 500 },
-      {} as never,
-    );
-
-    expect(result.total).toBe(2);
-    expect(client.databases.query).toHaveBeenCalledTimes(2);
-  });
-
-  it('respects max_rows ceiling', async () => {
+  it('hands the provider cursor back as next, and sends cursor as start_cursor', async () => {
     (client.databases.query as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
-      results: [fakeDbRow, { ...fakeDbRow, id: 'row-2' }, { ...fakeDbRow, id: 'row-3' }],
+      results: [{ ...fakeDbRow, id: 'row-2' }],
       has_more: true,
-      next_cursor: 'cursor-1',
+      next_cursor: 'cursor-2',
     });
 
     const tool = createQueryDatabaseTool(client);
     const result = await tool.execute(
-      { database_id: 'db-1', page_size: 50, max_rows: 2 },
+      { database_id: 'db-1', page_size: 1, cursor: 'cursor-1' },
       {} as never,
     );
 
-    expect(result.total).toBe(2);
-    expect(result.has_more).toBe(true);
+    expect(result.next).toBe('cursor-2');
+    expect(result.items.map((r) => r.id)).toEqual(['row-2']);
+    expect((client.databases.query as ReturnType<typeof vi.fn>).mock.calls[0]?.[0]).toMatchObject({
+      database_id: 'db-1',
+      page_size: 1,
+      start_cursor: 'cursor-1',
+    });
   });
 
   it('maps 401 to notion_unauthorized', async () => {
@@ -130,7 +111,7 @@ describe('notion_query_database', () => {
 
     const tool = createQueryDatabaseTool(client);
     await expect(
-      tool.execute({ database_id: 'x', page_size: 50, max_rows: 500 }, {} as never),
+      tool.execute({ database_id: 'x', page_size: 50 }, {} as never),
     ).rejects.toMatchObject({ code: 'notion_unauthorized' });
   });
 });

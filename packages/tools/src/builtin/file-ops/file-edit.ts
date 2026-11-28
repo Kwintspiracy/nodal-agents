@@ -10,6 +10,9 @@
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { writeFileAtomically } from './atomic-write';
+import { changedSinceSeen, decodeText, notTextReason } from './text-file';
+import { spliceEdit } from './text-edit';
+import { refusePlaceholderWrite, refuseQuotedPlaceholder } from './mask-guard';
 import { z } from 'zod';
 import type { ToolDefinition } from '../../types';
 import { detailOf, failureText, writtenFile } from '../../presenters';
@@ -26,6 +29,7 @@ import {
   MAX_WRITE_BYTES,
   WorkspaceError,
 } from './workspace';
+import { outcomeOfOkFlag } from '../../outcome';
 
 export const FileEditInputSchema = z.object({
   path: z.string().min(1).describe('Path to an existing file, relative to the workspace root.'),
@@ -42,6 +46,13 @@ export const FileEditInputSchema = z.object({
     .optional()
     .default(false)
     .describe('Replace every occurrence (default false: require exactly one match).'),
+  encoding: z
+    .string()
+    .optional()
+    .describe(
+      'Only when a call said the encoding could not be determined: the encoding of the file ' +
+        '(e.g. "windows-1252", "shift_jis"). Otherwise it is detected.',
+    ),
   purpose: z
     .string()
     .optional()
@@ -71,10 +82,12 @@ export const fileEditTool: ToolDefinition<typeof FileEditInputSchema, FileEditOu
     'Replace an exact part of a file while leaving the rest untouched. The edit fails if the target text is missing or ambiguous.',
   description:
     'Edit an existing file by replacing an exact substring. Quote the chunk to change verbatim ' +
-    '(including whitespace). Fails loud when the substring is missing (you misquoted) or ' +
-    'matches multiple places (ambiguous — narrow the quote, or pass replace_all:true). ' +
-    'Use this instead of file_write when you only want to change part of a file — preserves ' +
-    'untouched lines.',
+    '(including whitespace; a CRLF file may be quoted with LF line endings). Fails loud ' +
+    'when the substring is missing (you misquoted) or matches multiple places (ambiguous — ' +
+    'narrow the quote, or pass replace_all:true). Use this instead of file_write when you only ' +
+    'want to change part of a file: every byte outside the replaced text stays as it was, and ' +
+    'the file keeps its encoding, byte-order mark and line endings. Refused when the file ' +
+    'changed since this job last read it, or is not text.',
   inputSchema: FileEditInputSchema,
   riskLevel: 'write',
   egress: 'none',
@@ -125,6 +138,7 @@ export const fileEditTool: ToolDefinition<typeof FileEditInputSchema, FileEditOu
     }
     return (await computeSharedOverwriteApproval(ctx, input.path)) === 'require_approval';
   },
+  outcomeOf: outcomeOfOkFlag,
   execute: async (input, ctx) => {
     try {
       const path = await resolveAndCheckPath(ctx, input.path);
@@ -134,39 +148,59 @@ export const fileEditTool: ToolDefinition<typeof FileEditInputSchema, FileEditOu
         return { ok: false, reason: WORKFLOW_TEMPLATE_PROTECTED_MESSAGE };
       }
       const lu = await readFile(path);
-      // Les octets LUS, rapportés au seam (tool_call_reads) ; puis décodés comme avant.
-      ctx.reportReadContent?.(path, createHash('sha256').update(lu).digest('hex'));
-      const original = lu.toString('utf8');
-      if (!original.includes(input.old_string)) {
+      const sha256 = createHash('sha256').update(lu).digest('hex');
+      // Les octets LUS, rapportés au seam (tool_call_reads).
+      ctx.reportReadContent?.(path, sha256);
+      const stale = await changedSinceSeen(ctx, path, sha256, input.path, 'part');
+      if (stale !== null) return { ok: false, reason: stale };
+      // La couche texte : le fichier comme texte, et la forme dans laquelle il
+      // est écrit — ou le refus, et pourquoi (`text-file.ts`).
+      const decoded = decodeText(lu, input.encoding);
+      if (!decoded.ok) {
         return {
           ok: false,
-          reason: `old_string not found in "${input.path}". Re-read the file and quote the exact substring (whitespace counts).`,
+          reason: await notTextReason(input.path, lu, decoded, 'Nothing was written.'),
         };
       }
-      let replacements = 0;
-      let updated: string;
-      if (input.replace_all) {
-        updated = original.split(input.old_string).join(input.new_string);
-        replacements =
-          original.length - updated.length + input.new_string.length * 0 === 0
-            ? original.split(input.old_string).length - 1
-            : original.split(input.old_string).length - 1;
-      } else {
-        const firstIdx = original.indexOf(input.old_string);
-        const secondIdx = original.indexOf(input.old_string, firstIdx + 1);
-        if (secondIdx !== -1) {
+      // A masked read is never written back (mask-guard.ts): a quote of a line
+      // the agent saw masked, or a replacement that adds the mark, is refused
+      // with the hidden lines named, before the quoted text is searched for.
+      const placeholder =
+        (await refuseQuotedPlaceholder(ctx, {
+          path,
+          shownPath: input.path,
+          quoted: input.old_string,
+          current: decoded.text,
+        })) ??
+        (await refusePlaceholderWrite(ctx, {
+          path,
+          shownPath: input.path,
+          before: input.old_string,
+          after: input.new_string,
+          current: decoded.text,
+        }));
+      if (placeholder !== null) return { ok: false, reason: placeholder };
+      const spliced = spliceEdit(lu, decoded.text, decoded.form, input);
+      if (!spliced.ok) {
+        if (spliced.why === 'unrepresentable') {
           return {
             ok: false,
-            reason: `old_string matches multiple places in "${input.path}". Narrow the quote (add surrounding context) or pass replace_all:true.`,
+            reason:
+              `"${input.path}" is written in ${decoded.form.encoding}, and ${spliced.detail}. ` +
+              'Nothing was written. Use characters it has, or convert the whole file with ' +
+              'file_write and "encoding": "utf-8".',
           };
         }
-        updated =
-          original.slice(0, firstIdx) +
-          input.new_string +
-          original.slice(firstIdx + input.old_string.length);
-        replacements = 1;
+        return {
+          ok: false,
+          reason:
+            spliced.why === 'not_found'
+              ? `old_string not found in "${input.path}". Re-read the file and quote the exact substring (whitespace counts).`
+              : `old_string matches multiple places in "${input.path}". Narrow the quote (add surrounding context) or pass replace_all:true.`,
+        };
       }
-      const bytes = Buffer.byteLength(updated, 'utf8');
+      const { bytes: updated, replacements } = spliced;
+      const bytes = updated.length;
       if (bytes > MAX_WRITE_BYTES) {
         return {
           ok: false,

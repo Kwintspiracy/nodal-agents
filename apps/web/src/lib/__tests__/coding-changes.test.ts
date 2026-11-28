@@ -28,18 +28,19 @@ describe('extractFilePath', () => {
 });
 
 describe('isRefusedToolCall', () => {
-  it('reconnaît le refus du CLI et l’échec déclaré d’un outil Nodal', () => {
-    expect(
-      isRefusedToolCall('<tool_use_error>No such tool available: Write</tool_use_error>'),
-    ).toBe(true);
-    expect(isRefusedToolCall('{"ok":false,"error":"denied"}')).toBe(true);
-    expect(isRefusedToolCall('{"ok":true}')).toBe(false);
+  it('reads the outcome of the row (#1184): failed, refused or held changed nothing', () => {
+    expect(isRefusedToolCall('failed')).toBe(true);
+    expect(isRefusedToolCall('refused')).toBe(true);
+    expect(isRefusedToolCall('awaiting_approval')).toBe(true);
+    expect(isRefusedToolCall('done')).toBe(false);
+    // Unknown may have acted; a row older than the column is counted, not dropped.
+    expect(isRefusedToolCall('unknown')).toBe(false);
     expect(isRefusedToolCall(null)).toBe(false);
     expect(isRefusedToolCall(undefined)).toBe(false);
   });
 
-  it('ne regarde que la tête de la sortie : un texte long qui CITE l’erreur plus loin passe', () => {
-    expect(isRefusedToolCall('ok\n'.repeat(300) + '<tool_use_error>')).toBe(false);
+  it('a value outside the closed set is a broken writer, said loud', () => {
+    expect(() => isRefusedToolCall('<tool_use_error>')).toThrow(/TOOL_CALL_OUTCOME_OUT_OF_SET/);
   });
 });
 
@@ -102,16 +103,12 @@ describe('lineCountsOfCall — les compteurs « −a +b »', () => {
 
   it('un appel REFUSÉ n’a aucun compteur : il n’a rien écrit', () => {
     expect(
-      lineCountsOfCall(
-        'cli:Write',
-        { file_path: 'a.ts', content: 'x\ny\nz' },
-        '<tool_use_error>Write is disabled for this session</tool_use_error>',
-      ),
+      lineCountsOfCall('cli:Write', { file_path: 'a.ts', content: 'x\ny\nz' }, 'failed'),
     ).toEqual({});
   });
 
   it('un outil sans texte (un classeur) n’a aucun compteur', () => {
-    expect(lineCountsOfCall('xlsx_write', { path: 'b.xlsx' }, null)).toEqual({});
+    expect(lineCountsOfCall('xlsx_write', { path: 'b.xlsx' }, 'done')).toEqual({});
   });
 
   it('cli:file_change compte TOUS les fichiers de l’appel, pas seulement le premier', () => {

@@ -1,9 +1,18 @@
 // @nodal-agents/adapter-outlook-mail — Microsoft Graph client factory
 
-import { Client, MiddlewareFactory } from '@microsoft/microsoft-graph-client';
+import {
+  AuthenticationHandler,
+  Client,
+  RedirectHandler,
+  RedirectHandlerOptions,
+  RetryHandler,
+  RetryHandlerOptions,
+  TelemetryHandler,
+} from '@microsoft/microsoft-graph-client';
 import type {
   AuthenticationProvider,
   Context,
+  FetchOptions,
   Middleware,
 } from '@microsoft/microsoft-graph-client';
 
@@ -89,14 +98,81 @@ export class TimeoutMiddleware implements Middleware {
 }
 
 /**
+ * The last link of the chain: sends the request through `fetch`, the
+ * connector contract's transport (the SDK's own HTTPMessageHandler calls the
+ * global `fetch` and takes no other).
+ */
+export class TransportMiddleware implements Middleware {
+  constructor(private readonly send: typeof fetch) {}
+
+  setNext(): void {
+    // The last link: nothing follows.
+  }
+
+  async execute(context: Context): Promise<void> {
+    context.response = await this.send(context.request as RequestInfo, context.options);
+  }
+}
+
+/** RFC 9110 §9.2.1: methods that cannot have an effect at the provider. */
+const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
+
+/** The longest wait the SDK's own retry may make; a longer one goes back to the caller. */
+const MAX_SDK_RETRY_WAIT_S = 5;
+
+/**
+ * Whether the SDK may retry a request itself: only a safe method (a write it
+ * retried after a 503 or a 504 may already have been carried out: the
+ * connector contract reports such a write as "outcome unknown" instead), and
+ * only for a short wait (a pace refusal with a longer one goes back to the
+ * caller as `rate_limited`, with its time).
+ */
+export function graphMayRetry(
+  delaySeconds: number,
+  request: RequestInfo,
+  options: FetchOptions | undefined,
+  response: Response,
+): boolean {
+  const method = (
+    options?.method ?? (typeof request === 'object' ? request.method : 'GET')
+  ).toUpperCase();
+  if (!SAFE_METHODS.has(method)) return false;
+  const header = response.headers.get('retry-after');
+  const wait = header !== null && /^\d+$/.test(header) ? Number(header) : delaySeconds;
+  return wait <= MAX_SDK_RETRY_WAIT_S;
+}
+
+/**
  * Create a Microsoft Graph client whose access token is resolved lazily —
  * before every request — instead of captured once at construction time.
  * `getAccessToken` is the runner's resolver: it re-reads (and, via its
  * existing advisory-lock refresh path, refreshes) the credential from the DB.
+ *
+ * The chain is the SDK's default one (authentication, retry, redirect,
+ * telemetry), with the retry bounded by `graphMayRetry` and the request sent
+ * through `transport`: the connector contract's, given by the registry, or
+ * the global `fetch`.
  */
-export function createOutlookClient(getAccessToken: () => Promise<string>): Client {
+export function createOutlookClient(
+  getAccessToken: () => Promise<string>,
+  transport: typeof fetch = (...args) => fetch(...args),
+): Client {
   const authProvider = new ResolvedAccessTokenProvider(getAccessToken);
-  const defaultChain = MiddlewareFactory.getDefaultMiddlewareChain(authProvider);
-  const timeoutMiddleware = new TimeoutMiddleware(DEFAULT_TIMEOUT_MS);
-  return Client.initWithMiddleware({ middleware: [timeoutMiddleware, ...defaultChain] });
+  const retry = new RetryHandlerOptions(
+    // The SDK default delay and number of retries.
+    undefined,
+    undefined,
+    (delay, _attempt, request, options, response) =>
+      graphMayRetry(delay, request, options, response),
+  );
+  return Client.initWithMiddleware({
+    middleware: [
+      new TimeoutMiddleware(DEFAULT_TIMEOUT_MS),
+      new AuthenticationHandler(authProvider),
+      new RetryHandler(retry),
+      new RedirectHandler(new RedirectHandlerOptions()),
+      new TelemetryHandler(),
+      new TransportMiddleware(transport),
+    ],
+  });
 }

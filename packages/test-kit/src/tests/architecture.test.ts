@@ -18,6 +18,7 @@ import {
   scanForCompleteJobCallers,
   scanForTerminalSendOutsideOutbox,
   scanFilesForDeliverableTypeLiterals,
+  scanForOutcomeGuesses,
 } from '../index';
 import { mkdtempSourceTree } from '../source-files';
 
@@ -383,5 +384,52 @@ describe('scanForNodalHomeCopies (NODALAI_HOME)', () => {
   it('reports the host file too when it is not skipped', () => {
     const v = scanForNodalHomeCopies({ srcDir: own });
     expect(v.some((x) => x.file.endsWith('host.ts'))).toBe(true);
+  });
+});
+
+// #1184 — the outcome of a call is read on its row: a reader that guesses it
+// from the output, in any of the shapes the product's readers once used, is
+// seen; a reader of the column is not.
+describe('scanForOutcomeGuesses @cap:assigner-outils/moteur', () => {
+  let tree: string;
+  beforeAll(() => {
+    tree = mkdtempSourceTree('outcome-');
+    mkdirSync(join(tree, 'lib'), { recursive: true });
+    mkdirSync(join(tree, 'tests'), { recursive: true });
+    const fake: Record<string, string> = {
+      'envelope.ts':
+        "export const failed = (o: string) => { const p = JSON.parse(o); return 'outcome' in p && p.outcome === 'error'; };\n",
+      'prefix.ts': 'export const failed = (t: string) => t.startsWith(\'{"error":\');\n',
+      'cli-tag.ts': "export const refused = (t: string) => t.includes('<tool_use_error>');\n",
+      'ok-flag.ts':
+        'export const refused = (t: string) => /^\\s*\\{"ok"\\s*:\\s*false\\b/.test(t);\n',
+      'ok-text.ts': 'export const refused = (t: string) => t.startsWith(\'{"ok":false\');\n',
+      'by-name.ts': 'export function toolResultShape(o: unknown) { return o; }\n',
+    };
+    for (const [name, body] of Object.entries(fake)) writeFileSync(join(tree, 'lib', name), body);
+    writeFileSync(
+      join(tree, 'lib', 'column.ts'),
+      "import { readCallOutcome } from 'x';\nexport const failed = (row: { outcome: string | null }) => readCallOutcome(row.outcome) === 'failed';\n",
+    );
+    writeFileSync(join(tree, 'tests', 'fixture.ts'), "export const t = '<tool_use_error>';\n");
+  });
+  afterAll(() => rmSync(tree, { recursive: true, force: true }));
+
+  it('sees every shape of guessing, and only those', () => {
+    const v = scanForOutcomeGuesses({ srcDir: tree });
+    expect([...new Set(v.map((x) => x.file.split(/[\\/]/).pop()))].sort()).toEqual([
+      'by-name.ts',
+      'cli-tag.ts',
+      'envelope.ts',
+      'ok-flag.ts',
+      'ok-text.ts',
+      'prefix.ts',
+    ]);
+    expect(v.every((x) => x.rule === 'no-outcome-guess-outside-seam')).toBe(true);
+  });
+
+  it('spares a writer passed in skipFiles', () => {
+    const v = scanForOutcomeGuesses({ srcDir: tree, skipFiles: ['lib/cli-tag.ts'] });
+    expect(v.some((x) => x.file.endsWith('cli-tag.ts'))).toBe(false);
   });
 });

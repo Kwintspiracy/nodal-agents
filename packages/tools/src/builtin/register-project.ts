@@ -32,6 +32,7 @@ import { textCard, failureText } from '../presenters';
 import { resolveAndCheckPath, WorkspaceError } from './file-ops/workspace';
 import { registerCodeProjects } from '../projects/register';
 import { attachProductionToProject } from '../projects/attach';
+import { outcomeOfOkFlag } from '../outcome';
 
 export const REGISTER_PROJECT_PATH_MAX = 200;
 export const REGISTER_PROJECT_NAME_MAX = 80;
@@ -158,6 +159,7 @@ export const registerProjectTool: ToolDefinition<
    * Dans les trois cas, quelqu'un a choisi ce régime en connaissance de cause.
    */
   defaultApproval: 'require_approval',
+  outcomeOf: outcomeOfOkFlag,
   execute: async (input, ctx): Promise<RegisterProjectOutput> => {
     let abs: string;
     try {

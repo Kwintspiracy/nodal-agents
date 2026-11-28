@@ -1,155 +1,67 @@
-// packages/memory/src/curator.ts — Tier-2 MEMORY curator repo helpers.
+// packages/memory/src/curator.ts — Tier-2 MEMORY curator, Phase 1.
 //
-// The memory analog of the skill-curator helpers (packages/db repos/skills.ts):
-//   - transitionMemoryLifecycle: deterministic, usage-driven archival (Phase 1).
-//   - archiveAgentMemory / updateAgentMemoryFact: provenance-guarded mutations
-//     the LLM curation pass (Phase 2, runMemoryCuration) calls.
+// transitionMemoryLifecycle: deterministic, usage-driven archival. It changes
+// facts through `mutateMemory` (mutate.ts), like every other path: the
+// version it read, the owner's marks in the WHERE, the previous state kept.
+// The LLM pass (Phase 2, apps/runner/src/reflection/run-memory-curator.ts)
+// calls `mutateMemory` directly.
 //
-// Conservative BY CONSTRUCTION:
-//   - NEVER touches source='manual' (facts the user entered by hand).
-//   - Archiving sets archived=true (reversible); there is no hard delete here.
+// Archiving sets archived=true (reversible); there is no hard delete here.
 
-import { agentMemory, and, eq, lt, sql, type AnyDrizzleDb } from '@nodal-agents/db';
-import { computeFactHash } from './hash';
+import { agentMemory, and, eq, isNotNull, lt, sql, type AnyDrizzleDb } from '@nodal-agents/db';
+import { mutateMemory } from './mutate';
 
 export interface MemoryLifecycleResult {
   archived: number;
+  /** Eligible facts the owner wrote or pinned: left as they are. */
+  ownerProtected: number;
 }
 
 /**
- * Phase 1 — deterministic, no LLM. Archive agent-authored memories that have
- * EMPIRICALLY proven useless: low importance, NEVER accessed (access_count = 0),
- * and old (created before now − staleDays). This is the usage-driven "keep only
- * what's actually been used" signal — sounder than a one-shot importance guess.
- * Reversible (archived=true). Only source IN ('agent','reflection') is eligible;
- * user-entered facts are never archived by the curator.
+ * Phase 1 — deterministic, no LLM. Archive memories that have EMPIRICALLY
+ * proven useless: low importance, NEVER accessed (access_count = 0), and old
+ * (created before now − staleDays). Reversible (archived=true), and the state
+ * before is kept as a version naming the archiver.
  *
- * NEVER archives a fact the user has pinned (importance_locked=true) — the
- * deterministic sweep must honor a user pin exactly as the LLM re-score phase
- * (updateAgentMemoryImportance) already does. Without this, a starred/pinned
- * agent memory that is low-importance, unaccessed and old would be silently
- * archived, regressing the 0.7.0 pin feature (H1, audit followup).
+ * Who may be archived is NOT decided here: the owner's marks (a fact the owner
+ * wrote, a pinned fact) are honoured by `mutateMemory` in the WHERE of its
+ * UPDATE, the same rule for every path. Such a fact is counted in
+ * `ownerProtected` and left untouched.
  */
 export async function transitionMemoryLifecycle(
   db: AnyDrizzleDb,
   opts: { staleDays: number; importanceMax: number },
 ): Promise<MemoryLifecycleResult> {
   const cutoff = new Date(Date.now() - opts.staleDays * 24 * 60 * 60 * 1000);
-  const rows = await db
-    .update(agentMemory)
-    .set({ archived: true, updatedAt: new Date() })
+  const eligible = await db
+    .select({ id: agentMemory.id, entityId: agentMemory.entityId, version: agentMemory.version })
+    .from(agentMemory)
     .where(
       and(
+        // A change is made within a workspace (mutateMemory is scoped by it).
+        isNotNull(agentMemory.entityId),
         eq(agentMemory.archived, false),
-        sql`${agentMemory.source} IN ('agent','reflection')`,
         sql`${agentMemory.importance} <= ${opts.importanceMax}`,
         sql`coalesce(${agentMemory.accessCount}, 0) = 0`,
-        sql`coalesce(${agentMemory.importanceLocked}, false) = false`,
         lt(agentMemory.createdAt, cutoff),
       ),
-    )
-    .returning({ id: agentMemory.id });
-  return { archived: rows.length };
-}
+    );
 
-export type MemoryCuratorError = 'not_found' | 'not_agent_memory';
-
-/** Read a memory's provenance within an entity (the guard input). */
-async function loadSource(
-  db: AnyDrizzleDb,
-  entityId: string,
-  memoryId: string,
-): Promise<string | null | undefined> {
-  const [row] = await db
-    .select({ source: agentMemory.source })
-    .from(agentMemory)
-    .where(and(eq(agentMemory.id, memoryId), eq(agentMemory.entityId, entityId)))
-    .limit(1);
-  return row ? row.source : undefined;
-}
-
-/** Read a memory's provenance + user-lock state (the set_importance guard input). */
-async function loadSourceAndLock(
-  db: AnyDrizzleDb,
-  entityId: string,
-  memoryId: string,
-): Promise<{ source: string | null; importanceLocked: boolean } | undefined> {
-  const [row] = await db
-    .select({ source: agentMemory.source, importanceLocked: agentMemory.importanceLocked })
-    .from(agentMemory)
-    .where(and(eq(agentMemory.id, memoryId), eq(agentMemory.entityId, entityId)))
-    .limit(1);
-  return row ? { source: row.source, importanceLocked: row.importanceLocked } : undefined;
-}
-
-/**
- * Provenance-guarded archive (reversible). Refuses source='manual' so the
- * curator can never bin a fact the user entered. Mirrors archiveAgentSkill.
- */
-export async function archiveAgentMemory(
-  db: AnyDrizzleDb,
-  entityId: string,
-  memoryId: string,
-): Promise<{ ok: true } | { error: MemoryCuratorError }> {
-  const source = await loadSource(db, entityId, memoryId);
-  if (source === undefined) return { error: 'not_found' };
-  if (source === 'manual') return { error: 'not_agent_memory' };
-  await db
-    .update(agentMemory)
-    .set({ archived: true, updatedAt: new Date() })
-    .where(and(eq(agentMemory.id, memoryId), eq(agentMemory.entityId, entityId)));
-  return { ok: true };
-}
-
-/**
- * Provenance-guarded fact edit — distill an oversized fact down to its key
- * statement, or write the merged text of a consolidation. Refuses
- * source='manual'. Recomputes fact_hash so future exact-dedup stays correct.
- */
-export async function updateAgentMemoryFact(
-  db: AnyDrizzleDb,
-  entityId: string,
-  memoryId: string,
-  fact: string,
-): Promise<{ ok: true } | { error: MemoryCuratorError }> {
-  const source = await loadSource(db, entityId, memoryId);
-  if (source === undefined) return { error: 'not_found' };
-  if (source === 'manual') return { error: 'not_agent_memory' };
-  const trimmed = fact.trim();
-  await db
-    .update(agentMemory)
-    .set({ fact: trimmed, factHash: computeFactHash(trimmed), updatedAt: new Date() })
-    .where(and(eq(agentMemory.id, memoryId), eq(agentMemory.entityId, entityId)));
-  return { ok: true };
-}
-
-/**
- * Provenance-guarded importance re-score — the curator's usage-driven
- * correction to an agent's one-shot importance guess (see the module comment
- * above: usage, proven by access_count, is a sounder signal than a first
- * estimate). Refuses source='manual' like the other curator mutations, and
- * refuses ANY fact the user has pinned (importance_locked=true) — a
- * user-set importance is the top of the authority chain: agent → curator →
- * user, and the user always wins.
- */
-export async function updateAgentMemoryImportance(
-  db: AnyDrizzleDb,
-  entityId: string,
-  memoryId: string,
-  importance: number,
-): Promise<
-  { ok: true } | { error: MemoryCuratorError | 'invalid_importance' | 'importance_locked' }
-> {
-  if (!Number.isInteger(importance) || importance < 1 || importance > 5) {
-    return { error: 'invalid_importance' };
+  let archived = 0;
+  let ownerProtected = 0;
+  for (const row of eligible) {
+    const r = await mutateMemory(db, {
+      entityId: row.entityId!,
+      memoryId: row.id,
+      readVersion: row.version,
+      actor: { kind: 'lifecycle' },
+      change: { kind: 'archive' },
+      reason: `never used, importance <= ${opts.importanceMax}, older than ${opts.staleDays} days`,
+    });
+    if (r.ok) archived += 1;
+    else if (r.reason === 'owner_protected') ownerProtected += 1;
+    // `stale` / `not_found`: the row changed or went away since the select;
+    // the next tick reads it again.
   }
-  const row = await loadSourceAndLock(db, entityId, memoryId);
-  if (row === undefined) return { error: 'not_found' };
-  if (row.source === 'manual') return { error: 'not_agent_memory' };
-  if (row.importanceLocked) return { error: 'importance_locked' };
-  await db
-    .update(agentMemory)
-    .set({ importance, updatedAt: new Date() })
-    .where(and(eq(agentMemory.id, memoryId), eq(agentMemory.entityId, entityId)));
-  return { ok: true };
+  return { archived, ownerProtected };
 }

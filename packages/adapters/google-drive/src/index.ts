@@ -1,7 +1,7 @@
 // @nodal-agents/adapter-google-drive — public API
 // Single factory: createDriveTools(opts) → ConnectorToolDefinition[]
 
-import type { ConnectorToolDefinition } from '@nodal-agents/tools';
+import type { ConnectorIo, ConnectorToolDefinition } from '@nodal-agents/tools';
 import type { z } from 'zod';
 import { createDriveClient } from './client';
 import { createListFilesTool } from './tools/list-files';
@@ -17,7 +17,7 @@ import { createShareFileTool } from './tools/share-file';
 import { createListPermissionsTool } from './tools/list-permissions';
 import { createExportFileTool } from './tools/export-file';
 
-export type DriveAdapterOptions =
+export type DriveAdapterOptions = (
   | {
       /**
        * Static OAuth2 access token, captured once for the tools' lifetime.
@@ -34,7 +34,11 @@ export type DriveAdapterOptions =
        * from the DB instead of capturing one token for the tools' lifetime.
        */
       getAccessToken: () => Promise<string>;
-    };
+    }
+) & {
+  /** The connector contract's transport, which the provider's SDK uses (ConnectorIo). */
+  fetch?: ConnectorIo['fetch'];
+};
 
 /**
  * Create all 12 Google Drive tools using the provided OAuth access token.
@@ -53,7 +57,7 @@ export function createDriveTools(
 ): ConnectorToolDefinition<z.ZodTypeAny, unknown>[] {
   const getAccessToken =
     'getAccessToken' in opts ? opts.getAccessToken : async () => opts.accessToken;
-  const drive = createDriveClient(getAccessToken);
+  const drive = createDriveClient(getAccessToken, opts.fetch);
 
   return [
     // Read tools (5)

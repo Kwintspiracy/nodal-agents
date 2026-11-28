@@ -15,12 +15,25 @@ import {
   scanForProjectKeyCopies,
   scanForDirectTerminalCompleted,
   assertNoViolations,
+  scanForOutcomeGuesses,
+  OUTBOUND_BRAND_CAST,
+  outboundProjectionExits,
+  scanForOutboundBypass,
+  scanForGitSpawnOutsideLauncher,
 } from '@nodal-agents/test-kit';
+import { OUTBOUND_TEXT_COLUMNS } from '@nodal-agents/db';
 import { scanForServerUsesOfClientValues } from './scan-server-uses-client-value.ts';
 
 const srcDir = join(fileURLToPath(import.meta.url), '..', '..');
 
 describe('architecture invariants', () => {
+  it('starts git for itself only through the launcher (@nodal-agents/shared/internal-git)', () => {
+    assertNoViolations(
+      'git lancé hors du lanceur',
+      scanForGitSpawnOutsideLauncher({ srcDir: srcDir }),
+    );
+  });
+
   it('no agent or server slug hardcoded in source (invariant #1)', () => {
     assertNoViolations('slugs d\u2019agent', scanForAgentSlugs({ srcDir }));
   });
@@ -54,4 +67,26 @@ describe('architecture invariants', () => {
   // Invariant #2 is deliberately NOT asserted here. It governs the RUNNER —
   // "the LLM speaks or the runner stays silent". This package ships prose to
   // humans by design, so the same scan would flag its whole reason to exist.
+});
+
+describe('architecture — the outcome of a call is read on its row (#1184)', () => {
+  it('no production file decides a call’s outcome from its output', () => {
+    assertNoViolations('outcome guessed from a tool output', scanForOutcomeGuesses({ srcDir }));
+  });
+});
+
+describe('the text of a job or a chat leaves for a browser through the outbound seam @cap:suivre-execution/moteur', () => {
+  it('every projection of a column of agent text goes through outboundColumn, outboundColumns or outboundSql', () => {
+    // The columns are the list beside the schema (`OUTBOUND_TEXT_COLUMNS`,
+    // packages/db): a read model that projects one raw (a column, a whole row,
+    // an aggregate, every column implicitly) is an exit beside the seam. A
+    // column read only for the server's own work says so (`serverOnly`).
+    assertNoViolations(
+      'texte d’agent projeté pour un navigateur à côté de la couture',
+      scanForOutboundBypass({ srcDir }, [
+        ...outboundProjectionExits(OUTBOUND_TEXT_COLUMNS),
+        OUTBOUND_BRAND_CAST,
+      ]),
+    );
+  });
 });

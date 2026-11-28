@@ -34,6 +34,7 @@ import { z } from 'zod';
 import type { ToolContext, ToolDefinition } from '../../types';
 import { detailOf, failureText, readCard, writtenFile } from '../../presenters';
 import { readWorkspaceBinary, writeWorkspaceBinary } from './office-helpers';
+import { outcomeOfOkFlag } from '../../outcome';
 
 // ─── pptx_read ────────────────────────────────────────────────────────────────
 
@@ -83,6 +84,7 @@ export const pptxReadTool: ToolDefinition<typeof PptxReadInput, PptxReadOutput> 
           sections: output.slideCount,
         })
       : failureText(output.reason),
+  outcomeOf: outcomeOfOkFlag,
   execute: async (input, ctx) => {
     const readResult = await readWorkspaceBinary(ctx, input.path);
     if (!readResult.ok) return readResult;
@@ -406,6 +408,7 @@ export const pptxCreateTool: ToolDefinition<typeof PptxCreateInput, PptxCreateOu
     output.ok
       ? writtenFile(output.path, 'created', { detail: detailOf(output) })
       : failureText(output.reason),
+  outcomeOf: outcomeOfOkFlag,
   execute: async (input, ctx) => {
     const built = await buildPptxGenJsBuffer(ctx, input.slides, input.theme);
     if (!built.ok) return built;
@@ -456,6 +459,7 @@ export const pptxAppendSlidesTool: ToolDefinition<
     output.ok
       ? writtenFile(output.path, 'modified', { detail: detailOf(output) })
       : failureText(output.reason),
+  outcomeOf: outcomeOfOkFlag,
   execute: async (input, ctx) => {
     const readResult = await readWorkspaceBinary(ctx, input.path);
     if (!readResult.ok) return readResult;
@@ -636,6 +640,7 @@ export const pptxReplaceTextTool: ToolDefinition<
     output.ok
       ? writtenFile(input.path, 'modified', { detail: detailOf(output) })
       : failureText(output.reason),
+  outcomeOf: outcomeOfOkFlag,
   execute: async (input, ctx) => {
     const readResult = await readWorkspaceBinary(ctx, input.path);
     if (!readResult.ok) return readResult;

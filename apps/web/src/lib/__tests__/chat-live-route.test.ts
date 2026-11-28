@@ -82,7 +82,7 @@ describe('POST /api/chat/live @cap:parler-a-un-agent/moteur', () => {
     const text = [...body.matchAll(/event: delta\ndata: (.*)\n/g)]
       .map((m) => (JSON.parse(m[1]!) as { text: string }).text)
       .join('');
-    expect(text).toBe('La clé est [secret masqué] (sk-) et la suite.');
+    expect(text).toBe('La clé est [secret hidden] et la suite.');
     expect(body.trimEnd().endsWith('event: end\ndata: {}')).toBe(true);
   });
 

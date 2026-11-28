@@ -4,6 +4,7 @@
 export type {
   ToolDefinition,
   ConnectorToolDefinition,
+  ConnectorIo,
   ToolContext,
   ToolSpeech,
   ToolProvisioning,
@@ -20,6 +21,11 @@ export type {
   UserInputRequest,
   UserInputResponse,
 } from './types';
+
+// What a tool declares of a result it returned, and the seam's keys for what a
+// call acted on (#1184): one outcome per call, written by `executeTool`.
+export { outcomeOfOkFlag, outcomeOfCommand, callInputTarget, cliCallVerdict } from './outcome';
+export { outcomeUnknownInstruction } from './execute';
 
 // Files (images, PDFs) a tool hands to the model with its result: one rule for every tool
 // (file_read on an image or a PDF, an MCP server's image block).
@@ -199,6 +205,27 @@ export { shellChecklistDeclined } from './shell-checklist';
 
 // Whitelist computation
 export { computeToolWhitelist, agentBuiltinToolNames } from './whitelist';
+export {
+  ACCOUNT_KEY,
+  BUILTIN_TOOLS_SOURCE,
+  DELEGATION_TOOLS_SOURCE,
+  DELIVERY_TOOLS_SOURCE,
+  ConnectorAccountsError,
+  ToolNameCollisionError,
+  accountInstruction,
+  connectorSource,
+  lendConnectorTools,
+  mcpServerSource,
+  oneTargetPerName,
+  toolNameCollisionMessage,
+} from './tool-sources';
+export type {
+  AccountResult,
+  ConnectorAccount,
+  ConnectorLending,
+  LentTools,
+  ToolSource,
+} from './tool-sources';
 export type { WhitelistInput, AgentBuiltinInput } from './whitelist';
 export { TOP_LEVEL_JOB, ROUTINE_RUN } from './job-placement';
 export type { JobPlacement } from './job-placement';

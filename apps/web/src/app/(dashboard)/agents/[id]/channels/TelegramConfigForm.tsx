@@ -11,6 +11,7 @@ import {
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
 import PrimaryButton from '@/components/ui/PrimaryButton';
 import TextInput from '@/components/ui/TextInput';
+import ChannelLinkStatus from './ChannelLinkStatus.tsx';
 
 export default function TelegramConfigForm({
   agentId,
@@ -45,6 +46,13 @@ export default function TelegramConfigForm({
         status: 'connected',
         botUsername: result.data.identityLabel,
         lastSeenChatIdTelegram: config.lastSeenChatIdTelegram,
+        link: {
+          state: 'working',
+          cause: 'authorised',
+          detail: null,
+          observedAt: new Date(),
+          retryAfter: null,
+        },
       });
       setToken('');
       toast.success(`Connected as @${result.data.identityLabel}`);
@@ -85,6 +93,7 @@ export default function TelegramConfigForm({
             {connected ? 'Connected' : 'Not connected'}
           </span>
         </div>
+        <ChannelLinkStatus connected={connected} link={config.link} />
         {config.botUsername && (
           <p className="text-xs text-ink-3 mt-1.5">
             Bot:{' '}

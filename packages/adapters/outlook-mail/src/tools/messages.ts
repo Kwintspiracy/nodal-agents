@@ -1,15 +1,32 @@
 // @nodal-agents/adapter-outlook-mail — message tools
 // list, get, send, reply, forward, delete (move to Deleted Items), update (read/categories), move
+//
+// Send, reply and forward implement the mail contract of
+// @nodal-agents/shared/mail-contract (#1191, #1192, #1193).
 
 import { z } from 'zod';
 import type { ConnectorToolDefinition } from '@nodal-agents/tools';
 import type { Client } from '@microsoft/microsoft-graph-client';
-import type { Message } from '@microsoft/microsoft-graph-types';
+import type { Attachment, Message, Recipient } from '@microsoft/microsoft-graph-types';
+import {
+  forwardSubject,
+  mailBodyFormatSchema,
+  parseMailAddressList,
+  replySubject,
+  resolveMailBodyFormat,
+  resolveReplyRecipients,
+} from '@nodal-agents/shared/mail-contract';
+import type {
+  MailAddress,
+  MailAttachmentReport,
+  MailSendReport,
+} from '@nodal-agents/shared/mail-contract';
+import { LIST_CURSOR_DESCRIPTION, type ConnectorList } from '@nodal-agents/shared';
 import { mapOutlookError, OutlookAdapterError } from '../errors';
-import { paginateOutlook } from '../helpers/pagination';
 import type { ODataListResponse } from '../helpers/pagination';
 import { extractTextFromBody, capBody } from '../helpers/body';
-import { parseRecipients, buildFileAttachments, detectBodyContentType } from '../helpers/message';
+import { buildFileAttachments, graphBody, toGraphRecipients } from '../helpers/message';
+import { listOwnAddresses } from '../helpers/own-addresses';
 import type { AttachmentSpec } from '../helpers/message';
 
 // Max body chars to return (avoid context overload) — same cap as adapter-gmail.
@@ -67,24 +84,53 @@ const ListMessagesInput = z.object({
     .number()
     .int()
     .min(1)
-    .max(500)
+    .max(100)
     .optional()
-    .describe('Max messages to return (1-500, default 20).'),
+    .describe('Messages per page (1-100, default 20).'),
+  cursor: z.string().optional().describe(LIST_CURSOR_DESCRIPTION),
 });
 
-export type ListMessagesOutput = {
-  total: number;
-  messages: Array<{
-    messageId: string;
-    from: string;
-    subject: string;
-    receivedDateTime: string;
-    bodyPreview: string;
-    isRead: boolean;
-    hasAttachments: boolean;
-    folderId: string;
-  }>;
+export type ListedMessage = {
+  messageId: string;
+  from: string;
+  subject: string;
+  receivedDateTime: string;
+  bodyPreview: string;
+  isRead: boolean;
+  hasAttachments: boolean;
+  folderId: string;
 };
+
+/** One page, in the connector contract's list shape: `next` is Graph's `@odata.nextLink`. */
+export type ListMessagesOutput = ConnectorList<ListedMessage>;
+
+const GRAPH_ORIGIN = 'https://graph.microsoft.com';
+
+/**
+ * The page a cursor names: Graph's `@odata.nextLink`, which carries the
+ * query and its position. Only a Graph URL is followed (the token goes with
+ * the request).
+ */
+function nextLinkOf(cursor: string): string {
+  let url: URL;
+  try {
+    url = new URL(cursor);
+  } catch {
+    throw new OutlookAdapterError(
+      'outlook_validation_error',
+      'cursor is not a value outlook_list_messages returned as next',
+      400,
+    );
+  }
+  if (url.origin !== GRAPH_ORIGIN) {
+    throw new OutlookAdapterError(
+      'outlook_validation_error',
+      'cursor is not a value outlook_list_messages returned as next',
+      400,
+    );
+  }
+  return url.toString();
+}
 
 export function createListMessagesTool(
   client: Client,
@@ -92,31 +138,35 @@ export function createListMessagesTool(
   return {
     name: 'outlook_list_messages',
     description:
-      'List Outlook messages, optionally scoped to a folder and filtered by free-text search or an OData $filter ' +
-      'expression. Returns message IDs, sender, subject, received date and a preview. ' +
-      'Use outlook_get_message for the full body.',
+      'List Outlook messages, one page per call, optionally scoped to a folder and filtered by free-text ' +
+      'search or an OData $filter expression. Returns `items` (message IDs, sender, subject, received ' +
+      'date and a preview) and `next`: pass it back as `cursor` to read the next page (null when there ' +
+      'is none). Use outlook_get_message for the full body.',
     inputSchema: ListMessagesInput,
     async execute(input) {
       try {
-        const maxResults = Math.min(input.max_results ?? 20, 500);
-        const basePath = input.folder
-          ? `/me/mailFolders/${encodeURIComponent(input.folder)}/messages`
-          : '/me/messages';
-
-        const items = await paginateOutlook<Message>(
-          client,
-          async () => {
-            let req = client.api(basePath).select(LIST_SELECT).top(Math.min(maxResults, 100));
-            if (input.query) req = req.search(`"${input.query.replace(/"/g, '\\"')}"`);
-            if (input.filter) req = req.filter(input.filter);
-            return (await req.get()) as ODataListResponse<Message>;
-          },
-          maxResults,
-        );
+        let page: ODataListResponse<Message>;
+        if (input.cursor) {
+          // The next link carries the folder, the search, the filter and the page size.
+          page = (await client.api(nextLinkOf(input.cursor)).get()) as ODataListResponse<Message>;
+        } else {
+          const basePath = input.folder
+            ? `/me/mailFolders/${encodeURIComponent(input.folder)}/messages`
+            : '/me/messages';
+          let req = client
+            .api(basePath)
+            .select(LIST_SELECT)
+            .top(input.max_results ?? 20);
+          if (input.query) req = req.search(`"${input.query.replace(/"/g, '\\"')}"`);
+          if (input.filter) req = req.filter(input.filter);
+          page = (await req.get()) as ODataListResponse<Message>;
+        }
+        const items = page.value ?? [];
 
         return {
-          total: items.length,
-          messages: items.map((m) => ({
+          next: page['@odata.nextLink'] ?? null,
+          truncated: null,
+          items: items.map((m) => ({
             messageId: m.id ?? '',
             from: m.from?.emailAddress?.address ?? '',
             subject: m.subject ?? '',
@@ -232,12 +282,17 @@ export function createGetMessageTool(
 // ── outlook_send_email ──────────────────────────────────────────────────────
 
 const SendEmailInput = z.object({
-  to: z.string().describe('Recipient email address or comma-separated list.'),
+  to: z
+    .string()
+    .describe('Recipient(s): an address list, e.g. "Jane Doe <jane@x.com>, bob@y.com".'),
   subject: z.string().describe('Email subject line.'),
-  body: z.string().describe('Email body — plain text or HTML.'),
-  cc: z.string().optional().describe('CC address(es), comma-separated.'),
-  bcc: z.string().optional().describe('BCC address(es), comma-separated.'),
-  reply_to: z.string().optional().describe('Reply-To address(es), comma-separated.'),
+  body: z
+    .string()
+    .describe('Email body, sent exactly as written, in the format given by body_format.'),
+  body_format: mailBodyFormatSchema,
+  cc: z.string().optional().describe('CC address list.'),
+  bcc: z.string().optional().describe('BCC address list.'),
+  reply_to: z.string().optional().describe('Reply-To address list.'),
   attachments: z
     .array(AttachmentItemSchema)
     .optional()
@@ -249,7 +304,15 @@ const SendEmailInput = z.object({
   save_to_sent_items: z.boolean().optional().describe('Save a copy to Sent Items (default true).'),
 });
 
-export type SendEmailOutput = { sent: boolean };
+export type SendEmailOutput = MailSendReport;
+
+function reportAttachments(attachments: Attachment[]): MailAttachmentReport[] {
+  return attachments.map((a) => ({
+    filename: a.name ?? '',
+    mimeType: a.contentType ?? 'application/octet-stream',
+    inline: a.isInline ?? false,
+  }));
+}
 
 export function createSendEmailTool(
   client: Client,
@@ -257,25 +320,41 @@ export function createSendEmailTool(
   return {
     name: 'outlook_send_email',
     description:
-      'Send an email via Outlook. Supports plain text and HTML bodies, CC, BCC, Reply-To, and file attachments. ' +
-      'The Microsoft Graph sendMail action does not return the created message — there is no messageId to report back.',
+      'Send an email via Outlook. The body is plain text unless body_format is html. Supports CC, BCC, ' +
+      'Reply-To, and file attachments. Returns the recipients, subject and attachments actually sent ' +
+      '(Graph returns no message id for a send).',
     inputSchema: SendEmailInput,
     async execute(input) {
       try {
+        const bodyFormat = resolveMailBodyFormat(input.body_format);
+        const to = parseMailAddressList(input.to);
+        const cc = parseMailAddressList(input.cc);
+        const bcc = parseMailAddressList(input.bcc);
+        const attachments = buildFileAttachments(input.attachments as AttachmentSpec[] | undefined);
         const message: Message = {
           subject: input.subject,
-          body: { contentType: detectBodyContentType(input.body), content: input.body },
-          toRecipients: parseRecipients(input.to),
-          ccRecipients: parseRecipients(input.cc),
-          bccRecipients: parseRecipients(input.bcc),
-          replyTo: parseRecipients(input.reply_to),
-          attachments: buildFileAttachments(input.attachments as AttachmentSpec[] | undefined),
+          body: graphBody(input.body, bodyFormat),
+          toRecipients: toGraphRecipients(to),
+          ccRecipients: toGraphRecipients(cc),
+          bccRecipients: toGraphRecipients(bcc),
+          replyTo: toGraphRecipients(parseMailAddressList(input.reply_to)),
+          attachments,
         };
         await client.api('/me/sendMail').post({
           message,
           saveToSentItems: input.save_to_sent_items ?? true,
         });
-        return { sent: true };
+        return {
+          sent: true,
+          to,
+          cc,
+          bcc,
+          subject: input.subject,
+          bodyFormat,
+          messageId: null,
+          threadId: null,
+          attachments: reportAttachments(attachments),
+        };
       } catch (err) {
         throw mapOutlookError(err);
       }
@@ -283,18 +362,76 @@ export function createSendEmailTool(
   };
 }
 
+// ── Draft-based reply and forward ───────────────────────────────────────────
+//
+// Graph's one-call `reply` "uses the sender of the original message as
+// recipient", and its documentation leaves the Reply-To rule to the caller
+// ("send the reply to the recipients in replyTo and not the recipient in the
+// from property"). The contract's recipients are therefore set explicitly, on
+// the draft Graph's own `createReply` / `createForward` prepare (threading and
+// the carried original are Graph's), then sent with the draft's `send` action.
+// A draft whose completion fails is deleted, and the error is raised: nothing
+// half-written is left behind or reported as sent.
+
+async function completeAndSendDraft(
+  client: Client,
+  draftId: string,
+  patch: Partial<Message>,
+  attachments: Attachment[],
+): Promise<void> {
+  const draftPath = `/me/messages/${encodeURIComponent(draftId)}`;
+  try {
+    await client.api(draftPath).patch(patch);
+    for (const attachment of attachments) {
+      await client.api(`${draftPath}/attachments`).post(attachment);
+    }
+    await client.api(`${draftPath}/send`).post({});
+  } catch (err) {
+    try {
+      await client.api(draftPath).delete();
+    } catch {
+      // The send's error is the one the caller must see; a draft that could
+      // not be removed stays in Drafts, where the person can see it.
+    }
+    throw err;
+  }
+}
+
+function participants(list: Recipient[] | null | undefined): MailAddress[] {
+  return (list ?? []).flatMap((r) => {
+    const address = r.emailAddress?.address;
+    if (!address) return [];
+    const name = r.emailAddress?.name ?? '';
+    return [name ? { name, address } : { address }];
+  });
+}
+
 // ── outlook_reply_message ───────────────────────────────────────────────────
 
 const ReplyMessageInput = z.object({
   message_id: z.string().describe('ID of the message to reply to.'),
-  comment: z.string().describe('Reply text, prepended above the quoted original message.'),
+  body: z
+    .string()
+    .describe('Reply body, sent exactly as written, in the format given by body_format.'),
+  body_format: mailBodyFormatSchema,
   reply_all: z
     .boolean()
     .optional()
-    .describe('Reply to all recipients instead of just the sender (default false).'),
+    .describe(
+      'Reply to every participant (the sender and the other To/Cc recipients) instead of only the sender ' +
+        '(default false). This mailbox is never among the recipients.',
+    ),
+  cc: z
+    .string()
+    .optional()
+    .describe('Extra CC address list, added to the recipients the reply resolves.'),
+  attachments: z
+    .array(AttachmentItemSchema)
+    .optional()
+    .describe('Optional attachments to include with the reply.'),
 });
 
-export type ReplyMessageOutput = { sent: boolean; replyAll: boolean };
+export type ReplyMessageOutput = MailSendReport;
 
 export function createReplyMessageTool(
   client: Client,
@@ -302,16 +439,70 @@ export function createReplyMessageTool(
   return {
     name: 'outlook_reply_message',
     description:
-      'Reply to an Outlook message in-thread. Set reply_all to reply to every recipient instead of just the sender. ' +
-      'Graph automatically quotes the original message and sets threading — this action returns no messageId.',
+      'Reply to an Outlook message in its conversation. The recipients are resolved the way a mail client ' +
+      "does: the message's Reply-To, else its sender; a reply to a message this mailbox sent goes to that " +
+      "message's recipients; reply_all adds the other participants. Returns the recipients actually used.",
     inputSchema: ReplyMessageInput,
     async execute(input) {
       try {
-        const action = input.reply_all ? 'replyAll' : 'reply';
-        await client.api(`/me/messages/${encodeURIComponent(input.message_id)}/${action}`).post({
-          comment: input.comment,
-        });
-        return { sent: true, replyAll: input.reply_all ?? false };
+        const bodyFormat = resolveMailBodyFormat(input.body_format);
+        const messagePath = `/me/messages/${encodeURIComponent(input.message_id)}`;
+        const original = (await client
+          .api(messagePath)
+          .select([
+            'id',
+            'subject',
+            'from',
+            'replyTo',
+            'toRecipients',
+            'ccRecipients',
+            'conversationId',
+          ])
+          .get()) as Message;
+
+        const recipients = resolveReplyRecipients(
+          {
+            from: participants(original.from ? [original.from] : []),
+            replyTo: participants(original.replyTo),
+            to: participants(original.toRecipients),
+            cc: participants(original.ccRecipients),
+          },
+          await listOwnAddresses(client),
+          input.reply_all ?? false,
+        );
+        const cc = [...recipients.cc, ...parseMailAddressList(input.cc)];
+        const subject = replySubject(original.subject ?? '');
+        const attachments = buildFileAttachments(input.attachments as AttachmentSpec[] | undefined);
+
+        const draft = (await client.api(`${messagePath}/createReply`).post({})) as Message;
+        if (!draft.id) {
+          throw new OutlookAdapterError(
+            'outlook_unknown',
+            'Graph created no reply draft: nothing was sent.',
+          );
+        }
+        await completeAndSendDraft(
+          client,
+          draft.id,
+          {
+            subject,
+            toRecipients: toGraphRecipients(recipients.to),
+            ccRecipients: toGraphRecipients(cc),
+            body: graphBody(input.body, bodyFormat),
+          },
+          attachments,
+        );
+        return {
+          sent: true,
+          to: recipients.to,
+          cc,
+          bcc: [],
+          subject,
+          bodyFormat,
+          messageId: null,
+          threadId: draft.conversationId ?? original.conversationId ?? null,
+          attachments: reportAttachments(attachments),
+        };
       } catch (err) {
         throw mapOutlookError(err);
       }
@@ -323,26 +514,75 @@ export function createReplyMessageTool(
 
 const ForwardMessageInput = z.object({
   message_id: z.string().describe('ID of the message to forward.'),
-  to: z.string().describe('Recipient(s), comma-separated.'),
-  comment: z.string().optional().describe('Optional note prepended before the forwarded message.'),
+  to: z.string().describe('Recipient address list.'),
+  note: z
+    .string()
+    .optional()
+    .describe('Optional plain-text note sent above the forwarded message.'),
+  cc: z.string().optional().describe('CC address list.'),
 });
 
-export type ForwardMessageOutput = { sent: boolean };
+export type ForwardMessageOutput = MailSendReport;
 
 export function createForwardMessageTool(
   client: Client,
 ): ConnectorToolDefinition<typeof ForwardMessageInput, ForwardMessageOutput> {
   return {
     name: 'outlook_forward_message',
-    description: 'Forward an Outlook message to new recipients, with an optional note.',
+    description:
+      'Forward an Outlook message to new recipients, with an optional note. Graph carries the original ' +
+      'whole (its body, attachments and inline images). Returns the recipients and the files the ' +
+      'forwarded original carried.',
     inputSchema: ForwardMessageInput,
     async execute(input) {
       try {
-        await client.api(`/me/messages/${encodeURIComponent(input.message_id)}/forward`).post({
-          comment: input.comment ?? '',
-          toRecipients: parseRecipients(input.to),
-        });
-        return { sent: true };
+        const to = parseMailAddressList(input.to);
+        const cc = parseMailAddressList(input.cc);
+        const messagePath = `/me/messages/${encodeURIComponent(input.message_id)}`;
+        const original = (await client
+          .api(messagePath)
+          .select(['id', 'subject', 'hasAttachments'])
+          .get()) as Message;
+        const carried = original.hasAttachments
+          ? ((
+              (await client
+                .api(`${messagePath}/attachments`)
+                .select(['id', 'name', 'contentType', 'isInline'])
+                .get()) as ODataListResponse<Attachment>
+            ).value ?? [])
+          : [];
+        const subject = forwardSubject(original.subject ?? '');
+
+        // Graph's createForward prepares the forward with the original's body
+        // and attachments; the note is its `comment`. The body is never
+        // replaced, so the original stays whole.
+        const draft = (await client
+          .api(`${messagePath}/createForward`)
+          .post({ comment: input.note ?? '' })) as Message;
+        if (!draft.id) {
+          throw new OutlookAdapterError(
+            'outlook_unknown',
+            'Graph created no forward draft: nothing was sent.',
+          );
+        }
+        await completeAndSendDraft(
+          client,
+          draft.id,
+          { subject, toRecipients: toGraphRecipients(to), ccRecipients: toGraphRecipients(cc) },
+          [],
+        );
+        return {
+          sent: true,
+          to,
+          cc,
+          bcc: [],
+          subject,
+          bodyFormat: 'text',
+          messageId: null,
+          threadId: null,
+          attachments: [],
+          forwarded: { messageId: input.message_id, attachments: reportAttachments(carried) },
+        };
       } catch (err) {
         throw mapOutlookError(err);
       }

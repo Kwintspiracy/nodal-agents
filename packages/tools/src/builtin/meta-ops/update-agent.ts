@@ -10,6 +10,7 @@ import { eq, and, agents } from '@nodal-agents/db';
 import { effortKeptOnModel } from '@nodal-agents/shared';
 import type { ToolDefinition } from '../../types';
 import { resolveAgentProvider, validateModelForProvider } from './agent-model';
+import { outcomeOfOkFlag } from '../../outcome';
 
 const UpdateAgentInput = z.object({
   slug: z.string().min(1).describe('Slug of the existing agent to edit (e.g. "java").'),
@@ -45,6 +46,7 @@ export const updateAgentTool: ToolDefinition<typeof UpdateAgentInput, UpdateAgen
   egress: 'none',
   card: 'text',
   defaultApproval: 'require_approval',
+  outcomeOf: outcomeOfOkFlag,
   execute: async (input, ctx) => {
     if (!input.model && !input.personality && !input.name) {
       return {

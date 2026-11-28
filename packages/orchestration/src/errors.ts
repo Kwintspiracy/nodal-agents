@@ -71,6 +71,10 @@ export type OrchestrationErrorCode =
   | 'turn_limit_exceeded'
   | 'parent_not_found'
   | 'parent_wrong_status'
+  // Le parent attend un AUTRE enfant que celui qui veut le reprendre (#1204) :
+  // poser ce résultat en face de son appel d'outil le donnerait à la mauvaise
+  // délégation.
+  | 'parent_waits_for_another_child'
   | 'parent_not_delegatable'
   | 'missing_tool_use_id'
   | 'child_agent_not_found'

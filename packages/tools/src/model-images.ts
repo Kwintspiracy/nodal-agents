@@ -98,7 +98,13 @@ export function sniffImageMediaType(head: Uint8Array): string | null {
   if (startsWith(head, [0xff, 0xd8, 0xff])) return 'image/jpeg';
   if (ascii(head, 'GIF87a') || ascii(head, 'GIF89a')) return 'image/gif';
   if (ascii(head, 'RIFF') && ascii(head, 'WEBP', 8)) return 'image/webp';
-  if (ascii(head, 'BM') && head.length >= 14) return 'image/bmp';
+  // « BM » seul est le début de mille textes (« BMW X5 », « BMI,age ») : la
+  // signature d'un BMP porte aussi ses octets réservés 6 à 9, toujours nuls,
+  // que du texte ne porte jamais. Une signature se reconnaît à ce que le texte
+  // ne peut pas écrire (B09-04).
+  if (ascii(head, 'BM') && head.length >= 14 && [6, 7, 8, 9].every((i) => head[i] === 0)) {
+    return 'image/bmp';
+  }
   if (startsWith(head, [0x49, 0x49, 0x2a, 0x00]) || startsWith(head, [0x4d, 0x4d, 0x00, 0x2a])) {
     return 'image/tiff';
   }

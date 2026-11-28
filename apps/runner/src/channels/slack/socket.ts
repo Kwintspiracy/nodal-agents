@@ -28,7 +28,8 @@
 // discord/gateway.ts's `message.author.bot` check.
 
 import { App, SocketModeReceiver } from '@slack/bolt';
-import type { WebClient } from '@slack/web-api';
+import { ErrorCode as WebApiErrorCode, type WebClient } from '@slack/web-api';
+import { UnrecoverableSocketModeStartError } from '@slack/socket-mode';
 import { eq, inTransaction } from '@nodal-agents/db';
 import { channelAllowedConversations } from '@nodal-agents/db';
 import type { RunnerDeps } from '../../deps.ts';
@@ -40,7 +41,9 @@ import {
   isElicitationCardReply,
 } from '../../approvals/elicitation-channel.ts';
 import { SLACK_AUTH_CALLBACK_PREFIX } from './auth-callback.ts';
+import type { ChannelLinkSignal } from '../link-state.ts';
 import type { SlackInboundMessage, SlackInteractionAck } from './types.ts';
+import { outboundText, outboundValue } from '@nodal-agents/shared';
 
 export interface SlackSocketOpts {
   agentId: string;
@@ -63,7 +66,7 @@ export interface SlackSocketOpts {
    * was two log storms where the point was to have none. The manager owns the
    * message, with repeat-collapsing and backoff.
    */
-  onClosed?: (reason: string) => void;
+  onClosed?: (reason: string, error?: unknown) => void;
   /**
    * Called once the socket is really connected. Clears the manager's retry
    * backoff for this binding, so a binding that failed ten times and then
@@ -75,6 +78,32 @@ export interface SlackSocketOpts {
 
 export interface SlackSocketHandle {
   stop(): Promise<void>;
+}
+
+const UNRECOVERABLE_START: ReadonlySet<string> = new Set(
+  Object.values(UnrecoverableSocketModeStartError),
+);
+
+/**
+ * The link signal a socket close carries. @slack/socket-mode names the
+ * platform errors after which it will not try again
+ * (`UnrecoverableSocketModeStartError`: not_authed, invalid_auth,
+ * account_inactive, user_removed_from_team, team_disabled), raised as a Web
+ * API platform error (`code: ErrorCode.PlatformError`, `data.error`) by
+ * `apps.connections.open` (SocketModeClient.retrieveWSSURL). That one is the
+ * token refused for good; any other close (a transport error, a disconnect)
+ * is the link lost for now, which the manager respawns.
+ */
+export function slackLinkSignal(reason: string, error?: unknown): ChannelLinkSignal {
+  const e = error as { code?: unknown; data?: { error?: unknown } } | undefined;
+  if (
+    e?.code === WebApiErrorCode.PlatformError &&
+    typeof e.data?.error === 'string' &&
+    UNRECOVERABLE_START.has(e.data.error)
+  ) {
+    return { link: 'refused', detail: e.data.error };
+  }
+  return { link: 'lost', detail: reason };
 }
 
 /**
@@ -185,10 +214,10 @@ export function startSlackSocket(opts: SlackSocketOpts): SlackSocketHandle {
   // manager's respawn path, and onClosed fires at most once either way.
   let shuttingDown = false;
   let closedReported = false;
-  const reportClosed = (reason: string): void => {
+  const reportClosed = (reason: string, error?: unknown): void => {
     if (shuttingDown || closedReported) return;
     closedReported = true;
-    opts.onClosed?.(reason);
+    opts.onClosed?.(reason, error);
   };
 
   // With Bolt's own reconnect disabled, a close is terminal for THIS socket.
@@ -197,7 +226,7 @@ export function startSlackSocket(opts: SlackSocketOpts): SlackSocketHandle {
   // that never reaches a clean close.
   receiver.client.on('disconnected', () => reportClosed('disconnected'));
   receiver.client.on('error', (err: unknown) => {
-    reportClosed(`transport error: ${err instanceof Error ? err.message : String(err)}`);
+    reportClosed(`transport error: ${err instanceof Error ? err.message : String(err)}`, err);
   });
 
   app.error(async (err) => {
@@ -362,10 +391,11 @@ export function startSlackSocket(opts: SlackSocketOpts): SlackSocketHandle {
       await client.chat
         .postMessage({
           channel: pending.requesterConversationId,
-          text:
+          text: outboundText(
             'Demande enregistrée. Ce bot n’a pas encore de propriétaire : ouvrez son tableau ' +
-            'de bord, onglet Channels de l’agent, et autorisez cette conversation pour en ' +
-            'prendre le contrôle.',
+              'de bord, onglet Channels de l’agent, et autorisez cette conversation pour en ' +
+              'prendre le contrôle.',
+          ),
         })
         .catch(() => {});
       return;
@@ -376,8 +406,8 @@ export function startSlackSocket(opts: SlackSocketOpts): SlackSocketHandle {
       : 'souhaite parler à ce bot';
     await client.chat.postMessage({
       channel: pending.ownerConversationId,
-      text: `👤 ${pending.requesterName} ${target}. Autoriser ?`,
-      blocks: [
+      text: outboundText(`👤 ${pending.requesterName} ${target}. Autoriser ?`),
+      blocks: outboundValue([
         {
           type: 'section',
           text: { type: 'mrkdwn', text: `👤 *${pending.requesterName}* ${target}. Autoriser ?` },
@@ -399,15 +429,16 @@ export function startSlackSocket(opts: SlackSocketOpts): SlackSocketHandle {
             },
           ],
         },
-      ],
+      ]),
     });
 
     await client.chat
       .postMessage({
         channel: pending.requesterConversationId,
-        text:
+        text: outboundText(
           'Votre demande a été transmise au propriétaire du bot pour autorisation. ' +
-          'Vous pourrez écrire dès qu’elle est acceptée.',
+            'Vous pourrez écrire dès qu’elle est acceptée.',
+        ),
       })
       .catch(() => {});
   }
@@ -423,13 +454,13 @@ export function startSlackSocket(opts: SlackSocketOpts): SlackSocketHandle {
     const slackAck: SlackInteractionAck = {
       async ephemeralReply(text: string): Promise<void> {
         await client.chat
-          .postEphemeral({ channel: channelId, user: b.user.id, text })
+          .postEphemeral({ channel: channelId, user: b.user.id, text: outboundText(text) })
           .catch(() => {});
       },
       async resolveCard(text: string): Promise<void> {
         if (!messageTs) return;
         await client.chat
-          .update({ channel: channelId, ts: messageTs, text, blocks: [] })
+          .update({ channel: channelId, ts: messageTs, text: outboundText(text), blocks: [] })
           .catch(() => {});
       },
     };
@@ -507,7 +538,7 @@ export function startSlackSocket(opts: SlackSocketOpts): SlackSocketHandle {
       // registered forever and the agent was silently offline. Reporting the
       // failure is what makes that promise true. The MESSAGE is the manager's
       // to write (once, with backoff), not ours per attempt.
-      reportClosed(`start failed: ${err instanceof Error ? err.message : String(err)}`);
+      reportClosed(`start failed: ${err instanceof Error ? err.message : String(err)}`, err);
     });
 
   void startup;

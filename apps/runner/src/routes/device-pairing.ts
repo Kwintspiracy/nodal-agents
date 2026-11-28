@@ -8,7 +8,7 @@
 //   POST /api/devices/pair/poll   { deviceCode }
 //        → 202 pending · 200 paired (the token, ONCE) · 403 refused · 410 expired · 429 slow_down
 //
-// THE OWNER'S SIDE (DEVICE_OWNER_ROUTES), behind `requireRunnerAuth`: the
+// THE OWNER'S SIDE (DEVICE_OWNER_ROUTES), behind the admission (lib/admission.ts): the
 // dashboard calls them with the worker secret and the workspace of the
 // session; a session bearer reaches only its own workspace; a device key is
 // refused by the device gate. The REQUESTS are the install's, not a
@@ -22,6 +22,7 @@
 // nothing in it is ever trusted beyond that.
 
 import type { Context } from 'hono';
+import { answerAsIs } from './outbound-responses.ts';
 import { z } from 'zod';
 import {
   isSingleUserInstall,
@@ -110,7 +111,9 @@ export async function devicePairRoute(c: Context, deps: RunnerDeps): Promise<Res
   });
   if (!created.ok) return c.json({ error: 'rate_limited', reason: created.reason }, 429);
 
-  return c.json(
+  // The device's pairing code: the pairing's own secret (outbound-responses.ts).
+  return answerAsIs(
+    c,
     {
       pairingId: created.pairing.id,
       deviceCode,
@@ -119,6 +122,7 @@ export async function devicePairRoute(c: Context, deps: RunnerDeps): Promise<Res
       intervalSeconds: DEVICE_PAIRING_INTERVAL_SECONDS,
     },
     201,
+    'pairing-credential',
   );
 }
 
@@ -134,7 +138,8 @@ export async function devicePollRoute(c: Context, deps: RunnerDeps): Promise<Res
     issue: drawDeviceToken,
   });
   const body: DevicePollResponse = outcome;
-  return c.json(body, DEVICE_POLL_STATUS[outcome.status]);
+  // Paired: the device's token, once (outbound-responses.ts).
+  return answerAsIs(c, body, DEVICE_POLL_STATUS[outcome.status], 'pairing-credential');
 }
 
 // ─── The owner's side ────────────────────────────────────────────────────────

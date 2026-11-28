@@ -346,12 +346,17 @@ describe('file_read — a PDF longer than a request carries is read by windows o
     expect(out.reason).not.toContain('this is not a pdf at all');
   });
 
-  it('a binary named .pdf is not a PDF: nothing attached, read as the file it is', async () => {
+  it('a binary named .pdf is not a PDF: nothing attached, and it is not read as text either', async () => {
     const r = await read('binary.pdf', TAKES_PDFS);
     if (r.outcome !== 'success') throw new Error('expected the tool to answer');
     expect(r.attachments).toBeUndefined();
-    expect(r.output).toMatchObject({ ok: true, total_lines: 1 });
-    expect(r.output).not.toHaveProperty('document');
+    // La couche texte (`text-file.ts`) : ce qui n'est pas du texte est refusé
+    // comme texte, en disant ce que c'est — plus de bouillie décodée en UTF-8.
+    expect(r.output).toEqual({
+      ok: false,
+      reason:
+        '"binary.pdf" is not text (it contains NUL bytes): it is binary data (10 B). Nothing was read.',
+    });
   });
 });
 

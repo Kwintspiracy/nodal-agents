@@ -387,6 +387,16 @@ export function isDeviceTokenRoute(method: string, path: string): boolean {
   return namedBy(DEVICE_GESTURES, method, path);
 }
 
+/**
+ * The routes a device calls BEFORE it holds a key: the pairing gestures. What
+ * proves them is the pairing itself: a request grants nothing until the owner
+ * confirms it from a caller that proved who it is, and only the device code of
+ * a confirmed request collects the key.
+ */
+export function isDevicePairingRoute(method: string, path: string): boolean {
+  return namedBy(DEVICE_PAIRING_GESTURES, method, path);
+}
+
 // ─── The owner's side: Settings → Devices (#946) ─────────────────────────────
 //
 // Separate from the device routes: they never accept a device token, and keep

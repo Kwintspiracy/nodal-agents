@@ -44,6 +44,7 @@ import {
   unverifiedOf,
 } from './judge-kit';
 import { isOutboundTool, missingNeeds } from './needs';
+import { outboundText } from '@nodal-agents/shared';
 import { scenarioToolsFingerprint } from './scenario-tools';
 import { isBenchPrinterTool, type BenchPrinterState } from '../printer/identity';
 import { rotateRecords } from '../printer/record';
@@ -207,7 +208,9 @@ export function callerViewReasons(view: GetTaskReply | null, facts: TreeFacts): 
   const out: string[] = [];
   if ((root?.status ?? null) !== view.status)
     out.push(`get_task says ${view.status} although the root job is ${root?.status ?? 'missing'}`);
-  if ((root?.result ?? null) !== view.result)
+  // The caller reads the outbound copy of what the row holds (the MCP server
+  // answers through the outbound seam): that copy is what it must match.
+  if (outboundText(root?.result ?? null) !== view.result)
     out.push('get_task returned another result than the root job holds');
   return out;
 }

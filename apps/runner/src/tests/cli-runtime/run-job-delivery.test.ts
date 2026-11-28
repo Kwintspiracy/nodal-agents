@@ -220,6 +220,7 @@ const deliveriesOf = (jobId: string) =>
       payload: jobDeliveries.payload,
       chatId: jobDeliveries.chatId,
       channel: jobDeliveries.channel,
+      idempotencyKey: jobDeliveries.idempotencyKey,
     })
     .from(jobDeliveries)
     .where(eq(jobDeliveries.jobId, jobId));
@@ -284,6 +285,9 @@ describe('run-job : porte terminale + outbox', () => {
       payload: 'le texte final',
       chatId: CHAT,
       channel: 'telegram',
+      // La réponse du runtime CLI passe par la porte commune (#1215) : la même
+      // clé que la réponse de toute autre fin.
+      idempotencyKey: `${jobId}:answer`,
     });
     const job = await jobRow(jobId);
     expect(job.status).toBe('completed');

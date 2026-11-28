@@ -85,7 +85,9 @@ beforeAll(async () => {
 });
 
 describe('POST /api/worker', () => {
-  it('returns 403 when WORKER_SECRET is missing', async () => {
+  // Refused at the door (lib/admission.ts), like every route, before the route
+  // reads anything.
+  it('returns 401 proof_required when WORKER_SECRET is missing', async () => {
     const res = await app.fetch(
       new Request('http://localhost/api/worker', {
         method: 'POST',
@@ -93,10 +95,11 @@ describe('POST /api/worker', () => {
         body: JSON.stringify({ jobId: '00000000-0000-0000-0000-000000000001' }),
       }),
     );
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: 'proof_required' });
   });
 
-  it('returns 403 when WORKER_SECRET is wrong', async () => {
+  it('returns 401 proof_invalid when WORKER_SECRET is wrong', async () => {
     const res = await app.fetch(
       new Request('http://localhost/api/worker', {
         method: 'POST',
@@ -104,7 +107,8 @@ describe('POST /api/worker', () => {
         body: JSON.stringify({ jobId: '00000000-0000-0000-0000-000000000001' }),
       }),
     );
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: 'proof_invalid' });
   });
 
   it('returns 400 when jobId is missing', async () => {

@@ -18,6 +18,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { configHoteDepuis, portsDeLaStack } from './lib/live-stack.mjs';
 import { nodalHomeEntry } from './lib/nodal-home.mjs';
+import { launchUrl } from '../packages/auth/src/lib/launch-link.ts';
 import {
   STUDIO_HOST,
   STUDIO_PORT,
@@ -58,6 +59,13 @@ async function main() {
   const gate = randomBytes(24).toString('hex');
   const csrf = randomBytes(24).toString('hex');
   Object.assign(process.env, studioEnv(process.env, port, gate, csrf));
+  // Le studio est un serveur Next de plus : comme le tableau de bord, il
+  // n'admet un navigateur que par un lien de lancement, fait d'un secret que
+  // seul ce processus connaît (un par session du studio), et qui laisse un
+  // cookie (packages/auth/src/lib/launch-link.ts). Rien ne l'appelle d'autre
+  // que sa page : il n'a pas de runner à joindre.
+  const launchSecret = randomBytes(32).toString('hex');
+  process.env['WORKER_SECRET'] = launchSecret;
 
   // Next réécrit next-env.d.ts pour son dossier de build : remis tel quel dès
   // qu'il a fini de se préparer, et encore à la sortie.
@@ -83,8 +91,9 @@ async function main() {
     upgrade: app.getUpgradeHandler(),
   });
   await listenLoopback(server, port);
-  const url = `http://${STUDIO_HOST}:${port}/bench-studio`;
-  console.log(`Bench Studio: ${url} (local only; Ctrl+C to stop)`);
+  // Le lien marche une fois : `--no-open` l'imprime pour un navigateur choisi.
+  const url = launchUrl(`http://${STUDIO_HOST}:${port}/bench-studio`, launchSecret);
+  console.log(`Bench Studio: ${url} (local only, works once; Ctrl+C to stop)`);
   if (!process.argv.includes('--no-open')) {
     const openPath = createRequire(join(repoRoot, 'apps', 'cli', 'package.json')).resolve('open');
     const { default: open } = await import(pathToFileURL(openPath).href);

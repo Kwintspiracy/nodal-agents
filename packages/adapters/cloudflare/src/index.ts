@@ -16,6 +16,8 @@ import { makeCloudflareListWorkersTool, makeCloudflareDeleteWorkerTool } from '.
 export type CloudflareAdapterOptions = {
   /** Cloudflare API Token — template « Edit Cloudflare Workers ». */
   accessToken: string;
+  /** The connector contract's transport, which the SDK uses (the registry gives it). */
+  fetch?: typeof fetch;
 };
 
 /**
@@ -33,7 +35,7 @@ export function createCloudflareTools(
     throw new Error('CloudflareAdapterOptions: accessToken must be a non-empty string.');
   }
 
-  const account = new CloudflareAccountContext(opts.accessToken);
+  const account = new CloudflareAccountContext(opts.accessToken, opts.fetch);
 
   return [
     makeCloudflareDeployTool(account),

@@ -115,6 +115,7 @@ beforeAll(async () => {
     toolName: 'cli:Bash',
     toolInput: { command: `curl -H "x: ${CLE}" https://api` },
     toolOutput: `200 OK — la clé ${CLE} est encore dans le log`,
+    outcome: 'done',
     durationMs: 12,
     turn: 1,
     toolCallId: 'c_audit',

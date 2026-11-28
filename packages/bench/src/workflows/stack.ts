@@ -13,7 +13,9 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { isAbsolute, join, resolve } from 'node:path';
 import { z } from 'zod';
-import { nodalHomeEntry, nodalHomePath } from '@nodal-agents/shared/nodal-home';
+import { nodalHomePath } from '@nodal-agents/shared/nodal-home';
+import { readNodalConfigFile } from '@nodal-agents/shared/nodal-config-file';
+import { nodalConfigPath } from '@nodal-agents/shared/state-files';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import type { AgentId, EntityId } from '@nodal-agents/orchestration';
 import { benchPrinterServer } from '../printer/declaration';
@@ -24,39 +26,27 @@ import type { ProcessStarter, TeamMcpServer } from './types';
 /** Le préfixe de l'étiquette `caller` que le banc pose sur chacun de ses jobs. */
 export const BENCH_CALLER_PREFIX = 'nodal-bench/';
 
-const LocalConfigSchema = z.object({
-  ports: z
-    .object({ postgres: z.number().int().optional(), web: z.number().int().optional() })
-    .partial()
-    .optional(),
-  postgresPassword: z.string().optional(),
-});
-
-/** L'URL de la base de la stack locale, lue dans ~/.nodalai/config.json comme le fait le CLI. */
+/** L'URL de la base de la stack locale, lue dans son config.json par le lecteur du produit. */
 export function stackDatabaseUrl(): string {
-  const path = nodalHomeEntry('config.json');
-  if (!existsSync(path)) {
+  const path = nodalConfigPath();
+  const cfg = readNodalConfigFile(path);
+  if (cfg === null) {
     throw new Error(
       `workflow_no_stack: ${path} is missing, the stack never started on this machine`,
     );
   }
-  const cfg = LocalConfigSchema.parse(JSON.parse(readFileSync(path, 'utf8')));
   if (!cfg.postgresPassword)
     throw new Error(`workflow_no_stack: postgresPassword missing in ${path}`);
-  const port = cfg.ports?.postgres ?? 25444;
-  return `postgresql://nodalai:${encodeURIComponent(cfg.postgresPassword)}@localhost:${port}/nodalai`;
+  return `postgresql://nodalai:${encodeURIComponent(cfg.postgresPassword)}@localhost:${cfg.ports.postgres}/nodalai`;
 }
 
 /**
- * L'adresse du dashboard de la stack (`ports.web` de ~/.nodalai/config.json,
- * 3000 par défaut, comme le CLI) : Bench Studio y renvoie pour ouvrir un run.
+ * L'adresse du dashboard de la stack (`ports.web` de son config.json, 3000
+ * quand la stack n'a jamais démarré, comme le CLI) : Bench Studio y renvoie
+ * pour ouvrir un run.
  */
 export function stackWebUrl(): string {
-  const path = nodalHomeEntry('config.json');
-  const cfg = existsSync(path)
-    ? LocalConfigSchema.parse(JSON.parse(readFileSync(path, 'utf8')))
-    : { ports: undefined };
-  return `http://localhost:${cfg.ports?.web ?? 3000}`;
+  return `http://localhost:${readNodalConfigFile(nodalConfigPath())?.ports.web ?? 3000}`;
 }
 
 /**

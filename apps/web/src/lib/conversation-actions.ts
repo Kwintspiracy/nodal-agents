@@ -49,6 +49,9 @@ import {
   channelAllowedConversations,
   devices,
   showConversationsTo,
+  outboundColumn,
+  outboundColumns,
+  outboundSql,
 } from '@nodal-agents/db';
 import {
   keepsTurnsInChat,
@@ -433,7 +436,7 @@ export async function listAllConversationsAction(): Promise<ActionResult<Convers
         id: conversations.id,
         channel: conversations.channel,
         chatId: conversations.chatId,
-        title: conversations.title,
+        title: outboundColumn(conversations.title),
         agentId: conversations.agentId,
         agentName: agents.name,
         agentSlug: agents.slug,
@@ -476,12 +479,16 @@ export async function listAllConversationsAction(): Promise<ActionResult<Convers
         .select({
           conversationId: chatMessages.conversationId,
           turns: sql<number>`count(*) FILTER (WHERE ${chatMessages.role} = 'user')::int`,
-          firstRequest: sql<
-            string | null
-          >`(array_agg(${chatMessages.content} ORDER BY ${chatMessages.createdAt}) FILTER (WHERE ${chatMessages.role} = 'user'))[1]`,
-          lastReply: sql<
-            string | null
-          >`(array_agg(${chatMessages.content} ORDER BY ${chatMessages.createdAt} DESC) FILTER (WHERE ${chatMessages.role} = 'assistant'))[1]`,
+          firstRequest: outboundSql(
+            sql<
+              string | null
+            >`(array_agg(${chatMessages.content} ORDER BY ${chatMessages.createdAt}) FILTER (WHERE ${chatMessages.role} = 'user'))[1]`,
+          ),
+          lastReply: outboundSql(
+            sql<
+              string | null
+            >`(array_agg(${chatMessages.content} ORDER BY ${chatMessages.createdAt} DESC) FILTER (WHERE ${chatMessages.role} = 'assistant'))[1]`,
+          ),
         })
         .from(chatMessages)
         .where(inArray(chatMessages.conversationId, ids))
@@ -490,12 +497,14 @@ export async function listAllConversationsAction(): Promise<ActionResult<Convers
         .select({
           conversationId: agentJobs.conversationId,
           turns: sql<number>`count(*)::int`,
-          firstRequest: sql<
-            string | null
-          >`(array_agg(${agentJobs.task} ORDER BY ${agentJobs.createdAt}))[1]`,
-          lastReply: sql<
-            string | null
-          >`(array_agg(${agentJobs.result} ORDER BY ${agentJobs.createdAt} DESC) FILTER (WHERE ${agentJobs.result} IS NOT NULL))[1]`,
+          firstRequest: outboundSql(
+            sql<string | null>`(array_agg(${agentJobs.task} ORDER BY ${agentJobs.createdAt}))[1]`,
+          ),
+          lastReply: outboundSql(
+            sql<
+              string | null
+            >`(array_agg(${agentJobs.result} ORDER BY ${agentJobs.createdAt} DESC) FILTER (WHERE ${agentJobs.result} IS NOT NULL))[1]`,
+          ),
         })
         .from(agentJobs)
         .where(
@@ -646,9 +655,11 @@ async function nommerLesFils(
       db
         .select({
           conversationId: chatMessages.conversationId,
-          firstRequest: sql<
-            string | null
-          >`(array_agg(${chatMessages.content} ORDER BY ${chatMessages.createdAt}) FILTER (WHERE ${chatMessages.role} = 'user'))[1]`,
+          firstRequest: outboundSql(
+            sql<
+              string | null
+            >`(array_agg(${chatMessages.content} ORDER BY ${chatMessages.createdAt}) FILTER (WHERE ${chatMessages.role} = 'user'))[1]`,
+          ),
         })
         .from(chatMessages)
         .where(inArray(chatMessages.conversationId, sansTitre))
@@ -656,9 +667,9 @@ async function nommerLesFils(
       db
         .select({
           conversationId: agentJobs.conversationId,
-          firstRequest: sql<
-            string | null
-          >`(array_agg(${agentJobs.task} ORDER BY ${agentJobs.createdAt}))[1]`,
+          firstRequest: outboundSql(
+            sql<string | null>`(array_agg(${agentJobs.task} ORDER BY ${agentJobs.createdAt}))[1]`,
+          ),
         })
         .from(agentJobs)
         .where(
@@ -1188,7 +1199,7 @@ export async function resolveRunPageHrefAction(id: string): Promise<ActionResult
     }
     const [head] = await db
       .select({
-        triggerType: sql<string | null>`${agentJobs.triggerContext}->>'type'`,
+        triggerType: outboundSql(sql<string | null>`${agentJobs.triggerContext}->>'type'`),
         scheduleId: agentJobs.scheduleId,
       })
       .from(agentJobs)
@@ -1246,7 +1257,7 @@ export async function listExternalRunsAction(
     const rows = await db
       .select({
         id: agentJobs.id,
-        task: agentJobs.task,
+        task: outboundColumn(agentJobs.task),
         status: agentJobs.status,
         createdAt: agentJobs.createdAt,
       })
@@ -1604,7 +1615,7 @@ export async function getConversationThreadAction(
         id: conversations.id,
         channel: conversations.channel,
         chatId: conversations.chatId,
-        title: conversations.title,
+        title: outboundColumn(conversations.title),
         agentId: conversations.agentId,
         agentName: agents.name,
         agentSlug: agents.slug,
@@ -1634,7 +1645,7 @@ export async function getConversationThreadAction(
         .select({
           id: chatMessages.id,
           role: chatMessages.role,
-          content: chatMessages.content,
+          content: outboundColumn(chatMessages.content),
           jobId: chatMessages.jobId,
           stopped: chatMessages.stopped,
           cutReason: chatMessages.cutReason,
@@ -1648,7 +1659,7 @@ export async function getConversationThreadAction(
         .limit(MESSAGES_MAX + 1),
       db
         .select({
-          job: agentJobs,
+          job: outboundColumns(agentJobs),
           agentName: agents.name,
           agentSlug: agents.slug,
           agentAvatarUrl: agents.avatarUrl,
@@ -1706,16 +1717,17 @@ export async function getConversationThreadAction(
             .select({
               jobId: toolCalls.jobId,
               toolName: toolCalls.toolName,
-              card: toolCalls.card,
-              presented: toolCalls.presented,
+              card: outboundColumn(toolCalls.card),
+              presented: outboundColumn(toolCalls.presented),
               // Le tour : c'est par lui que la ligne rejoint son constat
               // d'écriture, dont la clé est (job, tour, chemin) — #197.
               turn: toolCalls.turn,
               riskLevel: toolCalls.riskLevel,
-              toolInput: toolCalls.toolInput,
+              toolInput: outboundColumn(toolCalls.toolInput),
               // L'ISSUE de l'appel : sans elle, un refus d'approbation passait
               // pour une production (revue Codex, passe 29).
-              toolOutput: toolCalls.toolOutput,
+              toolOutput: outboundColumn(toolCalls.toolOutput),
+              outcome: toolCalls.outcome,
             })
             .from(toolCalls)
             .where(
@@ -2019,6 +2031,7 @@ export async function getConversationThreadAction(
         toolName: row.toolName,
         toolInput: row.toolInput,
         toolOutput: row.toolOutput,
+        outcome: row.outcome,
         presented: row.presented,
         rawFilePaths: row.rawFilePaths,
       })),

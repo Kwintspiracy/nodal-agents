@@ -25,6 +25,7 @@ import {
   heldBy,
   workspaceSandboxReader,
   type WorkspaceScope,
+  loadToolResultMaskPolicy,
 } from '@nodal-agents/db';
 import {
   buildSystemPrompt,
@@ -42,7 +43,16 @@ import {
 } from '@nodal-agents/tools';
 import { acquireWorkspaceLocks, WorkspaceLockedError, type HeldLocks } from './workspace-locks.ts';
 import { DEFAULT_LIMITS } from '@nodal-agents/orchestration';
-import { readRunCostCeilingUsd, readRunSpentUsd } from '../job/run-budget.ts';
+import {
+  budgetDeliverable,
+  budgetErrorCode,
+  budgetStopLine,
+  cliSessionTimeLimitMs,
+  readRunCostCeilingUsd,
+  readRunSpentUsd,
+  readRunTimeCeilingMs,
+  type BudgetStopFacts,
+} from '../job/run-budget.ts';
 import type { DeploymentContext } from '@nodal-agents/orchestration';
 import { getDeploymentContext } from '../job/deployment.ts';
 import { telegramChatOf } from '../job/channel-delivery.ts';
@@ -68,12 +78,7 @@ import { loadConversationContext } from '../job/conversation-id.ts';
 // Recopiée nulle part : une seconde copie aurait divergé au premier ajout.
 import { EDIT_TOOLS, resolveScannedPath, scannedEditPath } from '../job/code-projects.ts';
 import { finalizeJobSuccess } from '../job/finalize.ts';
-import { drainDeliveries, prepareDelivery } from '../delivery/outbox.ts';
-import {
-  isDeliveryFault,
-  isDeliveryRefusal,
-  resolveDeliveryTarget,
-} from '../delivery/resolve-delivery-target.ts';
+import { drainDeliveries } from '../delivery/outbox.ts';
 import { probeWorkspaceGit } from '../lib/workspace-git.ts';
 import {
   snapshot,
@@ -92,12 +97,9 @@ import {
   type CliTurnResult,
 } from './provider.ts';
 
-/** Per-turn wall clock budget — a runtime agent turn is a full CLI session run. */
-const RUNTIME_TURN_TIMEOUT_MS = 900_000;
-
 /**
  * Tous les combien le tour relit la ligne de son job (#567). Un tour de CLI
- * dure jusqu'à quinze minutes sans rendre la main : c'est ce délai qui borne le
+ * dure jusqu'à la limite de temps du run sans rendre la main : c'est ce délai qui borne le
  * temps entre la ligne qui cesse de dire `processing` (arrêt demandé, faucheur,
  * remise en file) et le processus tué. Une lecture d'une colonne par seconde et
  * par tour en cours.
@@ -309,7 +311,7 @@ async function harnessEdits(
 ): Promise<string[]> {
   try {
     const rows = await db
-      .select({ toolInput: toolCalls.toolInput, toolOutput: toolCalls.toolOutput })
+      .select({ toolInput: toolCalls.toolInput, outcome: toolCalls.outcome })
       .from(toolCalls)
       .where(
         and(
@@ -466,17 +468,53 @@ async function snapshotEachWorkspace(
 }
 
 /**
- * Le verdict d'un tour de CLI : le code d'échec, ou `null` pour un tour qui a
- * répondu. Toutes les sorties en échec passent par ici, le frein compris —
- * voir « UN SEUL ORDRE DE FIN DE TOUR » dans `runCliRuntimeJob`.
+ * Comment s'est arrêté un tour de CLI qui n'a pas répondu : le code d'échec
+ * du job, et la ligne de plateforme qui suit son dernier texte. Une session
+ * arrêtée par une limite du RUN dit laquelle, avec sa valeur, par les mêmes
+ * faits que la boucle de Nodal (`BudgetStopFacts`, `budgetStopLine`) ; une
+ * session en échec dit son code. `null` : le tour a répondu.
+ *
+ * Toutes les sorties en échec passent par ici, le frein compris — voir « UN
+ * SEUL ORDRE DE FIN DE TOUR » dans `runCliRuntimeJob`.
  */
-function turnFailure(turn: CliTurnResult, brakeStop: BrakeStop | null): string | null {
+export function turnStop(
+  turn: CliTurnResult,
+  brakeStop: BrakeStop | null,
+  limits: { timeLimitMs: number; turn: number },
+): { code: string; line: string } | null {
   // Un tour qui a répondu reste un succès, même si le frein s'est serré
   // pendant qu'il rendait sa réponse : il n'a pas été tué, sa réponse part.
   if (!turn.isError && turn.finalText !== '') return null;
   // Le frein ne décrit qu'un tour déjà en échec : il a tué la CLI, et
   // l'arrêt se dit comme au départ du tour (serré, ou illisible).
-  if (brakeStop) return brakeStop;
+  if (brakeStop) return { code: brakeStop, line: sessionErrorStopLine(brakeStop) };
+  const limit: BudgetStopFacts | null = turn.toolCallCap
+    ? {
+        kind: 'tool_calls',
+        spent: turn.toolCallCap.calls,
+        limit: turn.toolCallCap.limit,
+        turn: limits.turn,
+      }
+    : turn.timedOut
+      ? { kind: 'time', spent: turn.durationMs, limit: limits.timeLimitMs, turn: limits.turn }
+      : null;
+  if (limit) return { code: budgetErrorCode(limit.kind), line: budgetStopLine(limit) };
+  const code = turnFailureCode(turn);
+  return { code, line: sessionErrorStopLine(code) };
+}
+
+/**
+ * La ligne d'une session de CLI arrêtée sur une erreur : son code seul, sans
+ * le détail (stderr, statut d'API) qui reste dans `agent_jobs.error`. Même
+ * famille que `budgetStopLine` : une ligne de plateforme entre crochets.
+ */
+export function sessionErrorStopLine(code: string): string {
+  const name = /^[a-z_]+/.exec(code)?.[0] ?? 'cli_runtime_error';
+  return `[stopped: CLI session error — ${name}]`;
+}
+
+/** Le code d'échec d'un tour de CLI en erreur, hors limites du run et hors frein. */
+function turnFailureCode(turn: CliTurnResult): string {
   // An exhausted subscription window must read as exactly that (D0/risques)
   // — as a machine CODE + data, never runner-authored prose (invariant #2:
   // the LLM speaks or the runner stays silent; error fields carry codes).
@@ -507,6 +545,7 @@ export async function runCliRuntimeJob(args: {
   | { status: 'failed'; error: string }
   | { status: 'cancelled' }
   | { status: 'already_handled' }
+  | { status: 'awaiting_tasks' }
 > {
   const { db, jobId, job, agentRow } = args;
 
@@ -563,6 +602,12 @@ export async function runCliRuntimeJob(args: {
     return fail('cost_budget_exceeded');
   }
 
+  // Le temps que la session peut travailler : la limite de temps du RUN que
+  // l'espace règle, la même que la boucle de Nodal applique, jamais une
+  // constante de l'adaptateur (voir cliSessionTimeLimitMs pour l'espace qui
+  // n'en pose aucune).
+  const timeLimitMs = cliSessionTimeLimitMs(await readRunTimeCeilingMs(db, job.entityId));
+
   // Session continuity: one CLI session per (agent, conversation).
   // assertRuntimeSessionKey: cli_sessions is shared with code_task, whose keys
   // carry a `code_task:` prefix, and the unique index is only
@@ -600,6 +645,13 @@ export async function runCliRuntimeJob(args: {
   // d'audit (voir takeCliTurnCheckpoints).
   const cliTurn = await resolveCliTurn(db, jobId);
   const pending = new Map<string, { name: string; input: unknown; startedAt: number }>();
+  // La politique de masque de l'agent pour ce que ses outils rendent, lue une
+  // fois pour le tour : chaque ligne `cli:*` passe par la même frontière que
+  // `executeTool`. Illisible, le tour ne part pas (invariant #4).
+  const maskPolicy = await loadToolResultMaskPolicy(db, {
+    entityId: job.entityId ?? '',
+    agentId: agentRow.id,
+  });
   // Les écritures d'audit ENCORE EN VOL à la fin du tour (revue Codex, passe
   // 33) : chaque insertion part sans être attendue — l'audit ne doit jamais
   // ralentir la CLI — mais `harnessEdits` les LIT juste après `binding.run`.
@@ -608,7 +660,16 @@ export async function runCliRuntimeJob(args: {
   // déclaré. Elles sont donc gardées ici et attendues (jamais relancées, jamais
   // bloquantes pour le travail : `allSettled`) avant la lecture.
   const auditWrites: Promise<unknown>[] = [];
+  // Le DERNIER texte que la session a écrit, quel que soit son runtime (les
+  // deux lecteurs de flux le remettent en `assistant_text`) : c'est ce qu'un
+  // arrêt livre, comme le dernier texte d'un run de la boucle de Nodal
+  // (`lastAssistantTextSeen`).
+  let lastText = '';
   const onEvent = (evt: ClaudeTurnEvent): void => {
+    if (evt.kind === 'assistant_text' && evt.text && evt.text.trim() !== '') {
+      lastText = evt.text;
+      return;
+    }
     if (evt.kind === 'tool_use' && evt.toolUseId && evt.toolName) {
       pending.set(evt.toolUseId, {
         name: evt.toolName,
@@ -634,8 +695,10 @@ export async function runCliRuntimeJob(args: {
             toolInput: started.input,
             toolOutput: evt.output,
             toolCallId: evt.toolUseId,
+            isError: evt.isError === true,
             startedAt: started.startedAt,
             now: Date.now(),
+            policy: maskPolicy,
           }),
         })
         .catch((err: unknown) => {
@@ -854,12 +917,13 @@ export async function runCliRuntimeJob(args: {
           model: defaults.model,
           effort: defaults.effort,
           resumeSessionId,
-          timeoutMs: RUNTIME_TURN_TIMEOUT_MS,
+          timeoutMs: timeLimitMs,
           // La CLI appartient au job (#750) : ce qu'elle laisse tourner vit
           // pour ses tours suivants et meurt à la fin du job.
           processScope: jobProcessScope(jobId),
           // The CLI runs its own internal loop the Nodal counters never see —
-          // apply the SAME per-turn cap at this seam (invariant #8).
+          // apply the SAME per-response cap at this seam (invariant #8),
+          // counted per model response by the stream's parser.
           maxToolCalls: DEFAULT_LIMITS.maxToolCallsPerTurn,
           onEvent,
           // Un seul signal : le frein (qui écoute aussi la ligne du job) ou, sans
@@ -893,7 +957,7 @@ export async function runCliRuntimeJob(args: {
   // CLI, le tour est un échec parmi les autres, dit comme au départ. Il
   // sortait avant la session et le registre : une CLI qui avait écrit puis
   // était tuée perdait son contexte et sa déclaration de projet.
-  const failure = turnFailure(turn, brake.stoppedBy());
+  const failure = turnStop(turn, brake.stoppedBy(), { timeLimitMs, turn: cliTurn });
   // ── L'ÉCRITURE MONTE L'ÉPOQUE (issue #101) ────────────────────────────────
   //
   // Le jumeau CLI de ce que `executeTool` fait autour de `tool.execute` : ce
@@ -1074,38 +1138,34 @@ export async function runCliRuntimeJob(args: {
   }
   if (cutBy) return outcomeOfLostAuthority(cutBy);
 
-  if (failure !== null) return fail(failure);
+  // Un tour arrêté, par une limite du run ou une erreur, sort comme un run de
+  // la boucle de Nodal arrêté sur son budget : le job échoue avec son code, et
+  // son résultat porte le dernier texte de la session puis la ligne qui dit
+  // pourquoi elle s'est arrêtée (`budgetDeliverable`). Les fichiers qu'elle a
+  // écrits ont leurs lignes d'audit et leur projet (ci-dessus).
+  if (failure !== null) {
+    await failJob(
+      db,
+      jobId,
+      failure.code,
+      undefined,
+      undefined,
+      budgetDeliverable(lastText, '', failure.line),
+    );
+    return { status: 'failed', error: failure.code };
+  }
 
   // ── La porte terminale (V&C, T11) ─────────────────────────────────────────
   //
-  // La cible de livraison est résolue AVANT la décision terminale et figée
-  // avec elle : la ligne `job_deliveries` en `prepared` est commise DANS la
-  // transaction qui pose le statut, puis le drain immédiat l'envoie — hors de
-  // toute transaction, après que les verrous sont rendus. Un crash entre le
-  // commit et l'envoi ne perd plus le message : le tick le reprend.
+  // La réponse est préparée par la porte elle-même, DANS la transaction qui
+  // pose `completed`, comme pour tout job venu d'un chat (#1215,
+  // job/answer-delivery.ts) ; le drain immédiat l'envoie ensuite, hors de toute
+  // transaction, après que les verrous sont rendus. Un crash entre le commit
+  // et l'envoi ne perd pas le message : le tick le reprend.
   //
-  // Le texte du CLI part VERBATIM (invariant #2 : le LLM parle, Nodal relaie).
-  // L'allowlist et les credentials se revérifient AU DRAIN, jamais ici.
-  let delivery: { channel: string; chatId: string; payload: string } | undefined;
-  if (job.chatId && turn.finalText.trim()) {
-    const target = await resolveDeliveryTarget(db, {
-      chatId: job.chatId,
-      agentId: agentRow.id,
-      channel: job.channel,
-      chatChannel: job.chatChannel,
-      triggerContext: job.triggerContext,
-    });
-    if (isDeliveryRefusal(target)) {
-      if (isDeliveryFault(target)) {
-        console.error(
-          `[cli-runtime] DELIVERY_TARGET_REFUSED job=${jobId} reason=${target.refused}`,
-        );
-      }
-    } else {
-      delivery = { channel: target.channel, chatId: target.chatId, payload: turn.finalText };
-    }
-  }
-
+  // Le texte du CLI part VERBATIM (invariant #2 : le LLM parle, Nodal relaie) :
+  // c'est le résultat du job. L'allowlist et les credentials se revérifient AU
+  // DRAIN, jamais ici.
   const outcome = await finalizeJobSuccess(
     db,
     // `prose` : le texte final du CLI est celui de l'agent, relayé verbatim
@@ -1120,17 +1180,6 @@ export async function runCliRuntimeJob(args: {
       // Une preuve rouge y reste donc OBSERVÉE, comme en PR①.
       repairTurn: 'unsupported',
       toolsUsed: [binding.toolLabel],
-      delivery,
-    },
-    {
-      prepareDelivery: async (tx, input) => {
-        await prepareDelivery(tx, {
-          jobId: input.jobId,
-          channel: input.channel as Parameters<typeof prepareDelivery>[1]['channel'],
-          chatId: input.chatId,
-          payload: input.payload,
-        });
-      },
     },
   );
 
@@ -1139,6 +1188,10 @@ export async function runCliRuntimeJob(args: {
     // été écrit, rien ne part — l'ancien code envoyait quand même.
     return { status: 'failed', error: 'already_handled' };
   }
+  // Le job a des tâches sur le tableau : la porte le lui laisse, rien n'est
+  // écrit ni livré (finalize.ts). Une session CLI n'a pas `create_task`
+  // aujourd'hui ; la porte est la même pour tous, il en lit l'issue.
+  if (outcome.kind === 'awaiting_tasks') return { status: 'awaiting_tasks' };
   // Un livrable DÉCLARÉ non vérifié (#509) : la primitive a écrit `failed`.
   // Le runtime CLI n'appelle pas `return_result` et ne déclare donc rien
   // aujourd'hui ; la porte est la même pour tous, il en lit l'issue.

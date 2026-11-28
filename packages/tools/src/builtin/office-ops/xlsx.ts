@@ -29,6 +29,7 @@ import {
   writtenFile,
 } from '../../presenters';
 import { readWorkspaceBinary, writeWorkspaceBinary } from './office-helpers';
+import { outcomeOfOkFlag } from '../../outcome';
 
 // ─── Shared helpers ────────────────────────────────────────────────────────────
 
@@ -454,6 +455,7 @@ export const xlsxReadTool: ToolDefinition<typeof XlsxReadInput, XlsxReadOutput> 
           })),
         )
       : failureText(output.reason),
+  outcomeOf: outcomeOfOkFlag,
   execute: async (input, ctx) => {
     const load = await loadWorkbook(ctx, input.path);
     if (!load.ok) return load;
@@ -534,6 +536,7 @@ export const xlsxSetCellTool: ToolDefinition<typeof XlsxSetCellInput, XlsxSetCel
   card: 'files',
   present: ({ input, output }) =>
     output.ok ? writtenWorkbook(input.path, 'modified', output) : failureText(output.reason),
+  outcomeOf: outcomeOfOkFlag,
   execute: async (input, ctx) => {
     const load = await loadWorkbookForWrite(ctx, input.path);
     if (!load.ok) return load;
@@ -600,6 +603,7 @@ export const xlsxSetRangeTool: ToolDefinition<typeof XlsxSetRangeInput, XlsxSetR
   card: 'files',
   present: ({ input, output }) =>
     output.ok ? writtenWorkbook(input.path, 'modified', output) : failureText(output.reason),
+  outcomeOf: outcomeOfOkFlag,
   execute: async (input, ctx) => {
     const load = await loadWorkbookForWrite(ctx, input.path);
     if (!load.ok) return load;
@@ -672,6 +676,7 @@ export const xlsxAppendRowsTool: ToolDefinition<typeof XlsxAppendRowsInput, Xlsx
     card: 'files',
     present: ({ input, output }) =>
       output.ok ? writtenWorkbook(input.path, 'modified', output) : failureText(output.reason),
+    outcomeOf: outcomeOfOkFlag,
     execute: async (input, ctx) => {
       const load = await loadWorkbookForWrite(ctx, input.path);
       if (!load.ok) return load;
@@ -732,6 +737,7 @@ export const xlsxAddSheetTool: ToolDefinition<typeof XlsxAddSheetInput, XlsxAddS
   card: 'files',
   present: ({ input, output }) =>
     output.ok ? writtenWorkbook(input.path, 'modified', output) : failureText(output.reason),
+  outcomeOf: outcomeOfOkFlag,
   execute: async (input, ctx) => {
     const load = await loadWorkbookForWrite(ctx, input.path);
     if (!load.ok) return load;
@@ -791,6 +797,7 @@ export const xlsxCreateTool: ToolDefinition<typeof XlsxCreateInput, XlsxCreateOu
   // card showed "C:\Users\…\workspaces\0000…\shared\b…" cut mid-way.
   present: ({ input, output }) =>
     output.ok ? writtenWorkbook(input.path, 'created', output) : failureText(output.reason),
+  outcomeOf: outcomeOfOkFlag,
   execute: async (input, ctx) => {
     const workbook = new ExcelJS.Workbook();
     const created = workbook.addWorksheet(input.sheet);
@@ -844,6 +851,7 @@ export const xlsxDeleteRowsTool: ToolDefinition<typeof XlsxDeleteRowsInput, Xlsx
     present: ({ input, output }) =>
       output.ok ? writtenWorkbook(input.path, 'modified', output) : failureText(output.reason),
     defaultApproval: 'require_approval',
+    outcomeOf: outcomeOfOkFlag,
     execute: async (input, ctx) => {
       const load = await loadWorkbookForWrite(ctx, input.path);
       if (!load.ok) return load;
@@ -974,6 +982,7 @@ export const xlsxFormatRangeTool: ToolDefinition<
   card: 'files',
   present: ({ input, output }) =>
     output.ok ? writtenWorkbook(input.path, 'modified', output) : failureText(output.reason),
+  outcomeOf: outcomeOfOkFlag,
   execute: async (input, ctx) => {
     const { font, fill, border, alignment } = input;
     if (!font && !fill && !border && !alignment && input.num_fmt === undefined) {
@@ -1105,6 +1114,7 @@ export const xlsxInsertRowsTool: ToolDefinition<typeof XlsxInsertRowsInput, Xlsx
     card: 'files',
     present: ({ input, output }) =>
       output.ok ? writtenWorkbook(input.path, 'modified', output) : failureText(output.reason),
+    outcomeOf: outcomeOfOkFlag,
     execute: async (input, ctx) => {
       const load = await loadWorkbookForWrite(ctx, input.path);
       if (!load.ok) return load;
@@ -1175,6 +1185,7 @@ export const xlsxDeleteColumnsTool: ToolDefinition<
   present: ({ input, output }) =>
     output.ok ? writtenWorkbook(input.path, 'modified', output) : failureText(output.reason),
   defaultApproval: 'require_approval',
+  outcomeOf: outcomeOfOkFlag,
   execute: async (input, ctx) => {
     const load = await loadWorkbookForWrite(ctx, input.path);
     if (!load.ok) return load;
@@ -1246,6 +1257,7 @@ export const xlsxInsertColumnsTool: ToolDefinition<
   card: 'files',
   present: ({ input, output }) =>
     output.ok ? writtenWorkbook(input.path, 'modified', output) : failureText(output.reason),
+  outcomeOf: outcomeOfOkFlag,
   execute: async (input, ctx) => {
     const load = await loadWorkbookForWrite(ctx, input.path);
     if (!load.ok) return load;
@@ -1313,6 +1325,7 @@ export const xlsxMergeCellsTool: ToolDefinition<typeof XlsxMergeCellsInput, Xlsx
     card: 'files',
     present: ({ input, output }) =>
       output.ok ? writtenWorkbook(input.path, 'modified', output) : failureText(output.reason),
+    outcomeOf: outcomeOfOkFlag,
     execute: async (input, ctx) => {
       const load = await loadWorkbookForWrite(ctx, input.path);
       if (!load.ok) return load;
@@ -1381,6 +1394,7 @@ export const xlsxUnmergeCellsTool: ToolDefinition<
   card: 'files',
   present: ({ input, output }) =>
     output.ok ? writtenWorkbook(input.path, 'modified', output) : failureText(output.reason),
+  outcomeOf: outcomeOfOkFlag,
   execute: async (input, ctx) => {
     const load = await loadWorkbookForWrite(ctx, input.path);
     if (!load.ok) return load;
@@ -1469,6 +1483,7 @@ export const xlsxSetColumnWidthsTool: ToolDefinition<
   card: 'files',
   present: ({ input, output }) =>
     output.ok ? writtenWorkbook(input.path, 'modified', output) : failureText(output.reason),
+  outcomeOf: outcomeOfOkFlag,
   execute: async (input, ctx) => {
     if ((!input.widths || input.widths.length === 0) && !input.autofit) {
       return { ok: false, reason: 'Provide widths and/or set autofit:true.' };
@@ -1571,6 +1586,7 @@ export const xlsxFreezePanesTool: ToolDefinition<
   card: 'files',
   present: ({ input, output }) =>
     output.ok ? writtenWorkbook(input.path, 'modified', output) : failureText(output.reason),
+  outcomeOf: outcomeOfOkFlag,
   execute: async (input, ctx) => {
     const load = await loadWorkbookForWrite(ctx, input.path);
     if (!load.ok) return load;
@@ -1654,6 +1670,7 @@ export const xlsxFindCellsTool: ToolDefinition<typeof XlsxFindCellsInput, XlsxFi
           truncated: output.truncated,
         })
       : failureText(output.reason),
+  outcomeOf: outcomeOfOkFlag,
   execute: async (input, ctx) => {
     const load = await loadWorkbook(ctx, input.path);
     if (!load.ok) return load;

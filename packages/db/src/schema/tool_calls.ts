@@ -57,10 +57,29 @@ export const toolCalls = pgTable(
     // descend jamais sous `write`. Seul le relevé d'un échange passé le lit
     // (ce qu'il cite). NULL : pas d'indice, ou une ligne d'avant 0166.
     readOnlyHint: boolean('read_only_hint'),
+    // 0175 : le masque des résultats d'outil a caché quelque chose dans CE
+    // résultat. Ce que la ligne range est ce que le modèle a lu, et ce n'était
+    // pas tout ce que l'outil avait lu : une lecture masquée n'est pas une vue
+    // des octets du fichier.
+    resultMasked: boolean('result_masked').notNull().default(false),
     // 0133 (#443) : cette ligne enregistre-t-elle une exécution qui a
     // COMMENCÉ ? true = marque d'intention ou exécution faite ; false = appel
     // refusé par la porte, jamais lancé ; NULL = ligne antérieure ou `cli:*`.
     executionStarted: boolean('execution_started'),
+    // 0170 (#1184, #1206) : CE QUE L'APPEL A DONNÉ, dans l'ensemble fermé de
+    // `@nodal-agents/shared` (`TOOL_CALL_OUTCOMES` : done, failed, unknown,
+    // refused, awaiting_approval), déclaré par l'outil et écrit UNE fois par la
+    // porte (`executeTool`) ou par l'enregistreur d'un runtime CLI. Lu par
+    // `readCallOutcome` et par rien d'autre : plus aucun lecteur ne devine
+    // l'issue dans `tool_output`. Les lignes d'avant 0170 ont été typées UNE
+    // fois par la migration, par la même règle. NULL : rien n'a été dit
+    // (« non enregistré », dit tel quel par ses lecteurs, jamais deviné).
+    outcome: text('outcome'),
+    // 0170 : CE SUR QUOI l'appel a agi, en clé (`chat:<canal>:<id>`,
+    // `file:<chemin>`, `input:<outil>:<empreinte>`). Un échec n'est résolu que
+    // par un appel `done` ultérieur sur la MÊME cible (`unresolvedCalls`),
+    // jamais par un autre succès du même outil. NULL : non enregistré.
+    target: text('target'),
     // 0110 : l'ORDRE D'ÉCRITURE, et la seule colonne qui le porte. `id` est un
     // uuid aléatoire, `turn` vaut pareil pour tous les appels d'un même tour, et
     // `created_at` peut être identique pour deux insertions rapprochées — la
@@ -75,6 +94,10 @@ export const toolCalls = pgTable(
     index('idx_tool_calls_job_created').on(table.jobId, sql`${table.createdAt} DESC`),
     index('idx_tool_calls_job_seq').on(table.jobId, sql`${table.seq} DESC`),
     index('idx_tool_calls_recent').on(sql`${table.createdAt} DESC`),
+    check(
+      'tool_calls_outcome_check',
+      sql`${table.outcome} IS NULL OR ${table.outcome} IN ('done','failed','unknown','refused','awaiting_approval')`,
+    ),
     check(
       'tool_calls_risk_level_check',
       sql`${table.riskLevel} IS NULL OR ${table.riskLevel} IN ('read','write','destructive')`,

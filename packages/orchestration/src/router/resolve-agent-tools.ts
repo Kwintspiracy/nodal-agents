@@ -42,7 +42,7 @@
 //     (non-delegated) job, so the full set is the correct approximation for
 //     that caller.
 
-import { eq } from '@nodal-agents/db';
+import { asc, eq } from '@nodal-agents/db';
 import {
   agents,
   agentConnectorAssignments,
@@ -175,9 +175,15 @@ export async function resolveAgentTools(
     );
   }
 
-  // ── Connector adapter tool names (mirrors execute.ts:1193-1277) ─────────
+  // ── Connector adapter tool names (mirrors execute.ts's connector loop) ─
   // No credential decryption — a placeholder token drives the SAME static
   // toolFactory() execute.ts calls with a real one; never executed.
+  //
+  // Several connectors of one service (two Gmail accounts) lend each of their
+  // names ONCE in a job, with an `account` argument (`lendConnectorTools`):
+  // the name, its risk and its default approval are those of the operation,
+  // whichever account lends it, so a name is listed once here too — one
+  // autonomy row per operation, which the accounts share.
   const connectorAssignments = await db
     .select({
       slug: connectorsTable.slug,
@@ -185,16 +191,18 @@ export async function resolveAgentTools(
     })
     .from(agentConnectorAssignments)
     .innerJoin(connectorsTable, eq(connectorsTable.id, agentConnectorAssignments.connectorId))
-    .where(eq(agentConnectorAssignments.agentId, agentRow.id));
+    .where(eq(agentConnectorAssignments.agentId, agentRow.id))
+    .orderBy(asc(connectorsTable.name), asc(connectorsTable.id));
 
-  const connectorTools: ResolvedAgentTool[] = [];
+  const connectorTools = new Map<string, ResolvedAgentTool>();
   for (const ca of connectorAssignments) {
     const entry = ADAPTER_REGISTRY[ca.slug];
     if (!entry) continue; // no adapter for this catalog slug — skip silently (matches execute.ts)
     const allTools = entry.toolFactory('__resolve_agent_tool_names_placeholder__');
     const enabled = ca.enabledOperations;
     const filtered = enabled === null ? allTools : allTools.filter((t) => enabled.includes(t.name));
-    connectorTools.push(...filtered);
+    for (const tool of filtered)
+      if (!connectorTools.has(tool.name)) connectorTools.set(tool.name, tool);
   }
 
   // ── MCP server tool names (mirrors execute.ts:1305-1450, lazy/cache-only) ─
@@ -206,7 +214,8 @@ export async function resolveAgentTools(
     })
     .from(agentMcpServersTable)
     .innerJoin(mcpServersTable, eq(mcpServersTable.id, agentMcpServersTable.mcpServerId))
-    .where(eq(agentMcpServersTable.agentId, agentRow.id));
+    .where(eq(agentMcpServersTable.agentId, agentRow.id))
+    .orderBy(asc(mcpServersTable.slug), asc(mcpServersTable.id));
 
   const mcpTools: ResolvedAgentTool[] = [];
   for (const ms of mcpAssignments) {
@@ -242,7 +251,7 @@ export async function resolveAgentTools(
   const tools = withToolLoader([
     ...from(delegationTools, 'delegation'),
     ...from(builtinTools, 'builtin'),
-    ...from(connectorTools, 'connector'),
+    ...from([...connectorTools.values()], 'connector'),
     ...from(mcpTools, 'mcp'),
     ...from(deliveryTools, 'delivery'),
   ]);

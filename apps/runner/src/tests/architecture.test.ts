@@ -27,11 +27,51 @@ import {
   RUNNER_NON_TERMINAL_SENDERS,
   scanFilesForDeliverableTypeLiterals,
   formatViolations,
+  scanForOutcomeGuesses,
+  assertNoViolations,
+  OUTBOUND_BRAND_CAST,
+  scanForOutboundBypass,
+  scanForToolResultBypass,
+  stripComments,
+  type OutboundExit,
+  scanForGitSpawnOutsideLauncher,
 } from '@nodal-agents/test-kit';
 import { join } from 'node:path';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 
 const SRC_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+
+// ─── Ce qui sort du runner passe par la couture de sortie ───────────────────
+//
+// Une réponse HTTP : `outboundResponses`, posé sur l'application avant tout le
+// reste. Un événement de flux : `sseEvent`, qui ne prend qu'une valeur sortante
+// (le compilateur le tient). Un SDK de plateforme atteint directement (les
+// sessions Discord, Slack, WhatsApp du runner) : ce scanner.
+
+/** Un SDK de messagerie atteint directement : son texte passe par la couture. */
+const RUNNER_SDK_SENDS: readonly OutboundExit[] = [
+  {
+    rule: 'sdk-send-beside-seam',
+    call: /\bchat\s*\.\s*(?:postMessage|postEphemeral|update|scheduleMessage)\s*\(/,
+    fields: ['text'],
+  },
+  {
+    rule: 'sdk-send-beside-seam',
+    call: /\binteraction\s*\.\s*(?:reply|followUp|update|editReply)\s*\(/,
+    fields: ['content'],
+  },
+];
+
+/** Dans les sessions de canal, tout `.send(` d'un client de plateforme. */
+const CHANNEL_SESSION_SENDS: readonly OutboundExit[] = [
+  { rule: 'sdk-send-beside-seam', call: /\.\s*send\s*\(/, fields: ['text', 'content', 'caption'] },
+];
+
+/** Une trame de flux écrite à la main, hors de `sseEvent`. */
+const HAND_WRITTEN_SSE_FRAME: OutboundExit = {
+  rule: 'sse-frame-beside-sse-event',
+  pattern: /['"`]data: /,
+};
 
 describe('invariant 1 — aucune métadonnée d’agent en dur', () => {
   it('src/ ne contient aucun slug d’agent connu', () => {
@@ -142,6 +182,29 @@ describe('architecture — le runtime CLI ne part écrire que du seam d’intent
           'Lancement de binding CLI hors des deux points qui posent l’intention',
           violations,
         ),
+      );
+    }
+  });
+});
+
+// ─── Une clé de modèle ne part que vers l'adresse enregistrée pour elle ─────
+
+describe('un client de modèle ne se construit qu’à partir de la clé de l’agent @cap:choisir-modele/moteur', () => {
+  // Tous les appels de modèle du runner (boucle de job, chat, titres, relances,
+  // curateurs, réflexion) passent par resolveAgentLlmClient, qui construit le
+  // client depuis la ligne entity_llm_keys : adresse enregistrée (ou officielle)
+  // et clé enregistrée. Un autre site qui construirait son propre client
+  // échapperait à cette règle.
+  const MODEL_CLIENT_BUILDERS = ['job/resolve-llm.ts'];
+
+  it('createLlmClient / createFailoverLlmClient ne sont appelés que par resolve-llm.ts', () => {
+    const violations = scanForPattern(
+      { srcDir: SRC_DIR, skipFiles: MODEL_CLIENT_BUILDERS },
+      { pattern: /\bcreate(?:Failover)?LlmClient\s*\(/, rule: 'model-client-outside-resolver' },
+    ).filter((v) => !/^\s*(\/\/|\*)/.test(v.text));
+    if (violations.length > 0) {
+      expect.fail(
+        formatViolations('Client de modèle construit hors de resolve-llm.ts', violations),
       );
     }
   });
@@ -278,5 +341,223 @@ describe('architecture — une porte par transition poussée (#944) @cap:suivre-
     }
     const used = new Set(calls.map((v) => rel(v.file)));
     expect(Object.keys(OUT_OF_PROCESS_WRITERS).filter((f) => !used.has(f))).toEqual([]);
+  });
+});
+
+// ─── #1180 : un seul écrivain de `failed`, et c'est lui qui prépare la notice ──
+//
+// Une trentaine de sorties d'échec (la boucle, le runtime CLI, le tableau, les
+// faucheurs) ; seules quelques-unes prévenaient la personne, chacune à sa façon.
+// La règle : `failed` s'écrit à UN endroit (`writeFailure`, job/state.ts, sous
+// `failJob`), et cet endroit prépare la notice dans la transaction qui l'écrit.
+// Une sortie nouvelle n'a donc rien à faire pour que la personne l'apprenne ;
+// une écriture de `failed` ailleurs serait un échec que personne n'apprend.
+
+/** `.update(agentJobs).set({ … status: 'failed' … })`, avant son WHERE. */
+const JOB_FAILED_WRITE =
+  /\.update\(agentJobs\)\s*\.set\(\{(?:(?!\.where\()[\s\S]){0,600}?\bstatus:\s*'failed'/g;
+
+describe('architecture — un seul écrivain de `failed`, qui prépare la notice (#1180) @cap:parler-par-canal-externe/moteur', () => {
+  it('`failed` n’est écrit sur agent_jobs qu’une fois, dans writeFailure, qui prépare la notice avant d’annoncer', () => {
+    const files = scanRoots(new RegExp(JOB_FAILED_WRITE.source), 'job-failed-write').map((v) =>
+      rel(v.file),
+    );
+    expect([...new Set(files)]).toEqual(['apps/runner/src/job/state.ts']);
+
+    const src = readFileSync(join(REPO, 'apps/runner/src/job/state.ts'), 'utf-8');
+    expect([...src.matchAll(JOB_FAILED_WRITE)]).toHaveLength(1);
+    const start = src.indexOf('async function writeFailure(');
+    const end = src.indexOf('\n}\n', start);
+    const body = src.slice(start, end);
+    expect(start).toBeGreaterThan(-1);
+    expect(body).toMatch(new RegExp(JOB_FAILED_WRITE.source));
+    const prepare = body.indexOf('await prepareFailureNotice(');
+    const announce = body.indexOf('await announceTransitions(');
+    expect(prepare).toBeGreaterThan(-1);
+    expect(announce).toBeGreaterThan(prepare);
+  });
+
+  it('aucune sortie d’échec ne prépare sa propre notice : la clé de la notice n’a qu’un auteur', () => {
+    const outside = WRITER_ROOTS.flatMap((root) =>
+      scanForPattern(
+        { srcDir: join(REPO, root) },
+        {
+          pattern: /failureNoticeKey\(|:harness:|notifyJobFailure\(/,
+          rule: 'failure-notice-elsewhere',
+        },
+      ),
+    )
+      .filter((v) => !isTestFile(v.file))
+      .map((v) => rel(v.file))
+      .filter((f) => f !== 'apps/runner/src/job/failure-notice.ts');
+    expect(outside).toEqual([]);
+  });
+});
+
+// ─── #1215 : un seul écrivain de `completed`, et c'est lui qui prépare la réponse ──
+//
+// Quatre façons coexistaient de répondre dans le chat de la demande : un outil
+// d'envoi surveillé par un drapeau en mémoire (Telegram, Discord, Slack), la
+// réponse du runtime CLI relayée par l'outbox, la synthèse du tableau, et rien
+// (WhatsApp). La règle : `completed` s'écrit à UN endroit (`completeJob`,
+// job/state.ts), et cet endroit prépare la réponse dans la transaction qui
+// l'écrit (job/answer-delivery.ts). Une fin nouvelle, un canal nouveau n'ont
+// rien à faire pour que la personne reçoive la réponse.
+
+/** `.update(agentJobs).set({ … status: 'completed' … })`, avant son WHERE. */
+const JOB_COMPLETED_WRITE =
+  /\.update\(agentJobs\)\s*\.set\(\{(?:(?!\.where\()[\s\S]){0,600}?\bstatus:\s*'completed'/g;
+
+/**
+ * Ce qui remet un texte à un adaptateur de canal, hors de l'outbox, des outils
+ * d'envoi et des cartes d'approbation : chacun nommé, avec ce qu'il envoie.
+ * Aucun ne porte la réponse ni l'échec d'un job.
+ */
+const OTHER_CHANNEL_SENDERS: Readonly<Record<string, string>> = {
+  'apps/runner/src/cron/run-schedules.ts': "the owner notice of a routine's spent daily budget",
+  'apps/runner/src/notify/code-transitions.ts': 'a transition of the Code tab',
+  'apps/runner/src/telegram/poller.ts': 'the pairing and membership replies of the bot',
+};
+
+/** Les lieux où un texte peut être remis à un canal par construction. */
+const SENDER_HOMES = [
+  // Les adaptateurs eux-mêmes.
+  'packages/delivery/src/',
+  // L'outbox : la réponse et l'échec de tout job.
+  'apps/runner/src/delivery/outbox.ts',
+  // Les outils d'envoi : ce qu'un agent envoie de lui-même (un fichier, un autre chat).
+  'packages/tools/src/communication/',
+  // Les cartes d'approbation et les questions d'un serveur MCP.
+  'apps/runner/src/approvals/',
+];
+
+describe('architecture — un seul écrivain de `completed`, qui prépare la réponse (#1215) @cap:parler-par-canal-externe/moteur', () => {
+  it('`completed` n’est écrit sur agent_jobs qu’une fois, dans completeJob, qui prépare la réponse avant d’annoncer', () => {
+    const files = scanRoots(new RegExp(JOB_COMPLETED_WRITE.source), 'job-completed-write').map(
+      (v) => rel(v.file),
+    );
+    expect([...new Set(files)]).toEqual(['apps/runner/src/job/state.ts']);
+
+    const src = readFileSync(join(REPO, 'apps/runner/src/job/state.ts'), 'utf-8');
+    expect([...src.matchAll(JOB_COMPLETED_WRITE)]).toHaveLength(1);
+    const start = src.indexOf('export async function completeJob(');
+    const end = src.indexOf('\n}\n', start);
+    const body = src.slice(start, end);
+    expect(start).toBeGreaterThan(-1);
+    expect(body).toMatch(new RegExp(JOB_COMPLETED_WRITE.source));
+    const prepare = body.indexOf('await prepareAnswerDelivery(');
+    const announce = body.indexOf('await announceTransitions(');
+    expect(prepare).toBeGreaterThan(-1);
+    expect(announce).toBeGreaterThan(prepare);
+  });
+
+  it('une livraison ne se prépare qu’aux deux portes de fin : la réponse et l’échec', () => {
+    const outside = WRITER_ROOTS.flatMap((root) =>
+      scanForPattern(
+        { srcDir: join(REPO, root) },
+        { pattern: /\bprepareDelivery\(|answerDeliveryKey\(/, rule: 'delivery-prepared-elsewhere' },
+      ),
+    )
+      .filter((v) => !isTestFile(v.file))
+      .map((v) => rel(v.file))
+      .filter(
+        (f) =>
+          ![
+            'apps/runner/src/delivery/outbox.ts',
+            'apps/runner/src/job/answer-delivery.ts',
+            'apps/runner/src/job/failure-notice.ts',
+          ].includes(f),
+      );
+    expect(outside).toEqual([]);
+  });
+
+  it('rien hors de l’outbox, des outils d’envoi et des cartes d’approbation ne remet un texte à un canal ; les autres envois sont nommés', () => {
+    const senders = WRITER_ROOTS.flatMap((root) =>
+      scanForPattern(
+        { srcDir: join(REPO, root) },
+        { pattern: /\.sendText\(|\.sendMedia\(|\bsendTelegramMessage\(/, rule: 'channel-send' },
+      ),
+    )
+      .filter((v) => !isTestFile(v.file))
+      .map((v) => rel(v.file))
+      .filter((f) => !SENDER_HOMES.some((home) => f.startsWith(home)));
+    expect([...new Set(senders)].sort()).toEqual(Object.keys(OTHER_CHANNEL_SENDERS).sort());
+  });
+});
+
+describe('architecture — the outcome of a call is read on its row (#1184)', () => {
+  it('no production file decides a call’s outcome from its output', () => {
+    assertNoViolations(
+      'outcome guessed from a tool output',
+      scanForOutcomeGuesses({ srcDir: SRC_DIR }),
+    );
+  });
+});
+
+describe('architecture — ce qui sort du runner passe par la couture de sortie @cap:parler-a-un-agent/moteur', () => {
+  it('un SDK de messagerie atteint directement porte son texte par la couture', () => {
+    const violations = [
+      ...scanForOutboundBypass({ srcDir: SRC_DIR }, RUNNER_SDK_SENDS),
+      ...scanForOutboundBypass({ srcDir: join(SRC_DIR, 'channels') }, CHANNEL_SESSION_SENDS),
+    ];
+    if (violations.length > 0) {
+      expect.fail(
+        formatViolations('Texte posté sur une plateforme à côté de la couture', violations),
+      );
+    }
+  });
+
+  it('une trame de flux ne s’écrit que par `sseEvent`, et rien ne se dit sorti sans y être passé', () => {
+    const violations = scanForOutboundBypass({ srcDir: SRC_DIR, skipFiles: ['routes/sse.ts'] }, [
+      HAND_WRITTEN_SSE_FRAME,
+      OUTBOUND_BRAND_CAST,
+    ]);
+    if (violations.length > 0) {
+      expect.fail(formatViolations('Flux écrit à côté de la couture', violations));
+    }
+  });
+
+  it('l’application répond par `outboundResponses`, posé avant toute autre porte', () => {
+    const src = stripComments(readFileSync(join(SRC_DIR, 'server.ts'), 'utf-8'));
+    const created = src.indexOf('new Hono()');
+    const seam = src.indexOf("app.use('*', outboundResponses)");
+    const firstOther = src
+      .slice(created)
+      .search(/\bapp\s*\.\s*(?:use|get|post|put|patch|delete|all|route|on)\s*\(/);
+    expect(created).toBeGreaterThan(-1);
+    expect(seam).toBeGreaterThan(created);
+    expect(created + firstOther).toBe(seam);
+    // Une seule application dans le runner : une seconde n'aurait pas la couture.
+    expect(src.match(/new Hono\(/g)).toHaveLength(1);
+    expect(
+      scanForOutboundBypass({ srcDir: SRC_DIR, skipFiles: ['src/server.ts'] }, [
+        { rule: 'second-app', pattern: /\bnew\s+Hono\s*[(<]/ },
+      ]),
+    ).toEqual([]);
+  });
+});
+
+describe('architecture — un résultat d’outil ne sort que par la frontière (executeTool) @cap:connecter-un-service/moteur', () => {
+  it('src/ ne lance aucun outil hors d’executeTool et n’écrit aucune ligne tool_calls hors de la frontière', () => {
+    const v = scanForToolResultBypass({
+      srcDir: SRC_DIR,
+      exemptRuns: [
+        {
+          // L'outil de recherche d'un connecteur, lancé DANS l'outil
+          // `web_search` (`ctx.searchBackend`) : ce qu'il rend est le résultat
+          // de `web_search`, masqué par la frontière comme celui de tout outil.
+          line: 'searchTool.execute(',
+          reason: 'inside web_search, whose result goes through the seam',
+        },
+      ],
+    });
+    if (v.length > 0) expect.fail(formatViolations('Résultat d’outil hors de la frontière', v));
+  });
+});
+
+describe('architecture — git n’est lancé que par le lanceur de Nodal', () => {
+  it('starts git for itself only through the launcher (@nodal-agents/shared/internal-git)', () => {
+    const v = scanForGitSpawnOutsideLauncher({ srcDir: SRC_DIR });
+    if (v.length > 0) expect.fail(formatViolations('git lancé hors du lanceur', v));
   });
 });

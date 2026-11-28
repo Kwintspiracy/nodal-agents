@@ -36,7 +36,6 @@ import {
   registerBuiltins,
 } from '@nodal-agents/tools';
 import { generateTaskTools } from '../planner/task-tools';
-import { VERIFY_BEFORE_ASSERT_NUDGE } from '../chain-counters';
 import { generateAssignTools } from '../router/assign-tools';
 import { KNOWN_TOOL_NAME_UNIVERSE } from '../router/tool-availability';
 import { CHANNELS, AUTOMATION_KINDS } from '@nodal-agents/shared';
@@ -354,9 +353,13 @@ describe('buildSystemPrompt @cap:configurer-agent/moteur', () => {
     const prompt = await buildSystemPrompt(agent, db, jobContext);
 
     expect(prompt).toContain('## Job context');
-    expect(prompt).toContain('- notify_on_success: true');
-    // It instructs delivery before finishing — the agent writes the text itself.
-    expect(prompt).toContain('return_result');
+    // The reply is the confirmation, written by the agent and sent by the
+    // runner (#1215): no tool is named as the way it reaches the user.
+    expect(prompt).toContain(
+      '- notify_on_success: true — when this job finishes, your reply is sent to the user as ' +
+        'their confirmation: make it short (what you did + the outcome).',
+    );
+    expect(prompt).not.toContain('via your delivery tool');
   });
 
   it('omits the notify_on_success directive when the flag is absent', async () => {
@@ -1727,9 +1730,9 @@ describe('buildSystemPrompt — names no tool outside the job list (#559) @cap:a
       availableToolNames: withSend,
     });
     expect(deliveryLines(prompt)).toEqual([
-      '- delivery: `telegram_send_message` reaches the user on telegram, the only way your replies reach them. ' +
+      '- delivery: your reply is sent to the user on telegram. `telegram_send_message` sends a separate message to them on telegram. ' +
         'Text arrives exactly as typed: no markup renders, so markdown (headings, tables, **bold**, escapes) shows literally. ' +
-        'A long text is split into several messages automatically, so send each reply once, whole.',
+        'A long text is split into several messages automatically, so send each message once, whole.',
     ]);
     // The line lives in the Job context block, where the channel is named.
     const jobContext = prompt.split('## Job context')[1]?.split('\n## ')[0] ?? '';
@@ -1756,9 +1759,9 @@ describe('buildSystemPrompt — names no tool outside the job list (#559) @cap:a
       availableToolNames: withSend,
     });
     expect(deliveryLines(prompt)).toEqual([
-      '- delivery: `telegram_send_message` reaches the user on discord, the only way your replies reach them. ' +
+      '- delivery: your reply is sent to the user on discord. `telegram_send_message` sends a separate message to them on discord. ' +
         'Text arrives as typed, and these marks render: **bold**, *italic*, `code`. Any other markup shows literally. ' +
-        'A long text is split into several messages automatically, so send each reply once, whole.',
+        'A long text is split into several messages automatically, so send each message once, whole.',
     ]);
     for (const gone of [
       'MarkdownV2',
@@ -1820,9 +1823,9 @@ ${sentence}`).length > 0,
       availableToolNames: withSend,
     });
     expect(deliveryLines(prompt)).toEqual([
-      '- delivery: `telegram_send_message` reaches the user on slack, the only way your replies reach them. ' +
+      '- delivery: your reply is sent to the user on slack. `telegram_send_message` sends a separate message to them on slack. ' +
         'Text arrives as typed, and these marks render: *bold*, _italic_, <url|text>. Any other markup shows literally. ' +
-        'A long text is split into several messages automatically, so send each reply once, whole.',
+        'A long text is split into several messages automatically, so send each message once, whole.',
     ]);
     expect(prompt).not.toContain('no markup renders');
   });
@@ -2489,8 +2492,6 @@ describe('buildSystemPrompt — the whole prompt names only held tools, on real 
       const cited = deferredCited(prompt);
       if (cited.length > 0) found[c.label] = cited;
     }
-    const nudge = deferredCited(VERIFY_BEFORE_ASSERT_NUDGE);
-    if (nudge.length > 0) found['runner nudge VERIFY_BEFORE_ASSERT'] = nudge;
     expect(found).toEqual({});
   });
 

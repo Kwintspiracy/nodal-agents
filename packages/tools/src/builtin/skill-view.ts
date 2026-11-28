@@ -12,6 +12,7 @@ import { agentSkills, eq, and } from '@nodal-agents/db';
 import type { ToolDefinition, ToolContext } from '../types';
 import { failureText, readCard } from '../presenters';
 import { resolveSkillRoot } from './skill-ops/skill-files';
+import { outcomeOfOkFlag } from '../outcome';
 
 export const SkillViewInputSchema = z.object({
   slug: z
@@ -86,6 +87,7 @@ export const skillViewTool: ToolDefinition<typeof SkillViewInputSchema, SkillVie
   card: 'read',
   present: ({ output }) =>
     output.ok ? readCard({ path: output.name, text: output.content }) : failureText(output.error),
+  outcomeOf: outcomeOfOkFlag,
   execute: async (input, ctx) => {
     const [row] = await ctx.db
       .select({ name: agentSkills.name, content: agentSkills.content })

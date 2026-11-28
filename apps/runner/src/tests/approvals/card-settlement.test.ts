@@ -93,6 +93,7 @@ import { runCronTick } from '../../cron/tick.ts';
 import { handleApprovalCallback } from '../../telegram/approval-callback.ts';
 import { handleDiscordApprovalInteraction } from '../../channels/discord/approval-callback.ts';
 import type { TelegramUpdate } from '@nodal-agents/delivery';
+import { seedResponder } from './workspace-responder.ts';
 
 const OWNER_CHAT = '199791464';
 const TELEGRAM_CARD_MESSAGE_ID = 4242;
@@ -253,6 +254,7 @@ beforeAll(async () => {
   db = result.db;
   const minimal = await seedMinimal(db);
   seed = { entityId: minimal.entityId, agentId: minimal.agentId };
+  await seedResponder(db, seed.entityId);
   deps = {
     db: db as unknown as RunnerDeps['db'],
     llmClient: {} as RunnerDeps['llmClient'],

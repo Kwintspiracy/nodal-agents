@@ -134,19 +134,24 @@ afterEach(() => {
   for (const ctl of opened.splice(0)) ctl.abort();
 });
 
-/** A request as a device on the network sends it: from `address`, with no Origin. */
+/**
+ * A request as a device on the network sends it: from `address`, with no
+ * Origin. On the owner's side (Settings → Devices), with no headers named, it
+ * is the dashboard's server side, which sends the install's secret.
+ */
 async function call(
   app: App,
   method: string,
   path: string,
   opts: { body?: unknown; headers?: Record<string, string>; from?: string } = {},
 ): Promise<{ status: number; json: Record<string, unknown> }> {
+  const ownerSide = /^\/api\/(device-pairings|workspace-devices)(\/|\?|$)/.test(path);
   const res = await app.fetch(
     new Request(`http://127.0.0.1${path}`, {
       method,
       headers: {
         ...(opts.body !== undefined ? { 'Content-Type': 'application/json' } : {}),
-        ...opts.headers,
+        ...(opts.headers ?? (ownerSide ? SECRET : {})),
       },
       ...(opts.body !== undefined ? { body: JSON.stringify(opts.body) } : {}),
     }),
@@ -484,16 +489,18 @@ describe('a device key reaches its own routes and conversations, and nothing els
     );
     const local = createApp(makeDeps(), testEnv);
     const a = await pairedDevice(local, x);
-    for (const [target, headers] of [
-      [app, SECRET],
-      [app, { Authorization: 'Bearer session-of-x' }],
-      [app, {}],
-      [local, {}],
-      [local, SECRET],
+    // A proof that is not this device's key passes the door and is refused by
+    // the device's route; no proof at all is refused by the door, in every mode.
+    for (const [target, headers, error] of [
+      [app, SECRET, 'device_token_required'],
+      [app, { Authorization: 'Bearer session-of-x' }, 'device_token_required'],
+      [app, {}, 'proof_required'],
+      [local, {}, 'proof_required'],
+      [local, SECRET, 'device_token_required'],
     ] as const) {
       expect(
         await call(target, 'POST', `/api/devices/${a.deviceId}/conversation`, { headers }),
-      ).toEqual({ status: 401, json: { error: 'device_token_required' } });
+      ).toEqual({ status: 401, json: { error } });
     }
     // Its own key opens it, in both modes.
     expect(

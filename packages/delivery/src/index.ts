@@ -1,5 +1,6 @@
 // index.ts — public API for @nodal-agents/delivery
 
+// Every sender is the seam's (outbound-channel.ts): what it posts is masked.
 export {
   sendTelegramMessage,
   sendTelegramPhoto,
@@ -15,7 +16,18 @@ export {
   editTelegramMessageText,
   addTelegramBotCommands,
   setTelegramMessageReaction,
-} from './channels/telegram.ts';
+  telegramAdapter,
+  discordAdapter,
+  slackAdapter,
+  whatsappAdapter,
+  deviceAdapter,
+  bindDeviceSink,
+  ensureWhatsAppSocket,
+  closeWhatsAppSocket,
+  outboundAdapter,
+  sendEmail,
+  sendLog,
+} from './outbound-channel.ts';
 export type {
   TelegramSendOpts,
   TelegramBotInfo,
@@ -27,10 +39,8 @@ export type {
   TelegramBotCommand,
 } from './channels/telegram.ts';
 
-export { sendEmail } from './channels/email.ts';
 export type { EmailSendOpts } from './channels/email.ts';
 
-export { sendLog } from './channels/log.ts';
 export type { LogSendOpts } from './channels/log.ts';
 
 export { DeliveryError } from './errors.ts';
@@ -60,18 +70,8 @@ export type {
   DiscoveredConversation,
 } from './channel-adapter.ts';
 
-export { telegramAdapter } from './channels/telegram-adapter.ts';
-
-export { discordAdapter } from './channels/discord-adapter.ts';
-
-export { slackAdapter } from './channels/slack-adapter.ts';
-
-export { whatsappAdapter } from './channels/whatsapp-adapter.ts';
-
-export { deviceAdapter, bindDeviceSink } from './channels/device-adapter.ts';
 export type { DeviceAddress, DeviceOutbound, DeviceSink } from './channels/device-adapter.ts';
 
-export { ensureWhatsAppSocket, closeWhatsAppSocket } from './channels/whatsapp/socket-manager.ts';
 export type {
   WhatsAppHandle,
   WhatsAppStatus,

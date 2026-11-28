@@ -159,11 +159,15 @@ export function createCreateEventTool(
       'Create a new calendar event. Use ISO 8601 datetimes for timed events, or YYYY-MM-DD ' +
       'for all-day events. Optionally invite attendees by email.',
     inputSchema: CreateEventInput,
-    async execute(input) {
+    async execute(input, ctx) {
       try {
         const res = await calendar.events.insert({
           calendarId: input.calendar_id ?? 'primary',
           requestBody: {
+            // The event id Calendar lets a client choose (base32hex, 5 to 1024
+            // chars) is its idempotency key: the registry derives it from the
+            // tool-call id, so every request of this call names one event.
+            ...(ctx?.idempotencyKey ? { id: ctx.idempotencyKey } : {}),
             summary: input.summary,
             description: input.description,
             location: input.location,

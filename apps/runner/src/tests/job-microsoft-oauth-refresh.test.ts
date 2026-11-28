@@ -17,6 +17,9 @@
 // on every resolution (see packages/runner-adapters/src/registry.ts and
 // apps/runner/src/job/execute.ts).
 
+// A connector test fakes its provider: reaching the network fails this file
+// (packages/test-kit/src/no-network.ts).
+import '@nodal-agents/test-kit/setup-no-network';
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { MockLanguageModelV3 } from 'ai/test';
 import { generateText } from 'ai';
@@ -294,9 +297,8 @@ describe('job-microsoft-oauth-refresh: token resolved per-call, not once at setu
     if (!job) throw new Error('Failed to create test job');
 
     // Two separate turns each calling outlook_list_messages, before return_result.
-    // The underlying Graph SDK HTTP call will fail in this harness (no real
-    // network) — that's fine, we only assert on how many times the
-    // credential resolver ran, not on the tool's result.
+    // Graph is faked below (the provider spy); the assertions are on how many
+    // times the credential resolver ran and on the token each request carried.
     const client = makeMockLlmClient([
       {
         toolCalls: [
@@ -319,7 +321,27 @@ describe('job-microsoft-oauth-refresh: token resolved per-call, not once at setu
       },
     ]);
 
+    // The provider, faked: every connector client sends through the connector
+    // contract's transport, the process's `fetch` in a job. Before the contract,
+    // this call went to the real provider (refused here by the network guard).
+    const providerCalls: Array<{ url: string; authorization: string | null }> = [];
+    const providerFake = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const req = new Request(input as string, init);
+      providerCalls.push({ url: req.url, authorization: req.headers.get('authorization') });
+      return new Response(JSON.stringify({ value: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    });
+
     await executeJob(job.id as JobId, makeDeps(client), testEnv);
+    providerFake.mockRestore();
+    // What the provider received: each call, with the token the resolver gave.
+    const listed = providerCalls.filter((c) =>
+      c.url.startsWith('https://graph.microsoft.com/v1.0/me/messages'),
+    );
+    expect(listed).toHaveLength(2);
+    for (const c of listed) expect(c.authorization).toBe('Bearer test-microsoft-access-token');
 
     // Filter to calls for THIS test's credential — other jobs / suites running
     // against the same shared mock share the module-level spy.
