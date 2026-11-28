@@ -134,6 +134,7 @@ async function recordCommand(
     toolName: 'run_command',
     toolInput: { command },
     toolOutput: JSON.stringify(output),
+    outcome: 'done',
     durationMs,
     turn: 1,
   });
@@ -232,6 +233,7 @@ describe('recordReviewerVerificationRuns @cap:verifier-un-livrable/moteur', () =
       toolName: 'run_command',
       toolInput: { command: 'rm -rf /' },
       toolOutput: JSON.stringify({ outcome: 'blocked', error: 'command_not_allowed' }),
+      outcome: 'refused',
       turn: 1,
     });
     // Et une lecture de fichier, qui n'est pas une vérification.
@@ -241,6 +243,7 @@ describe('recordReviewerVerificationRuns @cap:verifier-un-livrable/moteur', () =
       toolName: 'file_read',
       toolInput: { path: 'app.js' },
       toolOutput: JSON.stringify({ content: 'const a = 1;' }),
+      outcome: 'done',
       turn: 1,
     });
 

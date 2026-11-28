@@ -25,6 +25,7 @@ const ecriture = (path: string, content: string): AuditRowForChanges => ({
   toolName: 'file_write',
   toolInput: { path, content },
   toolOutput: '{"ok":true}',
+  outcome: 'done',
   presented: { card: 'files', total: 1, truncated: false, files: [{ path, action: 'created' }] },
 });
 
@@ -32,6 +33,7 @@ const edition = (path: string, oldText: string, newText: string): AuditRowForCha
   toolName: 'file_edit',
   toolInput: { path, old_string: oldText, new_string: newText },
   toolOutput: '{"ok":true}',
+  outcome: 'done',
   presented: { card: 'files', total: 1, truncated: false, files: [{ path, action: 'modified' }] },
 });
 
@@ -39,6 +41,7 @@ const lecture = (path: string): AuditRowForChanges => ({
   toolName: 'file_read',
   toolInput: { path },
   toolOutput: '{"ok":true}',
+  outcome: 'done',
   presented: { card: 'files', total: 1, truncated: false, files: [{ path, action: 'listed' }] },
 });
 
@@ -65,7 +68,7 @@ function commePageCode(
   for (const row of rows) {
     const change = extractChange(row.toolName, row.toolInput);
     if (change === null) continue;
-    if (isRefusedToolCall(row.toolOutput)) continue;
+    if (isRefusedToolCall(row.outcome)) continue;
     calls.push({ change });
   }
   return groupFileChanges(calls, workspaceRoots);
@@ -155,12 +158,15 @@ describe('regroupement par fichier @cap:travailler-sur-des-fichiers/moteur', () 
     const refus: AuditRowForChanges = {
       ...ecriture('src/a.ts', 'jamais\nécrit'),
       toolOutput: '<tool_use_error>No such tool available: Write</tool_use_error>',
+      outcome: 'failed',
     };
-    // La carte nomme encore le fichier — c'est ce que l'outil a présenté — mais
-    // rien n'a été écrit, donc la plaque n'a aucune ligne à peindre.
-    const [g] = fileChangesOfAuditRows([refus], []);
-    expect(g).toMatchObject({ filePath: 'src/a.ts', addedLines: 0, removedLines: 0 });
-    expect(buildPlateRows(g?.edits ?? [], PLATE_LINE_LIMIT).rows).toEqual([]);
+    // Son issue est `failed` sur sa ligne (#1184), comme celle d'un outil Nodal
+    // en échec : rien n'a été écrit, l'appel n'apporte ni fichier ni ligne à
+    // peindre. Une seule règle pour les deux, lue sur la même colonne.
+    expect(fileChangesOfAuditRows([refus], [])).toEqual([]);
+    // La même ligne, réussie, apporte son fichier : c'est bien l'issue qui décide.
+    const [g] = fileChangesOfAuditRows([{ ...refus, outcome: 'done' }], []);
+    expect(g).toMatchObject({ filePath: 'src/a.ts' });
   });
 
   it('le chemin ABSOLU et le chemin RELATIF du même fichier n’en font qu’un', () => {
@@ -194,6 +200,7 @@ describe('un fichier déplacé ou copié garde d’où il vient (#879) @cap:trav
     toolName: 'file_move',
     toolInput: { source: from, destination: path, copy: action === 'copied' },
     toolOutput: '{"ok":true}',
+    outcome: 'done',
     presented: {
       card: 'files',
       total: 1,

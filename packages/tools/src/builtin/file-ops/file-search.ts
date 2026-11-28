@@ -17,6 +17,7 @@ import {
   MAX_SEARCH_FILE_BYTES,
   WorkspaceError,
 } from './workspace';
+import { outcomeOfOkFlag } from '../../outcome';
 
 export const FileSearchInputSchema = z.object({
   pattern: z.string().min(1).describe('Regex pattern to search for.'),
@@ -110,6 +111,7 @@ export const fileSearchTool: ToolDefinition<typeof FileSearchInputSchema, FileSe
           truncated: output.truncated,
         })
       : failureText(output.reason),
+  outcomeOf: outcomeOfOkFlag,
   execute: async (input, ctx) => {
     try {
       const workspaces = assertWorkspacesConfigured(ctx);

@@ -11,6 +11,7 @@ import {
 } from '@nodal-agents/db';
 import type { ToolDefinition } from '../../types';
 import { resolveAgentId, resolveSkillId } from './link-helpers';
+import { outcomeOfOkFlag } from '../../outcome';
 
 const DetachSkillInput = z.object({
   skillSlug: z.string().min(1).describe('Slug or name of the skill to remove from the agent.'),
@@ -31,6 +32,7 @@ export const detachSkillTool: ToolDefinition<typeof DetachSkillInput, DetachSkil
   egress: 'none',
   card: 'text',
   defaultApproval: 'require_approval',
+  outcomeOf: outcomeOfOkFlag,
   execute: async (input, ctx) => {
     const skillId = await resolveSkillId(ctx.db, ctx.entityId, input.skillSlug);
     if (!skillId)

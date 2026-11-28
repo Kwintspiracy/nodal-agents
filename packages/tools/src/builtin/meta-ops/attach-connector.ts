@@ -6,6 +6,7 @@
 import { z } from 'zod';
 import type { ToolDefinition } from '../../types';
 import { resolveAgentId, resolveConnectorId, linkConnectorToAgent } from './link-helpers';
+import { outcomeOfOkFlag } from '../../outcome';
 
 const AttachConnectorInput = z.object({
   connectorSlug: z
@@ -37,6 +38,7 @@ export const attachConnectorTool: ToolDefinition<
   loading: 'eager',
   card: 'text',
   defaultApproval: 'require_approval',
+  outcomeOf: outcomeOfOkFlag,
   execute: async (input, ctx) => {
     const connectorId = await resolveConnectorId(ctx.db, ctx.entityId, input.connectorSlug);
     if (!connectorId) {

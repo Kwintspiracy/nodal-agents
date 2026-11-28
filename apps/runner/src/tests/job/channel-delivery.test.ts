@@ -2,23 +2,27 @@
 //
 // Le prompt d'un job sur canal portait 6 300 caractères écrits à la main pour
 // Telegram, dont trois consignes que le runner contredit. Il n'en reste qu'une
-// ligne, posée exactement là où la garde de livraison exige un envoi par outil,
-// avec le canal que l'outil résoudra et ce que SON adaptateur fait du texte.
+// ligne, posée pour un job qui tient l'outil d'envoi, avec le canal que l'outil
+// résoudra et ce que SON adaptateur fait du texte. La réponse d'un job venu
+// d'un chat est envoyée par le harnais, sur tout canal (#1215).
 
 import { describe, it, expect } from 'vitest';
-import { getAdapter, telegramAdapter, discordAdapter, slackAdapter } from '@nodal-agents/delivery';
+import {
+  getAdapter,
+  isMessagingChannel,
+  telegramAdapter,
+  discordAdapter,
+  slackAdapter,
+} from '@nodal-agents/delivery';
 import type { ChannelKind } from '@nodal-agents/delivery';
 import {
   channelDeliveryFacts,
   designatedChatChannel,
   replyDestination,
-  TOOL_ONLY_DELIVERY_CHANNELS,
 } from '../../job/channel-delivery.ts';
 
-// An agent that holds every channel's credential and the send tool, unless a
-// case says otherwise.
+// An agent that holds every channel's credential, unless a case says otherwise.
 const ALL_ACTIVE: ChannelKind[] = ['telegram', 'discord', 'slack'];
-const HOLDS_SEND = new Set(['telegram_send_message']);
 
 // The chat column as the writers set it (`designateChat`): a request that came
 // FROM a chat records that chat's channel (channels/turn.ts); a trigger's chat
@@ -27,8 +31,7 @@ const recordedChannel = (
   job: { channel: string | null; chatId: string | null },
   chatChannel: ChannelKind | undefined,
 ): string | null =>
-  chatChannel ??
-  (job.chatId && TOOL_ONLY_DELIVERY_CHANNELS.has(job.channel ?? '') ? job.channel : null);
+  chatChannel ?? (job.chatId && isMessagingChannel(job.channel) ? job.channel : null);
 
 const facts = (
   job: { channel: string | null; chatId: string | null; parentJobId?: string | null },
@@ -37,7 +40,6 @@ const facts = (
   channelDeliveryFacts({
     job: { parentJobId: null, ...job, chatChannel: recordedChannel(job, extra.chatChannel) },
     activeChannels: extra.activeChannels ?? ALL_ACTIVE,
-    heldTools: HOLDS_SEND,
   });
 
 describe('channelDeliveryFacts — the channel line comes from the adapter (#613) @cap:parler-par-canal-externe/moteur', () => {
@@ -47,6 +49,7 @@ describe('channelDeliveryFacts — the channel line comes from the adapter (#613
       sendTool: 'telegram_send_message',
       renders: telegramAdapter.text.renders,
       reply: 'channel',
+      replyChannel: 'telegram',
       target: 'chat',
     });
   });
@@ -57,12 +60,13 @@ describe('channelDeliveryFacts — the channel line comes from the adapter (#613
       sendTool: 'telegram_send_message',
       renders: discordAdapter.text.renders,
       reply: 'channel',
+      replyChannel: 'discord',
       target: 'chat',
     });
   });
 
-  it('every tool-delivery channel states what ITS adapter declares', () => {
-    for (const channel of TOOL_ONLY_DELIVERY_CHANNELS) {
+  it('every channel with a send tool states what ITS adapter declares', () => {
+    for (const channel of ['telegram', 'discord', 'slack']) {
       const f = facts({ channel, chatId: '1' });
       expect({ channel, renders: f?.renders, reply: f?.reply }).toEqual({
         channel,
@@ -79,6 +83,7 @@ describe('channelDeliveryFacts — the channel line comes from the adapter (#613
       sendTool: 'telegram_send_message',
       renders: slackAdapter.text.renders,
       reply: 'channel',
+      replyChannel: 'slack',
       target: 'chat',
     });
     // A webhook left on auto records the channel its route resolved.
@@ -87,6 +92,7 @@ describe('channelDeliveryFacts — the channel line comes from the adapter (#613
       sendTool: 'telegram_send_message',
       renders: discordAdapter.text.renders,
       reply: 'channel',
+      replyChannel: 'discord',
       target: 'chat',
     });
   });
@@ -173,13 +179,11 @@ describe('replyDestination — the answer goes back where the request came from 
     extra: {
       chatChannel?: ChannelKind;
       activeChannels?: readonly ChannelKind[];
-      heldTools?: ReadonlySet<string>;
     } = {},
   ) =>
     replyDestination({
       job: { parentJobId: null, ...job, chatChannel: recordedChannel(job, extra.chatChannel) },
       activeChannels: extra.activeChannels ?? ALL_ACTIVE,
-      heldTools: extra.heldTools ?? HOLDS_SEND,
     });
 
   it('a request without a chat is answered by its result, whatever channels the agent has', () => {
@@ -195,7 +199,7 @@ describe('replyDestination — the answer goes back where the request came from 
     }
   });
 
-  it('a request that came from a chat is answered in that chat, through the send tool', () => {
+  it('a request that came from a chat is answered in that chat, sent by the harness', () => {
     expect(dest({ channel: 'telegram', chatId: '199791464' })).toEqual({
       to: 'channel',
       channel: 'telegram',
@@ -255,16 +259,20 @@ describe('replyDestination — the answer goes back where the request came from 
     });
   });
 
-  it('a chat on a channel with no send tool is not a tool destination (WhatsApp today)', () => {
-    expect(dest({ channel: 'whatsapp', chatId: '111@s.whatsapp.net' })).toEqual({ to: 'result' });
+  // #1215 : la réponse est envoyée par le harnais, et non par un outil. Un
+  // canal sans outil d'envoi (WhatsApp) est une destination comme les autres.
+  it('a chat on a channel with no send tool is answered there too (WhatsApp)', () => {
+    expect(dest({ channel: 'whatsapp', chatId: '111@s.whatsapp.net' })).toEqual({
+      to: 'channel',
+      channel: 'whatsapp',
+    });
   });
 
   // Revue passe 1 de #657 : une tâche dashboard « Send via Telegram » dont
   // l'agent n'a plus de jeton retombait sur 'telegram' par défaut, donc
-  // 'channel', alors qu'aucun outil d'envoi n'était armé : la garde faisait
-  // échouer un travail fait. Un chat qu'aucun outil armé n'atteint n'est pas
-  // une destination.
-  it('a chat named by the trigger that no armed send tool can reach: the origin reads the result', () => {
+  // 'channel'. Un chat que l'agent n'atteint pas sur son canal n'est pas une
+  // destination (la porte le dit sur la ligne du job).
+  it('a chat named by the trigger that the agent cannot reach on its channel: the origin reads the result', () => {
     const cases: Array<{
       job: { channel: string; chatId: string };
       extra: Parameters<typeof dest>[1];
@@ -287,25 +295,16 @@ describe('replyDestination — the answer goes back where the request came from 
         job: { channel: 'cron', chatId: '1' },
         extra: { chatChannel: 'slack', activeChannels: ['telegram'] },
       },
-      // The credential is there, the job does not hold the send tool.
-      {
-        job: { channel: 'webhook', chatId: '1' },
-        extra: { chatChannel: 'telegram', heldTools: new Set<string>() },
-      },
-      {
-        job: { channel: 'dashboard', chatId: '1' },
-        extra: { chatChannel: 'telegram', heldTools: new Set<string>() },
-      },
     ];
     for (const { job, extra } of cases) {
       expect({ job, to: dest(job, extra) }).toEqual({ job, to: { to: 'result' } });
     }
   });
 
-  it('a request that came FROM a chat stays answered there even with no armed tool: its author reads nothing else, the guard fails loud', () => {
+  it('a request that came FROM a chat stays answered there even with no channel active: its author reads nothing else, the gate says it cannot', () => {
     for (const [job, extra] of [
       [{ channel: 'telegram', chatId: '199791464' }, { activeChannels: [] }],
-      [{ channel: 'discord', chatId: '1' }, { heldTools: new Set<string>() }],
+      [{ channel: 'discord', chatId: '1' }, { activeChannels: ['telegram'] }],
     ] as const) {
       expect({ job, to: dest(job, extra) }).toEqual({
         job,

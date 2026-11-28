@@ -120,8 +120,9 @@ export interface JobContext {
    * plateforme rend, telles qu'on les tape. Ce n'est pas une phrase par canal,
    * c'est ce que l'adaptateur déclare, et ses tests prouvent qu'il le fait.
    * `reply` : où va la RÉPONSE de ce job (#649), calculé une fois par le
-   * runner (`replyDestination`). `channel` : la demande porte un chat, l'outil
-   * est le seul chemin de la réponse, et la garde de livraison l'exige.
+   * runner (`replyDestination`). `channel` : la demande porte un chat, et le
+   * harnais y envoie la réponse (`replyChannel`, le canal de ce chat, #1215) ;
+   * l'outil n'envoie qu'un message séparé.
    * `result` : la réponse est le résultat du job, rendu là d'où vient la
    * demande (appelant MCP ou API, web) ; l'outil n'envoie qu'un message séparé
    * au propriétaire. `parent` : un délégué, dont le bloc « Delegated sub-task »
@@ -137,6 +138,8 @@ export interface JobContext {
     sendTool: string;
     renders: readonly string[];
     reply: 'channel' | 'result' | 'parent';
+    /** Le canal du chat où le harnais envoie la réponse, quand `reply` vaut `channel`. */
+    replyChannel?: string;
     target: 'chat' | 'owner';
   };
   /**
@@ -575,12 +578,19 @@ function channelDeliveryLine(
   availableTools: readonly string[],
 ): string | null {
   if (d.reply === 'parent' || !availableTools.includes(d.sendTool)) return null;
-  const path =
+  // #1215 : la réponse d'une demande venue d'un chat y est envoyée par le
+  // harnais, sur tout canal ; l'outil n'envoie qu'un message à part.
+  const destination =
     d.reply === 'channel'
-      ? `\`${d.sendTool}\` reaches the user on ${d.channel}, the only way your replies reach them.`
-      : "your reply is this job's result, returned to where the request came from. " +
-        `\`${d.sendTool}\` sends a separate message to ` +
-        `${d.target === 'chat' ? 'the chat named for this job,' : 'your owner'} on ${d.channel}.`;
+      ? `your reply is sent to the user on ${d.replyChannel ?? d.channel}. `
+      : "your reply is this job's result, returned to where the request came from. ";
+  const recipient =
+    d.target === 'owner'
+      ? 'your owner'
+      : d.reply === 'channel'
+        ? 'them'
+        : 'the chat named for this job,';
+  const path = `${destination}\`${d.sendTool}\` sends a separate message to ${recipient} on ${d.channel}.`;
   // Les marques que le canal rend, telles qu'il les attend : Slack et
   // WhatsApp rendent `*gras*`, pas `**gras**` (revue de #615).
   const arrives =
@@ -591,8 +601,7 @@ function channelDeliveryLine(
         'Any other markup shows literally.';
   return (
     `- delivery: ${path} ${arrives} ` +
-    'A long text is split into several messages automatically, so send each ' +
-    `${d.reply === 'channel' ? 'reply' : 'message'} once, whole.`
+    'A long text is split into several messages automatically, so send each message once, whole.'
   );
 }
 
@@ -732,9 +741,8 @@ function buildJobContextBlock(ctx: JobContext, availableTools: readonly string[]
   }
   if (ctx.notifyOnSuccess) {
     lines.push(
-      '- notify_on_success: true — when this job finishes, send the user a short ' +
-        'confirmation (what you did + the outcome) via your delivery tool before ' +
-        'calling return_result.',
+      '- notify_on_success: true — when this job finishes, your reply is sent to the user as ' +
+        'their confirmation: make it short (what you did + the outcome).',
     );
   }
   return `\n\n## Job context\n${lines.join('\n')}`;

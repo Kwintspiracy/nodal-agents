@@ -15,6 +15,7 @@
 // FIGÉS une fois fusionnés. Changer une demande ou un juge = monter `version`.
 
 import { existsSync, statSync } from 'node:fs';
+import { readCallOutcome } from '@nodal-agents/shared';
 import { extname } from 'node:path';
 import { readTrialRecords, type PrintedRequest, type TrialRecords } from '../printer/trial-records';
 import type { TreeFacts } from './facts';
@@ -491,7 +492,9 @@ const comfyTelegram = defineScenario<ImageObservation>({
     const fresh = o.images.filter((i) => i.exists && i.fresh);
     if (fresh.length === 0) r.push('no image file was written during the run');
     const sends = [...callsOf(facts, 'send_image'), ...callsOf(facts, 'send_file')];
-    const ok = sends.filter((c) => (parseJson(c.output) as { ok?: unknown } | null)?.ok === true);
+    // A send is confirmed by its OUTCOME (#1184), the same reading as the
+    // runner's and the web's, never by a field of its output.
+    const ok = sends.filter((c) => readCallOutcome(c.outcome ?? null) === 'done');
     if (ok.length === 0) {
       r.push(
         sends.length === 0

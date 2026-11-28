@@ -52,6 +52,7 @@ beforeEach(async () => {
       toolName: 'generate_speech',
       toolInput: { text: 'x', path: wav },
       toolOutput: '{"ok":true}',
+      outcome: 'done',
       presented: {
         card: 'files',
         total: 1,

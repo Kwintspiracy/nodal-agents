@@ -88,6 +88,7 @@ async function setVerdict(verdict: 'approve' | 'request_changes'): Promise<void>
     toolName: 'review_verdict',
     toolInput: {},
     toolOutput: verdictOutput(verdict),
+    outcome: 'done',
     turn: 1,
   });
 }
@@ -163,6 +164,7 @@ beforeAll(async () => {
     toolCallId: 'call-build',
     toolInput: { command: 'node --check app.js' },
     toolOutput: JSON.stringify({ exitCode: 0, stdout: '', stderr: '', timedOut: false }),
+    outcome: 'done',
     card: 'terminal',
     presented: { card: 'terminal', command: 'node --check app.js', exitCode: 0 },
     riskLevel: 'destructive',

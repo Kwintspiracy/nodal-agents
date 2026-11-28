@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { eq, and, agentMcpServers } from '@nodal-agents/db';
 import type { ToolDefinition } from '../../types';
 import { resolveAgentId, resolveMcpServerId } from './link-helpers';
+import { outcomeOfOkFlag } from '../../outcome';
 
 const DetachMcpInput = z.object({
   mcpSlug: z.string().min(1).describe('Slug or name of the MCP server to remove from the agent.'),
@@ -26,6 +27,7 @@ export const detachMcpTool: ToolDefinition<typeof DetachMcpInput, DetachMcpOutpu
   egress: 'none',
   card: 'text',
   defaultApproval: 'require_approval',
+  outcomeOf: outcomeOfOkFlag,
   execute: async (input, ctx) => {
     const resolved = await resolveMcpServerId(ctx.db, ctx.entityId, input.mcpSlug);
     if (!resolved.ok) {

@@ -95,12 +95,14 @@ const ecriture = (path: string, content: string): ThreadAuditRow => ({
   toolName: 'file_write',
   toolInput: { path, content },
   toolOutput: '{"ok":true}',
+  outcome: 'done',
   presented: { card: 'files', total: 1, truncated: false, files: [{ path, action: 'created' }] },
 });
 const edition = (path: string, oldText: string, newText: string): ThreadAuditRow => ({
   toolName: 'file_edit',
   toolInput: { path, old_string: oldText, new_string: newText },
   toolOutput: '{"ok":true}',
+  outcome: 'done',
   presented: { card: 'files', total: 1, truncated: false, files: [{ path, action: 'modified' }] },
 });
 /** Une lecture : le fichier est `listed`, il ne compte pas. */
@@ -108,6 +110,7 @@ const lecture = (path: string): ThreadAuditRow => ({
   toolName: 'file_read',
   toolInput: { path },
   toolOutput: '{"ok":true}',
+  outcome: 'done',
   presented: { card: 'files', total: 1, truncated: false, files: [{ path, action: 'listed' }] },
 });
 
@@ -252,7 +255,11 @@ describe('deliverySummary — ce que le modèle compte', () => {
         // Un petit-enfant : son fil n'est jamais assemblé, sa ligne compte.
         ecriture('src/c.ts', 'x\ny\nz'),
         // En attente d'approbation : rien n'a été écrit.
-        { ...ecriture('src/d.ts', 'jamais'), toolOutput: '{"outcome":"awaiting_approval"}' },
+        {
+          ...ecriture('src/d.ts', 'jamais'),
+          toolOutput: '{"outcome":"awaiting_approval"}',
+          outcome: 'awaiting_approval',
+        },
       ],
       feed: { items: [], totals: totals() },
     });

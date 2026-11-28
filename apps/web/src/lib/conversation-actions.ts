@@ -1716,6 +1716,7 @@ export async function getConversationThreadAction(
               // L'ISSUE de l'appel : sans elle, un refus d'approbation passait
               // pour une production (revue Codex, passe 29).
               toolOutput: toolCalls.toolOutput,
+              outcome: toolCalls.outcome,
             })
             .from(toolCalls)
             .where(
@@ -2019,6 +2020,7 @@ export async function getConversationThreadAction(
         toolName: row.toolName,
         toolInput: row.toolInput,
         toolOutput: row.toolOutput,
+        outcome: row.outcome,
         presented: row.presented,
         rawFilePaths: row.rawFilePaths,
       })),

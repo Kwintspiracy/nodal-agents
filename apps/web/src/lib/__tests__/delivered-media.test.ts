@@ -34,6 +34,7 @@ const ecrit = (path: string, action: 'written' | 'created' = 'written'): AuditRo
   toolName: 'generate_speech',
   toolInput: { text: 'x', path },
   toolOutput: '{"ok":true}',
+  outcome: 'done',
   presented: { card: 'files', total: 1, truncated: false, files: [{ path, action }] },
 });
 
@@ -41,6 +42,7 @@ const lu = (path: string): AuditRowForChanges => ({
   toolName: 'file_read',
   toolInput: { path },
   toolOutput: '{"ok":true}',
+  outcome: 'done',
   presented: { card: 'files', total: 1, truncated: false, files: [{ path, action: 'listed' }] },
 });
 

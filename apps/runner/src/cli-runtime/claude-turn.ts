@@ -47,6 +47,11 @@ export interface ClaudeTurnEvent {
   input?: unknown;
   /** tool_result content, stringified and capped. */
   output?: string;
+  /**
+   * The stream's own flag on a tool_result (`is_error`, Codex's `status:
+   * "failed"`): what the session says of its call, kept for its row (#1184).
+   */
+  isError?: boolean;
   text?: string;
 }
 
@@ -265,6 +270,7 @@ export function handleStreamLine(
           kind: 'tool_result',
           toolUseId: typeof block['tool_use_id'] === 'string' ? block['tool_use_id'] : undefined,
           output: stringifyCapped(block['content']),
+          isError: block['is_error'] === true,
         });
       } else if (block['type'] === 'text' && typeof block['text'] === 'string') {
         onEvent?.({ kind: 'assistant_text', text: block['text'] });

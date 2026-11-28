@@ -294,6 +294,7 @@ export async function assembleJobFeeds(
         turn: toolCalls.turn,
         toolInput: toolCalls.toolInput,
         toolOutput: toolCalls.toolOutput,
+        outcome: toolCalls.outcome,
         createdAt: toolCalls.createdAt,
       })
       .from(toolCalls)

@@ -68,6 +68,7 @@ import {
   openingMessages,
   personAnswersOfCalls,
   recordedPersonAnswers,
+  type ToolCallOutcome,
 } from '@nodal-agents/shared';
 import { ADAPTER_REGISTRY } from '@nodal-agents/runner-adapters';
 import {
@@ -128,6 +129,7 @@ import {
   withToolLoader,
   toolOutputForModel,
   shellChecklistDeclined,
+  outcomeUnknownInstruction,
 } from '@nodal-agents/tools';
 import type {
   ToolDefinition,
@@ -155,17 +157,10 @@ import {
   ToolCallLimitExceededError,
   DelegationDepthExceededError,
   DelegationPendingError,
-  NON_PROGRESS_SAME_TOOL_NUDGE_AT,
-  NON_PROGRESS_SAME_TOOL_FAIL_AT,
   NON_PROGRESS_ERROR_STREAK_NUDGE_AT,
   NON_PROGRESS_ERROR_STREAK_FAIL_AT,
-  recordSameToolCall,
   recordToolOutcome,
-  INITIAL_SAME_TOOL_STREAK_STATE,
   INITIAL_ERROR_STREAK_STATE,
-  CANCEL_UNDO_INTENT_RE,
-  CANCEL_UNDO_INTENT_SCAN_CHARS,
-  VERIFY_BEFORE_ASSERT_NUDGE,
   readFinalReviewVerdict,
   readChildDeliverables,
   deliveredSomething,
@@ -173,6 +168,8 @@ import {
   retryBlockedMessage,
   remainingDelegationHops,
   delegationDepthExceededMessage,
+  remainingDelegationResumes,
+  delegationResumeLimitMessage,
   resolveAgentToolNames,
   writeMissingAutonomyRows,
 } from '@nodal-agents/orchestration';
@@ -183,7 +180,6 @@ import type {
   EntityId,
   Agent,
   JobContext,
-  SameToolStreakState,
   ErrorStreakState,
   DelegationOutcomeRecord,
   SubDelegationOutcome,
@@ -205,7 +201,9 @@ import {
   findTaskBoundary,
 } from './state.ts';
 import { holdJobHeartbeat } from './heartbeat.ts';
-import { answerOfRun } from './final-answer.ts';
+import { NO_CHAT_SENDS, answerOfRun, readRunAnswer } from './final-answer.ts';
+import { lastSuccessfulSendTool, sendsToChat } from './chat-sends.ts';
+import { answerReader } from './answer-delivery.ts';
 import {
   AWAITING_APPROVAL_MARK,
   DEFERRED_MARK,
@@ -213,7 +211,6 @@ import {
   EVICTED_TOOL_RESULT_MARKER,
   EXPIRED_MARK,
   REJECTED_MARK,
-  toolResultShape,
   toolResultOutputText,
 } from './tool-result-shape.ts';
 import { hydrateForLlm, saveToolAttachments, toolImagesDir } from './model-images.ts';
@@ -235,14 +232,15 @@ import type { JobAuthority } from './state.ts';
 import {
   DELIVERABLE_NOT_VERIFIED,
   deliverableNotVerifiedLine,
+  CALLS_NOT_DONE,
   finalizeJobFailure,
   finalizeJobSuccess,
 } from './finalize.ts';
 import type { DeclaredDeliverableFailure } from './finalize.ts';
 import { releaseJobProcessesIfEnded } from './process-scopes.ts';
+import { jobUnresolvedCalls } from './call-outcomes.ts';
 import { jobProcessScope } from '@nodal-agents/sandbox';
-import { runnerNotesValue } from './transcript-text.ts';
-import { drainDeliveries, prepareDelivery } from '../delivery/outbox.ts';
+import { drainDeliveries } from '../delivery/outbox.ts';
 import { publishJobClaimed } from '../events/publish.ts';
 import { loadThreadHistory } from './thread-history.ts';
 import {
@@ -488,8 +486,6 @@ const DELIVERY_OR_TERMINAL_TOOL_NAMES: ReadonlySet<string> = new Set([
   'dashboard_publish',
   ...DELIVERY_TOOL_NAME_LIST,
 ]);
-
-// TOOL_ONLY_DELIVERY_CHANNELS and the rule that reads it live in channel-delivery.ts.
 
 /**
  * Was the stored prompt written for this exact tool list? Both sides sorted;
@@ -1974,6 +1970,27 @@ async function runJobTracked(
     return lacherLeJob(perte, `write_refused:${moment}`);
   };
 
+  /**
+   * La porte terminale a laissé le job à son tableau de tâches
+   * (`finalizeJobSuccess` → `awaiting_tasks`, finalize.ts) : il a lancé des
+   * tâches, et c'est le tableau qui le finira avec ce qu'elles rendent. Rien
+   * de terminal n'est écrit ; la transcription est sauvée telle quelle, le job
+   * reste `processing` et le run rend la main — quelle que soit la façon dont
+   * son tour a fini.
+   */
+  const laisserAuTableau = async (): Promise<ExecuteJobResult> => {
+    trace('handed_to_task_board', { turn });
+    const confie = await saveCheckpoint(db, jobId as string, {
+      messages,
+      chainCount: job.chainCount ?? 0,
+      toolsUsed,
+      // Les totaux lus comme la ligne du job les porte : null quand inconnus.
+      ...runStats(),
+    });
+    if (!confie) return await ecritureRefusee('awaiting_tasks_checkpoint');
+    return { status: 'awaiting_tasks' };
+  };
+
   // ── 3. Load agent ─────────────────────────────────────────────────────────────
   // (Leg 1: status was atomically set to 'processing' by claimJob above.)
   if (!job.agentId) {
@@ -2226,8 +2243,8 @@ async function runJobTracked(
   // A cron or webhook job that carries a chatId opted into a success
   // confirmation (the cron tick / webhook route — routes/webhook.ts — only set
   // chat_id when the trigger's notify_on_success is on). Surface that intent to
-  // the agent so it ends with a confirmation, and engage the delivery guard
-  // below so the send is actually enforced.
+  // the agent so it ends with a confirmation: its reply is that confirmation,
+  // sent to the chat by the gate that writes `completed` (#1215).
   const triggerWantsConfirmation = triggerWantsConfirmationOf(job);
   // The job's chat travels with the channel it was recorded on (#649, review
   // of #657 pass 4): every send tool reads `jobChatId` ON `jobChatChannel`
@@ -2386,9 +2403,10 @@ async function runJobTracked(
   // ToolContext below so resolveTransportChannel (delivery-guard.ts) can
   // default a non-transport job origin (cron, webhook, dashboard, api, …) to
   // THIS agent's own channel instead of unconditionally 'telegram'. whatsapp
-  // is intentionally excluded: no outbound send tool is registered for it yet
-  // (see TOOL_ONLY_DELIVERY_CHANNELS, channel-delivery.ts), so it isn't a real send-tool
-  // target for this ToolContext even when a whatsapp binding exists.
+  // is intentionally excluded: no send tool is registered for it, so it isn't a
+  // send-tool target for this ToolContext even when a whatsapp binding exists.
+  // A WhatsApp chat is answered all the same: the gate that writes `completed`
+  // sends the answer through the outbox (#1215, job/answer-delivery.ts).
   const activeChannels: ChannelKind[] = [
     ...(deliveryBotToken ? (['telegram'] as const) : []),
     ...(hasDiscordBinding ? (['discord'] as const) : []),
@@ -2890,7 +2908,6 @@ async function runJobTracked(
       parentJobId: job.parentJobId,
     },
     activeChannels,
-    heldTools: new Set(promptTools),
   };
   const replyTo = replyDestination(replyInputs);
   const promptVersion = deployment.version;
@@ -3152,9 +3169,10 @@ async function runJobTracked(
   //   - a success: what the tool says the model reads (`toModelOutput`),
   //     framed when the tool is a third party's (INJECT-001);
   //   - a failure: framed only when the TOOL raised it (`raisedByTool`), with
-  //     `mayHaveDelivered` kept in the block — the sibling-error guard reads
-  //     it to let a same-turn return_result through instead of deferring it
-  //     (deferral invites the duplicate re-send that flag exists to prevent).
+  //     `mayHaveDelivered` kept in the block when its outcome is unknown, for
+  //     the model: it may have arrived, and is not to be sent again;
+  //   - a result whose outcome the tool declared unknown (#1206): the result,
+  //     with the seam's one text saying so, on its target.
   const executedCallOutput = async (
     tool: ToolDefinition<z.ZodTypeAny, unknown>,
     toolName: string,
@@ -3164,10 +3182,19 @@ async function runJobTracked(
     if (result.outcome !== 'success') {
       return toErrorOutput(result.error, {
         raisedBy: result.raisedByTool ? toolName : undefined,
-        mayHaveDelivered: result.mayHaveDelivered === true,
+        mayHaveDelivered: result.callOutcome === 'unknown',
       });
     }
-    const read = toResultOutput(toolOutputForModel(tool, result.output), toolName);
+    // A result the tool declared `unknown` (#1206: submitted, still running,
+    // never confirmed): the model reads it, AND that its effect is unknown on
+    // this target, in the seam's one text. Never told to call again.
+    const forModel = toolOutputForModel(tool, result.output);
+    const read = toResultOutput(
+      result.callOutcome === 'unknown'
+        ? { outcome_unknown: outcomeUnknownInstruction(result.target), result: forModel }
+        : forModel,
+      toolName,
+    );
     // The files the tool attached (`ctx.attachForModel`, admitted against this
     // job's model) follow its text, in the order it attached them: saved
     // beside the channel photos, the result keeping their paths, never their
@@ -3241,15 +3268,21 @@ async function runJobTracked(
     catastrophicRefusalMessage: string | null;
     /** Le droit d'agir perdu avant une exécution (#566) : l'appelant s'arrête. */
     perdu: Extract<JobAuthority, { kind: 'lost' }> | null;
+    /**
+     * Une délégation approuvée, réservée par ce run et pas encore lancée :
+     * l'appelant la lance par `conduireLaDelegation`, comme la boucle.
+     */
+    approvedDelegation: ApprovalRequestRow | null;
   }> => {
     let msgs = msgsIn;
     let catastrophicRefusalMessage: string | null = null;
+    let approvedDelegation: ApprovalRequestRow | null = null;
 
     for (const req of resolvedRows) {
       // Rejouer un outil approuvé est un effet (#566) : la ligne est relue
       // avant chacun, et ce qui reste n'est pas exécuté.
       const perdu = await droitPerdu();
-      if (perdu) return { messages: msgs, catastrophicRefusalMessage, perdu };
+      if (perdu) return { messages: msgs, catastrophicRefusalMessage, perdu, approvedDelegation };
 
       let replacementOutput: ToolResultOutput;
       // La demande est close — son résultat consigné sur SA ligne (#566) —
@@ -3357,7 +3390,17 @@ async function runJobTracked(
                   `approval_reservation_refused: request ${req.id} could not be reserved while this run holds the job`,
                 );
               }
-              return { messages: msgs, catastrophicRefusalMessage, perdu };
+              return { messages: msgs, catastrophicRefusalMessage, perdu, approvedDelegation };
+            }
+            // Une délégation approuvée ne tourne pas ici : elle fait naître un
+            // enfant, et c'est la conduite de délégation, la même que dans la
+            // boucle, qui le fait (11.7, après ce rejeu). Sa réservation reste
+            // tenue par ce run ; la demande est close quand l'enfant existe, et
+            // le résultat de l'enfant prend la place de son marqueur.
+            if (reservation.kind === 'reserved' && req.toolName.startsWith('assign_')) {
+              approvedDelegation = req;
+              trace('resume_approved_delegation', { toolName: req.toolName });
+              continue;
             }
             // Synthesize an explicit auto_approve rule for this tool so that
             // tools with defaultApproval:'require_approval' (e.g. run_command)
@@ -3557,7 +3600,184 @@ async function runJobTracked(
       if (!close) await recordApprovalWithoutEffect(db, req.id, replacementOutput);
     }
 
-    return { messages: msgs, catastrophicRefusalMessage, perdu: null };
+    return { messages: msgs, catastrophicRefusalMessage, perdu: null, approvedDelegation };
+  };
+
+  /**
+   * Starts the child job of a delegation, runs it to its end inside this call
+   * stack, and resumes this job with its record. ONE way for every delegation
+   * that starts: the one the model calls in the loop, and the one a person
+   * approved, replayed when this job resumes (11.7). What the gate answers a
+   * delegation that does not start is handled like any tool result instead.
+   */
+  const conduireLaDelegation = async (d: {
+    readonly callId: string;
+    readonly toolName: string;
+    readonly childSlug: string;
+    readonly input: Record<string, unknown>;
+    /** The other results of the call's turn, re-injected with the child's. */
+    readonly sideResults: Array<{
+      type: 'tool_result';
+      tool_use_id: string;
+      toolName: string;
+      content: string;
+    }>;
+    /** The approval request this delegation waited on, when it waited on one. */
+    readonly approvalRequestId?: string;
+  }): Promise<ExecuteJobResult> => {
+    counters.bumpDelegationDepth();
+
+    // Track the assign_* call in toolsUsed BEFORE persisting — without
+    // this the parent loses its turn-1 tool list across the suspend.
+    toolsUsed = [...new Set([...toolsUsed, d.toolName])];
+
+    // Persist run-state (turn, tokens, toolsUsed) before transitioning
+    // to awaiting_delegation. handleDelegation persists messages +
+    // status atomically; this complements it for observability.
+    const avantDelegation = await saveCheckpoint(db, jobId as string, {
+      messages,
+      chainCount: job.chainCount ?? 0,
+      toolsUsed,
+      // Les totaux lus comme la ligne du job les porte : null quand inconnus.
+      ...runStats(),
+    });
+    if (!avantDelegation) return await ecritureRefusee('delegation_checkpoint');
+
+    const jobShape = {
+      id: jobId,
+      agentId: agent.id,
+      entityId: (job.entityId ?? null) as EntityId | null,
+      status: 'processing',
+      messages,
+      pendingDelegation: null,
+      chainCount: job.chainCount ?? 0,
+      delegationDepth: job.delegationDepth ?? 0,
+      parentJobId: (job.parentJobId ?? null) as JobId | null,
+      task: job.task,
+      channel: job.channel,
+      chatId: job.chatId,
+      // Lot E (conversations) : le child délégué hérite du fil de
+      // conversation du parent — sans ça, la page Jobs rattacherait
+      // le sous-job à aucune conversation.
+      conversationId: job.conversationId ?? null,
+    };
+
+    const delegation = await handleDelegation(
+      jobShape,
+      d.childSlug,
+      d.callId,
+      {
+        task: (d.input['task'] as string) ?? '',
+        data: d.input['data'] as string | undefined,
+      },
+      d.sideResults,
+      db,
+      prise,
+    );
+    // A delegation a person approved: its request is closed now that its
+    // child exists, so a later run of this job never starts it twice.
+    if (
+      d.approvalRequestId !== undefined &&
+      !(await recordApprovedExecution(
+        db,
+        d.approvalRequestId,
+        prise,
+        toResultOutput({ delegated_to: delegation.childJobId }),
+      ))
+    ) {
+      console.warn(
+        `[exec ${jobId}] APPROVED_RESULT_NOT_RECORDED request=${d.approvalRequestId} tool=${d.toolName}`,
+      );
+    }
+
+    // Drive the child synchronously, then resume the parent. In
+    // single-process local mode this is the simplest correct flow:
+    // no queue, no orphaned children, no separate delivery cron.
+    // The recursion is bounded by DelegationDepthExceededError
+    // (max 3) thrown from bumpDelegationDepth above.
+    const childOutcome = await executeJob(delegation.childJobId, deps, runnerEnv, {
+      inlineDelegation: true,
+    });
+
+    if (childOutcome.status === 'failed') {
+      // Prefer the child's user-facing reason (e.g. an agent_blocked
+      // explanation) over the bare error code, so the parent can relay
+      // WHY the child stopped — not just that it did.
+      const childFailure = delegationRecordFromOutcome(childOutcome);
+      // Surface the failure as a tool_result so the parent's LLM can
+      // react (notify the user via telegram_send_message, try another
+      // sub-agent, return_result{status:'blocked'}, etc.) instead of
+      // dying silently. Anti-loop: resumeDelegated bumps chainCount;
+      // a parent that keeps delegating on every failure will hit
+      // chain_limit_exceeded (max 15 chains, invariant #8).
+      //
+      // Live regression — job `56a3a1b5` (2026-05-17): Conciergus
+      // delegated to Summarizus, child failed at turn 5, parent died
+      // immediately with `child_failed:Retry exhausted` and the user
+      // got NOTHING back on Telegram after 8 minutes of work.
+      await resumeDelegated(jobId as JobId, delegation.childJobId, childFailure, db);
+      return runJob(jobId, deps, runnerEnv, opts);
+    }
+
+    if (childOutcome.status === 'cancelled') {
+      // The user cancelled the child mid-flight. Cascade: a parent
+      // whose only outstanding work was the child has nothing left
+      // to do. Flip the parent to cancelled too (the DB row may
+      // still be 'processing' since cancellation was scoped to the
+      // child); orphan-cleanup would catch it eventually but
+      // surfacing it now matches user intent.
+      // Under this run's claim (#566), like every write of the run,
+      // and through the door of job ends (#944): announced to the
+      // stream, once, when it lands.
+      const annule = await cancelJobs(db, {
+        ids: [jobId as string],
+        guard: ownJobRow(jobId as string),
+      });
+      if (annule.length === 0) {
+        return await ecritureRefusee('cascade_cancel');
+      }
+      await cancelJob(db, jobId as string, runStats(), messages);
+      return { status: 'cancelled' };
+    }
+
+    if (childOutcome.status !== 'completed') {
+      // Child SUSPENDED (awaiting approval / its own sub-delegation /
+      // awaiting_tasks). The parent is already persisted in
+      // `awaiting_delegation` (pending_delegation → this child) by
+      // handleDelegation, so leave it suspended and return — do NOT
+      // fail. When the child is later resumed (e.g. the user approves
+      // the gated command) and finishes, the child's executeJob wrapper
+      // calls maybeResumeParent, which resumes THIS parent and
+      // re-triggers it. Nested delegation + approval resume path.
+      return { status: 'awaiting_delegation' };
+    }
+
+    // Inject child's result as tool_result on the parent and flip
+    // status back to 'pending' so we can re-enter executeJob.
+    const childSuccess = delegationRecordFromOutcome(childOutcome);
+    await resumeDelegated(jobId as JobId, delegation.childJobId, childSuccess, db);
+
+    return runJob(jobId, deps, runnerEnv, opts);
+  };
+
+  /**
+   * A delegation the person approved starts the way every delegation starts
+   * (`conduireLaDelegation`): its child runs, and its record takes the place
+   * of the call's approval marker. Called wherever approvals are replayed:
+   * when the job resumes (11.7) and inside the grace window.
+   */
+  const lancerDelegationApprouvee = async (req: ApprovalRequestRow): Promise<ExecuteJobResult> => {
+    if (req.toolCallId === null) {
+      throw new Error(`approved_delegation_without_call: request ${req.id} names no tool call`);
+    }
+    return conduireLaDelegation({
+      callId: req.toolCallId,
+      toolName: req.toolName,
+      childSlug: req.toolName.replace(/^assign_/, '').replace(/_/g, '-'),
+      input: req.toolInput as Record<string, unknown>,
+      sideResults: [],
+      approvalRequestId: req.id,
+    });
   };
 
   // ── 11.7 Execute-on-resume (Bugs B+C fix) ────────────────────────────────────
@@ -3664,6 +3884,10 @@ async function runJobTracked(
       // transcript is already persisted, and the executed_at stamps make the
       // restart idempotent.
       approvalRuleList = await loadApprovalRules(db, job, agentRow);
+
+      if (executed.approvedDelegation) {
+        return await lancerDelegationApprouvee(executed.approvedDelegation);
+      }
     }
 
     // If there are still PENDING (unresolved) requests, re-suspend and wait.
@@ -3688,50 +3912,27 @@ async function runJobTracked(
   // resets it, which is fine. Reset to 0 by any turn that does real work or
   // calls return_result.
   let consecutiveDeliveryOnlyTurns = 0;
-  // Delivery guard (invariant 8, mirror of the anti-spam guard): for a tool-only
-  // delivery channel (telegram), a job must deliver at least once via the delivery
-  // tool before completing — otherwise the reply is a silent black hole. We flip
-  // this true on the first successful telegram_send_message; if a completion path
-  // is reached while still false, we re-prompt the agent (bounded) before letting
-  // it finish. In-memory/intra-run: in the router/delegation case the parent makes
-  // its final send in the same run it finalizes, so the flag is evaluated correctly.
-  // The bar is the reply's destination (#649, `replyTo`): a request that
-  // carries a chat to answer on — it came from one, or its trigger named one
-  // (a routine's confirmation, a webhook, the dashboard's "send via
-  // Telegram") — must be answered there before completing, otherwise the
-  // user never gets the answer they asked for. A request with no chat (MCP,
-  // API, the web) is answered by its result: no send is required.
-  const requiresToolDelivery = replyTo.to === 'channel';
-  // Human-readable capitalization for the nudges below: the channel the reply
-  // goes to. Only used for an in-agent nudge (never user-facing, invariant #2).
-  const CHANNEL_DISPLAY_NAMES: Readonly<Record<string, string>> = {
-    telegram: 'Telegram',
-    discord: 'Discord',
-    slack: 'Slack',
+  // La réponse d'un job venu d'un chat est ENVOYÉE PAR LE HARNAIS (#1215) :
+  // la porte qui pose `completed` la prépare dans l'outbox, sur tout canal
+  // (job/answer-delivery.ts). Plus de garde de livraison ici, plus de rappel au
+  // modèle, plus de drapeau en mémoire : ce qu'un envoi du job a porté au chat
+  // se lit sur les appels rangés (`sendsToChat`), le même après une reprise.
+  //
+  // Les envois de CE job au chat qui a demandé, lus maintenant sur les lignes
+  // `tool_calls` (chat-sends.ts) : un job sans chat n'en a aucun.
+  const envoisAuChat = async () => {
+    const lecteur = await answerReader(db, {
+      parentJobId: job.parentJobId ?? null,
+      chatId: job.chatId ?? null,
+      agentId: job.agentId ?? null,
+      channel: job.channel ?? null,
+      chatChannel: job.chatChannel ?? null,
+      triggerContext: job.triggerContext ?? null,
+    });
+    return lecteur.kind === 'chat'
+      ? sendsToChat(db, jobId as string, lecteur.target)
+      : NO_CHAT_SENDS;
   };
-  const channelDisplayName =
-    CHANNEL_DISPLAY_NAMES[replyTo.to === 'channel' ? replyTo.channel : ''] ?? 'Telegram';
-  const MAX_REDELIVERY_NUDGES = 2;
-  let redeliveryNudges = 0;
-  let toolDelivered = false;
-  // B3bis — which delivery tool actually fired (set alongside toolDelivered
-  // below). Feeds withDeliveryNotice: when THIS job is a delegated worker
-  // (job.parentJobId set) that delivered directly to the user, its parent needs
-  // to know so the orchestrator doesn't re-deliver or treat the task as
-  // undelivered — see withDeliveryNotice below.
-  let deliveredViaToolName: string | null = null;
-  // Internal corrective prompt — never sent to the channel; only steers the LLM
-  // back to delivering via its tool. Not user-facing text (invariant 2 holds).
-  // The tool is still named `telegram_send_message` regardless of channel (it
-  // dispatches through the job's own ChannelAdapter — renamed in phase C), so the
-  // wording below stays accurate on Discord/Slack by naming the channel but keeping
-  // the literal tool name.
-  const deliveryNudge =
-    `[système] Tu es sur ${channelDisplayName}. Tu n'as pas encore livré ta réponse à ` +
-    "l'utilisateur. Appelle `telegram_send_message` (l'outil d'envoi — il livre sur le canal " +
-    'du job) avec ta réponse, PUIS `return_result`. Ne réponds pas en texte simple — sur ' +
-    `${channelDisplayName}, seul un message envoyé via \`telegram_send_message\` est visible ` +
-    "par l'utilisateur.";
 
   // B3bis — append a deterministic, harness-authored delivery notice to the
   // result this job returns, so a PARENT that delegated to it (assign_*, in
@@ -3764,6 +3965,16 @@ async function runJobTracked(
     return noms.length === 0 ? '' : `[delegation stopped: ${noms.join(', ')} — no deliverable]`;
   };
 
+  /**
+   * Les lignes du runner que la fin porte (une délégation arrêtée, #108) :
+   * l'écriture terminale les pose après ses remplissages, les range dans
+   * `runner_notes` (#562) et les livre avec la réponse (#1215).
+   */
+  const lignesDeFin = (): { runnerLines?: readonly string[] } => {
+    const notice = failedDelegationNotice();
+    return notice === '' ? {} : { runnerLines: [notice] };
+  };
+
   const withFailedDelegationNotice = (resultText: string): string => {
     const notice = failedDelegationNotice();
     if (notice === '') return resultText;
@@ -3778,99 +3989,46 @@ async function runJobTracked(
    * vide — elle remplaçait alors le livrable au lieu de s'y ajouter.
    */
   /**
-   * Fait partir un texte du HARNAIS sur un canal où seul un outil atteint
-   * l'utilisateur — l'intention est écrite, `drainDeliveries` l'envoie.
-   *
-   * Deux situations l'appellent, et c'est la même : le job a quelque chose que
-   * l'utilisateur DOIT lire, et rien ne l'a envoyé. Un échec de délégation
-   * qu'un parent n'a pas dit (PR #108), et la raison d'un job qui s'arrête
-   * quand ses rappels de livraison sont épuisés (issue #115). Dans les deux
-   * cas, la base portait le fait et le destinataire n'avait rien reçu.
-   *
-   * Texte de PLATEFORME, marqué comme tel, jamais la voix de l'agent
-   * (invariant #2) — même nature que `[livraison effectuée : …]`. Une panne
-   * ici est DITE et jamais fatale : le job, lui, a fini.
+   * L'ÉCHEC terminal avec l'explication que le harnais en donne : le résultat
+   * que la personne lit, sur la page du job et là où elle a fait sa demande.
+   * C'est `failJob` qui prépare la notice, dans la transaction qui pose
+   * `failed`, pour CHAQUE échec (#1180) : ce chemin ne décide plus si la
+   * personne est prévenue, il dit seulement ce que l'échec explique.
    */
-  /**
-   * Le descripteur de livraison à poser DANS la transaction terminale, ou
-   * `null` quand il n'y a rien à dire ou aucun canal à outil pour le dire.
-   */
-  // Où part une notice du harnais : là où va la réponse (#649), quand c'est un
-  // chat. `null` : la réponse est le résultat du job, ou celui d'un parent.
-  const harnessNoticeTarget = (): { channel: string; chatId: string } | null => {
-    if (replyTo.to !== 'channel' || !job.chatId) return null;
-    return { channel: replyTo.channel, chatId: job.chatId };
-  };
-  const harnessNoticeDelivery = (
-    payload: string,
-  ): { channel: string; chatId: string; payload: string } | null => {
-    const cible = harnessNoticeTarget();
-    if (cible === null || payload.trim() === '') return null;
-    return { ...cible, payload };
-  };
-
-  /**
-   * L'ÉCHEC terminal et ce que le harnais a à en dire, commis ensemble
-   * (issue #116, résidu 3).
-   *
-   * Avant, ces deux gestes étaient séparés : `failJob` écrivait la ligne
-   * terminale, puis la notice se préparait après. Une panne entre les deux
-   * laissait un job fini avec rien à livrer, et rien ne pouvait le rattraper
-   * — le drain ne réclame que des lignes `prepared`, et il n'y en avait pas.
-   * C'est exactement la couture que `finalizeJobSuccess` tient du côté succès
-   * depuis #108 ; elle tient les deux côtés maintenant.
-   *
-   * Le canal est celui où va la réponse (`replyDestination`) : le canal du
-   * job, ou celui sur lequel le chat désigné a été résolu. Rien à
-   * dire, pas de canal à outil, pas de destinataire ⇒ l'échec s'écrit seul.
-   */
-  const failJobWithHarnessNotice = async (
+  const failJobExplained = async (
     errorCode: string,
-    payload: string,
-    suffixeCle: string,
-    userMessage?: string,
+    userMessage: string,
     replaceResult = false,
     /** Les lignes de `userMessage` écrites par le runner (#562). */
     runnerNotes?: readonly string[],
   ): Promise<void> => {
-    const notice = harnessNoticeDelivery(payload);
-    await finalizeJobFailure(
-      db,
-      {
-        jobId: jobId as string,
-        errorCode,
-        stats: runStats(),
-        messages: await transcriptionFermee(messages),
-        ...(userMessage !== undefined ? { userMessage, replaceResult } : {}),
-        ...(runnerNotes ? { runnerNotes } : {}),
-        ...(notice
-          ? { delivery: { ...notice, idempotencyKey: `${jobId}:harness:${suffixeCle}` } }
-          : {}),
-      },
-      {
-        prepareDelivery: async (tx, d) =>
-          void (await prepareDelivery(tx, {
-            ...d,
-            channel: d.channel as Parameters<typeof prepareDelivery>[1]['channel'],
-          })),
-      },
-    );
-    if (!notice) return;
-    await drainDeliveries(db, { jobId: jobId as string }).catch((e: unknown) =>
-      console.error(`[execute] DELIVERY_DRAIN_FAILED job=${jobId}`, e),
-    );
+    await finalizeJobFailure(db, {
+      jobId: jobId as string,
+      errorCode,
+      stats: runStats(),
+      messages: await transcriptionFermee(messages),
+      userMessage,
+      replaceResult,
+      ...(runnerNotes && runnerNotes.length > 0 ? { runnerNotes } : {}),
+    });
   };
 
   /**
-   * La sortie d'un run qu'un livrable DÉCLARÉ non vérifié a fait échouer
-   * (#509). La primitive a déjà écrit `failed`, le résultat et la notice ; il
-   * reste à envoyer la notice et à rendre au parent le MÊME texte que la ligne
-   * en base — c'est lui qui voyage dans le record de délégation.
+   * La sortie d'un run que la porte a fait échouer : un livrable DÉCLARÉ non
+   * vérifié (#509), ou des appels laissés en échec (#1184). La primitive a
+   * déjà écrit `failed`, le résultat et la notice ; il reste à envoyer la
+   * notice et à rendre au parent le MÊME texte que la ligne en base — c'est
+   * lui qui voyage dans le record de délégation.
    */
   const sortieLivrableNonVerifie = async (
     failure: DeclaredDeliverableFailure,
   ): Promise<ExecuteJobResult> => {
-    trace(DELIVERABLE_NOT_VERIFIED, { paths: failure.unverified.map((u) => u.path) });
+    const exitReason =
+      failure.unresolvedCalls.length > 0 ? CALLS_NOT_DONE : DELIVERABLE_NOT_VERIFIED;
+    trace(exitReason, {
+      paths: failure.unverified.map((u) => u.path),
+      calls: failure.unresolvedCalls.map((c) => `${c.toolName}:${c.outcome}`),
+    });
     await drainDeliveries(db, { jobId: jobId as string }).catch((e: unknown) =>
       console.error(`[execute] DELIVERY_DRAIN_FAILED job=${jobId}`, e),
     );
@@ -3879,7 +4037,7 @@ async function runJobTracked(
       error: failure.errorCode,
       result: failure.result,
       toolsUsed,
-      exitReason: DELIVERABLE_NOT_VERIFIED,
+      exitReason,
     };
   };
 
@@ -3903,17 +4061,10 @@ async function runJobTracked(
       .from(agentJobs)
       .where(eq(agentJobs.id, jobId as string))
       .limit(1);
-    const texte = (dejaEcrit?.result ?? '').trim() || reponseDuRun();
+    const texte = (dejaEcrit?.result ?? '').trim() || (await reponseDuRun());
     const livrable = [texte, line].filter((t) => t !== '').join('\n\n');
     trace(DELIVERABLE_NOT_VERIFIED, { paths: items.map((i) => i.path) });
-    await failJobWithHarnessNotice(
-      DELIVERABLE_NOT_VERIFIED,
-      line,
-      DELIVERABLE_NOT_VERIFIED,
-      livrable,
-      true,
-      [line],
-    );
+    await failJobExplained(DELIVERABLE_NOT_VERIFIED, livrable, true, [line]);
     return {
       status: 'failed',
       error: DELIVERABLE_NOT_VERIFIED,
@@ -3923,40 +4074,21 @@ async function runJobTracked(
     };
   };
 
-  const stampFailedDelegations = async (): Promise<void> => {
-    if (failedDelegationNotice() === '') return;
-    const [row] = await db
-      .select({ result: agentJobs.result, runnerNotes: agentJobs.runnerNotes })
-      .from(agentJobs)
-      .where(eq(agentJobs.id, jobId as string))
-      .limit(1);
-    const actuel = row?.result ?? '';
-    const avec = withFailedDelegationNotice(actuel);
-    if (avec === actuel) return;
-    // La ligne est du HARNAIS : elle est dite comme telle, à part du texte de
-    // l'agent (#562). Les écrans la lisent dans `result` (#108) ; la relecture
-    // du fil lit `runner_notes` pour ne pas la mettre dans la bouche de
-    // l'agent au tour suivant.
-    await db
-      .update(agentJobs)
-      .set({
-        result: avec,
-        runnerNotes: runnerNotesValue([...(row?.runnerNotes ?? []), failedDelegationNotice()]),
-      })
-      // Juste après la ligne `completed` que CE run vient de poser (#566).
-      .where(ownJobRow(jobId as string, ['completed']));
-
-    // La LIVRAISON de cette ligne, elle, est posée dans la transaction
-    // terminale (T08, voir `harnessNoticeDelivery`) : ici on ne fait plus que
-    // l'écrire dans le résultat.
-  };
-
   // Le parent LIT cet avis : le chat y est nommé par son handle, jamais par
   // l'identifiant du canal (#824 — un DM WhatsApp s'appelle par un numéro de
   // téléphone). Un chat dont personne ne connaît la plateforme n'a pas
   // d'adresse : l'avis n'en nomme aucune (`jobChatForModel`).
+  // Ce qu'un envoi a fait se lit sur les lignes des appels, jamais sur un
+  // drapeau en mémoire : un délégué repris après une approbation le dit encore
+  // à son parent (B03-05).
   const withDeliveryNotice = async (resultText: string): Promise<string> => {
-    if (!job.parentJobId || !deliveredViaToolName) return resultText;
+    if (!job.parentJobId) return resultText;
+    const deliveredViaToolName = await lastSuccessfulSendTool(
+      db,
+      jobId as string,
+      DELIVERY_TOOL_NAMES,
+    );
+    if (!deliveredViaToolName) return resultText;
     const chat = await jobChatForModel(db, job.entityId ?? null, {
       id: job.chatId ?? null,
       channel: job.chatChannel ?? null,
@@ -3965,24 +4097,13 @@ async function runJobTracked(
     return resultText ? `${resultText}\n\n${notice}` : notice;
   };
 
-  // Approval heads-up (mirror of the delivery guard). A gated tool creates an
-  // approval request and pauses the job WITHOUT executing. On a tool-only
-  // delivery channel (Telegram) that pause is otherwise completely silent — the
-  // user gets no signal that anything awaits their decision (live incident: job
-  // eeb2b587, 2026-05-31). `approvalPending` latches once a gate fires so the
-  // completion paths suspend instead of finalizing; the nudge below steers the
-  // agent to tell the user, in its own voice via its own tool, what it launched
-  // and that it's waiting. The nudge is LLM-channel only (never sent verbatim;
-  // invariant 2 holds).
+  // Une action gatée crée une demande d'approbation et met le job en pause sans
+  // l'exécuter. La personne en est prévenue par la CARTE d'approbation, sur le
+  // canal de la demande (`notifyApprovalCreated`, approvals/notify.ts, sur tout
+  // canal) : plus de tour de modèle pour le lui dire (#1215).
+  // `approvalPending` reste : il empêche une branche de fin de finaliser un
+  // job dont une demande attend.
   let approvalPending = false;
-  const approvalNudge =
-    `[système] Tu es sur ${channelDisplayName} et une de tes actions vient de créer une ` +
-    "demande d'approbation : elle attend la validation de l'utilisateur avant de s'exécuter. " +
-    "Avant que le job se mette en pause, appelle `telegram_send_message` (l'outil d'envoi — il " +
-    "livre sur le canal du job) pour dire à l'utilisateur, avec tes propres mots, quelle action " +
-    'tu as lancée et que tu attends son approbation (il pourra valider directement via les ' +
-    "boutons ✅/❌, ou depuis le dashboard). N'appelle PAS `return_result` — la mise en pause " +
-    'est automatique.';
   // Approval grace window (Lot A1). Read via runnerEnv when available
   // (validated, zod default 120_000); cron paths call executeJob without a
   // runnerEnv, so fall back to raw process.env like the other job-level limits
@@ -4073,6 +4194,10 @@ async function runJobTracked(
             error: 'catastrophic_command_refused',
             result: executed.catastrophicRefusalMessage,
           };
+        }
+
+        if (executed.approvedDelegation) {
+          return await lancerDelegationApprouvee(executed.approvedDelegation);
         }
 
         return 'resumed_inline';
@@ -4267,19 +4392,11 @@ async function runJobTracked(
   let noDeliveryNudgesIssued = etatDuRappel.remindersSent;
   let turnOfLastNudge = etatDuRappel.turnOfLastReminder;
 
-  // Guard 1f — non-progress detector. Tracks two signals over the raw
-  // SEQUENCE OF TOOL CALLS (not turns, unlike 1b/1d above): S1 = same tool
-  // name called N times in a row (any inputs); S2 = N tool calls in a row
-  // erroring. See chain-counters.ts for the incident write-up and the pure
-  // reducers. In-memory/intra-run, same lifetime as the Guard 1d state above.
-  const nonProgressSameToolNudgeAt = (() => {
-    const n = Number(process.env['NON_PROGRESS_SAME_TOOL_NUDGE_AT']);
-    return Number.isFinite(n) && n >= 1 ? Math.floor(n) : NON_PROGRESS_SAME_TOOL_NUDGE_AT;
-  })();
-  const nonProgressSameToolFailAt = (() => {
-    const n = Number(process.env['NON_PROGRESS_SAME_TOOL_FAIL_AT']);
-    return Number.isFinite(n) && n >= 1 ? Math.floor(n) : NON_PROGRESS_SAME_TOOL_FAIL_AT;
-  })();
+  // Guard 1f — non-progress detector: N tool calls in a row erroring, over
+  // the raw SEQUENCE OF TOOL CALLS (not turns, unlike 1b/1d above). See
+  // chain-counters.ts for the incident write-up and the pure reducer. A tool
+  // NAME repeated is not a signal: nothing here counts it. In-memory/intra-run,
+  // same lifetime as the Guard 1d state above.
   const nonProgressErrorStreakNudgeAt = (() => {
     const n = Number(process.env['NON_PROGRESS_ERROR_STREAK_NUDGE_AT']);
     return Number.isFinite(n) && n >= 1 ? Math.floor(n) : NON_PROGRESS_ERROR_STREAK_NUDGE_AT;
@@ -4288,69 +4405,39 @@ async function runJobTracked(
     const n = Number(process.env['NON_PROGRESS_ERROR_STREAK_FAIL_AT']);
     return Number.isFinite(n) && n >= 1 ? Math.floor(n) : NON_PROGRESS_ERROR_STREAK_FAIL_AT;
   })();
-  let sameToolStreakState: SameToolStreakState = INITIAL_SAME_TOOL_STREAK_STATE;
   let errorStreakState: ErrorStreakState = INITIAL_ERROR_STREAK_STATE;
 
-  // Guard 1g — verify-before-assert nudge. See chain-counters.ts for the
-  // incident + detection rationale. Checked ONCE, on this job's first turn
-  // only — `turn` is still `job.turn ?? 0` here (the while loop below does
-  // `turn += 1` as its first statement), so `guard1gTargetTurn` is exactly
-  // the turn number of that first iteration.
-  const cancelIntentDetected = CANCEL_UNDO_INTENT_RE.test(
-    (job.task ?? '').slice(0, CANCEL_UNDO_INTENT_SCAN_CHARS),
-  );
-  const guard1gTargetTurn = turn + 1;
-  let guard1gChecked = false;
-  // Bounded to ONE hold per job (below) — the exact incident shape is turn 1
-  // calling return_result IN THE SAME turn as telegram_send_message, which
-  // would otherwise complete the job before the k-ter nudge (below) is ever
-  // reached. Once held once, every subsequent return_result passes through
-  // unconditionally, whatever it says.
-  let guard1gHeldCompletion = false;
-
-  // Guard 3b — no-false-success. Tool names whose last outcome this run was a
-  // hard error and that were never since re-run successfully. If the agent
-  // signals return_result(status='success') while this set is non-empty, it is
-  // claiming a success that didn't happen (invariant #4) — defer/nudge, then
-  // fail loud. An honest return_result(status='blocked') is always allowed.
-  const unresolvedToolFailures = new Set<string>();
+  // Guard 3b — no-false-success, before the end. A DELIVERY that failed and
+  // that nothing redid on the same target (`tool_calls.outcome` and `target`,
+  // read per target from the job's rows, job/call-outcomes.ts): the agent is
+  // reminded, at most twice, to redo it or to end honestly with
+  // status='blocked'. A delivery whose outcome is UNKNOWN is never pushed to
+  // be redone: it may have arrived, and redoing it duplicates it (#1206).
+  // What is still unresolved when the job ends is the completion gate's to
+  // decide (`finalizeJobSuccess`, #1184), for every tool and every runtime.
   const MAX_UNRESOLVED_FAILURE_NUDGES = 2;
   let unresolvedFailureNudges = 0;
 
   /**
-   * Les livraisons NON PARTIES — et elles seules.
+   * Les livraisons NON PARTIES — et elles seules, lues sur les lignes.
    *
    * CE QUE LE RUNNER NE DÉCIDE PAS, ET POURQUOI. Cette garde a porté un temps
    * les délégations ratées : un parent ne pouvait pas déclarer un succès
    * par-dessus un `assign_*` qui n'avait rien rendu. Pour être juste, il aurait
    * fallu savoir si le travail manquant avait été fait autrement — une question
    * que le runner ne peut pas trancher, parce qu'elle demande de comparer deux
-   * tâches. Quatre approximations ont été essayées et les quatre sont tombées
-   * (revue Codex de la PR #108, passes 1 à 4) :
+   * tâches (revue Codex de la PR #108, passes 1 à 4). Restent les deux faits
+   * que la machine établit vraiment : un job sans livrable échoue (garde 3c),
+   * et l'échec du spécialiste arrive au parent dans son enregistrement typé ET
+   * dans le résultat livré à l'utilisateur (`withFailedDelegationNotice`).
    *
-   * 1. n'effacer jamais → FAUX ROUGE : le parent obéit au rappel et échoue quand
-   *    même ;
-   * 2. effacer dès qu'une autre délégation livre → FAUX VERT : elle pouvait
-   *    porter sur autre chose ;
-   * 3. effacer dès qu'un outil réussit → trois faux verts : une lecture sans
-   *    rapport, l'envoi de la PROMESSE elle-même, et relu dans la transcription
-   *    une erreur sérialisée en `text` — laquelle ne dit même pas l'ordre,
-   *    `resumeDelegated` rangeant le résultat de l'enfant avant des appels
-   *    antérieurs ;
-   * 4. n'accepter qu'une délégation qui livre → un simple REPORT comptait.
-   *
-   * Restent les deux faits que la machine établit vraiment : un job sans
-   * livrable échoue (garde 3c), et l'échec du spécialiste arrive au parent dans
-   * son enregistrement typé ET dans le résultat livré à l'utilisateur
-   * (`withFailedDelegationNotice`). L'honnêteté du parent redevient affaire de
-   * prompt — l'interdiction du message d'attente y est explicite —, adossée à
-   * un fait visible plutôt qu'à un verdict rendu à l'aveugle.
-   *
-   * Une LIVRAISON ratée, elle, reste bloquante : « rien n'est parti » se
-   * vérifie sans rien comprendre à la tâche.
+   * Une LIVRAISON ratée, elle, se vérifie sans rien comprendre à la tâche :
+   * « rien n'est parti » est le fait de sa ligne.
    */
-  const stuckDeliveriesNow = (): string[] =>
-    [...unresolvedToolFailures].filter((t) => DELIVERY_OR_TERMINAL_TOOL_NAMES.has(t));
+  const stuckDeliveriesNow = async (): Promise<string[]> =>
+    (await jobUnresolvedCalls(db, jobId as string))
+      .filter((c) => c.outcome === 'failed' && DELIVERY_OR_TERMINAL_TOOL_NAMES.has(c.toolName))
+      .map((c) => c.toolName);
 
   // `delegationOutcomes` — la carte des délégations de ce run, prise en
   // PARAMÈTRE (voir `runJob` juste au-dessus) : elle sort avec le résultat pour
@@ -4372,14 +4459,12 @@ async function runJobTracked(
         "vérité à l'utilisateur, puis termine honnêtement avec status='blocked'.",
     }) as ModelMessage;
 
-  // Guard 3b, cross-run leg (#107). `unresolvedToolFailures` is in-memory and a
-  // delegation resume re-ENTERS executeJob, so a parent resumed with a FAILED
-  // delegation would start its next run with an empty set and be free to signal
-  // success over a delegation that delivered nothing. Seed the set from the
-  // transcript: for every `assign_*` tool-result already in `messages`, the LAST
-  // occurrence decides — an error-text one leaves the slug unresolved, a later
-  // successful one clears it (so a fallback to another specialist, or a redo
-  // that worked, is not held against the parent).
+  // The delegation record, cross-run leg (#107). A delegation resume
+  // re-ENTERS executeJob: the map of what each specialist delivered is seeded
+  // from the transcript, for every `assign_*` tool-result already in
+  // `messages`, the LAST occurrence deciding — an error-text one leaves the
+  // slug failed, a later successful one clears it (so a fallback to another
+  // specialist, or a redo that worked, is not held against the parent).
   //
   // #116 — la même boucle relit désormais l'issue du SOUS-ARBRE portée par
   // l'enregistrement typé, si bien que l'échec d'un petit-enfant atteint le
@@ -4499,11 +4584,11 @@ async function runJobTracked(
   // transcription du tour courant, donc la même après une reprise. Sans
   // frontière, tout est relu, comme `lastAssistantTextSeen` au-dessus (et
   // c'est tracé là).
-  // « Les réponses de ce job partent par un envoi » se lit dans SA livraison
-  // (#649, `replyTo`), pas dans la présence d'un envoi : un job qui répond par
-  // son résultat peut envoyer une image en passant.
-  const reponseDuRun = (): string =>
-    answerOfRun(currentTurnMessages(messages, job.task), requiresToolDelivery);
+  // Ce qu'un envoi au chat qui a demandé a porté se lit sur les appels rangés
+  // (#1215, `envoisAuChat`), par pas et par destination : un accusé plus tôt,
+  // un envoi à un autre chat, une image en passant ne sont pas la réponse.
+  const reponseDuRun = async (): Promise<string> =>
+    answerOfRun(currentTurnMessages(messages, job.task), await envoisAuChat());
   // ONE nudge, as Hermes does: ask for the deliverable, then fail loud.
   const MAX_EMPTY_DELIVERABLE_NUDGES = 1;
   // Le compteur de rappels vit en mémoire, donc il repart à zéro à chaque
@@ -4539,7 +4624,7 @@ async function runJobTracked(
     return seen;
   })();
   // Internal corrective prompt — LLM channel only, never sent to a user
-  // (invariant #2 holds, same standing as `deliveryNudge` above).
+  // (invariant #2 holds).
   const emptyDeliverableNudge =
     '[système] ' +
     EMPTY_DELIVERABLE_NUDGE_MARK +
@@ -4600,15 +4685,12 @@ async function runJobTracked(
   // nouvelle tête à la transition terminale (déclencheur de la migration
   // 0141) : jamais perdu.
   //
-  // Un message remet la livraison à faire : sur un canal à outil, ce qui vient
-  // d'arriver n'a encore reçu aucune réponse, quoi que le run ait envoyé avant.
-  // Le budget de rappels repart avec lui.
+  // Ce qui vient d'arriver n'a encore reçu aucune réponse : la réponse que le
+  // run donnera en finissant y répond, et la porte la livre (#1215).
   const lireLaFile = async (moment: 'turn_start' | 'before_final_text'): Promise<boolean> => {
     const arrives = await drainJobInbox(db, jobId as string);
     if (arrives.length === 0) return false;
     messages = [...messages, ...(arrives as unknown as ModelMessage[])];
-    toolDelivered = false;
-    redeliveryNudges = 0;
     trace('inbox_drained', { turn, count: arrives.length, at: moment });
     return true;
   };
@@ -4851,8 +4933,8 @@ async function runJobTracked(
             // trajectory in one response (64 to 546 calls, or the output cap),
             // and left an orchestrator unable to answer a direct question.
             // A turn that answers in text is judged after it, by the guards
-            // that already read it (delivery on a tool-only channel, stuck
-            // delegations, declared deliverables, the empty turn).
+            // that already read it (stuck delegations, declared deliverables,
+            // the empty turn); its text is the answer, sent where it was asked.
             toolChoice: 'auto',
           },
           // #440 : le tour est streamé sous deux horloges de silence, jamais
@@ -5428,9 +5510,9 @@ async function runJobTracked(
         trace('no_tool_calls_branch', { turn, hasText: Boolean(texteDuTour) });
         // An approval is pending (a gate fired on a prior turn) and the agent
         // produced no tool call this turn. We must NOT complete or fail — the
-        // request still needs the user's decision. Suspend; the dashboard resume
-        // will continue. (Plain text can't reach a Telegram user anyway, and the
-        // heads-up nudge already had its bounded turns above.)
+        // request still needs the user's decision. Suspend; the resume will
+        // continue. The approval card already told the person, on the channel
+        // of the request (approvals/notify.ts).
         if (approvalPending) {
           const suspended = await suspendForApproval();
           if (suspended === 'resumed_inline') {
@@ -5453,56 +5535,17 @@ async function runJobTracked(
           // MÊME garde que la branche `return_result` (3b) : un texte final est
           // une livraison, et livrer « je te reviens » par-dessus une délégation
           // qui a échoué, c'est promettre ce qui n'existe pas.
-          const stuckHere = stuckDeliveriesNow();
-          if (stuckHere.length > 0) {
-            if (unresolvedFailureNudges < MAX_UNRESOLVED_FAILURE_NUDGES) {
-              unresolvedFailureNudges += 1;
-              trace('unresolved_tool_failure_nudge', {
-                turn,
-                attempt: unresolvedFailureNudges,
-                stuck: stuckHere,
-                via: 'text_branch',
-              });
-              messages = [...messages, unresolvedFailureNudge(stuckHere)];
-              continue;
-            }
-            trace('unresolved_tool_failure', { turn, stuck: stuckHere, via: 'text_branch' });
-            await failJob(db, jobId as string, 'unresolved_tool_failure', runStats(), messages);
-            return { status: 'failed', error: 'unresolved_tool_failure' };
-          }
-          // Delivery guard: on a tool-only channel, a plain-text answer was NOT
-          // delivered to the user (only the tool reaches them). Re-prompt the
-          // agent to resend via its tool instead of silently completing. Live
-          // incident: job 5d84d72e (2026-05-29) completed with the reply only in
-          // agent_jobs.result — the Telegram user saw nothing.
-          if (requiresToolDelivery && !toolDelivered) {
-            if (redeliveryNudges < MAX_REDELIVERY_NUDGES) {
-              redeliveryNudges += 1;
-              trace('telegram_redelivery_nudge', {
-                turn,
-                attempt: redeliveryNudges,
-                via: 'text_branch',
-              });
-              messages = [...messages, { role: 'user', content: deliveryNudge } as ModelMessage];
-              continue;
-            }
-            trace('telegram_not_delivered', { turn, via: 'text_branch' });
-            // Rien n'est parti, le job s'arrête, et le harnais le DIT à
-            // l'utilisateur (issue #115) — avec SES mots et rien d'autre. Le
-            // texte de l'agent ne part PAS sous un habillage de plateforme :
-            // habiller de la prose de modèle en fait de harnais est exactement
-            // ce que l'invariant #2 interdit, et la passe ciblée l'a dit
-            // (constat 6). Ce que le harnais sait ici : ça s'est arrêté, rien
-            // n'a été livré, et quel spécialiste n'a rien rendu. L'intention de
-            // livrer est commise AVEC la ligne terminale (#116, résidu 3).
-            await failJobWithHarnessNotice(
-              'telegram_not_delivered',
-              [`[stopped: nothing was delivered on this channel]`, failedDelegationNotice()]
-                .filter(Boolean)
-                .join('\n\n'),
-              'not-delivered',
-            );
-            return { status: 'failed', error: 'telegram_not_delivered' };
+          const stuckHere = await stuckDeliveriesNow();
+          if (stuckHere.length > 0 && unresolvedFailureNudges < MAX_UNRESOLVED_FAILURE_NUDGES) {
+            unresolvedFailureNudges += 1;
+            trace('unresolved_tool_failure_nudge', {
+              turn,
+              attempt: unresolvedFailureNudges,
+              stuck: stuckHere,
+              via: 'text_branch',
+            });
+            messages = [...messages, unresolvedFailureNudge(stuckHere)];
+            continue;
           }
           // Une déclaration renvoyée et jamais refaite (#509) : répondre en
           // texte n'efface pas des fichiers promis que Nodal n'a pas pu trouver.
@@ -5510,14 +5553,9 @@ async function runJobTracked(
           if (dueTexte !== null && dueTexte.length > 0) {
             return await echouerSurDeclaration(dueTexte);
           }
-          // SANS `delivery` : sur ce chemin le canal a déjà été servi par
-          // l'outil telegram_send_message pendant le run — préparer une
-          // livraison ici DOUBLERAIT le message.
-          // T08 : l'intention de livrer s'écrit DANS la transaction qui pose le
-          // statut terminal. Posée après, une panne entre les deux laissait un
-          // job fini sans ligne d'outbox, donc une notice perdue pour toujours
-          // (passe ciblée sur la livraison, constat 2). Le point d'extension
-          // existait et n'était branché nulle part.
+          // La réponse est préparée par la porte, DANS la transaction qui pose
+          // `completed` (#1215) : sur tout canal, sauf ce qu'un envoi du pas de
+          // réponse a déjà porté au chat.
           // Un message arrivé pendant le dernier appel (#531) : la réponse en
           // texte ne l'a pas lu. Il entre dans la transcription, et le tour
           // suivant y répond — le run ne conclut pas par-dessus.
@@ -5525,40 +5563,25 @@ async function runJobTracked(
           // La finalisation est un effet : elle livre et pose `completed` (#566).
           const perteAvantFin = await droitPerdu();
           if (perteAvantFin) return await lacherLeJob(perteAvantFin, 'finalize');
-          const noticeALivrer = harnessNoticeDelivery(failedDelegationNotice());
-          const cibleNotice = harnessNoticeTarget();
           // La réponse du job (#1083) : ce texte final, précédé, si le job est
           // passé par des tours de réparation, de la réponse donnée avant la
           // preuve et de ce que chaque réparation a dit. Sans réparation, c'est
           // ce texte-là.
-          const reponseTexte = reponseDuRun();
-          const finalized = await finalizeJobSuccess(
-            db,
-            {
-              jobId: jobId as string,
-              result: reponseTexte,
-              // Les MOTS DE L'AGENT : c'est son texte final, sur la branche
-              // texte (#154, #210).
-              resultKind: 'prose',
-              // La boucle de tours SAIT rouvrir ce job : un rouge jamais
-              // réparé rend `repair_due` et rejoue un tour (issue #375).
-              repairTurn: 'supported',
-              toolsUsed,
-              stats: runStats(),
-              messages,
-              ...(noticeALivrer ? { delivery: noticeALivrer } : {}),
-              // Un livrable déclaré non vérifié (#509) : sa ligne part vers le
-              // canal à outil, là où l'agent a pu dire « livré ».
-              ...(cibleNotice ? { noticeTarget: cibleNotice } : {}),
-            },
-            {
-              prepareDelivery: async (tx, d) =>
-                void (await prepareDelivery(tx, {
-                  ...d,
-                  channel: d.channel as Parameters<typeof prepareDelivery>[1]['channel'],
-                })),
-            },
-          );
+          const reponseTexte = await reponseDuRun();
+          const finalized = await finalizeJobSuccess(db, {
+            jobId: jobId as string,
+            result: reponseTexte,
+            // Les MOTS DE L'AGENT : c'est son texte final, sur la branche
+            // texte (#154, #210).
+            resultKind: 'prose',
+            // La boucle de tours SAIT rouvrir ce job : un rouge jamais
+            // réparé rend `repair_due` et rejoue un tour (issue #375).
+            repairTurn: 'supported',
+            toolsUsed,
+            stats: runStats(),
+            messages,
+            ...lignesDeFin(),
+          });
           if (finalized.kind === 'already_terminal') {
             // Course perdue : un autre chemin (reaper, annulation) a fini ce job.
             // Ne PAS prétendre 'completed' — l'ancien code le faisait ici alors
@@ -5566,6 +5589,7 @@ async function runJobTracked(
             trace('terminal_write_lost_race', { turn, writer: 'finalize_text', jobId });
             return { status: 'already_handled' };
           }
+          if (finalized.kind === 'awaiting_tasks') return await laisserAuTableau();
           // UN LIVRABLE PROMIS N'EST PAS LÀ (#509) : la primitive a écrit
           // `failed` — les réparations sont épuisées, il n'y a pas de tour de plus.
           if (finalized.kind === 'failed') {
@@ -5601,7 +5625,6 @@ async function runJobTracked(
           // or delay the job response — gates + throttle live inside the hook.
           // Snapshot carries the FINAL state (in-memory `job` is still
           // pre-completion). Only runs when the primitive won the terminal write.
-          await stampFailedDelegations();
           void maybeRunReflection(
             deps,
             db,
@@ -5728,6 +5751,11 @@ async function runJobTracked(
         toolName: string;
         output: ToolResultOutput;
       }> = [];
+      // What became of each call of THIS turn (#1184), by tool-call id: the
+      // outcome the seam returned with the result, or `failed` for a call the
+      // loop itself did not run (an unavailable tool, a refused delegation).
+      // The same-turn guard below reads it; nothing reads a block's text for it.
+      const turnOutcomes = new Map<string, ToolCallOutcome>();
 
       // A model can emit return_result MORE than once in a turn (minimax does).
       // Only the first (returnResultCall) finalizes the job; the rest are stripped
@@ -5810,7 +5838,7 @@ async function runJobTracked(
       let awaitingApproval = false;
 
       // Guard 1f — non-progress nudges queued while processing this turn's
-      // tool calls (S1/S2 below), flushed into `messages` once at step k so
+      // tool calls (S2 below), flushed into `messages` once at step k so
       // the NEXT LLM call sees them. A 'fail' signal returns immediately from
       // inside the loop instead of queuing — see the hooks below.
       const pendingNonProgressNudges: string[] = [];
@@ -5966,37 +5994,6 @@ async function runJobTracked(
 
         toolsUsed = [...new Set([...toolsUsed, call.name])];
 
-        // Guard 1f (S1) — same-tool streak, across the whole job (any
-        // inputs, any turn). Checked BEFORE the toolDef lookup below so it
-        // also catches a model hammering the same unavailable/hallucinated
-        // tool name. `fail` returns immediately, before this call runs: the
-        // transcript persisted by failJob answers it, and every other call of
-        // the turn, as not executed (#561, `transcriptionFermee`).
-        {
-          const { state, signal } = recordSameToolCall(
-            sameToolStreakState,
-            call.name,
-            nonProgressSameToolNudgeAt,
-            nonProgressSameToolFailAt,
-          );
-          sameToolStreakState = state;
-          if (signal === 'fail') {
-            const errorCode = `non_progress_detected: ${state.streak} consecutive ${call.name} calls without changing approach`;
-            trace('non_progress_same_tool_fail', { turn, tool: call.name, streak: state.streak });
-            await failJob(db, jobId as string, errorCode, runStats(), messages);
-            return { status: 'failed', error: errorCode };
-          }
-          if (signal === 'nudge') {
-            trace('non_progress_same_tool_nudge', { turn, tool: call.name, streak: state.streak });
-            pendingNonProgressNudges.push(
-              `[system] You have called ${call.name} ${state.streak} times in a row. You are ` +
-                'likely stuck. Stop exploring: either finish the task with what you already have, ' +
-                'or clearly report the blocker in your final answer and end with return_result. Do ' +
-                'not keep retrying the same approach.',
-            );
-          }
-        }
-
         const toolDef = toolMap.get(call.name);
         if (!toolDef) {
           // Recoverable (mirrors the deferred-approval pattern above): feed the
@@ -6013,9 +6010,13 @@ async function runJobTracked(
               error: describeUnavailableTool(call.name, [...toolMap.keys()]),
             }),
           });
+          turnOutcomes.set(call.id, 'failed');
           continue;
         }
 
+        // What the gate answered a delegation that did not start (refused, or
+        // held for a person): handled below like the result of any call.
+        let delegationAnswer: Awaited<ReturnType<typeof executeTool>> | undefined;
         if (call.name.startsWith('assign_')) {
           const childSlug = call.name.replace(/^assign_/, '').replace(/_/g, '-');
 
@@ -6036,8 +6037,27 @@ async function runJobTracked(
                 error: delegationDepthExceededMessage(),
               }),
             });
+            turnOutcomes.set(call.id, 'failed');
             // The assign_ calls dropped by the one-per-turn filter get their
             // deferral from `closeTurn` when this turn's tool message is built.
+            continue;
+          }
+
+          // The resume cap of invariant #8, at the call. The parent resumes
+          // once per delegation and is refused at entry once `chain_count`
+          // reaches `maxChains`: a delegation that would bring it there is
+          // refused HERE, before its child runs, instead of failing the parent
+          // after the child has run and been paid for.
+          if (remainingDelegationResumes(job.chainCount ?? 0) === 0) {
+            toolResultBlocks.push({
+              type: 'tool-result',
+              toolCallId: call.id,
+              toolName: call.name,
+              output: toResultOutput({
+                error: delegationResumeLimitMessage(job.chainCount ?? 0),
+              }),
+            });
+            turnOutcomes.set(call.id, 'failed');
             continue;
           }
 
@@ -6065,6 +6085,7 @@ async function runJobTracked(
                   'deferred: this job already delegates via the task board (create_task). Do NOT also assign_ — let the tasks run and compile, or add more parallel work with create_task. Mixing both delegation styles on one job is not allowed.',
               }),
             });
+            turnOutcomes.set(call.id, 'failed');
             // The assign_ calls dropped by the one-per-turn filter get their
             // deferral from `closeTurn` when this turn's tool message is built.
             continue;
@@ -6096,6 +6117,7 @@ async function runJobTracked(
                 toolName: call.name,
                 output: toResultOutput({ error: describeDuplicateReview(duplicate) }),
               });
+              turnOutcomes.set(call.id, 'failed');
               // Les assign_* frères écartés par `filterToolCallsForDelegation`
               // reçoivent leur report de `closeTurn` (#561).
               continue;
@@ -6143,6 +6165,7 @@ async function runJobTracked(
                 }),
               }),
             });
+            turnOutcomes.set(call.id, 'failed');
 
             // The other assign_* calls of this turn, dropped to keep one
             // delegation per turn, get their deferral from `closeTurn` when
@@ -6154,7 +6177,7 @@ async function runJobTracked(
           }
 
           try {
-            await executeTool(
+            delegationAnswer = await executeTool(
               toolDef,
               call.input,
               {
@@ -6194,43 +6217,6 @@ async function runJobTracked(
             );
           } catch (err) {
             if (err instanceof DelegationPendingError) {
-              counters.bumpDelegationDepth();
-
-              // Track the assign_* call in toolsUsed BEFORE persisting — without
-              // this the parent loses its turn-1 tool list across the suspend.
-              toolsUsed = [...new Set([...toolsUsed, call.name])];
-
-              // Persist run-state (turn, tokens, toolsUsed) before transitioning
-              // to awaiting_delegation. handleDelegation persists messages +
-              // status atomically; this complements it for observability.
-              const avantDelegation = await saveCheckpoint(db, jobId as string, {
-                messages,
-                chainCount: job.chainCount ?? 0,
-                toolsUsed,
-                // Les totaux lus comme la ligne du job les porte : null quand inconnus.
-                ...runStats(),
-              });
-              if (!avantDelegation) return await ecritureRefusee('delegation_checkpoint');
-
-              const jobShape = {
-                id: jobId,
-                agentId: agent.id,
-                entityId: (job.entityId ?? null) as EntityId | null,
-                status: 'processing',
-                messages,
-                pendingDelegation: null,
-                chainCount: job.chainCount ?? 0,
-                delegationDepth: job.delegationDepth ?? 0,
-                parentJobId: (job.parentJobId ?? null) as JobId | null,
-                task: job.task,
-                channel: job.channel,
-                chatId: job.chatId,
-                // Lot E (conversations) : le child délégué hérite du fil de
-                // conversation du parent — sans ça, la page Jobs rattacherait
-                // le sous-job à aucune conversation.
-                conversationId: job.conversationId ?? null,
-              };
-
               // Every other tool_use of this turn travels with the delegation
               // as a side result, re-injected next to the child's result on
               // resume: the calls that ran before the assign (e.g. save_memory),
@@ -6250,100 +6236,30 @@ async function runJobTracked(
                 content: toolResultOutputText(b.output),
               }));
 
-              const delegation = await handleDelegation(
-                jobShape,
+              return await conduireLaDelegation({
+                callId: call.id,
+                toolName: call.name,
                 childSlug,
-                call.id,
-                {
-                  task: (call.input['task'] as string) ?? '',
-                  data: call.input['data'] as string | undefined,
-                },
-                preAssignSideResults,
-                db,
-                prise,
-              );
-
-              // Drive the child synchronously, then resume the parent. In
-              // single-process local mode this is the simplest correct flow:
-              // no queue, no orphaned children, no separate delivery cron.
-              // The recursion is bounded by DelegationDepthExceededError
-              // (max 3) thrown from bumpDelegationDepth above.
-              const childOutcome = await executeJob(delegation.childJobId, deps, runnerEnv, {
-                inlineDelegation: true,
+                input: call.input,
+                sideResults: preAssignSideResults,
               });
-
-              if (childOutcome.status === 'failed') {
-                // Prefer the child's user-facing reason (e.g. an agent_blocked
-                // explanation) over the bare error code, so the parent can relay
-                // WHY the child stopped — not just that it did.
-                const childFailure = delegationRecordFromOutcome(childOutcome);
-                // Surface the failure as a tool_result so the parent's LLM can
-                // react (notify the user via telegram_send_message, try another
-                // sub-agent, return_result{status:'blocked'}, etc.) instead of
-                // dying silently. Anti-loop: resumeDelegated bumps chainCount;
-                // a parent that keeps delegating on every failure will hit
-                // chain_limit_exceeded (max 15 chains, invariant #8).
-                //
-                // Live regression — job `56a3a1b5` (2026-05-17): Conciergus
-                // delegated to Summarizus, child failed at turn 5, parent died
-                // immediately with `child_failed:Retry exhausted` and the user
-                // got NOTHING back on Telegram after 8 minutes of work.
-                await resumeDelegated(jobId as JobId, delegation.childJobId, childFailure, db);
-                return runJob(jobId, deps, runnerEnv, opts);
-              }
-
-              if (childOutcome.status === 'cancelled') {
-                // The user cancelled the child mid-flight. Cascade: a parent
-                // whose only outstanding work was the child has nothing left
-                // to do. Flip the parent to cancelled too (the DB row may
-                // still be 'processing' since cancellation was scoped to the
-                // child); orphan-cleanup would catch it eventually but
-                // surfacing it now matches user intent.
-                // Under this run's claim (#566), like every write of the run,
-                // and through the door of job ends (#944): announced to the
-                // stream, once, when it lands.
-                const annule = await cancelJobs(db, {
-                  ids: [jobId as string],
-                  guard: ownJobRow(jobId as string),
-                });
-                if (annule.length === 0) {
-                  return await ecritureRefusee('cascade_cancel');
-                }
-                await cancelJob(db, jobId as string, runStats(), messages);
-                return { status: 'cancelled' };
-              }
-
-              if (childOutcome.status !== 'completed') {
-                // Child SUSPENDED (awaiting approval / its own sub-delegation /
-                // awaiting_tasks). The parent is already persisted in
-                // `awaiting_delegation` (pending_delegation → this child) by
-                // handleDelegation, so leave it suspended and return — do NOT
-                // fail. When the child is later resumed (e.g. the user approves
-                // the gated command) and finishes, the child's executeJob wrapper
-                // calls maybeResumeParent, which resumes THIS parent and
-                // re-triggers it. Nested delegation + approval resume path.
-                return { status: 'awaiting_delegation' };
-              }
-
-              // Inject child's result as tool_result on the parent and flip
-              // status back to 'pending' so we can re-enter executeJob.
-              const childSuccess = delegationRecordFromOutcome(childOutcome);
-              await resumeDelegated(jobId as JobId, delegation.childJobId, childSuccess, db);
-
-              return runJob(jobId, deps, runnerEnv, opts);
             }
             throw err;
           }
-
-          continue;
+          // `executeTool` RETURNED: the gate answered before the delegation
+          // started (a Block rule, an invalid brief, a missing stated purpose,
+          // an identical call already refused, or an Ask rule holding it for a
+          // person). Falls through to the handling every call's result gets.
         }
 
-        // Non-delegation tool
+        // Every call that did not start a delegation.
         // Reuse the result if this read was already run in the parallel pre-pass;
         // otherwise execute now (writes, single-tool turns, mixed turns).
         let toolResult: Awaited<ReturnType<typeof executeTool>>;
         const preResult = preExecuted.get(call.id);
-        if (preResult) {
+        if (delegationAnswer) {
+          toolResult = delegationAnswer;
+        } else if (preResult) {
           toolResult = preResult;
         } else {
           // A slow tool (image gen, MCP call, external API) — and a chain of
@@ -6357,6 +6273,7 @@ async function runJobTracked(
           );
         }
 
+        turnOutcomes.set(call.id, toolResult.callOutcome);
         if (toolResult.outcome === 'awaiting_approval') {
           const awaitingMarker = `${AWAITING_APPROVAL_MARK} tool_call_id=${call.id}`;
           toolResultBlocks.push({
@@ -6373,37 +6290,14 @@ async function runJobTracked(
           continue;
         }
 
-        // Delivery guard: record a successful user-facing delivery so the
-        // completion paths know the user actually received something. A send
-        // timeout flagged mayHaveDelivered counts too: the message probably
-        // reached the user, and treating it as undelivered would make the
-        // guard nudge a re-send — the exact duplication this flag prevents.
-        if (
-          DELIVERY_TOOL_NAMES.has(call.name) &&
-          (toolResult.outcome === 'success' ||
-            (toolResult.outcome === 'error' && toolResult.mayHaveDelivered === true))
-        ) {
-          toolDelivered = true;
-          deliveredViaToolName = call.name;
-        }
-
-        // Guard 3b — track unresolved hard tool failures across turns. A success
-        // clears any prior failure of the same tool (the agent retried and it
-        // worked); a fresh error marks it unresolved. (awaiting_approval was
-        // handled above with `continue`, so outcome here is success|error.)
-        // A mayHaveDelivered send timeout is NOT an unresolved failure: the
-        // false-success guard below would otherwise demand "réessaie la
-        // livraison jusqu'à réussite" — a forced re-send of a message that
-        // probably already arrived.
-        if (toolResult.outcome === 'success') {
-          unresolvedToolFailures.delete(call.name);
-          // Une délégation qui livre efface ce qu'on avait à dire d'elle — et
-          // le FAIT qu'elle ait livré reste dans la carte, parce qu'il voyage
-          // jusqu'au parent et y efface le même échec propagé (#116).
-          if (call.name.startsWith('assign_')) delegationOutcomes.set(call.name, 'delivered');
-        } else if (!(toolResult.outcome === 'error' && toolResult.mayHaveDelivered === true)) {
-          unresolvedToolFailures.add(call.name);
-          if (call.name.startsWith('assign_')) delegationOutcomes.set(call.name, 'failed');
+        // What became of a call is on its row (`tool_calls.outcome`, #1184),
+        // read per target by the gate and by Guard 3b: no memory of failures
+        // by tool name is kept here. A delegation's own record (#116) still
+        // follows what the seam said of the call.
+        if (call.name.startsWith('assign_')) {
+          if (toolResult.callOutcome === 'done') delegationOutcomes.set(call.name, 'delivered');
+          else if (toolResult.callOutcome !== 'unknown')
+            delegationOutcomes.set(call.name, 'failed');
         }
 
         // Punch list V1.1 — transition du pipeline code notifiée au canal
@@ -6413,10 +6307,12 @@ async function runJobTracked(
         if (call.name === 'code_task') {
           void notifyCodeTransition(db, jobId as string, {
             kind: 'code_task_done',
-            success: toolResult.outcome === 'success',
+            // What the tool declared of its run (#1184, FV1-03): a run that
+            // ended in error is `failed`, never a finished task.
+            success: toolResult.callOutcome === 'done',
             agentName: agent.name,
           });
-        } else if (call.name === 'review_verdict' && toolResult.outcome === 'success') {
+        } else if (call.name === 'review_verdict' && toolResult.callOutcome === 'done') {
           const verdictInput = call.input as { verdict?: unknown };
           void notifyCodeTransition(db, jobId as string, {
             kind: 'review_verdict',
@@ -6465,7 +6361,7 @@ async function runJobTracked(
         {
           const { state, signal } = recordToolOutcome(
             errorStreakState,
-            toolResult.outcome === 'error',
+            toolResult.callOutcome !== 'done',
             nonProgressErrorStreakNudgeAt,
             nonProgressErrorStreakFailAt,
           );
@@ -6509,15 +6405,14 @@ async function runJobTracked(
       // j. Suspension states — approval gate.
       //
       // A gated tool created an approval request and did NOT execute. `awaitingApproval`
-      // is per-turn; `approvalPending` latches across turns so the heads-up turn
-      // (below) cannot slip through to a completion path. Before going silent on
-      // a tool-only channel (Telegram), we give the agent up to MAX bounded turns
-      // to tell the user — in its own voice, via its own delivery tool — what it
-      // launched and that it's waiting for approval. Once delivered (or budget
-      // spent, or not a tool-only channel) we suspend; the user resolves the
-      // request from the dashboard, which resumes the job (section 11.7 executes
-      // the approved tool). Live incident: job eeb2b587 (2026-05-31) suspended on
-      // a gated `attach_skill` with zero Telegram signal to the user.
+      // is per-turn; `approvalPending` latches across turns so no completion
+      // path can finalize while a request waits. We suspend; the user resolves
+      // the request (from the approval card, or the dashboard), which resumes
+      // the job (section 11.7 executes the approved tool). Live incident: job
+      // eeb2b587 (2026-05-31) suspended on a gated `attach_skill` with zero
+      // Telegram signal to the user: the approval card, sent by the gate on the
+      // channel of the request, is that signal (approvals/notify.ts). The extra
+      // model turn that asked the agent to say it too is gone (#1215).
       if (awaitingApproval) {
         approvalPending = true;
       }
@@ -6532,12 +6427,6 @@ async function runJobTracked(
             ...turnMessages('an action of this turn is awaiting user approval'),
           ];
         }
-        if (requiresToolDelivery && !toolDelivered && redeliveryNudges < MAX_REDELIVERY_NUDGES) {
-          redeliveryNudges += 1;
-          trace('telegram_approval_nudge', { turn, attempt: redeliveryNudges });
-          messages = [...messages, { role: 'user', content: approvalNudge } as ModelMessage];
-          continue;
-        }
         const suspended = await suspendForApproval();
         if (suspended === 'resumed_inline') {
           // Every open request resolved within the grace window (Lot A1) —
@@ -6550,79 +6439,26 @@ async function runJobTracked(
         return suspended;
       }
 
-      // j-1g. Guard 1g HOLD — the exact 2026-07-11 incident shape: turn 1
-      // answers a cancel/undo request by calling return_result IN THE SAME
-      // turn as (only) delivery tools, or with no other tool call at all. The
-      // k-ter nudge (below) never gets a chance to be seen if the job
-      // completes here — the incident job's turn 1 was literally
-      // [telegram_send_message, return_result] and it went straight to
-      // 'completed'. Intercept: do NOT let return_result finalize this once —
-      // synthesize a "deferred" tool-result (same shape as j-pré below),
-      // inject the verify-before-assert nudge, and loop once more. Bounded to
-      // ONE interception per job via `guard1gHeldCompletion`: the very next
-      // return_result — whatever turn, whatever it says — passes through
-      // unconditionally, so this can never itself become a stall.
-      if (
-        returnResultCall &&
-        !guard1gHeldCompletion &&
-        turn === guard1gTargetTurn &&
-        cancelIntentDetected
-      ) {
-        const siblingToolNames = toolResultBlocks.map((b) => b.toolName);
-        const noVerification = siblingToolNames.every(
-          (n) => n === 'return_result' || DELIVERY_TOOL_NAMES.has(n),
-        );
-        if (noVerification) {
-          guard1gHeldCompletion = true;
-          guard1gChecked = true;
-          trace('guard1g_held_completion', { turn });
-          toolResultBlocks.push({
-            type: 'tool-result',
-            toolCallId: returnResultCall.toolCallId,
-            toolName: 'return_result',
-            output: toResultOutput({
-              error:
-                'deferred: verify platform state with a read tool before finalizing — see the runtime notice below.',
-            }),
-          });
-          messages = [...messages, ...turnMessages()];
-          messages = [
-            ...messages,
-            { role: 'user', content: VERIFY_BEFORE_ASSERT_NUDGE } as ModelMessage,
-          ];
-          continue;
-        }
-      }
-
       // j-pré. Detect tool errors in the same turn as return_result. If a
       // sibling tool errored, do NOT finalize: inject the error into messages
       // and re-loop so the LLM sees it next turn. Without this guard, a turn
       // like [telegram_send_message (error), return_result] would silently
       // finalize the job claiming success even though the side-effect failed
       // — direct violation of invariant #4 (no silent fallbacks).
-      // A "sibling tool error" is one whose tool_result output is a JSON
-      // object containing an `error` field (the shape we wrap failures in
-      // — see toResultOutput callers in section i above).
+      // A "sibling tool error" is a call of this turn whose OUTCOME is
+      // `failed` or `refused` (#1184): what the seam returned with the result
+      // (`turnOutcomes`), never a reading of the block's text. A tool that
+      // returned its failure (`{ ok: false }`, a command killed at its
+      // timeout, a coding run in error) is one, as much as a tool that threw.
       //
-      // Fix #19: toResultOutput forces `type: 'text'` (not 'json') once the
-      // serialized `{error: ...}` object exceeds MAX_TOOL_RESULT_CHARS — a
-      // large tool error (e.g. a misbehaving connector dumping a huge stack
-      // trace back) goes through truncateForContext instead. Checking
-      // `type === 'json'` alone missed that case entirely: the sibling error
-      // went undetected and the turn finalized 'completed' despite the failed
-      // side effect (invariant #4). truncateForContext only touches content
-      // AFTER the `{"error":` prefix (elision/truncation both preserve the
-      // head), so that prefix survives and is a safe marker to check for text
-      // outputs too.
-      //
-      // A mayHaveDelivered send timeout is ambiguous, not a failure to fix:
-      // deferring return_result over it would push the LLM to resend the
-      // (probably delivered) message. Let the turn finalize.
-      //
-      // ONE reading of a result's outcome, shared with the re-read's record
-      // of the run (#711, job/tool-result-shape.ts).
-      const isToolErrorBlock = (block: (typeof toolResultBlocks)[number]): boolean =>
-        block.toolName !== 'return_result' && toolResultShape(block.output) === 'error';
+      // An UNKNOWN outcome is ambiguous, not a failure to fix: deferring
+      // return_result over it would push the LLM to redo a call that may have
+      // taken effect (#1206). Let the turn finalize; the gate states it.
+      const isToolErrorBlock = (block: (typeof toolResultBlocks)[number]): boolean => {
+        if (block.toolName === 'return_result') return false;
+        const outcome = turnOutcomes.get(block.toolCallId);
+        return outcome === 'failed' || outcome === 'refused';
+      };
 
       const turnHadSiblingToolError =
         returnResultCall !== undefined && toolResultBlocks.some(isToolErrorBlock);
@@ -6702,33 +6538,6 @@ async function runJobTracked(
             continue;
           }
 
-          // L2-delivery — on a tool-delivery channel, the user only sees what the
-          // agent sends. If the reason wasn't delivered, nudge (bounded, shared
-          // budget) the agent to send it via its channel tool before we finalize.
-          if (
-            reason !== '' &&
-            requiresToolDelivery &&
-            !toolDelivered &&
-            redeliveryNudges < MAX_REDELIVERY_NUDGES
-          ) {
-            redeliveryNudges += 1;
-            trace('blocked_delivery_nudge', { turn, attempt: redeliveryNudges });
-            toolResultBlocks.push({
-              type: 'tool-result',
-              toolCallId: returnResultCall.toolCallId,
-              toolName: 'return_result',
-              output: toResultOutput({
-                error:
-                  "deferred: tu es bloqué mais l'utilisateur n'a rien reçu. Envoie d'abord ta " +
-                  'raison via ton outil de livraison (telegram_send_message), puis rappelle ' +
-                  "return_result avec status='blocked'.",
-              }),
-            });
-            messages = [...messages, ...turnMessages()];
-            messages = [...messages, { role: 'user', content: deliveryNudge } as ModelMessage];
-            continue;
-          }
-
           // Finalize. Synthetic tool-result keeps the message-structure invariant.
           // failJob writes the user-facing result: the agent's reason when present,
           // else a generic backstop (L3) — never silence, never a fake 'completed'.
@@ -6747,26 +6556,20 @@ async function runJobTracked(
           // lives in result (failJob fills it when no delivery tool already did).
           const errorMessage = shortBlockReason(reason);
           const resultMessage = reason || BLOCK_NO_REASON;
-          // La raison existe, et sur un canal à outil personne ne l'a envoyée si
-          // les rappels de livraison sont épuisés : le harnais la fait partir
-          // (issue #115). `toolDelivered` dit que l'agent l'a déjà dite — on ne
-          // double pas son message, et la notice devient alors vide, ce que la
-          // porte terminale lit comme « rien à livrer ».
+          // La raison de l'agent est le résultat de l'échec, suivie de la ligne
+          // des délégations arrêtées quand il y en a : c'est ce que la personne
+          // lit, sur la page du job et là où elle a demandé — la notice de
+          // l'échec, que `failJob` prépare pour toute sortie (#1180, #115).
           //
           // `errorMessage` vient du champ TYPÉ que le harnais a écrit lui-même
           // à partir de la raison de l'agent (`shortBlockReason`) : c'est un
-          // statut, pas une phrase relayée. La raison complète reste dans le
-          // résultat, que l'utilisateur voit sur l'écran du job. L'intention de
-          // livrer est commise AVEC la ligne terminale (#116, résidu 3).
-          await failJobWithHarnessNotice(
+          // statut, pas une phrase relayée.
+          const delegationsArretees = failedDelegationNotice();
+          await failJobExplained(
             errorMessage,
-            toolDelivered
-              ? ''
-              : [`[stopped: ${errorMessage}]`, failedDelegationNotice()]
-                  .filter(Boolean)
-                  .join('\n\n'),
-            'blocked',
-            resultMessage,
+            withFailedDelegationNotice(resultMessage),
+            false,
+            delegationsArretees === '' ? [] : [delegationsArretees],
           );
           trace('exit_blocked_via_return_result', { hasReason: reason !== '' });
           // Carry the reason so a delegating parent can relay WHY we stopped.
@@ -6779,106 +6582,42 @@ async function runJobTracked(
           };
         }
 
-        if (rrStatus === 'success' && unresolvedToolFailures.size > 0) {
-          const stuck = [...unresolvedToolFailures];
-          // A 'success' is only FALSE when the user got nothing — i.e. a DELIVERY
-          // tool failed (telegram_send_message / send_image / dashboard_publish).
-          // Benign, non-retryable side-tool failures (a deduped comment, a vote on
-          // OWN content) while the agent HAS delivered are NOT a false success:
-          // the deliverable is honest and the failures stay visible in the
-          // persisted transcript. Hard-failing those turned complete, productive
-          // jobs into false FAILURES (observed live: the sessions did all the work,
-          // then died on unresolved_tool_failure over a self-vote/dedup rejection
-          // the agent literally cannot retry to success). The telegram-delivery
-          // guard below independently catches "nothing delivered on a tool-only
-          // channel".
-          // `assign_*` joins the delivery tools here (#107): a delegation that
-          // came back FAILED produced nothing, so a parent signalling success
-          // over it is claiming a result that does not exist — the same lie the
-          // guard already catches for a failed send. The parent is nudged to
-          // redo, re-delegate elsewhere, or tell the truth; then it fails loud.
-          const stuckDelivery = stuckDeliveriesNow();
-          if (stuckDelivery.length > 0) {
-            if (unresolvedFailureNudges < MAX_UNRESOLVED_FAILURE_NUDGES) {
-              unresolvedFailureNudges += 1;
-              trace('unresolved_tool_failure_nudge', {
-                turn,
-                attempt: unresolvedFailureNudges,
-                stuck: stuckDelivery,
-              });
-              toolResultBlocks.push({
-                type: 'tool-result',
-                toolCallId: returnResultCall.toolCallId,
-                toolName: 'return_result',
-                output: toResultOutput({
-                  error:
-                    'deferred: tu signales un succès alors que ceci a échoué sans être corrigé (' +
-                    stuckDelivery.join(', ') +
-                    "). Refais-le jusqu'à réussite (ou confie-le à un autre spécialiste), ou " +
-                    "appelle return_result avec status='blocked'.",
-                }),
-              });
-              messages = [...messages, ...turnMessages()];
-              messages = [...messages, unresolvedFailureNudge(stuckDelivery)];
-              continue;
-            }
-            trace('unresolved_tool_failure', { turn, stuck: stuckDelivery });
-            await failJob(db, jobId as string, 'unresolved_tool_failure', runStats(), messages);
-            return { status: 'failed', error: 'unresolved_tool_failure' };
-          }
-          // Only non-delivery side-tool failures remain → NOT a false success.
-          // Accept it and fall through to normal completion; the failed calls
-          // stay recorded in the persisted transcript (invariant #4: not silent).
-          trace('unresolved_side_tool_failures_accepted', { turn, stuck });
+        // Guard 3b: a DELIVERY left failed is redone first (bounded). Whatever
+        // is still unresolved at the end, delivery or not, is the gate's
+        // (#1184): the run then ends as work not done, the calls named.
+        const stuckDelivery = rrStatus === 'success' ? await stuckDeliveriesNow() : [];
+        if (stuckDelivery.length > 0 && unresolvedFailureNudges < MAX_UNRESOLVED_FAILURE_NUDGES) {
+          unresolvedFailureNudges += 1;
+          trace('unresolved_tool_failure_nudge', {
+            turn,
+            attempt: unresolvedFailureNudges,
+            stuck: stuckDelivery,
+          });
+          toolResultBlocks.push({
+            type: 'tool-result',
+            toolCallId: returnResultCall.toolCallId,
+            toolName: 'return_result',
+            output: toResultOutput({
+              error:
+                'deferred: tu signales un succès alors que ceci a échoué sans être corrigé (' +
+                stuckDelivery.join(', ') +
+                "). Refais-le jusqu'à réussite (ou confie-le à un autre spécialiste), ou " +
+                "appelle return_result avec status='blocked'.",
+            }),
+          });
+          messages = [...messages, ...turnMessages()];
+          messages = [...messages, unresolvedFailureNudge(stuckDelivery)];
+          continue;
         }
 
         // Resolve the task-board state up front: a run that created tasks
         // delivers asynchronously via the cron (deliverCompletedRoots), so the
-        // delivery guard below must NOT fire for it — only for runs that would
-        // finalize right now with nothing delivered.
+        // empty-deliverable guard below must NOT fire for it — only for runs
+        // that would finalize right now with nothing delivered.
         const taskRows = await db
           .select({ id: agentTasks.id })
           .from(agentTasks)
           .where(eq(agentTasks.rootJobId, jobId as string));
-
-        // Delivery guard (mirror of the anti-spam guard): on a tool-only channel,
-        // calling return_result without ever delivering — and with no task-board
-        // flow to deliver later — would complete the job silently. Re-prompt the
-        // agent to send via its tool first, mirroring the j-pré defer pattern.
-        // Live incident: job 5d84d72e (2026-05-29).
-        if (requiresToolDelivery && !toolDelivered && taskRows.length === 0) {
-          if (redeliveryNudges < MAX_REDELIVERY_NUDGES) {
-            redeliveryNudges += 1;
-            trace('telegram_redelivery_nudge', {
-              turn,
-              attempt: redeliveryNudges,
-              via: 'return_result_branch',
-            });
-            toolResultBlocks.push({
-              type: 'tool-result',
-              toolCallId: returnResultCall.toolCallId,
-              toolName: 'return_result',
-              output: toResultOutput({
-                error:
-                  "deferred: tu n'as pas encore livré ta réponse via telegram_send_message — fais-le avant de terminer",
-              }),
-            });
-            messages = [...messages, ...turnMessages()];
-            messages = [...messages, { role: 'user', content: deliveryNudge } as ModelMessage];
-            continue;
-          }
-          trace('telegram_not_delivered', { turn, via: 'return_result_branch' });
-          // Même chose sur ce chemin : les mots du harnais, pas ceux de l'agent,
-          // et la livraison commise avec la ligne terminale (#116, résidu 3).
-          await failJobWithHarnessNotice(
-            'telegram_not_delivered',
-            [`[stopped: nothing was delivered on this channel]`, failedDelegationNotice()]
-              .filter(Boolean)
-              .join('\n\n'),
-            'not-delivered',
-          );
-          return { status: 'failed', error: 'telegram_not_delivered' };
-        }
 
         // Guard 3c — empty deliverable (#107, job f1852d35 / sub-job 538b8d53).
         // `return_result` is a SIGNAL, so a turn made of reasoning +
@@ -6899,20 +6638,23 @@ async function runJobTracked(
         // delegating agent « je relance le rendu » for a document that was
         // finished. A `reason` given with the success signal is the answer when
         // no written reply follows the work (`answerOfRun`).
-        const reponseRetour = reponseDuRun();
+        const reponseRetour = await reponseDuRun();
         if (reponseRetour === '' && lastAssistantTextSeen !== '') {
           trace('answer_predates_work', { turn, lastTextLen: lastAssistantTextSeen.length });
         }
         // « Déjà livré » veut dire : CELUI QUI LIT ce job a reçu quelque chose
-        // de l'envoi (revue de #1087, F2). Deux lecteurs le reçoivent, par les
-        // mécanismes qui existent déjà : la personne, quand les réponses du job
-        // partent par un envoi (sa livraison, #649) ; le parent d'un job
+        // de l'envoi (revue de #1087, F2). Deux lecteurs le reçoivent, lus sur
+        // les appels rangés (#1215) : la personne, quand le pas de réponse a
+        // envoyé au chat qui a demandé (`envoisAuChat`, une issue inconnue
+        // comprise : son texte est renvoyé par la porte) ; le parent d'un job
         // délégué, à qui `withDeliveryNotice` remet le fait de l'envoi (#824).
         // Un job de TÊTE qui répond par son résultat (MCP, API, tableau de
         // bord) ne transmet rien de l'envoi à qui lit son résultat : un envoi
         // en passant ne le livre pas, et son résultat vide est un livrable vide.
-        const dejaLivreParEnvoi =
-          toolDelivered && (requiresToolDelivery || Boolean(job.parentJobId));
+        const dejaLivreParEnvoi = job.parentJobId
+          ? (await lastSuccessfulSendTool(db, jobId as string, DELIVERY_TOOL_NAMES)) !== null
+          : readRunAnswer(currentTurnMessages(messages, job.task), await envoisAuChat()).unsent !==
+            null;
         if (taskRows.length === 0 && !dejaLivreParEnvoi && reponseRetour === '') {
           const [deliverableRow] = await db
             .select({ result: agentJobs.result })
@@ -7111,66 +6853,28 @@ async function runJobTracked(
         });
         messages = [...messages, ...turnMessages()];
 
-        // If this run created tasks on the board, the workflow continues
-        // asynchronously: the cron's executeReadyTasks runs each task and
-        // deliverCompletedRoots compiles + finalizes the parent once all tasks
-        // are done. Calling completeJob here would set completedAt and lock
-        // out the cron's delivery (it gates on `completedAt IS NULL`), so the
-        // user would never see the compiled task results — only the
-        // orchestrator's summary. Instead, save a checkpoint and let the cron
-        // own the final state. Status stays 'processing' until the cron flips
-        // it to 'completed'.
-        if (taskRows.length > 0) {
-          trace('return_result_with_tasks', { taskCount: taskRows.length });
-          const confie = await saveCheckpoint(db, jobId as string, {
-            messages,
-            chainCount: job.chainCount ?? 0,
-            toolsUsed,
-            // Les totaux lus comme la ligne du job les porte : null quand inconnus.
-            ...runStats(),
-          });
-          if (!confie) return await ecritureRefusee('awaiting_tasks_checkpoint');
-          return { status: 'awaiting_tasks' };
-        }
-
         trace('finalize_call', { turn, toolsUsed, stats: runStats() });
-        // SANS `delivery` — même raison que le chemin texte : le canal a été
-        // servi par l'outil de livraison pendant le run.
         // La finalisation est un effet : elle livre et pose `completed` (#566).
+        // La réponse part avec elle, préparée par la porte (#1215).
         const perteAvantFin = await droitPerdu();
         if (perteAvantFin) return await lacherLeJob(perteAvantFin, 'finalize');
-        const noticeALivrer = harnessNoticeDelivery(failedDelegationNotice());
-        const cibleNotice = harnessNoticeTarget();
-        const finalized = await finalizeJobSuccess(
-          db,
-          {
-            jobId: jobId as string,
-            result: finalResult,
-            // `finalResult` est VIDE ici (brique 33), donc rien n'est écrit et
-            // cette marque n'est pas posée : celle de l'outil de livraison qui a
-            // rempli `result` plus tôt, ou celle des remplissages de
-            // `completeJob`, reste en place. Elle est nommée quand même — la
-            // primitive exige que chaque porte DISE de quel genre est le texte
-            // qu'elle passe.
-            resultKind: 'prose',
-            // Même boucle, même reprise possible (issue #375).
-            repairTurn: 'supported',
-            toolsUsed,
-            stats: runStats(),
-            messages,
-            ...(noticeALivrer ? { delivery: noticeALivrer } : {}),
-            // Même canal que la notice du harnais : là où l'agent a pu dire
-            // « livré » (#509).
-            ...(cibleNotice ? { noticeTarget: cibleNotice } : {}),
-          },
-          {
-            prepareDelivery: async (tx, d) =>
-              void (await prepareDelivery(tx, {
-                ...d,
-                channel: d.channel as Parameters<typeof prepareDelivery>[1]['channel'],
-              })),
-          },
-        );
+        const finalized = await finalizeJobSuccess(db, {
+          jobId: jobId as string,
+          result: finalResult,
+          // `finalResult` est VIDE ici (brique 33), donc rien n'est écrit et
+          // cette marque n'est pas posée : celle de l'outil de livraison qui a
+          // rempli `result` plus tôt, ou celle des remplissages de
+          // `completeJob`, reste en place. Elle est nommée quand même — la
+          // primitive exige que chaque porte DISE de quel genre est le texte
+          // qu'elle passe.
+          resultKind: 'prose',
+          // Même boucle, même reprise possible (issue #375).
+          repairTurn: 'supported',
+          toolsUsed,
+          stats: runStats(),
+          messages,
+          ...lignesDeFin(),
+        });
         if (finalized.kind === 'already_terminal') {
           // The conditional terminal write lost the race — another writer (e.g. the
           // orphan reaper) already finalized this row. Do NOT claim 'completed':
@@ -7178,6 +6882,7 @@ async function runJobTracked(
           trace('terminal_write_lost_race', { turn, writer: 'finalize', jobId });
           return { status: 'already_handled' };
         }
+        if (finalized.kind === 'awaiting_tasks') return await laisserAuTableau();
         // Un livrable PROMIS n'est pas vérifié, réparations épuisées (#509).
         if (finalized.kind === 'failed') {
           if (!finalized.failure) throw new Error(`FINALIZE_FAILED_WITHOUT_FAILURE: ${jobId}`);
@@ -7236,7 +6941,6 @@ async function runJobTracked(
         // injected an empty tool-result into the parent, leaving the parent
         // orchestrator blind to what the sub-agent actually produced (and
         // forcing it to hallucinate or re-delegate until chain limit).
-        await stampFailedDelegations();
         const [finalRow] = await db
           .select({ result: agentJobs.result })
           .from(agentJobs)
@@ -7261,7 +6965,7 @@ async function runJobTracked(
       }
 
       // k-pré-bis. Guard 1f — flush any non-progress nudges queued while
-      // processing this turn's tool calls (S1/S2 hooks above) so the NEXT
+      // processing this turn's tool calls (S2 hook above) so the NEXT
       // LLM call sees them. A 'fail' signal already returned from inside the
       // loop, so only 'nudge' entries ever reach here.
       for (const nudge of pendingNonProgressNudges) {
@@ -7312,28 +7016,6 @@ async function runJobTracked(
       // we keep return_result in the set for correctness against future paths.)
       {
         const thisToolNames = toolResultBlocks.map((b) => b.toolName);
-
-        // Guard 1g — verify-before-assert nudge (see chain-counters.ts for the
-        // incident + detection rationale). Covers the turn that answers a
-        // cancel/undo request WITHOUT calling return_result this turn (e.g. a
-        // bare telegram_send_message, still gathering). The turn that DOES
-        // call return_result in the same breath is instead caught by the j-1g
-        // HOLD above, before this point is ever reached — that's the guard
-        // that fires on the exact incident shape.
-        if (!guard1gChecked && turn === guard1gTargetTurn) {
-          guard1gChecked = true;
-          if (cancelIntentDetected) {
-            const noVerification =
-              thisToolNames.length === 0 || thisToolNames.every((n) => DELIVERY_TOOL_NAMES.has(n));
-            if (noVerification) {
-              messages = [
-                ...messages,
-                { role: 'user', content: VERIFY_BEFORE_ASSERT_NUDGE } as ModelMessage,
-              ];
-              trace('verify_before_assert_nudge', { turn });
-            }
-          }
-        }
 
         const isDelivering = thisToolNames.some((n) => DELIVERY_OR_TERMINAL_TOOL_NAMES.has(n));
         if (isDelivering || thisToolNames.length === 0) {

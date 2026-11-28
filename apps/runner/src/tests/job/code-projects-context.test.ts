@@ -106,6 +106,7 @@ beforeAll(async () => {
       toolName: 'cli:Edit',
       toolInput: { file_path: `${racine}/dev/calorie-counter/app/app.js` },
       toolOutput: 'ok',
+      outcome: 'done',
     },
     {
       entityId: seed.entityId,
@@ -113,6 +114,7 @@ beforeAll(async () => {
       toolName: 'file_write',
       toolInput: { path: `${racine}/dev/water-intake/main.js` },
       toolOutput: '{"ok":true}',
+      outcome: 'done',
     },
     // Une écriture REFUSÉE ne crée pas de projet.
     {
@@ -121,6 +123,9 @@ beforeAll(async () => {
       toolName: 'cli:Write',
       toolInput: { file_path: `${racine}/dev/ghost-app/index.js` },
       toolOutput: '<tool_use_error>No such tool available: Write.</tool_use_error>',
+      // The recorder writes the CLI's flag as the row's outcome (#1184): it is
+      // what says the write was refused, not the text above.
+      outcome: 'failed',
     },
   ]);
 });
@@ -250,6 +255,7 @@ describe('listCodeProjectsForContext', () => {
         toolName: 'file_write',
         toolInput: { path: 'coffre/Physique/note.md' },
         toolOutput: '{"ok":true}',
+        outcome: 'done',
       },
       {
         entityId: seed.entityId,
@@ -257,6 +263,7 @@ describe('listCodeProjectsForContext', () => {
         toolName: 'file_write',
         toolInput: { path: 'coffre/Warhammer/note.md' },
         toolOutput: '{"ok":true}',
+        outcome: 'done',
       },
     ]);
     _resetProjectsCacheForTests();
@@ -341,6 +348,7 @@ describe('listCodeProjectsForContext', () => {
         toolName: 'file_write',
         toolInput: { path: `${parent}/coffre/Physique/note.md` },
         toolOutput: '{"ok":true}',
+        outcome: 'done',
       },
       {
         entityId: seed.entityId,
@@ -348,6 +356,7 @@ describe('listCodeProjectsForContext', () => {
         toolName: 'file_write',
         toolInput: { path: `${parent}/app/x.ts` },
         toolOutput: '{"ok":true}',
+        outcome: 'done',
       },
     ]);
     _resetProjectsCacheForTests();
@@ -462,6 +471,7 @@ describe('listCodeProjectsForContext', () => {
       toolName: 'file_write',
       toolInput: { path: 'coffre/carnet/note.md' },
       toolOutput: '{"ok":true}',
+      outcome: 'done',
     });
     _resetProjectsCacheForTests();
 
@@ -507,6 +517,7 @@ describe('listCodeProjectsForContext', () => {
       toolName: 'file_write',
       toolInput: { path: `${racine}/dev/vivant/ancien-nom.ts` },
       toolOutput: '{"ok":true}',
+      outcome: 'done',
     });
     _resetProjectsCacheForTests();
 
@@ -593,6 +604,7 @@ describe('listCodeProjectsForContext', () => {
       toolName: 'file_write',
       toolInput: { path: 'commun/app.js' },
       toolOutput: '{"ok":true}',
+      outcome: 'done',
     });
     _resetProjectsCacheForTests();
 
@@ -768,6 +780,7 @@ describe('listCodeProjectsForContext', () => {
       toolName: 'file_write',
       toolInput: { path: `${coffre}/notes-app/build.py` },
       toolOutput: '{"ok":true}',
+      outcome: 'done',
     });
 
     try {
@@ -834,6 +847,7 @@ describe('listCodeProjectsForContext', () => {
       toolName: 'file_write',
       toolInput: { path: `${racine}/dev/delegue-app/index.html` },
       toolOutput: '{"ok":true}',
+      outcome: 'done',
     });
 
     try {
@@ -883,6 +897,7 @@ describe('listCodeProjectsForContext', () => {
       toolName: 'file_write',
       toolInput: { path: `${racine}/dev/niche-app/notes.py` },
       toolOutput: '{"ok":true}',
+      outcome: 'done',
     });
 
     try {
@@ -941,6 +956,7 @@ describe('listCodeProjectsForContext', () => {
       toolName: 'file_write',
       toolInput: { path: `${dossier}/coffre/script.py` },
       toolOutput: '{"ok":true}',
+      outcome: 'done',
     });
 
     try {

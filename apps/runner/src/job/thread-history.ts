@@ -101,7 +101,8 @@ import {
   keepsTurnsInChat,
   runnerRecordMessage,
 } from '@nodal-agents/shared';
-import { messageText } from './state.ts';
+import { messageText } from './transcript-text.ts';
+import { CHANNEL_SEND_TOOL } from './channel-delivery.ts';
 
 /**
  * Channels that represent ongoing conversations. Others (`api`, `cron`,
@@ -326,8 +327,12 @@ export async function loadThreadHistory(opts: LoadThreadHistoryOptions): Promise
       continue;
     }
 
+    // La forme rejouée est celle de ce qui a été envoyé (#1215) : une réponse
+    // que l'agent a portée par l'outil d'envoi revient comme cet appel ; une
+    // réponse que le harnais a envoyée (le résultat du job, sur tout canal)
+    // revient comme le texte que l'agent a écrit, ce qu'il a fait.
     const sendTool = CHANNEL_SEND_TOOL[row.channel];
-    if (sendTool) {
+    if (sendTool && reply !== null && reply.callIds.size > 0) {
       const callId = `history-tool-${nextSynthId++}`;
       blocks.push([
         ...asked,
@@ -697,43 +702,6 @@ function withoutRunnerNotes(result: string | null, notes: readonly string[]): st
   }
   return text;
 }
-
-/**
- * Map of channel → the tool the agent uses to emit a user-visible reply.
- * For conversational channels, the user-facing text typically lives inside
- * a `*_send_message` tool call rather than in `return_result` — the agent
- * delivers the answer through the channel API directly, and only acks via
- * `return_result({status: 'success'})` with no text. Without this lookup we
- * lose the user-visible reply and the next turn's session-memory context
- * comes back empty.
- *
- * S3 (multichannel plan): exported so a later phase can extend this map
- * per-channel once other channels get their OWN send tool name.
- *
- * WhatsApp est dans CONVERSATIONAL_CHANNELS et VOLONTAIREMENT absent d'ici : il
- * n'a pas d'outil d'envoi à lui, et les noms des outils de livraison ne
- * changeront qu'à cette phase-là. Un tour WhatsApp est donc relu sous la forme
- * TEXTE à deux messages, pas sous la forme appel d'outil à trois — poser ici un
- * nom d'outil qui n'existe pas apprendrait au modèle à appeler le vide.
- * (Le commentaire disait l'inverse jusqu'au 06/09 : il affirmait que WhatsApp
- * était dans l'ensemble au-dessus, ce qui était faux — revue Codex, passe 28.)
- *
- * Discord/Slack ingress (D2, K2): a discord or slack job's send tool IS
- * 'telegram_send_message' — the 6 delivery tools are registered by
- * CREDENTIAL AVAILABILITY, not by channel-specific name (see execute.ts's
- * capabilityTools gating and delivery-guard.ts's
- * resolveChannelForJob/resolveBotToken), and the tool itself already
- * dispatches through the channel-neutral ChannelAdapter resolved from the
- * job's OWN channel. Reusing the telegram-named tool for a discord/slack job
- * is functionally correct but semantically odd — renaming the 6 tools to
- * channel-neutral names (e.g. `send_message`) is cleanup-phase work, not
- * this ticket.
- */
-export const CHANNEL_SEND_TOOL: Readonly<Record<string, string>> = {
-  telegram: 'telegram_send_message',
-  discord: 'telegram_send_message',
-  slack: 'telegram_send_message',
-};
 
 /**
  * Resolve the assistant's user-visible reply for a prior job, using a

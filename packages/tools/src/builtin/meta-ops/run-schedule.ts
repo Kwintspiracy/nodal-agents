@@ -16,6 +16,7 @@ import { LIVE_JOB_STATUSES } from '@nodal-agents/shared';
 // A notify channel is a messaging platform: its CHECK leaves `device` out (migration 0163).
 import type { MessagingChannelKind } from '@nodal-agents/delivery';
 import type { ToolDefinition } from '../../types';
+import { outcomeOfOkFlag } from '../../outcome';
 
 const RunScheduleInput = z.object({
   name: z.string().min(1).describe('Name of the schedule to run now (see list_schedules).'),
@@ -35,6 +36,7 @@ export const runScheduleTool: ToolDefinition<typeof RunScheduleInput, RunSchedul
   egress: 'none',
   card: 'text',
   defaultApproval: 'require_approval',
+  outcomeOf: outcomeOfOkFlag,
   execute: async (input, ctx) => {
     const [sched] = await ctx.db
       .select({

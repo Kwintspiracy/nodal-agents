@@ -48,12 +48,14 @@ vi.mock('@nodal-agents/delivery', async (importOriginal) => ({
     resolveTransportChannel: unknown;
     listActiveChannelsForAgent: unknown;
     resolveOwnerNoticeTarget: unknown;
+    isMessagingChannel: unknown;
   }>().then((real) => ({
     defaultSendChannel: real.defaultSendChannel,
     jobChatOn: real.jobChatOn,
     resolveTransportChannel: real.resolveTransportChannel,
     listActiveChannelsForAgent: real.listActiveChannelsForAgent,
     resolveOwnerNoticeTarget: real.resolveOwnerNoticeTarget,
+    isMessagingChannel: real.isMessagingChannel,
   }))),
   sendTelegramMessage: (opts: SendOpts) => sendTelegramMessageMock(opts),
   // Read by the prompt's channel line (#613); Telegram's declaration.

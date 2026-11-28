@@ -47,6 +47,7 @@ export async function loadRunAuditRows(
       toolName: toolCalls.toolName,
       toolInput: toolCalls.toolInput,
       toolOutput: toolCalls.toolOutput,
+      outcome: toolCalls.outcome,
       presented: toolCalls.presented,
     })
     .from(toolCalls)

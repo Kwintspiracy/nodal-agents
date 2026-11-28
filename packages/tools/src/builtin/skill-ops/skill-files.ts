@@ -29,6 +29,7 @@ import type { ToolContext, ToolDefinition } from '../../types';
 import { failureText, filesCard, readCard, writtenFile } from '../../presenters';
 import { windowsPathViolation, MAX_READ_FILE_BYTES } from '../file-ops/workspace';
 import { readLinesWindowed, ReadLinesCapExceededError } from '../file-ops/read-lines';
+import { outcomeOfOkFlag } from '../../outcome';
 
 /** Max bytes returned by a single skill_file_read call (same cap as file_read). */
 const MAX_READ_BYTES = 1024 * 1024;
@@ -215,6 +216,7 @@ export const skillFileReadTool: ToolDefinition<
           sections: output.total_lines,
         })
       : failureText(output.reason),
+  outcomeOf: outcomeOfOkFlag,
   execute: async (input, ctx) => {
     try {
       const realRoot = await resolveSkillRoot(ctx, input.skill);
@@ -337,6 +339,7 @@ export const skillFileListTool: ToolDefinition<
           { truncated: output.truncated },
         )
       : failureText(output.reason),
+  outcomeOf: outcomeOfOkFlag,
   execute: async (input, ctx) => {
     try {
       const realRoot = await resolveSkillRoot(ctx, input.skill);
@@ -472,6 +475,7 @@ export const skillFileWriteTool: ToolDefinition<
         })
       : failureText(output.reason),
   defaultApproval: 'require_approval',
+  outcomeOf: outcomeOfOkFlag,
   execute: async (input, ctx) => {
     try {
       // GATE — authorization: owner opted THIS skill's writes in for THIS agent.

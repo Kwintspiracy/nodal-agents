@@ -13,6 +13,7 @@ import type { ToolDefinition, ToolContext } from '../../types';
 import { resolveAgentId } from './link-helpers';
 import { lintRoutineTask } from './routine-lint';
 import { ROUTINE_RUN } from '../../job-placement';
+import { outcomeOfOkFlag } from '../../outcome';
 
 /** Compute the next fire time for a cron expression in a timezone, or null if invalid. */
 function computeNextRun(expr: string, tz: string): Date | null {
@@ -221,6 +222,7 @@ export const createScheduleTool: ToolDefinition<typeof CreateScheduleInput, Sche
   egress: 'none',
   card: 'text',
   defaultApproval: 'require_approval',
+  outcomeOf: outcomeOfOkFlag,
   execute: async (input, ctx) => {
     const agentId = await resolveAgentId(ctx.db, ctx.entityId, input.agentSlug);
     if (!agentId)
@@ -322,6 +324,7 @@ export const updateScheduleTool: ToolDefinition<typeof UpdateScheduleInput, Sche
   egress: 'none',
   card: 'text',
   defaultApproval: 'require_approval',
+  outcomeOf: outcomeOfOkFlag,
   execute: async (input, ctx) => {
     const hasTimes = input.atTimes && input.atTimes.length > 0;
     const hasInterval = input.everyMinutes !== undefined;
@@ -415,6 +418,7 @@ export const toggleScheduleTool: ToolDefinition<typeof ToggleScheduleInput, Sche
   egress: 'none',
   card: 'text',
   defaultApproval: 'require_approval',
+  outcomeOf: outcomeOfOkFlag,
   execute: async (input, ctx) => {
     const [row] = await ctx.db
       .select({

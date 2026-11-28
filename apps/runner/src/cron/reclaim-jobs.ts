@@ -50,7 +50,7 @@ import { resumeDelegated } from '@nodal-agents/orchestration';
 import type { JobId } from '@nodal-agents/orchestration';
 import { failJob, lastTextOfRun } from '../job/state.ts';
 import { budgetDeliverable } from '../job/execute.ts';
-import { notifyJobFailure } from './reset-orphans.ts';
+import { sweptJobStopLine } from './stop-line.ts';
 import { restartResumeOf } from '../lib/runtime-restart.ts';
 import type { RestartResume } from '../lib/runtime-restart.ts';
 import { RUNNER_HEARTBEAT_MS } from '../job/heartbeat.ts';
@@ -200,50 +200,6 @@ async function effectsAfterCheckpoint(
   return noms;
 }
 
-/** Des millisecondes en minutes et secondes, jamais négatives. */
-function duree(ms: number): string {
-  const total = Math.max(0, Math.round(ms / 1000));
-  const min = Math.floor(total / 60);
-  const sec = total % 60;
-  return min > 0 ? `${min}m${String(sec).padStart(2, '0')}s` : `${sec}s`;
-}
-
-/**
- * La ligne que la personne lit quand son travail est mort avec le runner.
- *
- * Même nature que `timeoutStopLine` et `providerRejectionStopLine` dans le
- * runner : une ligne de PLATEFORME, entre crochets, faite de CHAMPS TYPÉS — le
- * statut où le job a été trouvé, et depuis combien de temps il ne battait plus.
- * Le harnais ne raconte rien, il pose les faits qu'il a (invariant #2).
- */
-export function runnerRestartedStopLine(faits: {
-  status: string;
-  idleMs: number;
-  /** Faux quand aucun texte de CE run n'a pu être relu (#491). */
-  textRecovered?: boolean;
-  /** Le nombre de reprises après redémarrage déjà épuisées, quand il l'est (#443). */
-  resumesExhausted?: number;
-  /** Les outils déjà exécutés par le tour interrompu, qui empêchent de le rejouer (#443). */
-  sideEffects?: readonly string[];
-  /** Le runtime qui ne sait pas reprendre, quand c'est la raison (#443). */
-  runtimeNotResumable?: string;
-}): string {
-  const perte = faits.textRecovered === false ? '; no text of this run could be recovered' : '';
-  const reprises =
-    faits.resumesExhausted !== undefined
-      ? `; already resumed ${String(faits.resumesExhausted)} times after a restart`
-      : '';
-  const effets =
-    faits.sideEffects && faits.sideEffects.length > 0
-      ? `; not resumed, the interrupted turn had already run: ${faits.sideEffects.join(', ')}`
-      : '';
-  const runtime =
-    faits.runtimeNotResumable !== undefined
-      ? `; runtime ${faits.runtimeNotResumable} cannot resume`
-      : '';
-  return `[stopped: runner restarted — status ${faits.status}, no heartbeat for ${duree(faits.idleMs)}${reprises}${effets}${runtime}${perte}]`;
-}
-
 /** Ce qu'une passe de reprise a fait, pour le tick et pour les journaux. */
 export interface ReclaimResult {
   /** Jobs passés en `failed` parce que plus personne ne les tenait. */
@@ -373,7 +329,7 @@ export async function reclaimJobsOfDeadRunners(
     // sont relus par `resumeDelegated` pour toute délégation. Aucun texte de
     // ce run retrouvé : la ligne le dit, jamais un texte d'historique à la place.
     const texte = lastTextOfRun(job.messages, job.task ?? '');
-    const ligne = runnerRestartedStopLine({
+    const ligne = sweptJobStopLine({
       status: job.status ?? 'processing',
       idleMs,
       textRecovered: texte !== '',
@@ -410,7 +366,9 @@ export async function reclaimJobsOfDeadRunners(
         .set({ restartBlockedBy: [...decision.blockedBy] })
         .where(eq(agentJobs.id, job.id));
     }
-    await notifyJobFailure(db, job.id, ligne);
+    // La personne l'apprend par `failJob` : la notice de cet échec, préparée
+    // dans sa transaction, là où la demande a été faite. Un enfant ne parle
+    // qu'à son parent, réveillé juste en dessous avec cet échec (#1180).
 
     if (await resumeParentOfReclaimedChild(db, job.id, job.parentJobId, livrable, decision.code)) {
       out.parentsResumed += 1;

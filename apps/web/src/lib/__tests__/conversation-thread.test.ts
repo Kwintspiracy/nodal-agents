@@ -124,10 +124,12 @@ const ecriture = (
   path: string,
   content: string,
   output: string = '{"ok":true}',
+  outcome: string = 'done',
 ): ThreadAuditRow => ({
   toolName: 'file_write',
   toolInput: { path, content },
   toolOutput: output,
+  outcome,
   presented: { card: 'files', total: 1, truncated: false, files: [{ path, action: 'created' }] },
 });
 
@@ -388,6 +390,7 @@ describe('buildConversationThread — une conversation de canal', () => {
       toolName: 'file_edit',
       toolInput: { path: 'notes/bonjour.html', old_string: 'a', new_string: 'b\nc' },
       toolOutput: '{"ok":true}',
+      outcome: 'done',
       presented: {
         card: 'files',
         total: 1,
@@ -467,9 +470,9 @@ describe('buildConversationThread — une conversation de canal', () => {
           jobId: 'j2',
           verdict: travail,
           audit: [
-            ecriture('src/a.ts', 'x\ny', '{"outcome":"awaiting_approval"}'),
-            ecriture('src/b.ts', 'x', '{"outcome":"blocked"}'),
-            ecriture('src/c.ts', 'x', '{"outcome":"error","error":"boom"}'),
+            ecriture('src/a.ts', 'x\ny', '{"outcome":"awaiting_approval"}', 'awaiting_approval'),
+            ecriture('src/b.ts', 'x', '{"outcome":"error","error":"blocked: a rule"}', 'refused'),
+            ecriture('src/c.ts', 'x', '{"outcome":"error","error":"boom"}', 'failed'),
           ],
         }),
       ],
@@ -1320,6 +1323,7 @@ const ecritureMasquee = (path: string): ThreadAuditRow => {
     toolName: 'file_write',
     toolInput: { path, content: 'x' },
     toolOutput: '{"ok":true}',
+    outcome: 'done',
     presented: redactPresented(carte),
     rawFilePaths: [path],
   };
@@ -1378,6 +1382,7 @@ describe('récapitulatif de livraison — un chemin masqué n’efface pas un fi
       toolName: 'file_write',
       toolInput: { path, content: 'x' },
       toolOutput: '{"ok":true}',
+      outcome: 'done',
       presented: {
         card: 'files',
         total: 1,

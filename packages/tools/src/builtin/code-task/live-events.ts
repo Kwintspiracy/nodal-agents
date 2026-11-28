@@ -15,6 +15,7 @@ import { toolCalls } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { redactSecretsForAudit, redactSecretsInText } from '@nodal-agents/shared';
 import type { ToolCard } from '@nodal-agents/shared';
+import { cliCallVerdict } from '../../outcome';
 
 /**
  * Plafond par ligne d audit. Une sortie d outil peut faire des megaoctets (un
@@ -30,6 +31,8 @@ export interface LiveToolEvent {
   input: unknown;
   /** Present on the closing event only. */
   output?: string;
+  /** The stream's own flag on the result (`is_error`, `status: "failed"`, #1184). */
+  isError?: boolean;
 }
 
 /**
@@ -75,6 +78,7 @@ export function parseLiveToolEvent(
             name: '',
             input: undefined,
             output: typeof c === 'string' ? c : JSON.stringify(c ?? ''),
+            isError: p['is_error'] === true,
           },
         };
       }
@@ -101,6 +105,7 @@ export function parseLiveToolEvent(
       name: itemType,
       input: undefined,
       output: JSON.stringify(item).slice(0, 8000),
+      isError: item['status'] === 'failed',
     },
   };
 }
@@ -178,6 +183,9 @@ export function makeLiveToolRecorder(args: {
         toolOutput: redactSecretsInText((parsed.event.output ?? '').slice(0, MAX_OUTPUT_CHARS)),
         durationMs: Date.now() - started.startedAt,
         toolCallId: parsed.event.id,
+        // What the session said of its own call, and what it acted on
+        // (#1184): the same reading as the CLI runtime's rows.
+        ...cliCallVerdict(started.name, started.input, parsed.event.isError === true),
       })
       .catch((err: unknown) => {
         console.warn(`[code-task] live tool_calls insert failed (job=${args.jobId}):`, err);
