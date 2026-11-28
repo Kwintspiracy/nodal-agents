@@ -121,6 +121,9 @@ beforeAll(async () => {
       toolName: 'cli:Write',
       toolInput: { file_path: `${racine}/dev/ghost-app/index.js` },
       toolOutput: '<tool_use_error>No such tool available: Write.</tool_use_error>',
+      // The recorder writes the CLI's flag as the row's outcome (#1184): it is
+      // what says the write was refused, not the text above.
+      outcome: 'failed',
     },
   ]);
 });

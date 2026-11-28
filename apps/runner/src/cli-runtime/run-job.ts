@@ -304,7 +304,7 @@ async function harnessEdits(
 ): Promise<string[]> {
   try {
     const rows = await db
-      .select({ toolInput: toolCalls.toolInput, toolOutput: toolCalls.toolOutput })
+      .select({ toolInput: toolCalls.toolInput, outcome: toolCalls.outcome })
       .from(toolCalls)
       .where(
         and(
@@ -630,6 +630,7 @@ export async function runCliRuntimeJob(args: {
             toolInput: started.input,
             toolOutput: evt.output,
             toolCallId: evt.toolUseId,
+            isError: evt.isError === true,
             startedAt: started.startedAt,
             now: Date.now(),
           }),

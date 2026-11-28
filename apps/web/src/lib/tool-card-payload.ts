@@ -11,7 +11,7 @@
 // qui est arrivé à P7, dont le classement ignorait l'issue que le fil, lui,
 // lisait déjà (revue Codex, passe 29).
 
-import { ToolCardPayloadSchema, TOOL_CARDS } from '@nodal-agents/shared';
+import { ToolCardPayloadSchema, TOOL_CARDS, readCallOutcome } from '@nodal-agents/shared';
 import type { ToolCard, ToolCardPayload } from '@nodal-agents/shared';
 
 /**
@@ -40,63 +40,44 @@ export function parsePresented(value: unknown): ToolCardPayload | null {
 export type StepOutcome = 'success' | 'error' | 'awaiting_approval' | 'blocked' | 'unknown';
 
 /**
- * Le sort d'un appel, lu depuis ce que `executeTool` a écrit : une ligne
- * d'échec porte `{ outcome: 'error' | 'blocked' | 'awaiting_approval' }`, une
- * ligne de succès porte la sortie brute de l'outil. Une sortie absente est
- * `unknown` — jamais un succès par défaut.
+ * Le sort d'un appel, LU SUR SA COLONNE (`tool_calls.outcome`, #1184), par la
+ * seule lecture du produit (`readCallOutcome`, @nodal-agents/shared) : plus
+ * jamais deviné dans la sortie. Une ligne d'avant 0170 que la migration n'a pas
+ * pu typer est `unknown`, dit comme tel, jamais un succès par défaut. Un appel
+ * d'issue inconnue (une requête partie sans réponse) l'est aussi : on ne sait
+ * pas comment il a fini.
  */
+export function stepOutcomeOf(outcome: string | null | undefined): StepOutcome {
+  const o = readCallOutcome(outcome);
+  switch (o) {
+    case 'done':
+      return 'success';
+    case 'failed':
+      return 'error';
+    case 'refused':
+      return 'blocked';
+    case 'awaiting_approval':
+      return 'awaiting_approval';
+    case 'unknown':
+    case 'not_recorded':
+      return 'unknown';
+  }
+}
+
 /**
  * L'appel a-t-il EU LIEU ? Une erreur, un blocage, une attente d'approbation
  * n'ont rien fait : ce qu'ils auraient écrit ne compte pas (P2bis, revue
- * Codex passe 56). `unknown` (une ligne sans sortie, d'avant les enveloppes)
- * compte : l'appel a tourné, on ne sait juste pas comment il a fini.
+ * Codex passe 56). `unknown` (une ligne non enregistrée, ou une issue
+ * inconnue) compte : l'appel a peut-être tourné.
  */
 export function callHappened(outcome: StepOutcome): boolean {
   return outcome !== 'error' && outcome !== 'blocked' && outcome !== 'awaiting_approval';
 }
 
-export function outcomeOfToolOutput(toolOutput: string | null | undefined): StepOutcome {
-  if (toolOutput === null || toolOutput === undefined) return 'unknown';
-  try {
-    const parsed = JSON.parse(toolOutput) as unknown;
-    if (parsed && typeof parsed === 'object' && 'outcome' in parsed) {
-      const o = (parsed as { outcome: unknown }).outcome;
-      if (o === 'error' || o === 'blocked' || o === 'awaiting_approval') return o;
-      if (o === 'success') return 'success';
-    }
-  } catch {
-    // sortie non JSON : une chaîne brute, donc un succès textuel
-  }
-  return 'success';
-}
-
 /**
- * L'appel a-t-il été REFUSÉ PAR UNE RÈGLE du propriétaire ? (#395)
- *
- * Une règle `block` rend `{ outcome: 'error', error: 'blocked: an approval
- * rule forbids …' }` (`packages/tools/src/execute.ts`) : l'issue est une
- * erreur, et le mot qui la distingue d'une panne est en tête du message.
- *
- * Un `outcome: 'blocked'` en toutes lettres compte aussi, bien qu'aucun outil
- * du dépôt n'en écrive aujourd'hui (Reviewer C, passe 1) : `StepOutcome` porte
- * cette valeur, `outcomeOfToolOutput` la rend, et une ligne qui la porterait
- * doit être lue comme un refus plutôt que passer pour une commande ordinaire.
- *
- * La lecture vit ICI, avec les deux autres lectures de `tool_calls` : une
- * seconde façon de reconnaître un refus divergerait au premier changement du
- * message, et une commande refusée repasserait pour une commande qui a tourné.
+ * L'appel a-t-il été REFUSÉ (#395) ? Par une règle du propriétaire, ou par une
+ * personne : la colonne le dit (`refused`), et c'est la seule lecture.
  */
-export function isBlockedByRule(toolOutput: string | null | undefined): boolean {
-  if (toolOutput === null || toolOutput === undefined) return false;
-  try {
-    const parsed = JSON.parse(toolOutput) as unknown;
-    if (!parsed || typeof parsed !== 'object') return false;
-    const record = parsed as { outcome?: unknown; error?: unknown };
-    if (record.outcome === 'blocked') return true;
-    return record.outcome === 'error' && typeof record.error === 'string'
-      ? record.error.startsWith('blocked:')
-      : false;
-  } catch {
-    return false;
-  }
+export function isRefusedOutcome(outcome: string | null | undefined): boolean {
+  return readCallOutcome(outcome) === 'refused';
 }

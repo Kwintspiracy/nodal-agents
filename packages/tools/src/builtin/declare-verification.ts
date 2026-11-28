@@ -93,6 +93,8 @@ export const declareVerificationTool: ToolDefinition<
   // repasser par une approbation. Sans cette ligne, déclarer serait un moyen
   // détourné d'exécuter sans demander.
   defaultApproval: 'require_approval',
+  // A declaration refused (`declared: false`) declared nothing (#1184).
+  outcomeOf: (output) => (output.declared ? 'done' : 'failed'),
   execute: async (input, ctx) => {
     const path = normalizePath(input.project_path.trim());
     const key = projectKey(path);

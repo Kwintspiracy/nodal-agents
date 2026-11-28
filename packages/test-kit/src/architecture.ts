@@ -550,6 +550,37 @@ export function scanFilesForDeliverableTypeLiterals(files: readonly string[]): V
   return out;
 }
 
+// ─── #1184 : l'issue d'un appel se lit sur sa colonne, nulle part ailleurs ──────
+
+/**
+ * What reading a tool's OUTPUT to decide whether the call worked looks like
+ * (#1184). The outcome is written once by the seam (`executeTool`) and the CLI
+ * recorders in `tool_calls.outcome`, and read by `readCallOutcome`
+ * (@nodal-agents/shared); before it, the runner, the web (three ways) and the
+ * bench each guessed it again from the text, and each guessed differently:
+ *   - the seam's failure envelope, read back: an `in` test on its `outcome`
+ *     key, or the transcript's error prefix;
+ *   - the two refusal envelopes the screens recognised: a CLI's error tag,
+ *     a builtin's serialized `ok: false`;
+ *   - the guessers by name, so that one cannot come back under its own name.
+ * A file that WRITES one of these shapes (the CLI recorder that marks a Codex
+ * failure, the seam) is passed in `skipFiles` by the package that owns it.
+ */
+export const OUTCOME_GUESS_PATTERNS: readonly RegExp[] = [
+  /['"]outcome['"]\s+in\b/,
+  /startsWith\(\s*'\{"error":'/,
+  /<tool_use_error>/,
+  // `{"ok":` as text, and `\{"ok"\s*:` as a regular expression in source.
+  /\{"ok"(?:\\s\*)?\s*:/,
+  /\b(?:outcomeOfToolOutput|toolResultShape|isBlockedByRule|isRefusedCall)\b/,
+];
+
+export function scanForOutcomeGuesses(opts: ScanOptions): Violation[] {
+  return OUTCOME_GUESS_PATTERNS.flatMap((pattern) =>
+    scanForPattern(opts, { pattern, rule: 'no-outcome-guess-outside-seam' }),
+  );
+}
+
 /**
  * Every source file of the package, concatenated.
  *

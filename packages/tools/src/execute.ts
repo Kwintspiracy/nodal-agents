@@ -21,7 +21,12 @@ import {
   type ChainWorkspace,
   type ShellGateReason,
   type ShellHost,
+  type DeclaredToolOutcome,
+  type ToolCallOutcome,
+  filesTarget,
+  readableTarget,
 } from '@nodal-agents/shared';
+import { callInputTarget } from './outcome';
 import type { z } from 'zod';
 import type {
   ApprovalRule,
@@ -223,13 +228,7 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
   const parsed = tool.inputSchema.safeParse(rawInput);
   if (!parsed.success) {
     const detail = parsed.error.message;
-    const result: ToolExecutionResult = {
-      outcome: 'error',
-      error: `invalid_input: ${detail}`,
-    };
-    // Still write audit row for failed validations
-    await _writeToolCall(ctx, auditTool, rawInput, JSON.stringify(result), Date.now() - startMs);
-    return result;
+    return refuseCall(ctx, auditTool, rawInput, startMs, `invalid_input: ${detail}`, 'failed');
   }
 
   const validatedInput = parsed.data as z.infer<typeof tool.inputSchema>;
@@ -284,18 +283,14 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
     console.error(
       `[executeTool] AUTONOMY_ROW_MISSING agent=${ctx.agentId} job=${ctx.jobId} tool=${tool.name}`,
     );
-    const result: ToolExecutionResult = {
-      outcome: 'error',
-      error: autonomyRowMissing(tool.name),
-    };
-    await _writeToolCall(
+    return refuseCall(
       ctx,
       auditTool,
       validatedInput,
-      JSON.stringify(result),
-      Date.now() - startMs,
+      startMs,
+      autonomyRowMissing(tool.name),
+      'failed',
     );
-    return result;
   }
 
   // ── 1.4 A `block` row wins over everything ─────────────────────────────────
@@ -320,18 +315,14 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
     try {
       await tool.preflight(validatedInput, ctx);
     } catch (err) {
-      const result: ToolExecutionResult = {
-        outcome: 'error',
-        error: err instanceof Error ? err.message : String(err),
-      };
-      await _writeToolCall(
+      return refuseCall(
         ctx,
         auditTool,
         validatedInput,
-        JSON.stringify(result),
-        Date.now() - startMs,
+        startMs,
+        err instanceof Error ? err.message : String(err),
+        'failed',
       );
-      return result;
     }
   }
 
@@ -369,18 +360,14 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
       console.error(
         `[executeTool] AUTONOMY_ROW_MISSING agent=${ctx.agentId} job=${ctx.jobId} tool=${REPLACE_SHARED_FILE_SETTING}`,
       );
-      const result: ToolExecutionResult = {
-        outcome: 'error',
-        error: autonomyRowMissing(REPLACE_SHARED_FILE_SETTING),
-      };
-      await _writeToolCall(
+      return refuseCall(
         ctx,
         auditTool,
         validatedInput,
-        JSON.stringify(result),
-        Date.now() - startMs,
+        startMs,
+        autonomyRowMissing(REPLACE_SHARED_FILE_SETTING),
+        'failed',
       );
-      return result;
     }
     const canHarden =
       setting.action === 'block' ||
@@ -504,15 +491,14 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
       // jamais, et la porte reposerait la question — à l'infini. Un appel sans
       // id est un appelant qui ne sait pas reprendre : dit par un code, jamais
       // suspendu.
-      const result: ToolExecutionResult = { outcome: 'error', error: 'question_without_call_id' };
-      await _writeToolCall(
+      return refuseCall(
         ctx,
         auditTool,
         validatedInput,
-        JSON.stringify(result),
-        Date.now() - startMs,
+        startMs,
+        'question_without_call_id',
+        'failed',
       );
-      return result;
     }
     effectiveAction = (await hasAnsweredQuestion(ctx, tool.name))
       ? 'auto_approve'
@@ -524,9 +510,12 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
     // the bare word "blocked" gave the model nothing to correct with — it
     // would retry the same tool or probe for workarounds (étape C, review
     // loop: a read-only reviewer needs to be TOLD the posture is intentional).
-    const result: ToolExecutionResult = {
-      outcome: 'error',
-      error: shellBlock
+    return refuseCall(
+      ctx,
+      auditTool,
+      validatedInput,
+      startMs,
+      shellBlock
         ? // Ce que la liste interdit, et sur quoi (#464) : le modèle sait
           // quoi ne pas refaire, au lieu de chercher un détour.
           shellChecklistRefusal(shellBlock)
@@ -539,15 +528,8 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
             `intentional restriction set by the owner — do NOT retry it and do NOT work around it ` +
             `via other tools or sub-agents. Use your allowed tools, or report the limitation in ` +
             `your result.`,
-    };
-    await _writeToolCall(
-      ctx,
-      auditTool,
-      validatedInput,
-      JSON.stringify(result),
-      Date.now() - startMs,
+      'refused',
     );
-    return result;
   }
 
   if (effectiveAction === 'require_approval') {
@@ -558,18 +540,14 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
     const dejaRefuse =
       tool.asksUser === true ? null : await priorRejectionOfSameCall(ctx, tool, validatedInput);
     if (dejaRefuse) {
-      const result: ToolExecutionResult = {
-        outcome: 'error',
-        error: alreadyRejectedInstruction(tool.name, dejaRefuse),
-      };
-      await _writeToolCall(
+      return refuseCall(
         ctx,
         auditTool,
         validatedInput,
-        JSON.stringify(result),
-        Date.now() - startMs,
+        startMs,
+        alreadyRejectedInstruction(tool.name, dejaRefuse),
+        'refused',
       );
-      return result;
     }
 
     // ── 2.5 Une demande sans raison n'est pas posée ──────────────────────────
@@ -580,15 +558,7 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
     // n'existe : voir `purpose.ts` pour la règle et ce qu'elle épargne.
     const sansRaison = refuseWithoutStatedPurpose(auditTool, validatedInput);
     if (sansRaison) {
-      const result: ToolExecutionResult = { outcome: 'error', error: sansRaison };
-      await _writeToolCall(
-        ctx,
-        auditTool,
-        validatedInput,
-        JSON.stringify(result),
-        Date.now() - startMs,
-      );
-      return result;
+      return refuseCall(ctx, auditTool, validatedInput, startMs, sansRaison, 'failed');
     }
 
     // Insert approval_requests row
@@ -624,15 +594,14 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
 
     if (!row) {
       // Fallthrough — fail loud
-      const result: ToolExecutionResult = { outcome: 'error', error: 'approval_insert_failed' };
-      await _writeToolCall(
+      return refuseCall(
         ctx,
         auditTool,
         validatedInput,
-        JSON.stringify(result),
-        Date.now() - startMs,
+        startMs,
+        'approval_insert_failed',
+        'failed',
       );
-      return result;
     }
 
     const gateRequest: ApprovalGateRequest = {
@@ -651,13 +620,16 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
     const approvalResult: ToolExecutionResult = {
       outcome: 'awaiting_approval',
       approvalRequestId: row.id,
+      callOutcome: 'awaiting_approval',
+      target: callInputTarget(tool.name, validatedInput, tool),
     };
     await _writeToolCall(
       ctx,
       auditTool,
       validatedInput,
-      JSON.stringify(approvalResult),
+      envelopeOf(approvalResult),
       Date.now() - startMs,
+      approvalResult,
     );
     return approvalResult;
   }
@@ -687,28 +659,12 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
     // devient vrai par construction.
     const gate = await takeMutationIntent(tool, validatedInput, ctx);
     if ('error' in gate) {
-      const result: ToolExecutionResult = { outcome: 'error', error: gate.error };
-      await _writeToolCall(
-        ctx,
-        auditTool,
-        validatedInput,
-        JSON.stringify(result),
-        Date.now() - startMs,
-      );
-      return result;
+      return refuseCall(ctx, auditTool, validatedInput, startMs, gate.error, 'failed');
     }
 
     const failure = await takeCheckpointForTurn(tool.name, ctx);
     if (failure) {
-      const result: ToolExecutionResult = { outcome: 'error', error: failure };
-      await _writeToolCall(
-        ctx,
-        auditTool,
-        validatedInput,
-        JSON.stringify(result),
-        Date.now() - startMs,
-      );
-      return result;
+      return refuseCall(ctx, auditTool, validatedInput, startMs, failure, 'failed');
     }
     mutationTargets = gate.targets;
     mutationDeliverables = gate.deliverables;
@@ -761,6 +717,9 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
     reportWrittenContent: (absPath, sha256) => contenusEcrits.set(absPath, sha256),
     reportReadContent: (absPath, sha256) => contenusLus.set(absPath, sha256),
     confirmMove: (source, destination) => deplacementsFaits.set(source, destination),
+    reportTarget: (target) => {
+      reportedTarget = target;
+    },
     attachForModel: (attachment) => {
       const outcome = admitModelAttachment(ctx.modelInput, attachment, attachmentsForModel);
       if (outcome.attached) attachmentsForModel.push(attachment);
@@ -778,16 +737,28 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
   // être écrite, l'outil ne tourne pas — pas d'effet sans marque. Une lecture
   // n'en a pas besoin : la rejouer ne refait rien. Le coût : une écriture de
   // plus par appel d'outil qui n'est pas une lecture.
+  // Ce sur quoi l'appel agit (#1184) : ce que l'outil RAPPORTE en tournant
+  // (`ctx.reportTarget`, un envoi nomme le chat qu'il a résolu), sinon les
+  // fichiers qu'il nomme, sinon l'appel lui-même. La marque porte la clé
+  // connue avant de tourner ; la ligne complétée porte la finale.
+  let reportedTarget: string | null = null;
+  const targetNow = (): string =>
+    reportedTarget ??
+    filesTarget((mutationTargets ?? []).filter((t) => t.kind === 'file').map((t) => t.path)) ??
+    callInputTarget(tool.name, validatedInput, tool);
   const marque =
     auditTool.riskLevel !== 'read' && ctx.jobId
-      ? await markToolStarted(ctx, auditTool, validatedInput)
+      ? await markToolStarted(ctx, auditTool, validatedInput, targetNow())
       : undefined;
   if (marque === null) {
+    // Aucune ligne : l'appel n'a pas tourné, et il n'y a rien sur quoi écrire.
     return {
       outcome: 'error',
       error:
         `tool_intent_unrecorded: "${tool.name}" did NOT run. Its start could not be recorded, ` +
         `and a tool that changes something never runs without that record. Call it again.`,
+      callOutcome: 'failed',
+      target: targetNow(),
     };
   }
   // Et, quand les dossiers visés sont des DÉPÔTS GIT, l'état de leur `git
@@ -896,12 +867,30 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
       }
     }
     const durationMs = Date.now() - startMs;
+    // L'issue que l'outil DÉCLARE de ce qu'il a rendu (#1184) ; sans
+    // déclaration, rendre c'est `done`. Une déclaration qui lève est un bug de
+    // CET outil : l'appel a rendu, mais rien ne permet de dire s'il a fait ce
+    // qu'on lui demandait — `unknown`, et le journal le dit (invariant #4).
+    let declared: DeclaredToolOutcome = 'done';
+    if (auditTool.outcomeOf) {
+      try {
+        declared = auditTool.outcomeOf(output);
+      } catch (err) {
+        declared = 'unknown';
+        console.error(
+          `[tools] TOOL_OUTCOME_DECLARATION_FAILED tool=${tool.name} job=${ctx.jobId}:`,
+          err,
+        );
+      }
+    }
+    const verdict = { callOutcome: declared, target: targetNow() };
     const ligneAudit = await _writeToolCall(
       ctx,
       auditTool,
       validatedInput,
       JSON.stringify(output),
       durationMs,
+      verdict,
       { value: output },
       marque,
       true,
@@ -1077,8 +1066,8 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
       );
     }
     return attachmentsForModel.length > 0
-      ? { outcome: 'success', output, attachments: attachmentsForModel }
-      : { outcome: 'success', output };
+      ? { outcome: 'success', output, attachments: attachmentsForModel, ...verdict }
+      : { outcome: 'success', output, ...verdict };
   } catch (err) {
     // Re-throw fatal runner errors — never swallow these
     if (err instanceof MessageStructureError || err instanceof QuotaExhaustedError) {
@@ -1122,6 +1111,9 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
             to: signal.childSlug ?? null,
           }),
           Date.now() - startMs,
+          // La DEMANDE est faite (#1184) : ce que l'enfant rendra se lit sur
+          // la ligne de l'enfant et dans l'enregistrement de délégation.
+          { callOutcome: 'done', target: targetNow() },
           undefined,
           marque,
           true,
@@ -1151,34 +1143,36 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
     // The runner frames it like the tool's success (INJECT-001). A failure of
     // the platform around the call, the gate's own errors, and the
     // `mayHaveDelivered` instruction below are the product's text: no flag.
+    const target = targetNow();
     const result: ToolExecutionResult = mayHaveDelivered
       ? {
           outcome: 'error',
-          error:
-            `${errorMsg} — AMBIGUOUS OUTCOME: the send request WAS transmitted and the ` +
-            'message may have been delivered. Do NOT call this tool again with the same ' +
-            'content (resending duplicates messages). Continue as if delivered and mention ' +
-            'the uncertainty in your final result.',
-          mayHaveDelivered: true,
+          error: `${errorMsg} — ${outcomeUnknownInstruction(target)}`,
+          callOutcome: 'unknown',
+          target,
         }
       : {
           outcome: 'error',
           error: errorMsg,
+          callOutcome: 'failed',
+          target,
           ...(raisedByExecute ? { raisedByTool: true as const } : {}),
         };
     // A failure that came with a result (ToolFailedWithOutput): the row keeps
     // that result whole, as a success's row does; the model still reads the
     // error alone.
+    const envelope = JSON.parse(envelopeOf(result)) as Record<string, unknown>;
     const rowOutput =
       raisedByExecute && err instanceof ToolFailedWithOutput
-        ? { ...result, output: err.output }
-        : result;
+        ? { ...envelope, output: err.output }
+        : envelope;
     const ligneAudit = await _writeToolCall(
       ctx,
       auditTool,
       validatedInput,
       JSON.stringify(rowOutput),
       Date.now() - startMs,
+      result,
       undefined,
       marque,
       true,
@@ -1690,12 +1684,65 @@ async function recordTurnCheckpoint(
   }
 }
 
+// ─── L'issue d'un appel (#1184) ─────────────────────────────────────────────
+
+/**
+ * The envelope a failed or held call keeps in `tool_output`: what the model
+ * read, as before 0170. The outcome is NOT read back from it (the row has its
+ * own column); it stays the text the screens show for the call.
+ */
+function envelopeOf(result: ToolExecutionResult): string {
+  const { callOutcome: _outcome, target: _target, ...envelope } = result;
+  return JSON.stringify(envelope);
+}
+
+/**
+ * A call the gate does not run: the row is written with its outcome
+ * (`failed`, or `refused` for a rule of the owner or a person's earlier
+ * refusal), never as started, and keyed by the call itself.
+ */
+async function refuseCall(
+  ctx: ToolContext,
+  tool: ToolDefinition<z.ZodTypeAny, unknown>,
+  input: unknown,
+  startMs: number,
+  error: string,
+  callOutcome: 'failed' | 'refused',
+): Promise<ToolExecutionResult> {
+  const result: ToolExecutionResult = {
+    outcome: 'error',
+    error,
+    callOutcome,
+    target: callInputTarget(tool.name, input, tool),
+  };
+  await _writeToolCall(ctx, tool, input, envelopeOf(result), Date.now() - startMs, result);
+  return result;
+}
+
+/**
+ * What the model reads of a call whose effect is unknown (#1206): it may or
+ * may not have happened, on THIS target. One text, for a call that threw with
+ * `mayHaveDelivered` and for a result a tool declared `unknown`: calling it
+ * again blindly is exactly what duplicates a send or a creation.
+ */
+export function outcomeUnknownInstruction(target: string | null): string {
+  const on = readableTarget(target);
+  return (
+    `OUTCOME UNKNOWN${on === null ? '' : ` (target: ${on})`}: the request WAS sent and may ` +
+    'have taken effect. Do NOT call this tool again with the same content: a second call ' +
+    'can duplicate it. Check whether it happened first if you can; otherwise continue as if ' +
+    'it did, and say in your final result that it is not confirmed.'
+  );
+}
+
 async function _writeToolCall(
   ctx: ToolContext,
   tool: ToolDefinition<z.ZodTypeAny, unknown>,
   input: unknown,
   output: string,
   durationMs: number,
+  /** What became of the call, and what it acted on (#1184): the row's `outcome` and `target`. */
+  verdict: { callOutcome: ToolCallOutcome; target: string | null },
   /** The tool's ACTUAL output — only on a successful execution; absent, the row records no payload. */
   produced?: { value: unknown },
   /** The intent mark written before the tool ran (#443): completed, never duplicated. */
@@ -1740,6 +1787,8 @@ async function _writeToolCall(
           toolInput: redactSecretsForAudit(input) as Record<string, unknown>,
           toolOutput: output,
           durationMs,
+          outcome: verdict.callOutcome,
+          target: verdict.target,
         })
         .where(eq(toolCalls.id, markId));
       return markId;
@@ -1772,6 +1821,10 @@ async function _writeToolCall(
         toolInput: redactSecretsForAudit(input) as Record<string, unknown>,
         toolOutput: output,
         durationMs,
+        // 0170 (#1184) : l'issue de l'appel et ce sur quoi il a agi, écrites
+        // ICI et nulle part ailleurs pour un outil du registre.
+        outcome: verdict.callOutcome,
+        target: verdict.target,
         // étape D: turn + tool_use id make this row joinable to the transcript
         // and to llm_calls — the full-copy output was previously unlinkable.
         turn: ctx.turn ?? null,
@@ -1801,6 +1854,7 @@ async function markToolStarted(
   ctx: ToolContext,
   tool: ToolDefinition<z.ZodTypeAny, unknown>,
   input: unknown,
+  target: string,
 ): Promise<string | null> {
   try {
     const [row] = await ctx.db
@@ -1817,6 +1871,11 @@ async function markToolStarted(
         // La marque EST une exécution commencée (#443) : c'est elle, et elle
         // seule parmi les lignes d'un appel non-lecture, que le faucheur compte.
         executionStarted: true,
+        // Une marque sans sortie veut dire « peut-être fait » : c'est
+        // exactement `unknown` (#1184). Un runner mort entre l'effet et la
+        // ligne complétée laisse donc une issue vraie, jamais un succès.
+        outcome: 'unknown',
+        target,
         turn: ctx.turn ?? null,
         toolCallId: ctx.toolCallId ?? null,
       })

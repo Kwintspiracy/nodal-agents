@@ -16,6 +16,7 @@ import {
   getWorkspaceRootForDisplay,
   WorkspaceError,
 } from './workspace';
+import { outcomeOfOkFlag } from '../../outcome';
 
 export const FileListInputSchema = z.object({
   path: z
@@ -100,6 +101,7 @@ export const fileListTool: ToolDefinition<typeof FileListInputSchema, FileListOu
           { truncated: output.truncated },
         )
       : failureText(output.reason),
+  outcomeOf: outcomeOfOkFlag,
   execute: async (input, ctx) => {
     try {
       // Guard first (throws if not configured at all)

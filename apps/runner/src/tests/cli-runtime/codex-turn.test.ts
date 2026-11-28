@@ -302,11 +302,11 @@ describe('handleCodexLine sur le flux réel enregistré', () => {
 
   it('un file_change en ÉCHEC ne compte pas comme un fichier changé', () => {
     // Constat de la revue Codex (27/08). Codex dit son échec dans un champ
-    // `status` que personne ne lit : les surfaces Code ne reconnaissent que
-    // `<tool_use_error>` et `{"ok":false}`. Un changement échoué était donc
-    // compté comme un fichier CHANGÉ, affiché dans le panneau Changes, et
-    // pouvait faire naître un projet dans le contexte des agents — un travail
-    // qui n'a jamais eu lieu, annoncé comme fait.
+    // `status` que personne ne lisait : un changement échoué était compté
+    // comme un fichier CHANGÉ. Depuis #1184, le flux garde ce fait tel qu'il
+    // le dit (`isError`), et l'enregistreur l'écrit dans la colonne `outcome`
+    // de la ligne, que lisent l'onglet Code et le registre des projets. La
+    // sortie reste ce que Codex a écrit, sans enveloppe ajoutée.
     const state = newCodexParseState();
     const events: CodexTurnEvent[] = [];
     handleCodexLine(
@@ -324,12 +324,9 @@ describe('handleCodexLine sur le flux réel enregistré', () => {
     );
 
     const result = events.find((e) => e.kind === 'tool_result');
-    expect(result?.output, 'un échec passe pour une écriture réussie').toContain(
-      '<tool_use_error>',
-    );
-    // La sortie d'origine reste derrière l'enveloppe : l'audit doit rester
-    // lisible, pas se réduire à un marqueur.
+    expect(result?.isError, 'un échec passe pour une écriture réussie').toBe(true);
     expect(result?.output).toContain('file_change');
+    expect(result?.output).not.toContain('<tool_use_error>');
   });
 
   it('un file_change RÉUSSI n’est pas marqué comme refusé', () => {

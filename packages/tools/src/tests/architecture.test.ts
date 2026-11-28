@@ -17,6 +17,8 @@ import {
   scanForProjectKeyCopies,
   scanForMutatingSpawnOutsideIntent,
   formatViolations,
+  scanForOutcomeGuesses,
+  assertNoViolations,
 } from '@nodal-agents/test-kit';
 
 const SRC_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -77,5 +79,14 @@ describe('architecture — le moteur shell est PUR', () => {
     for (const forbidden of ["from '../types'", '@nodal-agents/db', 'file-ops/workspace']) {
       expect(src.includes(forbidden), `shell-engine.ts importe ${forbidden}`).toBe(false);
     }
+  });
+});
+
+describe('architecture — the outcome of a call is read on its row (#1184)', () => {
+  it('no production file decides a call’s outcome from its output', () => {
+    assertNoViolations(
+      'outcome guessed from a tool output',
+      scanForOutcomeGuesses({ srcDir: SRC_DIR }),
+    );
   });
 });

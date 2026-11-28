@@ -110,7 +110,8 @@ import {
   verificationRuns,
 } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
-import type { DecisionStatus, JobResultKind } from '@nodal-agents/shared';
+import type { DecisionStatus, JobResultKind, UnresolvedCall } from '@nodal-agents/shared';
+import { chatTarget, readableTarget } from '@nodal-agents/shared';
 import { readProofRepairAttempts } from '@nodal-agents/shared';
 import { resolveRunWorkspaces, withJobFolder } from '@nodal-agents/tools';
 import { getVerifier } from '../verification/registry.ts';
@@ -126,6 +127,8 @@ import type {
   ReadyConfig,
 } from '../verification/registry.ts';
 import { TERMINAL_STATUSES, answerOfJobRun, completeJob, failJob } from './state.ts';
+import { answerReader } from './answer-delivery.ts';
+import { jobUnresolvedCalls } from './call-outcomes.ts';
 import { watchJobEnd } from './process-scopes.ts';
 import { toDbSafeString } from './transcript-text.ts';
 
@@ -212,13 +215,49 @@ export function deliverableNotVerifiedLine(
   return `[stopped: declared deliverable not verified — ${faits}]`;
 }
 
-/** Ce qu'un run échoué à la porte des livrables déclarés laisse derrière lui. */
+/**
+ * Ce qu'un run échoué à la porte laisse derrière lui : un livrable déclaré non
+ * vérifié (#509), ou des appels laissés en échec (#1184). Le même chemin pour
+ * les deux, la même forme : le code, le `result` écrit (le dernier texte du
+ * run, puis la ligne), la ligne, et les faits qui l'ont faite.
+ */
 export interface DeclaredDeliverableFailure {
-  readonly errorCode: typeof DELIVERABLE_NOT_VERIFIED;
+  readonly errorCode: string;
   /** Le `result` écrit : le dernier texte du run, puis la ligne. */
   readonly result: string;
   readonly line: string;
   readonly unverified: readonly UnverifiedDeclaredDeliverable[];
+  /** Les appels que rien n'a refaits (#1184) ; vide pour un livrable non vérifié. */
+  readonly unresolvedCalls: readonly UnresolvedCall[];
+}
+
+/**
+ * Le code d'un job dont des appels qui agissent sont restés en échec, ou
+ * d'issue inconnue (#1184) : même famille que `tasks_not_done` (le tableau,
+ * cron/deliver-results.ts), le travail n'est pas fait.
+ */
+export const CALLS_NOT_DONE = 'calls_not_done';
+
+/** Le code complet : combien, et lesquels. */
+export function callsNotDoneCode(calls: readonly UnresolvedCall[]): string {
+  const names = [...new Set(calls.map((c) => c.toolName))];
+  return `${CALLS_NOT_DONE} (${calls.length} unresolved: ${names.join(', ')})`;
+}
+
+/**
+ * La ligne que la personne lit sous la réponse d'un job dont des appels sont
+ * restés en échec (#1184). Même famille que `deliverableNotVerifiedLine` : une
+ * ligne de PLATEFORME, entre crochets, faite de champs typés (l'outil, sa
+ * cible quand elle se lit, l'issue). Pure.
+ */
+export function callsNotDoneLine(calls: readonly UnresolvedCall[]): string {
+  const faits = calls
+    .map((c) => {
+      const on = readableTarget(c.target);
+      return `${c.toolName}${on === null ? '' : ` → ${on}`}: ${c.outcome}`;
+    })
+    .join('; ');
+  return `[stopped: tool calls not done — ${faits}]`;
 }
 
 // ─── Types de retour ────────────────────────────────────────────────────────
@@ -229,6 +268,7 @@ export interface DeclaredDeliverableFailure {
  */
 export type ObservedOutcome =
   | 'awaiting_tasks'
+  | 'calls_not_done'
   | 'completed'
   | 'completed_unverified'
   | 'review_pending'
@@ -1294,7 +1334,75 @@ export async function finalizeJobSuccess(
           .where(ownJobRow(jobId, ['failed']));
         return {
           decisions,
-          failure: { errorCode: DELIVERABLE_NOT_VERIFIED, result, line, unverified },
+          failure: {
+            errorCode: DELIVERABLE_NOT_VERIFIED,
+            result,
+            line,
+            unverified,
+            unresolvedCalls: [],
+          },
+        };
+      }
+
+      // ─── #1184 : un appel qui agit, resté en échec, fait échouer le run ────
+      //
+      // Lu sur les LIGNES du job (`tool_calls.outcome` et `target`), pour toute
+      // porte et tout runtime : un appel `failed` ou `unknown` qu'aucun appel
+      // `done` ultérieur sur la MÊME cible n'a refait laisse le travail non
+      // fait. Le job ne finit pas `completed` : il finit comme un travail non
+      // fait (`tasks_not_done` pour le tableau), avec la réponse de l'agent
+      // suivie de la ligne qui nomme chaque appel. Un envoi de texte au chat
+      // qui a demandé est refait par le harnais lui-même, qui y livre la
+      // réponse à la fin (#1215) : ce chat-là est passé comme cible tenue.
+      const [lu] = await tx
+        .select({
+          parentJobId: agentJobs.parentJobId,
+          chatId: agentJobs.chatId,
+          agentId: agentJobs.agentId,
+          channel: agentJobs.channel,
+          chatChannel: agentJobs.chatChannel,
+          triggerContext: agentJobs.triggerContext,
+          result: agentJobs.result,
+          task: agentJobs.task,
+        })
+        .from(agentJobs)
+        .where(eq(agentJobs.id, jobId));
+      if (!lu) throw new Error(`${FINALIZE_JOB_NOT_FOUND}: ${jobId}`);
+      const lecteur = await answerReader(tx, lu);
+      const restes = await jobUnresolvedCalls(
+        tx,
+        jobId,
+        lecteur.kind === 'chat' ? chatTarget(lecteur.target.channel, lecteur.target.chatId) : null,
+      );
+      if (restes.length > 0) {
+        const line = callsNotDoneLine(restes);
+        const errorCode = callsNotDoneCode(restes);
+        const texte =
+          finalText.trim() ||
+          (lu.result ?? '').trim() ||
+          answerOfJobRun(input.messages, lu.task ?? '');
+        const result = toDbSafeString([texte, line].filter((t) => t !== '').join('\n\n'));
+        const failed = await failJob(
+          tx,
+          jobId,
+          errorCode,
+          input.stats,
+          input.messages,
+          result,
+          undefined,
+          { replaceResult: true, runnerLines: [line] },
+        );
+        if (!failed) {
+          log(VERIFY_TERMINAL_WRITE_LOST, { jobId });
+          throw new Error(`${VERIFY_TERMINAL_WRITE_LOST}: ${jobId}`);
+        }
+        await tx
+          .update(agentJobs)
+          .set({ toolsUsed, updatedAt: new Date() })
+          .where(ownJobRow(jobId, ['failed']));
+        return {
+          decisions,
+          failure: { errorCode, result, line, unverified: [], unresolvedCalls: restes },
         };
       }
 
@@ -1343,6 +1451,19 @@ export async function finalizeJobSuccess(
 
   const { decisions, repair, failure } = committed;
   if (failure) {
+    if (failure.unresolvedCalls.length > 0) {
+      log(CALLS_NOT_DONE, {
+        jobId,
+        calls: failure.unresolvedCalls.map((c) => `${c.toolName}:${c.outcome}`),
+      });
+      return {
+        kind: 'failed',
+        observedOutcome: 'calls_not_done',
+        observedDue: false,
+        decisions,
+        failure,
+      };
+    }
     log(VERIFY_DECLARED_NOT_VERIFIED, {
       jobId,
       paths: failure.unverified.map((u) => u.path),

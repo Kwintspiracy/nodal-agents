@@ -8,7 +8,12 @@
 //
 // D'où cette fonction : PURE, donc le masquage se prouve au lieu de se relire.
 
-import { redactSecretsForAudit, redactSecretsInText } from '@nodal-agents/shared';
+import {
+  redactSecretsForAudit,
+  redactSecretsInText,
+  type ToolCallOutcome,
+} from '@nodal-agents/shared';
+import { cliCallVerdict } from '@nodal-agents/tools';
 
 /**
  * Plafond par ligne d'audit. La sortie d'un outil peut peser des mégaoctets
@@ -23,6 +28,9 @@ export interface CliAuditRow {
   toolOutput: string;
   toolCallId: string;
   durationMs: number;
+  /** What the stream said of the call (#1184), and what it acted on. */
+  outcome: ToolCallOutcome;
+  target: string;
 }
 
 /**
@@ -48,8 +56,11 @@ export function buildCliAuditRow(args: {
   toolCallId: string;
   startedAt: number;
   now: number;
+  /** The stream's own flag on the result (`is_error`, `status: "failed"`). */
+  isError?: boolean;
 }): CliAuditRow {
   return {
+    ...cliCallVerdict(args.toolName, args.toolInput, args.isError === true),
     toolName: `cli:${args.toolName}`,
     toolInput: redactSecretsForAudit(args.toolInput) as Record<string, unknown>,
     toolOutput: redactSecretsInText((args.toolOutput ?? '').slice(0, MAX_AUDIT_OUTPUT_CHARS)),

@@ -696,14 +696,21 @@ describe('a send whose outcome is unknown is not counted as delivered, and the r
         idempotencyKey: `${answerDeliveryKey(job.id)}:resend_unconfirmed`,
       },
     ]);
-    // The call's row keeps where the unconfirmed send was going.
+    // The call's row says it, in its own columns (#1184): the outcome is
+    // unknown, on the chat the send was going to. That is the one source of
+    // the resend above; the output keeps where it was going, as data.
     const [call] = await db
-      .select({ toolOutput: toolCalls.toolOutput })
+      .select({
+        toolOutput: toolCalls.toolOutput,
+        outcome: toolCalls.outcome,
+        target: toolCalls.target,
+      })
       .from(toolCalls)
       .where(and(eq(toolCalls.jobId, job.id), eq(toolCalls.toolName, 'telegram_send_message')));
+    expect(call!.outcome).toBe('unknown');
+    expect(call!.target).toBe(`chat:telegram:${job.chatId}`);
     expect(JSON.parse(call!.toolOutput!)).toMatchObject({
       outcome: 'error',
-      mayHaveDelivered: true,
       output: { attempt: { channel: 'telegram', chatId: job.chatId } },
     });
   });

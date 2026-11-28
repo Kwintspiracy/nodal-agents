@@ -27,6 +27,8 @@ import {
   RUNNER_NON_TERMINAL_SENDERS,
   scanFilesForDeliverableTypeLiterals,
   formatViolations,
+  scanForOutcomeGuesses,
+  assertNoViolations,
 } from '@nodal-agents/test-kit';
 import { join } from 'node:path';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
@@ -419,5 +421,14 @@ describe('architecture — un seul écrivain de `completed`, qui prépare la ré
       .map((v) => rel(v.file))
       .filter((f) => !SENDER_HOMES.some((home) => f.startsWith(home)));
     expect([...new Set(senders)].sort()).toEqual(Object.keys(OTHER_CHANNEL_SENDERS).sort());
+  });
+});
+
+describe('architecture — the outcome of a call is read on its row (#1184)', () => {
+  it('no production file decides a call’s outcome from its output', () => {
+    assertNoViolations(
+      'outcome guessed from a tool output',
+      scanForOutcomeGuesses({ srcDir: SRC_DIR }),
+    );
   });
 });

@@ -22,6 +22,7 @@ import {
 import type { ToolDefinition, ToolContext } from '../types';
 import { sentCard } from '../presenters';
 import { RECEIPT_KEY, sendReceipt, withSendAttempt, type SendReceipt } from './receipt';
+import { chatTarget } from '@nodal-agents/shared';
 
 // ─── Input / Output ───────────────────────────────────────────────────────────
 
@@ -192,6 +193,10 @@ Fail conditions:
         'telegram_no_recipient',
         input.channel,
       );
+      // What this call acts on (#1184): the chat it resolved, whatever form
+      // the model gave the address in. Said before the send, so a failure or
+      // a timeout is keyed to it as well as a success.
+      ctx.reportTarget?.(chatTarget(channel, chatId));
 
       // 2. Bot token — the runner's resolved token wins (B3: a delegated worker
       // inheriting its entity's root agent's token); otherwise fall back to this

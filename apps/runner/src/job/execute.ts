@@ -68,6 +68,7 @@ import {
   openingMessages,
   personAnswersOfCalls,
   recordedPersonAnswers,
+  type ToolCallOutcome,
 } from '@nodal-agents/shared';
 import { ADAPTER_REGISTRY } from '@nodal-agents/runner-adapters';
 import {
@@ -128,6 +129,7 @@ import {
   withToolLoader,
   toolOutputForModel,
   shellChecklistDeclined,
+  outcomeUnknownInstruction,
 } from '@nodal-agents/tools';
 import type {
   ToolDefinition,
@@ -209,7 +211,6 @@ import {
   EVICTED_TOOL_RESULT_MARKER,
   EXPIRED_MARK,
   REJECTED_MARK,
-  toolResultShape,
   toolResultOutputText,
 } from './tool-result-shape.ts';
 import { hydrateForLlm, saveToolAttachments, toolImagesDir } from './model-images.ts';
@@ -231,11 +232,13 @@ import type { JobAuthority } from './state.ts';
 import {
   DELIVERABLE_NOT_VERIFIED,
   deliverableNotVerifiedLine,
+  CALLS_NOT_DONE,
   finalizeJobFailure,
   finalizeJobSuccess,
 } from './finalize.ts';
 import type { DeclaredDeliverableFailure } from './finalize.ts';
 import { releaseJobProcessesIfEnded } from './process-scopes.ts';
+import { jobUnresolvedCalls } from './call-outcomes.ts';
 import { jobProcessScope } from '@nodal-agents/sandbox';
 import { drainDeliveries } from '../delivery/outbox.ts';
 import { publishJobClaimed } from '../events/publish.ts';
@@ -3166,9 +3169,10 @@ async function runJobTracked(
   //   - a success: what the tool says the model reads (`toModelOutput`),
   //     framed when the tool is a third party's (INJECT-001);
   //   - a failure: framed only when the TOOL raised it (`raisedByTool`), with
-  //     `mayHaveDelivered` kept in the block — the sibling-error guard reads
-  //     it to let a same-turn return_result through instead of deferring it
-  //     (deferral invites the duplicate re-send that flag exists to prevent).
+  //     `mayHaveDelivered` kept in the block when its outcome is unknown, for
+  //     the model: it may have arrived, and is not to be sent again;
+  //   - a result whose outcome the tool declared unknown (#1206): the result,
+  //     with the seam's one text saying so, on its target.
   const executedCallOutput = async (
     tool: ToolDefinition<z.ZodTypeAny, unknown>,
     toolName: string,
@@ -3178,10 +3182,19 @@ async function runJobTracked(
     if (result.outcome !== 'success') {
       return toErrorOutput(result.error, {
         raisedBy: result.raisedByTool ? toolName : undefined,
-        mayHaveDelivered: result.mayHaveDelivered === true,
+        mayHaveDelivered: result.callOutcome === 'unknown',
       });
     }
-    const read = toResultOutput(toolOutputForModel(tool, result.output), toolName);
+    // A result the tool declared `unknown` (#1206: submitted, still running,
+    // never confirmed): the model reads it, AND that its effect is unknown on
+    // this target, in the seam's one text. Never told to call again.
+    const forModel = toolOutputForModel(tool, result.output);
+    const read = toResultOutput(
+      result.callOutcome === 'unknown'
+        ? { outcome_unknown: outcomeUnknownInstruction(result.target), result: forModel }
+        : forModel,
+      toolName,
+    );
     // The files the tool attached (`ctx.attachForModel`, admitted against this
     // job's model) follow its text, in the order it attached them: saved
     // beside the channel photos, the result keeping their paths, never their
@@ -4001,15 +4014,21 @@ async function runJobTracked(
   };
 
   /**
-   * La sortie d'un run qu'un livrable DÉCLARÉ non vérifié a fait échouer
-   * (#509). La primitive a déjà écrit `failed`, le résultat et la notice ; il
-   * reste à envoyer la notice et à rendre au parent le MÊME texte que la ligne
-   * en base — c'est lui qui voyage dans le record de délégation.
+   * La sortie d'un run que la porte a fait échouer : un livrable DÉCLARÉ non
+   * vérifié (#509), ou des appels laissés en échec (#1184). La primitive a
+   * déjà écrit `failed`, le résultat et la notice ; il reste à envoyer la
+   * notice et à rendre au parent le MÊME texte que la ligne en base — c'est
+   * lui qui voyage dans le record de délégation.
    */
   const sortieLivrableNonVerifie = async (
     failure: DeclaredDeliverableFailure,
   ): Promise<ExecuteJobResult> => {
-    trace(DELIVERABLE_NOT_VERIFIED, { paths: failure.unverified.map((u) => u.path) });
+    const exitReason =
+      failure.unresolvedCalls.length > 0 ? CALLS_NOT_DONE : DELIVERABLE_NOT_VERIFIED;
+    trace(exitReason, {
+      paths: failure.unverified.map((u) => u.path),
+      calls: failure.unresolvedCalls.map((c) => `${c.toolName}:${c.outcome}`),
+    });
     await drainDeliveries(db, { jobId: jobId as string }).catch((e: unknown) =>
       console.error(`[execute] DELIVERY_DRAIN_FAILED job=${jobId}`, e),
     );
@@ -4018,7 +4037,7 @@ async function runJobTracked(
       error: failure.errorCode,
       result: failure.result,
       toolsUsed,
-      exitReason: DELIVERABLE_NOT_VERIFIED,
+      exitReason,
     };
   };
 
@@ -4388,49 +4407,37 @@ async function runJobTracked(
   })();
   let errorStreakState: ErrorStreakState = INITIAL_ERROR_STREAK_STATE;
 
-  // Guard 3b — no-false-success. Tool names whose last outcome this run was a
-  // hard error and that were never since re-run successfully. If the agent
-  // signals return_result(status='success') while this set is non-empty, it is
-  // claiming a success that didn't happen (invariant #4) — defer/nudge, then
-  // fail loud. An honest return_result(status='blocked') is always allowed.
-  const unresolvedToolFailures = new Set<string>();
+  // Guard 3b — no-false-success, before the end. A DELIVERY that failed and
+  // that nothing redid on the same target (`tool_calls.outcome` and `target`,
+  // read per target from the job's rows, job/call-outcomes.ts): the agent is
+  // reminded, at most twice, to redo it or to end honestly with
+  // status='blocked'. A delivery whose outcome is UNKNOWN is never pushed to
+  // be redone: it may have arrived, and redoing it duplicates it (#1206).
+  // What is still unresolved when the job ends is the completion gate's to
+  // decide (`finalizeJobSuccess`, #1184), for every tool and every runtime.
   const MAX_UNRESOLVED_FAILURE_NUDGES = 2;
   let unresolvedFailureNudges = 0;
 
   /**
-   * Les livraisons NON PARTIES — et elles seules.
+   * Les livraisons NON PARTIES — et elles seules, lues sur les lignes.
    *
    * CE QUE LE RUNNER NE DÉCIDE PAS, ET POURQUOI. Cette garde a porté un temps
    * les délégations ratées : un parent ne pouvait pas déclarer un succès
    * par-dessus un `assign_*` qui n'avait rien rendu. Pour être juste, il aurait
    * fallu savoir si le travail manquant avait été fait autrement — une question
    * que le runner ne peut pas trancher, parce qu'elle demande de comparer deux
-   * tâches. Quatre approximations ont été essayées et les quatre sont tombées
-   * (revue Codex de la PR #108, passes 1 à 4) :
+   * tâches (revue Codex de la PR #108, passes 1 à 4). Restent les deux faits
+   * que la machine établit vraiment : un job sans livrable échoue (garde 3c),
+   * et l'échec du spécialiste arrive au parent dans son enregistrement typé ET
+   * dans le résultat livré à l'utilisateur (`withFailedDelegationNotice`).
    *
-   * 1. n'effacer jamais → FAUX ROUGE : le parent obéit au rappel et échoue quand
-   *    même ;
-   * 2. effacer dès qu'une autre délégation livre → FAUX VERT : elle pouvait
-   *    porter sur autre chose ;
-   * 3. effacer dès qu'un outil réussit → trois faux verts : une lecture sans
-   *    rapport, l'envoi de la PROMESSE elle-même, et relu dans la transcription
-   *    une erreur sérialisée en `text` — laquelle ne dit même pas l'ordre,
-   *    `resumeDelegated` rangeant le résultat de l'enfant avant des appels
-   *    antérieurs ;
-   * 4. n'accepter qu'une délégation qui livre → un simple REPORT comptait.
-   *
-   * Restent les deux faits que la machine établit vraiment : un job sans
-   * livrable échoue (garde 3c), et l'échec du spécialiste arrive au parent dans
-   * son enregistrement typé ET dans le résultat livré à l'utilisateur
-   * (`withFailedDelegationNotice`). L'honnêteté du parent redevient affaire de
-   * prompt — l'interdiction du message d'attente y est explicite —, adossée à
-   * un fait visible plutôt qu'à un verdict rendu à l'aveugle.
-   *
-   * Une LIVRAISON ratée, elle, reste bloquante : « rien n'est parti » se
-   * vérifie sans rien comprendre à la tâche.
+   * Une LIVRAISON ratée, elle, se vérifie sans rien comprendre à la tâche :
+   * « rien n'est parti » est le fait de sa ligne.
    */
-  const stuckDeliveriesNow = (): string[] =>
-    [...unresolvedToolFailures].filter((t) => DELIVERY_OR_TERMINAL_TOOL_NAMES.has(t));
+  const stuckDeliveriesNow = async (): Promise<string[]> =>
+    (await jobUnresolvedCalls(db, jobId as string))
+      .filter((c) => c.outcome === 'failed' && DELIVERY_OR_TERMINAL_TOOL_NAMES.has(c.toolName))
+      .map((c) => c.toolName);
 
   // `delegationOutcomes` — la carte des délégations de ce run, prise en
   // PARAMÈTRE (voir `runJob` juste au-dessus) : elle sort avec le résultat pour
@@ -4452,14 +4459,12 @@ async function runJobTracked(
         "vérité à l'utilisateur, puis termine honnêtement avec status='blocked'.",
     }) as ModelMessage;
 
-  // Guard 3b, cross-run leg (#107). `unresolvedToolFailures` is in-memory and a
-  // delegation resume re-ENTERS executeJob, so a parent resumed with a FAILED
-  // delegation would start its next run with an empty set and be free to signal
-  // success over a delegation that delivered nothing. Seed the set from the
-  // transcript: for every `assign_*` tool-result already in `messages`, the LAST
-  // occurrence decides — an error-text one leaves the slug unresolved, a later
-  // successful one clears it (so a fallback to another specialist, or a redo
-  // that worked, is not held against the parent).
+  // The delegation record, cross-run leg (#107). A delegation resume
+  // re-ENTERS executeJob: the map of what each specialist delivered is seeded
+  // from the transcript, for every `assign_*` tool-result already in
+  // `messages`, the LAST occurrence deciding — an error-text one leaves the
+  // slug failed, a later successful one clears it (so a fallback to another
+  // specialist, or a redo that worked, is not held against the parent).
   //
   // #116 — la même boucle relit désormais l'issue du SOUS-ARBRE portée par
   // l'enregistrement typé, si bien que l'échec d'un petit-enfant atteint le
@@ -5530,22 +5535,17 @@ async function runJobTracked(
           // MÊME garde que la branche `return_result` (3b) : un texte final est
           // une livraison, et livrer « je te reviens » par-dessus une délégation
           // qui a échoué, c'est promettre ce qui n'existe pas.
-          const stuckHere = stuckDeliveriesNow();
-          if (stuckHere.length > 0) {
-            if (unresolvedFailureNudges < MAX_UNRESOLVED_FAILURE_NUDGES) {
-              unresolvedFailureNudges += 1;
-              trace('unresolved_tool_failure_nudge', {
-                turn,
-                attempt: unresolvedFailureNudges,
-                stuck: stuckHere,
-                via: 'text_branch',
-              });
-              messages = [...messages, unresolvedFailureNudge(stuckHere)];
-              continue;
-            }
-            trace('unresolved_tool_failure', { turn, stuck: stuckHere, via: 'text_branch' });
-            await failJob(db, jobId as string, 'unresolved_tool_failure', runStats(), messages);
-            return { status: 'failed', error: 'unresolved_tool_failure' };
+          const stuckHere = await stuckDeliveriesNow();
+          if (stuckHere.length > 0 && unresolvedFailureNudges < MAX_UNRESOLVED_FAILURE_NUDGES) {
+            unresolvedFailureNudges += 1;
+            trace('unresolved_tool_failure_nudge', {
+              turn,
+              attempt: unresolvedFailureNudges,
+              stuck: stuckHere,
+              via: 'text_branch',
+            });
+            messages = [...messages, unresolvedFailureNudge(stuckHere)];
+            continue;
           }
           // Une déclaration renvoyée et jamais refaite (#509) : répondre en
           // texte n'efface pas des fichiers promis que Nodal n'a pas pu trouver.
@@ -5751,6 +5751,11 @@ async function runJobTracked(
         toolName: string;
         output: ToolResultOutput;
       }> = [];
+      // What became of each call of THIS turn (#1184), by tool-call id: the
+      // outcome the seam returned with the result, or `failed` for a call the
+      // loop itself did not run (an unavailable tool, a refused delegation).
+      // The same-turn guard below reads it; nothing reads a block's text for it.
+      const turnOutcomes = new Map<string, ToolCallOutcome>();
 
       // A model can emit return_result MORE than once in a turn (minimax does).
       // Only the first (returnResultCall) finalizes the job; the rest are stripped
@@ -6005,6 +6010,7 @@ async function runJobTracked(
               error: describeUnavailableTool(call.name, [...toolMap.keys()]),
             }),
           });
+          turnOutcomes.set(call.id, 'failed');
           continue;
         }
 
@@ -6031,6 +6037,7 @@ async function runJobTracked(
                 error: delegationDepthExceededMessage(),
               }),
             });
+            turnOutcomes.set(call.id, 'failed');
             // The assign_ calls dropped by the one-per-turn filter get their
             // deferral from `closeTurn` when this turn's tool message is built.
             continue;
@@ -6050,6 +6057,7 @@ async function runJobTracked(
                 error: delegationResumeLimitMessage(job.chainCount ?? 0),
               }),
             });
+            turnOutcomes.set(call.id, 'failed');
             continue;
           }
 
@@ -6077,6 +6085,7 @@ async function runJobTracked(
                   'deferred: this job already delegates via the task board (create_task). Do NOT also assign_ — let the tasks run and compile, or add more parallel work with create_task. Mixing both delegation styles on one job is not allowed.',
               }),
             });
+            turnOutcomes.set(call.id, 'failed');
             // The assign_ calls dropped by the one-per-turn filter get their
             // deferral from `closeTurn` when this turn's tool message is built.
             continue;
@@ -6108,6 +6117,7 @@ async function runJobTracked(
                 toolName: call.name,
                 output: toResultOutput({ error: describeDuplicateReview(duplicate) }),
               });
+              turnOutcomes.set(call.id, 'failed');
               // Les assign_* frères écartés par `filterToolCallsForDelegation`
               // reçoivent leur report de `closeTurn` (#561).
               continue;
@@ -6155,6 +6165,7 @@ async function runJobTracked(
                 }),
               }),
             });
+            turnOutcomes.set(call.id, 'failed');
 
             // The other assign_* calls of this turn, dropped to keep one
             // delegation per turn, get their deferral from `closeTurn` when
@@ -6262,6 +6273,7 @@ async function runJobTracked(
           );
         }
 
+        turnOutcomes.set(call.id, toolResult.callOutcome);
         if (toolResult.outcome === 'awaiting_approval') {
           const awaitingMarker = `${AWAITING_APPROVAL_MARK} tool_call_id=${call.id}`;
           toolResultBlocks.push({
@@ -6278,23 +6290,14 @@ async function runJobTracked(
           continue;
         }
 
-        // Guard 3b — track unresolved hard tool failures across turns. A success
-        // clears any prior failure of the same tool (the agent retried and it
-        // worked); a fresh error marks it unresolved. (awaiting_approval was
-        // handled above with `continue`, so outcome here is success|error.)
-        // A mayHaveDelivered send timeout is NOT an unresolved failure: the
-        // false-success guard below would otherwise demand "réessaie la
-        // livraison jusqu'à réussite" — a forced re-send of a message that
-        // probably already arrived.
-        if (toolResult.outcome === 'success') {
-          unresolvedToolFailures.delete(call.name);
-          // Une délégation qui livre efface ce qu'on avait à dire d'elle — et
-          // le FAIT qu'elle ait livré reste dans la carte, parce qu'il voyage
-          // jusqu'au parent et y efface le même échec propagé (#116).
-          if (call.name.startsWith('assign_')) delegationOutcomes.set(call.name, 'delivered');
-        } else if (!(toolResult.outcome === 'error' && toolResult.mayHaveDelivered === true)) {
-          unresolvedToolFailures.add(call.name);
-          if (call.name.startsWith('assign_')) delegationOutcomes.set(call.name, 'failed');
+        // What became of a call is on its row (`tool_calls.outcome`, #1184),
+        // read per target by the gate and by Guard 3b: no memory of failures
+        // by tool name is kept here. A delegation's own record (#116) still
+        // follows what the seam said of the call.
+        if (call.name.startsWith('assign_')) {
+          if (toolResult.callOutcome === 'done') delegationOutcomes.set(call.name, 'delivered');
+          else if (toolResult.callOutcome !== 'unknown')
+            delegationOutcomes.set(call.name, 'failed');
         }
 
         // Punch list V1.1 — transition du pipeline code notifiée au canal
@@ -6304,10 +6307,12 @@ async function runJobTracked(
         if (call.name === 'code_task') {
           void notifyCodeTransition(db, jobId as string, {
             kind: 'code_task_done',
-            success: toolResult.outcome === 'success',
+            // What the tool declared of its run (#1184, FV1-03): a run that
+            // ended in error is `failed`, never a finished task.
+            success: toolResult.callOutcome === 'done',
             agentName: agent.name,
           });
-        } else if (call.name === 'review_verdict' && toolResult.outcome === 'success') {
+        } else if (call.name === 'review_verdict' && toolResult.callOutcome === 'done') {
           const verdictInput = call.input as { verdict?: unknown };
           void notifyCodeTransition(db, jobId as string, {
             kind: 'review_verdict',
@@ -6356,7 +6361,7 @@ async function runJobTracked(
         {
           const { state, signal } = recordToolOutcome(
             errorStreakState,
-            toolResult.outcome === 'error',
+            toolResult.callOutcome !== 'done',
             nonProgressErrorStreakNudgeAt,
             nonProgressErrorStreakFailAt,
           );
@@ -6440,29 +6445,20 @@ async function runJobTracked(
       // like [telegram_send_message (error), return_result] would silently
       // finalize the job claiming success even though the side-effect failed
       // — direct violation of invariant #4 (no silent fallbacks).
-      // A "sibling tool error" is one whose tool_result output is a JSON
-      // object containing an `error` field (the shape we wrap failures in
-      // — see toResultOutput callers in section i above).
+      // A "sibling tool error" is a call of this turn whose OUTCOME is
+      // `failed` or `refused` (#1184): what the seam returned with the result
+      // (`turnOutcomes`), never a reading of the block's text. A tool that
+      // returned its failure (`{ ok: false }`, a command killed at its
+      // timeout, a coding run in error) is one, as much as a tool that threw.
       //
-      // Fix #19: toResultOutput forces `type: 'text'` (not 'json') once the
-      // serialized `{error: ...}` object exceeds MAX_TOOL_RESULT_CHARS — a
-      // large tool error (e.g. a misbehaving connector dumping a huge stack
-      // trace back) goes through truncateForContext instead. Checking
-      // `type === 'json'` alone missed that case entirely: the sibling error
-      // went undetected and the turn finalized 'completed' despite the failed
-      // side effect (invariant #4). truncateForContext only touches content
-      // AFTER the `{"error":` prefix (elision/truncation both preserve the
-      // head), so that prefix survives and is a safe marker to check for text
-      // outputs too.
-      //
-      // A mayHaveDelivered send timeout is ambiguous, not a failure to fix:
-      // deferring return_result over it would push the LLM to resend the
-      // (probably delivered) message. Let the turn finalize.
-      //
-      // ONE reading of a result's outcome, shared with the re-read's record
-      // of the run (#711, job/tool-result-shape.ts).
-      const isToolErrorBlock = (block: (typeof toolResultBlocks)[number]): boolean =>
-        block.toolName !== 'return_result' && toolResultShape(block.output) === 'error';
+      // An UNKNOWN outcome is ambiguous, not a failure to fix: deferring
+      // return_result over it would push the LLM to redo a call that may have
+      // taken effect (#1206). Let the turn finalize; the gate states it.
+      const isToolErrorBlock = (block: (typeof toolResultBlocks)[number]): boolean => {
+        if (block.toolName === 'return_result') return false;
+        const outcome = turnOutcomes.get(block.toolCallId);
+        return outcome === 'failed' || outcome === 'refused';
+      };
 
       const turnHadSiblingToolError =
         returnResultCall !== undefined && toolResultBlocks.some(isToolErrorBlock);
@@ -6586,56 +6582,32 @@ async function runJobTracked(
           };
         }
 
-        if (rrStatus === 'success' && unresolvedToolFailures.size > 0) {
-          const stuck = [...unresolvedToolFailures];
-          // A 'success' is only FALSE when the user got nothing — i.e. a DELIVERY
-          // tool failed (telegram_send_message / send_image / dashboard_publish).
-          // Benign, non-retryable side-tool failures (a deduped comment, a vote on
-          // OWN content) while the agent HAS delivered are NOT a false success:
-          // the deliverable is honest and the failures stay visible in the
-          // persisted transcript. Hard-failing those turned complete, productive
-          // jobs into false FAILURES (observed live: the sessions did all the work,
-          // then died on unresolved_tool_failure over a self-vote/dedup rejection
-          // the agent literally cannot retry to success). A job asked on a chat
-          // gets its answer there from the gate that writes `completed` (#1215).
-          // `assign_*` joins the delivery tools here (#107): a delegation that
-          // came back FAILED produced nothing, so a parent signalling success
-          // over it is claiming a result that does not exist — the same lie the
-          // guard already catches for a failed send. The parent is nudged to
-          // redo, re-delegate elsewhere, or tell the truth; then it fails loud.
-          const stuckDelivery = stuckDeliveriesNow();
-          if (stuckDelivery.length > 0) {
-            if (unresolvedFailureNudges < MAX_UNRESOLVED_FAILURE_NUDGES) {
-              unresolvedFailureNudges += 1;
-              trace('unresolved_tool_failure_nudge', {
-                turn,
-                attempt: unresolvedFailureNudges,
-                stuck: stuckDelivery,
-              });
-              toolResultBlocks.push({
-                type: 'tool-result',
-                toolCallId: returnResultCall.toolCallId,
-                toolName: 'return_result',
-                output: toResultOutput({
-                  error:
-                    'deferred: tu signales un succès alors que ceci a échoué sans être corrigé (' +
-                    stuckDelivery.join(', ') +
-                    "). Refais-le jusqu'à réussite (ou confie-le à un autre spécialiste), ou " +
-                    "appelle return_result avec status='blocked'.",
-                }),
-              });
-              messages = [...messages, ...turnMessages()];
-              messages = [...messages, unresolvedFailureNudge(stuckDelivery)];
-              continue;
-            }
-            trace('unresolved_tool_failure', { turn, stuck: stuckDelivery });
-            await failJob(db, jobId as string, 'unresolved_tool_failure', runStats(), messages);
-            return { status: 'failed', error: 'unresolved_tool_failure' };
-          }
-          // Only non-delivery side-tool failures remain → NOT a false success.
-          // Accept it and fall through to normal completion; the failed calls
-          // stay recorded in the persisted transcript (invariant #4: not silent).
-          trace('unresolved_side_tool_failures_accepted', { turn, stuck });
+        // Guard 3b: a DELIVERY left failed is redone first (bounded). Whatever
+        // is still unresolved at the end, delivery or not, is the gate's
+        // (#1184): the run then ends as work not done, the calls named.
+        const stuckDelivery = rrStatus === 'success' ? await stuckDeliveriesNow() : [];
+        if (stuckDelivery.length > 0 && unresolvedFailureNudges < MAX_UNRESOLVED_FAILURE_NUDGES) {
+          unresolvedFailureNudges += 1;
+          trace('unresolved_tool_failure_nudge', {
+            turn,
+            attempt: unresolvedFailureNudges,
+            stuck: stuckDelivery,
+          });
+          toolResultBlocks.push({
+            type: 'tool-result',
+            toolCallId: returnResultCall.toolCallId,
+            toolName: 'return_result',
+            output: toResultOutput({
+              error:
+                'deferred: tu signales un succès alors que ceci a échoué sans être corrigé (' +
+                stuckDelivery.join(', ') +
+                "). Refais-le jusqu'à réussite (ou confie-le à un autre spécialiste), ou " +
+                "appelle return_result avec status='blocked'.",
+            }),
+          });
+          messages = [...messages, ...turnMessages()];
+          messages = [...messages, unresolvedFailureNudge(stuckDelivery)];
+          continue;
         }
 
         // Resolve the task-board state up front: a run that created tasks

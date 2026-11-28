@@ -1003,13 +1003,12 @@ describe('a parent cannot promise over a failed delegation @cap:organiser-equipe
       .select({ payload: jobDeliveries.payload, chatId: jobDeliveries.chatId })
       .from(jobDeliveries)
       .where(eq(jobDeliveries.jobId, parentId));
-    // Le bot sert : le message de l'agent part, puis le run s'arrête sur la
-    // délégation jamais résolue. La personne reçoit UNE notice de cet échec, sur
-    // son chat : le résultat que la page du job montre (#1180). Avant, cette
-    // sortie-là (`unresolved_tool_failure`) n'envoyait rien.
+    // L'envoi de l'agent échoue, rien ne le refait : le run finit comme un
+    // travail non fait, l'appel nommé (#1184). La personne reçoit UNE notice de
+    // cet échec, sur son chat : le résultat que la page du job montre (#1180).
     const row = await jobRow(parentId);
     expect(row.status).toBe('failed');
-    expect(row.error).toBe('unresolved_tool_failure');
+    expect(row.error).toBe('calls_not_done (1 unresolved: telegram_send_message)');
     expect(livraisons).toEqual([{ payload: row.result, chatId: '4242' }]);
     await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
   });

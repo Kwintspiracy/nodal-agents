@@ -310,12 +310,7 @@ import { toElicitationView, type ElicitationView } from './elicitation-view.ts';
 import { readAttachmentViews } from './elicitation-attachments.ts';
 import { effortKeptOnModel, isRefusedEffort } from './model-choices.ts';
 import type { ConversationFeed, Step } from './conversation-feed.ts';
-import {
-  parsePresented,
-  outcomeOfToolOutput,
-  callHappened,
-  isToolCard,
-} from './tool-card-payload.ts';
+import { parsePresented, stepOutcomeOf, callHappened, isToolCard } from './tool-card-payload.ts';
 import { originOfRun, inTimeOrder, type RunOrigin } from './activity-runs.ts';
 import { aggregateSpaceCost, costOfCalls, type SpaceCostView } from './space-cost.ts';
 import { assembleJobFeed, collectDescendants } from './job-feed.ts';
@@ -2712,6 +2707,7 @@ export async function getSpaceConversationAction(
           riskLevel: toolCalls.riskLevel,
           toolInput: toolCalls.toolInput,
           toolOutput: toolCalls.toolOutput,
+          outcome: toolCalls.outcome,
         })
         .from(toolCalls)
         .where(and(eq(toolCalls.entityId, session.entityId), inArray(toolCalls.jobId, relevantIds)))
@@ -2853,6 +2849,7 @@ export async function getSpaceConversationAction(
         toolName: r.toolName,
         toolInput: r.toolInput,
         toolOutput: r.toolOutput,
+        outcome: r.outcome,
         presented: r.presented,
       })),
       // #508 — le prix du run : les appels de la racine et de sa descendance,
@@ -10205,6 +10202,7 @@ export async function listRunCallsAction(raw: unknown): Promise<ActionResult<Run
           toolCallId: toolCalls.toolCallId,
           toolInput: toolCalls.toolInput,
           toolOutput: toolCalls.toolOutput,
+          outcome: toolCalls.outcome,
           durationMs: toolCalls.durationMs,
           turn: toolCalls.turn,
           card: toolCalls.card,
@@ -10244,7 +10242,7 @@ export async function listRunCallsAction(raw: unknown): Promise<ActionResult<Run
     ]);
 
     const tools: RunCall[] = toolRows.map((r) => {
-      const outcome = outcomeOfToolOutput(r.toolOutput);
+      const outcome = stepOutcomeOf(r.outcome);
       return {
         kind: 'tool',
         id: r.id,
@@ -10269,7 +10267,7 @@ export async function listRunCallsAction(raw: unknown): Promise<ActionResult<Run
           // Ce que l'appel a écrit, compté comme le fil le compte (même
           // fonction) : un appel qui n'a pas abouti n'a rien écrit.
           lineCounts: callHappened(outcome)
-            ? lineCountsOfCall(r.toolName, r.toolInput, r.toolOutput)
+            ? lineCountsOfCall(r.toolName, r.toolInput, r.outcome)
             : {},
           // Les questions d'approbation sont l'affaire du fil, où l'on peut
           // répondre. La liste des runs montre l'appel, pas ses boutons.
@@ -14021,6 +14019,7 @@ export async function listCodingProcessesAction(): Promise<ActionResult<CodingPr
         // Needed to tell an executed call from a REFUSED one — a write the
         // harness rejected must not count as a file changed (isRefusedToolCall).
         toolOutput: toolCalls.toolOutput,
+        outcome: toolCalls.outcome,
       })
       .from(toolCalls)
       .where(
@@ -14084,6 +14083,7 @@ export async function listCodingProcessesAction(): Promise<ActionResult<CodingPr
         toolName: string;
         toolInput: unknown;
         toolOutput: string | null;
+        outcome: string | null;
         /** L'agent qui a passé l'appel — pour lire ses chemins relatifs. */
         agentId: string | null;
       }>
@@ -14103,6 +14103,7 @@ export async function listCodingProcessesAction(): Promise<ActionResult<CodingPr
         toolName: c.toolName,
         toolInput: c.toolInput,
         toolOutput: c.toolOutput,
+        outcome: c.outcome,
         agentId: callAgentId,
       });
       callsByRoot.set(root, arr);
@@ -14284,7 +14285,7 @@ export async function listCodingProcessesAction(): Promise<ActionResult<CodingPr
         const set = new Set<string>();
         for (const c of calls) {
           if (!FILE_TOOL_NAMES.has(c.toolName)) continue;
-          if (isRefusedToolCall(c.toolOutput)) continue; // attempted ≠ changed
+          if (isRefusedToolCall(c.outcome)) continue; // attempted ≠ changed
           const fp = extractFilePath(c.toolInput as Record<string, unknown> | null);
           // Un chemin qu'aucun dossier attaché ne couvre n'est pas rattachable
           // à un projet : il ne compte pas dans le décompte de fichiers, faute
@@ -14330,7 +14331,11 @@ export async function listCodingProcessesAction(): Promise<ActionResult<CodingPr
       const verdictRows =
         allRelevantIds.length > 0
           ? await db
-              .select({ jobId: toolCalls.jobId, toolOutput: toolCalls.toolOutput })
+              .select({
+                jobId: toolCalls.jobId,
+                toolOutput: toolCalls.toolOutput,
+                outcome: toolCalls.outcome,
+              })
               .from(toolCalls)
               .where(
                 and(
@@ -14428,6 +14433,8 @@ export type CodingToolCallView = {
   toolName: string;
   toolInput: unknown;
   toolOutput: string | null;
+  /** What became of the call (`tool_calls.outcome`, #1184), read by `stepOutcomeOf`. */
+  outcome: string | null;
   durationMs: number | null;
   createdAt: string | null;
   /** Set when this call happened in a DIRECT CHILD job (a delegated worker), not the root itself. */
@@ -14663,6 +14670,7 @@ export async function getCodingProcessDetailAction(
           toolName: toolCalls.toolName,
           toolInput: toolCalls.toolInput,
           toolOutput: toolCalls.toolOutput,
+          outcome: toolCalls.outcome,
           durationMs: toolCalls.durationMs,
           createdAt: toolCalls.createdAt,
         })
@@ -14858,7 +14866,7 @@ export async function getCodingProcessDetailAction(
         const attempted: ChangeRef = { rawPath: change.filePath, workspaces: wsOfCall(tc.jobId) };
         attemptedTargets.push(attempted);
         // A refused call wrote nothing — it must not appear as a change.
-        if (isRefusedToolCall(tc.toolOutput)) continue;
+        if (isRefusedToolCall(tc.outcome)) continue;
         const ref: ChangeRef = { rawPath: change.filePath, workspaces: wsOfCall(tc.jobId) };
         // Non rattachable, hors détail — comme dans la liste.
         if (!isInsideWorkspace(ref, detailWorkspaces)) continue;
@@ -14972,6 +14980,7 @@ export async function getCodingProcessDetailAction(
             // processus Code montrait la sortie brute (Reviewer C, #158).
             toolInput: redactPresented(tc.toolInput),
             toolOutput: tc.toolOutput === null ? null : redactSecretsInText(tc.toolOutput),
+            outcome: tc.outcome,
             durationMs: tc.durationMs,
             createdAt: tc.createdAt ? tc.createdAt.toISOString() : null,
             delegatedFrom:

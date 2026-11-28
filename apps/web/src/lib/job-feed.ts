@@ -10,6 +10,7 @@
 // Un helper interne n'a rien à y faire, et re-exporter une action d'un fichier
 // `'use server'` à l'autre est un piège connu de ce dépôt.
 
+import { callHappened, stepOutcomeOf } from './tool-card-payload.ts';
 import 'server-only';
 import {
   eq,
@@ -217,7 +218,11 @@ async function lireVerdictsLivres(
   if (jobIds.length === 0) return parJob;
 
   const rows = await db
-    .select({ jobId: toolCalls.jobId, toolOutput: toolCalls.toolOutput })
+    .select({
+      jobId: toolCalls.jobId,
+      toolOutput: toolCalls.toolOutput,
+      outcome: toolCalls.outcome,
+    })
     .from(toolCalls)
     .where(
       and(
@@ -230,12 +235,14 @@ async function lireVerdictsLivres(
     // écrite, et les suivantes — des appels corrigés, repris — sont ignorées.
     .orderBy(desc(toolCalls.seq));
 
-  // Les jobs déjà tranchés. Pas `parJob` : sa ligne la plus récente peut ne
-  // RIEN livrer — un appel refusé après un succès dit que le relecteur s'est
-  // repris — et il faut alors s'arrêter là, sans remonter au succès d'avant.
+  // Les jobs déjà tranchés : la ligne la plus récente qui a ABOUTI décide. Un
+  // appel refusé à la validation (`failed` sur sa ligne, #1184) n'est pas un
+  // verdict et ne cache pas celui d'avant (B52-01) : la même règle que la
+  // section Review (`readReviewVerdicts`), lue sur la même colonne.
   const tranches = new Set<string>();
   for (const row of rows) {
     if (row.jobId === null || tranches.has(row.jobId)) continue;
+    if (!callHappened(stepOutcomeOf(row.outcome))) continue;
     tranches.add(row.jobId);
     try {
       const verdict = parseReviewVerdictOutput(row.toolOutput);
@@ -294,6 +301,7 @@ export async function assembleJobFeeds(
         turn: toolCalls.turn,
         toolInput: toolCalls.toolInput,
         toolOutput: toolCalls.toolOutput,
+        outcome: toolCalls.outcome,
         createdAt: toolCalls.createdAt,
       })
       .from(toolCalls)

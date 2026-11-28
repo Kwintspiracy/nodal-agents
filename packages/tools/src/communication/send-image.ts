@@ -26,6 +26,7 @@ import type { ToolDefinition, ToolContext } from '../types';
 import { sentCard } from '../presenters';
 import type { SendResult } from '@nodal-agents/delivery';
 import { RECEIPT_KEY, sendReceipt, withSendAttempt, type SendReceipt } from './receipt';
+import { chatItemTarget } from '@nodal-agents/shared';
 
 // Telegram photo size limit. Uploads above this cap silently fail or are
 // rejected server-side; we enforce the cap locally so the error is clear.
@@ -147,6 +148,9 @@ Fail conditions:
         'no_recipient',
         input.channel,
       );
+      // What this call acts on (#1184): THIS item in the chat it resolved. A
+      // later send of another file to the same chat does not make up for it.
+      ctx.reportTarget?.(chatItemTarget(channel, chatId, input.source));
 
       // 2. Bot token — the runner's resolved token wins (B3: a delegated worker
       // inheriting its entity's root agent's token); otherwise fall back to this

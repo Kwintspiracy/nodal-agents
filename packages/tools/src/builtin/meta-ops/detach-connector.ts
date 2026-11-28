@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { eq, and, agentConnectorAssignments } from '@nodal-agents/db';
 import type { ToolDefinition } from '../../types';
 import { resolveAgentId, resolveConnectorId } from './link-helpers';
+import { outcomeOfOkFlag } from '../../outcome';
 
 const DetachConnectorInput = z.object({
   connectorSlug: z
@@ -32,6 +33,7 @@ export const detachConnectorTool: ToolDefinition<
   egress: 'none',
   card: 'text',
   defaultApproval: 'require_approval',
+  outcomeOf: outcomeOfOkFlag,
   execute: async (input, ctx) => {
     const connectorId = await resolveConnectorId(ctx.db, ctx.entityId, input.connectorSlug);
     if (!connectorId)

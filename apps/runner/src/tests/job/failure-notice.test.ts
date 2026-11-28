@@ -361,6 +361,7 @@ const COMPUTED_CODES = [
   'runtime_not_supported:unknown-cli', // the CLI runtime, `runtime_not_supported:${…}`
   'runner_restarted', // RUNNER_RESTARTED_CODE, the reclaim
   'tasks_not_done (2 of 3 done)', // the board's `rootError`
+  'calls_not_done (1 unresolved: gmail_send_email)', // the gate's `callsNotDoneCode` (#1184)
   'Missing access to the calendar', // a blocked agent's short reason (`errorMessage`)
 ];
 
@@ -369,7 +370,6 @@ describe('one writer of failed, one notice per failure @cap:parler-par-canal-ext
 
   it('the scan reads the exits: the codes the audit named are among them', () => {
     for (const named of [
-      'unresolved_tool_failure',
       'quota_exhausted',
       'no_progress_detected',
       'orphan_job_reset',

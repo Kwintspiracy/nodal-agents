@@ -142,6 +142,7 @@ export async function runCliRuntimeChatTurn(args: {
         toolInput: started.input,
         toolOutput: evt.output,
         toolCallId: evt.toolUseId,
+        isError: evt.isError === true,
         startedAt: started.startedAt,
         now: Date.now(),
       });

@@ -18,6 +18,7 @@
 // (Quentin, 18/09 : « il ne devrait y en avoir qu'une seule et elle devrait
 // être dans le bloc review prévu à cet effet »).
 
+import { callHappened, stepOutcomeOf } from './tool-card-payload.ts';
 import 'server-only';
 import { and, asc, eq, inArray, agentJobs, toolCalls } from '@nodal-agents/db';
 import { parseReviewVerdictOutput, REVIEW_VERDICT_TOOL } from '@nodal-agents/orchestration';
@@ -85,7 +86,11 @@ export async function readReviewVerdicts(
 ): Promise<JobReviewVerdicts> {
   if (jobIds.length === 0) return { views: [], rawByJob: new Map() };
   const rows = await db
-    .select({ jobId: toolCalls.jobId, toolOutput: toolCalls.toolOutput })
+    .select({
+      jobId: toolCalls.jobId,
+      toolOutput: toolCalls.toolOutput,
+      outcome: toolCalls.outcome,
+    })
     .from(toolCalls)
     .where(
       and(
@@ -100,6 +105,11 @@ export async function readReviewVerdicts(
   const views: ReviewVerdictView[] = [];
   for (const row of rows) {
     if (row.jobId === null || row.toolOutput === null) continue;
+    // Un appel qui n'a PAS ABOUTI n'est pas un verdict (#1184, B52-01) : un
+    // `review_verdict` refusé à la validation est `failed` sur sa ligne, et il
+    // n'est ni une vue « Request changes » ni un verdict compté. Lu sur la
+    // colonne, par la même lecture que le fil et le runner.
+    if (!callHappened(stepOutcomeOf(row.outcome))) continue;
     // `rawByJob` reste BRUT, et ce n'est pas un oubli : personne ne le rend.
     // Il sert à chercher un marqueur d'approbation dans la sortie
     // (`actions.ts`, dérivation d'étape) — une décision, pas un affichage. Le

@@ -26,6 +26,7 @@ import {
   MAX_WRITE_BYTES,
   WorkspaceError,
 } from './workspace';
+import { outcomeOfOkFlag } from '../../outcome';
 
 export const FileEditInputSchema = z.object({
   path: z.string().min(1).describe('Path to an existing file, relative to the workspace root.'),
@@ -125,6 +126,7 @@ export const fileEditTool: ToolDefinition<typeof FileEditInputSchema, FileEditOu
     }
     return (await computeSharedOverwriteApproval(ctx, input.path)) === 'require_approval';
   },
+  outcomeOf: outcomeOfOkFlag,
   execute: async (input, ctx) => {
     try {
       const path = await resolveAndCheckPath(ctx, input.path);

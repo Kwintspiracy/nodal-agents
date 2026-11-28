@@ -6972,14 +6972,12 @@ describe('reliability guards', () => {
     expect(row?.status).toBe('completed');
   });
 
-  it('Guard 3b: a NON-delivery side-tool failure does NOT make a success false — the job completes', async () => {
+  it('a call the gate refused before it ran (invalid input) decides nothing — the job completes', async () => {
     const job = await createTestJob(db, seed);
-    // Turn 1: save_memory fails (a non-delivery side action). Turn 2:
-    // return_result(status='success'). The deliverable is unaffected, so this is
-    // NOT a false success — the job COMPLETES; the failed call stays visible in
-    // the persisted transcript. Live regression this fixes: Java/Cortex sessions
-    // did all their work, then died on unresolved_tool_failure over a self-vote /
-    // dedup rejection the agent literally cannot retry to success.
+    // Turn 1: save_memory is called with no arguments: the gate refuses it at
+    // validation, before it runs (its row says `failed`, never started). Turn
+    // 2: return_result(status='success'). A call that never ran changed
+    // nothing and the model read why: it leaves no work undone (#1184).
     const llmClient = makeMockLlmClient([
       { toolCalls: [{ toolCallId: 'sm-bad', toolName: 'save_memory', args: {} }] },
       {
@@ -7048,13 +7046,20 @@ describe('reliability guards', () => {
 
     const result = await executeJob(job.id as JobId, customDeps, testEnv);
     expect(result.status).toBe('failed');
-    if (result.status === 'failed') expect(result.error).toBe('unresolved_tool_failure');
+    // After its two reminders, the run ends as work not done (#1184): the gate
+    // names the call that nothing redid, in the code and in the line.
+    if (result.status === 'failed') {
+      expect(result.error).toBe('calls_not_done (1 unresolved: dashboard_publish)');
+    }
     // #561 : la transcription persistée à l'échec garde chaque tool_use avec son résultat.
     const [persisted] = await db
-      .select({ messages: agentJobs.messages })
+      .select({ messages: agentJobs.messages, result: agentJobs.result })
       .from(agentJobs)
       .where(eq(agentJobs.id, job.id));
     expect(() => validateMessageStructure(persisted!.messages as never)).not.toThrow();
+    expect(persisted!.result).toContain(
+      '[stopped: tool calls not done — dashboard_publish: failed]',
+    );
   });
 
   // #886 : la même garde sur la branche TEXTE. Une livraison ratée, puis une
@@ -7101,13 +7106,19 @@ describe('reliability guards', () => {
     const result = await executeJob(job.id as JobId, customDeps, testEnv);
 
     expect(result.status).toBe('failed');
-    if (result.status === 'failed') expect(result.error).toBe('unresolved_tool_failure');
+    if (result.status === 'failed') {
+      expect(result.error).toBe('calls_not_done (1 unresolved: dashboard_publish)');
+    }
     const [row] = await db
-      .select({ status: agentJobs.status, error: agentJobs.error })
+      .select({ status: agentJobs.status, error: agentJobs.error, result: agentJobs.result })
       .from(agentJobs)
       .where(eq(agentJobs.id, job.id));
     expect(row?.status).toBe('failed');
-    expect(row?.error).toBe('unresolved_tool_failure');
+    expect(row?.error).toBe('calls_not_done (1 unresolved: dashboard_publish)');
+    // The person reads the agent's answer, then the line that names the call.
+    expect(row?.result).toBe(
+      'Published.\n\n[stopped: tool calls not done — dashboard_publish: failed]',
+    );
     // The model was told, in a request it received, which action failed.
     expect(JSON.stringify(prompts)).toContain('dashboard_publish');
     expect(JSON.stringify(prompts)).toContain("Ne déclare pas un succès qui n'a pas eu lieu");

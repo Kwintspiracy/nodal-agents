@@ -280,29 +280,6 @@ export function expandToolCalls(
 }
 
 /**
- * L'enveloppe que les surfaces Code reconnaissent comme un ÉCHEC.
- *
- * `isRefusedToolCall` (onglet Code) et le scan des projets ne connaissent que
- * deux formes : `<tool_use_error>` et `{"ok":false}`. Codex, lui, dit son échec
- * dans un champ `status` de son item — que personne ne lit. Un `file_change`
- * échoué était donc compté comme un fichier CHANGÉ, affiché dans le panneau
- * Changes, et pouvait faire naître un projet dans le contexte des agents (revue
- * Codex, 27/08).
- *
- * On n'apprend pas à deux consommateurs une troisième forme : on traduit à la
- * source, une fois, dans celle qu'ils connaissent déjà. La sortie d'origine est
- * conservée derrière l'enveloppe — l'audit doit rester lisible.
- */
-const REFUSED_MARKER = '<tool_use_error>';
-
-export function markRefusedIfFailed(item: unknown, output: string): string {
-  const status = (item as Record<string, unknown> | undefined)?.['status'];
-  if (status !== 'failed') return output;
-  if (output.startsWith(REFUSED_MARKER)) return output;
-  return `${REFUSED_MARKER}${output}`;
-}
-
-/**
  * Traite UNE ligne du flux. Rend `true` quand la ligne ouvre un appel d'outil ;
  * cet appel passe par `gate.admit()`, le garde anti-boucle de `spawn-turn.ts`.
  * Un appel refusé n'est jamais remis à `onEvent`, ni son ouverture ni sa fin.
@@ -344,7 +321,11 @@ export function handleCodexLine(
         onEvent?.({
           kind: 'tool_result',
           toolUseId,
-          output: markRefusedIfFailed(item, (live.event.output ?? '').slice(0, OUTPUT_CAP)),
+          output: (live.event.output ?? '').slice(0, OUTPUT_CAP),
+          // Codex dit son échec dans le `status` de son item : c'est le fait que
+          // la ligne garde (`outcome`, #1184), jamais une enveloppe ajoutée au
+          // texte pour que des lecteurs la reconnaissent.
+          isError: (item as Record<string, unknown> | undefined)?.['status'] === 'failed',
         });
       }
     }
@@ -398,7 +379,11 @@ export function handleCodexLine(
         onEvent?.({
           kind: 'tool_result',
           toolUseId: call.toolUseId,
-          output: markRefusedIfFailed(item, (live.event.output ?? '').slice(0, OUTPUT_CAP)),
+          output: (live.event.output ?? '').slice(0, OUTPUT_CAP),
+          // Codex dit son échec dans le `status` de son item : c'est le fait que
+          // la ligne garde (`outcome`, #1184), jamais une enveloppe ajoutée au
+          // texte pour que des lecteurs la reconnaissent.
+          isError: (item as Record<string, unknown> | undefined)?.['status'] === 'failed',
         });
       }
     }

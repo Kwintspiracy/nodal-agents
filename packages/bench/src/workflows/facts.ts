@@ -37,6 +37,13 @@ export const ToolCallFactSchema = z.object({
   /** L'entrée, sérialisée telle que la base la rend (JSON). */
   input: z.string().nullable(),
   output: z.string().nullable(),
+  /**
+   * What became of the call (`tool_calls.outcome`, #1184), read by
+   * `readCallOutcome` (@nodal-agents/shared), the product's one reading. Absent
+   * from fixtures captured before 0170, and NULL on a row that predates it:
+   * both read as `not_recorded`, never as a success.
+   */
+  outcome: z.string().nullable().optional(),
   createdMs: z.number(),
 });
 export type ToolCallFact = z.infer<typeof ToolCallFactSchema>;
@@ -262,6 +269,7 @@ const RawTool = z.object({
   tool_name: z.string(),
   tool_input: z.string().nullable(),
   tool_output: z.string().nullable(),
+  outcome: z.string().nullable(),
   created_ms: num,
 });
 const RawLlm = z.object({
@@ -363,7 +371,7 @@ export async function readTreeFacts(db: AnyDrizzleDb, rootId: string): Promise<T
     await executeRows(
       db,
       sql`
-      select job_id::text, tool_name, tool_input::text as tool_input, tool_output,
+      select job_id::text, tool_name, tool_input::text as tool_input, tool_output, outcome,
              (extract(epoch from created_at) * 1000)::float8 as created_ms
         from tool_calls where job_id in (${tree}) order by created_at`,
     ),
@@ -497,6 +505,7 @@ export async function readTreeFacts(db: AnyDrizzleDb, rootId: string): Promise<T
       toolName: t.tool_name,
       input: t.tool_input,
       output: t.tool_output,
+      outcome: t.outcome,
       createdMs: t.created_ms,
     })),
     llmCalls: llm.map((l) => ({

@@ -7,6 +7,7 @@ import { createSkillRepo } from '@nodal-agents/db';
 import { systemSkillSlugs } from '@nodal-agents/catalog';
 import type { ToolDefinition } from '../../types';
 import { lintSkillContent } from './lint-skill-content';
+import { outcomeOfOkFlag } from '../../outcome';
 
 /** Authoring guidance appended to create_skill / update_skill descriptions so
  *  the LLM writes skills against NodalAI's real conventions, not its
@@ -50,6 +51,7 @@ export const createSkillTool: ToolDefinition<typeof CreateSkillInput, CreateSkil
   egress: 'none',
   card: 'text',
   defaultApproval: 'require_approval',
+  outcomeOf: outcomeOfOkFlag,
   execute: async (input, ctx) => {
     // Reject foreign/invented tool references before persisting (fail loud).
     const lint = await lintSkillContent(ctx.db, ctx.entityId, input.content);
