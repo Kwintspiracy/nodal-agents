@@ -5,7 +5,7 @@
 import { z } from 'zod';
 import { eq, and, agentConnectorAssignments } from '@nodal-agents/db';
 import type { ToolDefinition } from '../../types';
-import { resolveAgentId, resolveConnectorId } from './link-helpers';
+import { ambiguousConnectorMessage, resolveAgentId, resolveConnectorId } from './link-helpers';
 import { outcomeOfOkFlag } from '../../outcome';
 
 const DetachConnectorInput = z.object({
@@ -35,12 +35,19 @@ export const detachConnectorTool: ToolDefinition<
   defaultApproval: 'require_approval',
   outcomeOf: outcomeOfOkFlag,
   execute: async (input, ctx) => {
-    const connectorId = await resolveConnectorId(ctx.db, ctx.entityId, input.connectorSlug);
-    if (!connectorId)
+    const connector = await resolveConnectorId(ctx.db, ctx.entityId, input.connectorSlug);
+    if (!connector)
       return {
         ok: false,
         error: `Connector "${input.connectorSlug}" not found in this workspace.`,
       };
+    if ('ambiguous' in connector) {
+      return {
+        ok: false,
+        error: ambiguousConnectorMessage(input.connectorSlug, connector.ambiguous),
+      };
+    }
+    const connectorId = connector.id;
     const agentId = await resolveAgentId(ctx.db, ctx.entityId, input.agentSlug);
     if (!agentId)
       return { ok: false, error: `Agent "${input.agentSlug}" not found in this workspace.` };

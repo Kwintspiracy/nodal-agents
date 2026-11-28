@@ -76,7 +76,9 @@ Also extend the `getProviderByCredentialType` helper if it has explicit cases (c
 }
 ```
 
-The `slug` here MUST match the key you used in `OAUTH_PROVIDERS`. The route `/api/oauth/slack-oauth/start` and `/api/oauth/slack-oauth/callback` derive their behaviour from this slug + the registry.
+The `slug` here MUST match the key you used in `OAUTH_PROVIDERS`. The routes `/api/oauth/slack-oauth/start` and `/api/oauth/slack-oauth/callback` are keyed by the CREDENTIAL TYPE (the OAuth client, hence the registered redirect URI); the start's body names the connector (`connector=<slug>`), whose entry gives the scopes asked for.
+
+Every operation of the adapter declares the scopes its calls need (`OperationDescriptor.scopes`, from the provider's API reference), and the entry's `scopes` must equal those plus its `accountScopes` (identity, offline access): `packages/runner-adapters/src/tests/connector-scopes.test.ts` fails otherwise. A connector is bound only to a credential whose granted scopes cover some of its operations, and an operation whose scopes are not granted is not given to a job.
 
 ### 3. `apps/web/src/lib/connector-help.ts`
 

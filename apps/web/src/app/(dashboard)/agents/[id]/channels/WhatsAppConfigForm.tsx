@@ -10,7 +10,9 @@ import {
   disconnectAgentChannelAction,
   type WhatsAppPairingStatus,
 } from '@/lib/actions.ts';
+import type { ConnectionState } from '@nodal-agents/shared';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
+import ChannelLinkStatus from './ChannelLinkStatus.tsx';
 import PrimaryButton from '@/components/ui/PrimaryButton';
 
 const POLL_INTERVAL_MS = 2000;
@@ -61,9 +63,12 @@ function statusLabel(status: WhatsAppPairingStatus): string {
 export default function WhatsAppConfigForm({
   agentId,
   initialStatus,
+  link,
 }: {
   agentId: string;
   initialStatus: 'connected' | 'disconnected';
+  /** What the runner last learnt about the link (connection_states). */
+  link: ConnectionState;
 }) {
   const router = useRouter();
   const [status, setStatus] = useState<WhatsAppPairingStatus>(
@@ -154,6 +159,7 @@ export default function WhatsAppConfigForm({
           <span className={statusDotClass(status)} aria-hidden="true" />
           <span className="text-sm font-medium text-ink">{statusLabel(status)}</span>
         </div>
+        <ChannelLinkStatus connected={initialStatus === 'connected'} link={link} />
         {identityLabel && (
           <p className="text-xs text-ink-3 mt-1.5">
             Linked as <span className="font-mono text-ink-2">{identityLabel}</span>

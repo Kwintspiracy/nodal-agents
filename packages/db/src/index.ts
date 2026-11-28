@@ -14,6 +14,12 @@ export {
   refreshAndPersistCredential,
 } from './queries/credentials.ts';
 export type { DecryptedCredential, OauthPayload, Db } from './queries/credentials.ts';
+export {
+  recordConnectionState,
+  clearConnectionState,
+  readConnectionStates,
+  readConnectionState,
+} from './queries/connection-states.ts';
 export { assertMasterKeyRestorable } from './queries/master-key-guard.ts';
 export type { AssertMasterKeyRestorableOptions } from './queries/master-key-guard.ts';
 export { designateChat, resolveScheduleNotifyChat } from './queries/designated-chat.ts';
@@ -104,7 +110,12 @@ export {
 export type { RunCommandRuleAction, SetApprovalRuleInput } from './repos/approval-rules.ts';
 export { createStdioMcpServerRepo, decryptMcpServerEnv } from './repos/mcp-servers.ts';
 export type { StdioMcpServerInput } from './repos/mcp-servers.ts';
-export { createApiKeyConnectorRepo, setAgentConnectorAssignmentRepo } from './repos/connectors.ts';
+export {
+  connectorRenameRefusal,
+  createApiKeyConnectorRepo,
+  findIndistinctAccountOnAgent,
+  setAgentConnectorAssignmentRepo,
+} from './repos/connectors.ts';
 export type {
   CreateApiKeyConnectorInput,
   SetAgentConnectorAssignmentInput,

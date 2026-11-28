@@ -204,6 +204,27 @@ export { shellChecklistDeclined } from './shell-checklist';
 
 // Whitelist computation
 export { computeToolWhitelist, agentBuiltinToolNames } from './whitelist';
+export {
+  ACCOUNT_KEY,
+  BUILTIN_TOOLS_SOURCE,
+  DELEGATION_TOOLS_SOURCE,
+  DELIVERY_TOOLS_SOURCE,
+  ConnectorAccountsError,
+  ToolNameCollisionError,
+  accountInstruction,
+  connectorSource,
+  lendConnectorTools,
+  mcpServerSource,
+  oneTargetPerName,
+  toolNameCollisionMessage,
+} from './tool-sources';
+export type {
+  AccountResult,
+  ConnectorAccount,
+  ConnectorLending,
+  LentTools,
+  ToolSource,
+} from './tool-sources';
 export type { WhitelistInput, AgentBuiltinInput } from './whitelist';
 export { TOP_LEVEL_JOB, ROUTINE_RUN } from './job-placement';
 export type { JobPlacement } from './job-placement';

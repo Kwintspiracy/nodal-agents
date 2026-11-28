@@ -39,6 +39,7 @@ import { detachConnectorTool } from '../builtin/meta-ops/detach-connector.ts';
 import { detachMcpTool } from '../builtin/meta-ops/detach-mcp.ts';
 import { detachSkillTool } from '../builtin/meta-ops/detach-skill.ts';
 import { attachConnectorTool } from '../builtin/meta-ops/attach-connector.ts';
+import { createConnectorTool } from '../builtin/meta-ops/create-connector.ts';
 
 let db: TestDb;
 let seed: Awaited<ReturnType<typeof seedMinimal>>;
@@ -506,5 +507,115 @@ describe('attach_connector', () => {
     );
     expect(r.ok).toBe(false);
     expect(r.ok ? '' : r.error).toContain('create_connector');
+  });
+});
+
+// ─── several accounts of one service on one agent ─────────────────────────────
+//
+// In a job, the tools of several accounts of one service take an `account`
+// argument whose values are the connectors' names. Both agent attach paths
+// (attach_connector, create_connector with an agent) refuse a second account
+// a model could not tell apart from the first, and naming a connector by a
+// slug that several connectors share never picks one of them.
+
+describe('attach paths: several accounts of one service @cap:connecter-un-service/moteur', () => {
+  async function freshAgent(): Promise<{ id: string; slug: string }> {
+    const s = suffixe();
+    const [row] = await db
+      .insert(agents)
+      .values({
+        entityId: seed.entityId,
+        name: `Accounts ${s}`,
+        slug: `accounts-${s}`,
+        personality: 'p',
+      })
+      .returning();
+    return { id: row!.id, slug: row!.slug };
+  }
+  async function linksOf(agentId: string): Promise<string[]> {
+    const rows = await db
+      .select({ connectorId: agentConnectorAssignments.connectorId })
+      .from(agentConnectorAssignments)
+      .where(eq(agentConnectorAssignments.agentId, agentId));
+    return rows.map((r) => r.connectorId);
+  }
+
+  it('attach_connector: two accounts under distinct names are both given', async () => {
+    const agent = await freshAgent();
+    const s = suffixe();
+    const work = await makeConnector('notion', `Work ${s}`);
+    const home = await makeConnector('notion-oauth', `Home ${s}`);
+    for (const c of [work, home]) {
+      const r = await attachConnectorTool.execute(
+        { connectorSlug: c.name, agentSlug: agent.slug },
+        makeCtx(),
+      );
+      expect(r.ok, r.ok ? '' : r.error).toBe(true);
+    }
+    expect((await linksOf(agent.id)).sort()).toEqual([work.id, home.id].sort());
+  });
+
+  it('attach_connector: a second account of the service under a name that cannot be told apart is refused, naming both, nothing written', async () => {
+    const agent = await freshAgent();
+    const s = suffixe();
+    const first = await makeConnector('notion', `Team ${s}`);
+    const second = await makeConnector('notion-oauth', ` team ${s.toUpperCase()} `);
+    const ok = await attachConnectorTool.execute(
+      { connectorSlug: first.name, agentSlug: agent.slug },
+      makeCtx(),
+    );
+    expect(ok.ok).toBe(true);
+    const r = await attachConnectorTool.execute(
+      { connectorSlug: second.name, agentSlug: agent.slug },
+      makeCtx(),
+    );
+    expect(r.ok).toBe(false);
+    const error = r.ok ? '' : r.error;
+    expect(error).toContain(`"${first.name}" (notion)`);
+    expect(error).toContain(`"${second.name}" (notion-oauth)`);
+    expect(await linksOf(agent.id)).toEqual([first.id]);
+  });
+
+  it('attach_connector: a slug several connectors share names none of them; the refusal lists them', async () => {
+    const agent = await freshAgent();
+    const s = suffixe();
+    const slug = `mail-${s}`;
+    const a = await makeConnector(slug, `Personal ${s}`);
+    const b = await makeConnector(slug, `Work ${s}`);
+    const r = await attachConnectorTool.execute(
+      { connectorSlug: slug, agentSlug: agent.slug },
+      makeCtx(),
+    );
+    expect(r.ok).toBe(false);
+    const error = r.ok ? '' : r.error;
+    expect(error).toContain(`"${a.name}" (${slug})`);
+    expect(error).toContain(`"${b.name}" (${slug})`);
+    expect(await linksOf(agent.id)).toEqual([]);
+  });
+
+  it('create_connector with an agent: the second account under the same name is registered but not given, and says why', async () => {
+    const agent = await freshAgent();
+    const s = suffixe();
+    const first = await makeConnector('airtable', `Base ${s}`);
+    await attachConnectorTool.execute(
+      { connectorSlug: first.name, agentSlug: agent.slug },
+      makeCtx(),
+    );
+    const r = await createConnectorTool.execute(
+      { slug: 'airtable', name: `BASE ${s}`, apiKey: 'pat-x', attachToAgentSlug: agent.slug },
+      makeCtx({
+        provisioning: {
+          encrypt: (v: string) => `enc:${v}`,
+          connectMcp: async () => {
+            throw new Error('unused');
+          },
+        },
+      }),
+    );
+    expect(r.ok).toBe(true);
+    const message = r.ok ? r.message : '';
+    expect(message).toContain('NOT attached');
+    expect(message).toContain(`"${first.name}" (airtable)`);
+    expect(await linksOf(agent.id)).toEqual([first.id]);
   });
 });

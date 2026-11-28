@@ -5,7 +5,12 @@
 
 import { z } from 'zod';
 import type { ToolDefinition } from '../../types';
-import { resolveAgentId, resolveConnectorId, linkConnectorToAgent } from './link-helpers';
+import {
+  ambiguousConnectorMessage,
+  resolveAgentId,
+  resolveConnectorId,
+  linkConnectorToAgent,
+} from './link-helpers';
 import { outcomeOfOkFlag } from '../../outcome';
 
 const AttachConnectorInput = z.object({
@@ -40,18 +45,25 @@ export const attachConnectorTool: ToolDefinition<
   defaultApproval: 'require_approval',
   outcomeOf: outcomeOfOkFlag,
   execute: async (input, ctx) => {
-    const connectorId = await resolveConnectorId(ctx.db, ctx.entityId, input.connectorSlug);
-    if (!connectorId) {
+    const connector = await resolveConnectorId(ctx.db, ctx.entityId, input.connectorSlug);
+    if (!connector) {
       return {
         ok: false,
         error: `Connector "${input.connectorSlug}" not found in this workspace. Create it with create_connector first.`,
+      };
+    }
+    if ('ambiguous' in connector) {
+      return {
+        ok: false,
+        error: ambiguousConnectorMessage(input.connectorSlug, connector.ambiguous),
       };
     }
     const agentId = await resolveAgentId(ctx.db, ctx.entityId, input.agentSlug);
     if (!agentId) {
       return { ok: false, error: `Agent "${input.agentSlug}" not found in this workspace.` };
     }
-    await linkConnectorToAgent(ctx.db, ctx.entityId, agentId, connectorId);
+    const linked = await linkConnectorToAgent(ctx.db, ctx.entityId, agentId, connector.id);
+    if (!linked.ok) return linked;
     return {
       ok: true,
       message: `Attached connector "${input.connectorSlug}" to agent "${input.agentSlug}" — its tools are now available to that agent.`,

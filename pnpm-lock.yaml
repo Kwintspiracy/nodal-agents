@@ -266,6 +266,9 @@ importers:
       '@slack/bolt':
         specifier: ^4.7.3
         version: 4.7.3(@types/express@5.0.6)
+      '@slack/socket-mode':
+        specifier: 2.0.7
+        version: 2.0.7
       '@slack/web-api':
         specifier: ^7.19.0
         version: 7.19.0

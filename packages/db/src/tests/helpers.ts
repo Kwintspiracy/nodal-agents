@@ -418,6 +418,22 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
     CREATE UNIQUE INDEX IF NOT EXISTS connectors_entity_slug_name_unique
       ON connectors (entity_id, slug, name);
 
+    -- Migration 0171: what was learnt about each connection.
+    CREATE TABLE IF NOT EXISTS connection_states (
+      source_kind text NOT NULL,
+      source_id text NOT NULL,
+      state text NOT NULL,
+      cause text NOT NULL,
+      detail text,
+      retry_after timestamptz,
+      observed_at timestamptz NOT NULL DEFAULT now(),
+      PRIMARY KEY (source_kind, source_id),
+      CONSTRAINT connection_states_kind_check
+        CHECK (source_kind IN ('credential','connector','mcp_server','channel')),
+      CONSTRAINT connection_states_state_check
+        CHECK (state IN ('working','needs_reauth','unreachable','broken'))
+    );
+
     CREATE TABLE IF NOT EXISTS agent_connector_assignments (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       agent_id uuid NOT NULL REFERENCES agents(id) ON DELETE CASCADE,

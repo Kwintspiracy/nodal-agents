@@ -17,7 +17,7 @@ import { catalogCategory } from './categories.ts';
 type Props = {
   catalog: ConnectorCatalogItem[];
   instances: ConnectorRow[];
-  credsByType: Record<string, CompatibleCredential[]>;
+  credsBySlug: Record<string, CompatibleCredential[]>;
 };
 
 /**
@@ -26,7 +26,7 @@ type Props = {
  * Each card's CTA opens a Modal with ConnectorAddForm rendered directly inside.
  * The CredentialWizard is owned at card level to avoid nesting two z-50 portals.
  */
-export default function ConnectorsMarketplaceGrid({ catalog, instances, credsByType }: Props) {
+export default function ConnectorsMarketplaceGrid({ catalog, instances, credsBySlug }: Props) {
   // Render connectors alphabetically by label.
   const sortedCatalog = [...catalog].sort((a, b) => a.label.localeCompare(b.label));
   return catalog.length === 0 ? (
@@ -36,7 +36,7 @@ export default function ConnectorsMarketplaceGrid({ catalog, instances, credsByT
       {sortedCatalog.map((item) => {
         const installedInstances = instances.filter((i) => i.slug === item.slug);
         const isInstalled = installedInstances.length > 0;
-        const compatible = item.credentialType ? (credsByType[item.credentialType] ?? []) : [];
+        const compatible = credsBySlug[item.slug] ?? [];
         return (
           <ConnectorMarketCard
             key={item.slug}
