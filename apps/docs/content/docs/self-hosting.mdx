@@ -24,7 +24,7 @@ The first run launches an interactive setup wizard that asks for:
 1. **LLM provider** — pick a local model (Ollama, LM Studio, Jan.ai, llama.cpp, vLLM) or a remote one (Anthropic, OpenAI, OpenRouter). You can add more providers later in the dashboard.
 2. **Network mode** — loopback (localhost only, no auth) or LAN (accessible on your network, requires sign-up).
 
-Config is saved to `~/.nodalai/config.json`. Run `nodal-agents init` at any time to re-run the wizard.
+Config is saved to `~/.nodalai/config.json`. Run `nodal-agents init` at any time to re-run the wizard. On an existing install it changes only what you answer (the LLM and the network mode) and keeps everything else as it was: the database password, the secrets, the ports and the sign-in settings.
 
 ## Ports
 
@@ -36,7 +36,7 @@ Default ports (configurable in `~/.nodalai/config.json`):
 | Runner (API)      | 3001         |
 | Embedded Postgres | 25432        |
 
-If a configured port is occupied on startup, `nodal-agents up` automatically rotates to the next free port and saves the new value to config. The dashboard opens at the resolved URL.
+If a configured port is occupied on startup, `nodal-agents up` automatically rotates to the next free port and saves the new value to config. A service is never given a port another service of the same install holds or was given, and a config that names one port for two services is refused. The dashboard opens at the resolved URL.
 
 ## Data directory
 
@@ -44,13 +44,17 @@ All persistent data lives at `~/.nodalai/`, or in the folder the `NODALAI_HOME` 
 
 ```
 ~/.nodalai/
-  config.json      # CLI configuration (ports, auth mode, worker secret)
+  config.json      # CLI configuration (ports, auth mode, secrets, the database password)
+  config.json.last-good  # The version of config.json before its last change
+  secrets.key      # The master key every stored credential is encrypted with
   pg-data/         # Embedded Postgres data files
   pids/            # PID files for runner + web (used by `down`)
   logs/            # Runner and web log files
   logs/postgres/   # The cluster's own log, one subdirectory per data directory
   workspaces/      # One subtree per workspace: shared files, community skills
   checkpoints/     # Shadow git store — snapshots taken before an agent writes
+  snapshots/       # config.json and secrets.key saved with each copy of the database
+  backups/         # what `nodal-agents backup` writes by default
 ```
 
 To wipe everything and start fresh:
@@ -60,7 +64,13 @@ nodal-agents down
 rm -rf ~/.nodalai
 ```
 
-Your LLM provider keys, agents, jobs, and memory are all in `pg-data/`.
+Your LLM provider keys, agents, jobs, and memory are all in `pg-data/`. The keys and tokens in it are encrypted with `secrets.key`, and the database opens only with the password in `config.json`: a copy of `pg-data/` is usable only together with those two files. To save an install, use `nodal-agents backup` (below): it takes the three together, in one file.
+
+### If config.json or secrets.key is damaged
+
+These files are replaced whole: a save that is interrupted leaves the previous version, never half of one. A file that exists but cannot be read (an edit that broke the JSON, a value Nodal does not accept) stops every command with an error that names the file and says what is wrong. Nothing is written over it, and Nodal never treats it as a first run. Fix the file, or copy `config.json.last-good` over `config.json`, then run the command again.
+
+At start, Nodal also checks that `secrets.key` is the key this database was encrypted with, and refuses to start with another one.
 
 ## Start and stop
 
@@ -141,10 +151,50 @@ nodal-agents update
 This command:
 
 1. Fetches the latest version from the npm registry.
-2. If already up to date, prints a notice and exits.
-3. Otherwise, stops the running stack (`nodal-agents down`), installs `nodal-agents@latest` globally, and restarts the stack in the background.
+2. Installs it only when it is **newer** than the installed version. The same version, or an older one (a registry mirror that lags behind, or a pre-release you installed yourself), changes nothing and says so.
+3. Otherwise, stops the running stack (`nodal-agents down`), installs exactly that version globally, and restarts the stack in the background.
 
-Your data in `~/.nodalai/pg-data/` is never touched by the update.
+The update itself does not touch `~/.nodalai/pg-data/`. The **next start** of the new version migrates the database to its schema, in place: make a backup first (`nodal-agents backup`, see [Backup and restore](#backup-and-restore)). Before it does, and only when there is a migration to apply to a database that holds data, `up` copies the database inside its own cluster and saves `config.json` and `secrets.key` beside the copy (in `~/.nodalai/snapshots/`). If that copy cannot be made (another program connected to the database, not enough free disk: the message gives the size of the copy and the free space), nothing is migrated and `up` stops. A copy takes about the size of the database on disk; the last two are kept (`"snapshots": { "keep": N }` in `config.json`).
+
+### Going back after an update
+
+A program older than its database refuses to start on it, and says which version migrated it. To go back:
+
+```bash
+nodal-agents down
+nodal-agents rollback                 # lists the copies, newest first
+nodal-agents rollback <copy-name>     # swaps one back in
+npm install -g nodal-agents@<version> # the version that last opened it, named by the command
+nodal-agents up
+```
+
+The swap keeps the database it replaces as a copy of its own; nothing is dropped. The master key travels with its database both ways. `config.json` is not changed (its database password and ports are the cluster's); the one saved with the copy stays in its folder under `snapshots/`. These copies live in the same cluster, on the same disk: they undo a faulty migration, not a lost disk. For that, make a backup.
+
+## Backup and restore
+
+```bash
+nodal-agents backup                      # into ~/.nodalai/backups/
+nodal-agents backup --to /mnt/usb --passphrase --keep 5
+nodal-agents down
+nodal-agents restore ~/.nodalai/backups/nodal-backup-20261128T090000000Z.nodalbak
+nodal-agents up
+```
+
+**What a backup holds.** Every table of the database, the schema it belongs to, the master key (`secrets.key`), `config.json`, and with `--with-workspaces` the `workspaces/` folder: everything an install needs to live again. The folders you gave agents elsewhere on disk are your own files and are not in it; save them as you save the rest of your files.
+
+**It is verified when it is made.** The file is read back and compared with the database, table by table, before the command says it is done; an interrupted backup leaves no file with a backup's name. It works while Nodal runs.
+
+**It holds the master key.** Anyone who has the file can read every stored credential. Keep it where only you can read it, or use `--passphrase` (the passphrase cannot be recovered). The default folder is on the same disk as the install and `reset` deletes it: copy backups to another disk or machine.
+
+**Restore keeps what it replaces.** The database a restore replaces becomes a copy that `nodal-agents rollback` can swap back. A backup from an older version is migrated by the installed one; a backup from a newer version is refused until you install that version.
+
+### Moving to another machine
+
+1. On the old machine: `nodal-agents backup --with-workspaces`, and copy the file across.
+2. On the new one: `npm install -g nodal-agents`, then `nodal-agents restore <file>`. On a machine with no install, it creates one first. The settings of the backup come back; the ports and the database password stay this machine's own.
+3. `nodal-agents up`. The restore lists the folders given to agents that do not exist on this machine.
+
+The same path moves an install to a new major version of the embedded Postgres: a backup does not depend on the server's version, so it restores into a new, empty cluster.
 
 To update without auto-restarting:
 

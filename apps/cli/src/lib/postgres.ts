@@ -1,5 +1,6 @@
 // postgres.ts — start/stop embedded Postgres using the embedded-postgres package
 
+import type { MigrateDatabaseOptions, MigrateDatabaseResult } from '@nodal-agents/db/safe-migrate';
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { PG_DATA_DIR } from './config.ts';
@@ -692,6 +693,20 @@ const READY_TIMEOUT_MS = 180_000;
  * otherwise sit through until the deadline.
  */
 /**
+ * The cluster started and refused the password it was given (SQLSTATE class
+ * 28). The cluster has been stopped again when this is thrown, so the caller
+ * may start it once more with another password it legitimately holds (a
+ * password change left half-way, `up.ts`).
+ */
+export class PostgresAuthError extends Error {
+  readonly code = 'PG_AUTH_FAILED';
+  constructor(message: string) {
+    super(message);
+    this.name = 'PostgresAuthError';
+  }
+}
+
+/**
  * Is this connection error an AUTHENTICATION refusal rather than "not ready
  * yet"?
  *
@@ -833,7 +848,7 @@ export async function startAndWaitUntilReady(
       if (isPostgresAuthFailure(err)) {
         await stopQuietly(pg, watchers);
         const code = (err as { code?: string }).code;
-        throw new Error(
+        throw new PostgresAuthError(
           `Postgres refused the connection: authentication failed (SQLSTATE ${code}). ` +
             'The cluster started and was stopped again. The password the CLI holds does not ' +
             'match the one this data directory was initialised with.',
@@ -1038,12 +1053,17 @@ export async function startEmbeddedPostgres(
   const url = buildPgUrl(port, password);
 
   // Try to enable pgvector; if unavailable, warn and continue
+  //
+  // The client is closed whatever happens. The embedded cluster ships no
+  // pgvector, so this query fails on every start of a stock install, and the
+  // client used to stay connected to the database from then on: a session
+  // nobody owned, on the database `up` is about to copy before migrating
+  // (a copy needs no other session on its source, PostgreSQL's own rule).
   let vectorAvailable = false;
+  const client = pg.getPgClient(PG_DATABASE);
   try {
-    const client = pg.getPgClient(PG_DATABASE);
     await client.connect();
     await client.query('CREATE EXTENSION IF NOT EXISTS vector');
-    await client.end();
     vectorAvailable = true;
   } catch {
     process.stderr.write(
@@ -1051,6 +1071,8 @@ export async function startEmbeddedPostgres(
         '  To enable: install pgvector (Mac: brew install pgvector; Win: see README).\n' +
         '  Continuing in keyword-only memory mode (vector columns rewritten to text).\x1b[0m\n',
     );
+  } finally {
+    await client.end().catch(() => undefined);
   }
 
   return {
@@ -1119,42 +1141,17 @@ async function stopThisCluster(dataDir: string): Promise<boolean> {
 // ─── Drizzle migrations ───────────────────────────────────────────────────────
 
 /**
- * Run Drizzle migrations against the given database URL.
- * Delegates to @nodal-agents/db/migrate to respect the architecture rule:
- * only packages/db may import drizzle-orm or postgres directly.
- *
- * @param patchVectorAsText when true, rewrite `vector(N)` columns to `text`
- *   in migration SQL — used when pgvector wasn't loaded (keyword-only mode).
+ * Move the database's schema to this program's journal, the ONE way it is
+ * done (`@nodal-agents/db/safe-migrate`): a database newer than this program
+ * is refused, a skipped migration is refused unless repair is asked, and the
+ * schema never moves over rows without a copy taken first inside the cluster,
+ * with the state files beside it. Lazy, like every database call of the CLI:
+ * only packages/db imports the driver.
  */
-export async function runMigrations(
+export async function migrateDatabase(
   databaseUrl: string,
-  opts: { patchVectorAsText?: boolean } = {},
-): Promise<void> {
-  const { runMigrations: migrate } = await import('@nodal-agents/db/migrate');
-  await migrate(databaseUrl, opts);
-}
-
-/**
- * Les migrations que le journal annonce et que cette base n'a jamais reçues.
- *
- * Le migrateur de drizzle saute en silence une migration mergée après une
- * plus récente (issue #298) ; c'est ce contrôle qui le dit. La règle et sa
- * raison vivent dans `@nodal-agents/db/migrate` — seul `packages/db` importe
- * le pilote Postgres.
- */
-export async function findMigrationGaps(
-  databaseUrl: string,
-  opts: { patchVectorAsText?: boolean } = {},
-): Promise<{ idx: number; tag: string; when: number }[]> {
-  const { findMigrationGaps: chercher } = await import('@nodal-agents/db/migrate');
-  return chercher(databaseUrl, opts);
-}
-
-/** Applique les migrations manquantes, dans l'ordre du journal. Rend la liste. */
-export async function repairMigrations(
-  databaseUrl: string,
-  opts: { patchVectorAsText?: boolean } = {},
-): Promise<{ idx: number; tag: string; when: number }[]> {
-  const { repairMigrations: reparer } = await import('@nodal-agents/db/migrate');
-  return reparer(databaseUrl, opts);
+  opts: MigrateDatabaseOptions,
+): Promise<MigrateDatabaseResult> {
+  const { migrateDatabase: migrate } = await import('@nodal-agents/db/safe-migrate');
+  return migrate(databaseUrl, opts);
 }

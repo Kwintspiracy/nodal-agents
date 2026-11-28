@@ -3,21 +3,31 @@
 import chalk from 'chalk';
 import prompts from 'prompts';
 import ora from 'ora';
-import { randomBytes } from 'crypto';
-import { writeConfig, readConfig, CONFIG_FILE, type Config } from '../lib/config.ts';
+import {
+  writeConfig,
+  readConfig,
+  createConfig,
+  newInstallConfig,
+  CONFIG_FILE,
+  type Config,
+} from '../lib/config.ts';
 import { LLM_PRESETS, fetchModels, isEndpointReachable } from '../lib/llm-presets.ts';
-
-function generateSecret(bytes = 32): string {
-  return randomBytes(bytes).toString('hex');
-}
 
 /**
  * Run the interactive init wizard.
- * If a config already exists and force=false, asks whether to overwrite.
  *
- * `nonInteractive` writes a sensible default (lan bind, local-auth, no LLM
- * preset) and returns — used by headless / CI environments where there is
- * no TTY. The user finishes LLM config from the dashboard.
+ * On an EXISTING install it edits, it does not replace (B38-01): the answers
+ * change the LLM and the network mode, and everything else in the config is
+ * kept as it was, the database password above all, with the secrets, the
+ * ports, the auth settings and any key this version does not know. Re-running
+ * it is therefore safe by construction, which is what the docs promise. A
+ * config that exists but cannot be read stops `init` with the reader's error:
+ * it is never taken for "no config" and written over.
+ *
+ * `force` skips the confirmation. `nonInteractive` asks nothing: on a new
+ * install it writes a default for container boot (lan bind, local-auth, no LLM
+ * preset); on an existing one it returns the config untouched unless `force`
+ * is given, in which case it applies those same two choices to it.
  */
 export async function runInit(
   options: { force?: boolean; nonInteractive?: boolean } = {},
@@ -26,27 +36,27 @@ export async function runInit(
 
   if (existing && !options.force) {
     if (options.nonInteractive) return existing;
-    const { overwrite } = await prompts({
+    const { proceed } = await prompts({
       type: 'confirm',
-      name: 'overwrite',
-      message: chalk.yellow('A config already exists. Overwrite it?'),
+      name: 'proceed',
+      message: chalk.yellow(
+        'A config already exists. Change its LLM and network settings? ' +
+          '(The database password, secrets and ports are kept.)',
+      ),
       initial: false,
     });
-    if (!overwrite) {
+    if (!proceed) {
       console.log(chalk.gray('Init cancelled — keeping existing config.'));
       return existing;
     }
   }
 
   if (options.nonInteractive) {
-    const config: Config = {
-      ports: { web: 3000, runner: 3001, postgres: 25432 },
-      workerSecret: generateSecret(32),
-      serverActionsKey: randomBytes(32).toString('base64'),
+    const choices: Partial<Config> = {
       bind: 'lan',
-      auth: { mode: 'local-auth' },
+      auth: { ...existing?.auth, mode: 'local-auth' },
     };
-    writeConfig(config);
+    const config = save(existing, choices);
     console.log(chalk.green('  Default config written for container boot.'));
     return config;
   }
@@ -165,22 +175,20 @@ export async function runInit(
 
   // ── Build config ──────────────────────────────────────────────────────────
 
-  const workerSecret = generateSecret(32);
-
-  const config: Config = {
+  const lan = (bind as string) === 'lan';
+  const choices: Partial<Config> = {
     llm: {
       provider: preset.provider,
       baseURL: baseURL as string,
       model,
       apiKey,
     },
-    ports: {
-      web: 3000,
-      runner: 3001,
-      postgres: 25432,
-    },
-    workerSecret,
     bind: bind as 'loopback' | 'lan',
+    // LAN is offered as "sign up with email + password": an existing
+    // `auth.mode: local-trust` would be the combination `up` refuses to start.
+    ...(lan && existing?.auth?.mode === 'local-trust'
+      ? { auth: { ...existing.auth, mode: 'local-auth' as const } }
+      : {}),
   };
 
   // ── Warn if endpoint not reachable ────────────────────────────────────────
@@ -195,12 +203,12 @@ export async function runInit(
     );
   }
 
-  writeConfig(config);
+  const config = save(existing, choices);
 
   console.log('');
   console.log(chalk.green(`  Config saved to ${CONFIG_FILE}`));
 
-  if ((bind as string) === 'lan') {
+  if (lan) {
     console.log('');
     console.log(chalk.bold.cyan('  LAN mode: sign up at http://<your-ip>:3000/login'));
     console.log(chalk.gray('  The first user to sign up becomes the admin.'));
@@ -210,5 +218,20 @@ export async function runInit(
   console.log(chalk.gray('  Run `nodal-agents up` to start Nodal-Agents.'));
   console.log('');
 
+  return config;
+}
+
+/**
+ * Apply `choices` to the existing config (an edit: every other key is kept),
+ * or create the config of a new install with them.
+ */
+function save(existing: Config | null, choices: Partial<Config>): Config {
+  if (existing) {
+    const config: Config = { ...existing, ...choices };
+    writeConfig(config);
+    return config;
+  }
+  const config = newInstallConfig(choices);
+  createConfig(config);
   return config;
 }

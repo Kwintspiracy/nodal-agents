@@ -49,6 +49,8 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
 import { NodalConfigSchema, type NodalConfig } from '@nodal-agents/shared/nodal-config';
+import { createNodalConfigFile, readNodalConfigFile } from '@nodal-agents/shared/nodal-config-file';
+import { nodalConfigPath } from '@nodal-agents/shared/state-files';
 import {
   NODALAI_HOME_ENV,
   defaultNodalHome,
@@ -210,7 +212,7 @@ export function instancePaths(instance: CampaignInstance): {
 } {
   const env = { [NODALAI_HOME_ENV]: instance.home };
   return {
-    config: nodalHomeEntry('config.json', env),
+    config: nodalConfigPath(env),
     workspaces: nodalHomeEntry('workspaces', env),
     benchConfig: join(instance.home, 'bench.json'),
     marker: join(instance.home, 'campaign.json'),
@@ -277,18 +279,18 @@ export function createInstanceFiles(
   // Le marqueur d'abord : un banc tué juste après laisse une campagne que la
   // suivante sait effacer.
   writeFileSync(paths.marker, `${JSON.stringify(marker, null, 2)}\n`, 'utf8');
-  writeFileSync(paths.config, `${JSON.stringify(instanceConfig(instance), null, 2)}\n`, {
-    encoding: 'utf8',
-    mode: 0o600,
-  });
+  // Par l'écrivain du produit : création exclusive et atomique, 0600.
+  createNodalConfigFile(paths.config, instanceConfig(instance));
   writeFileSync(paths.benchConfig, `${JSON.stringify({ services: keys.services }, null, 2)}\n`);
   return marker;
 }
 
 /** Le secret du runner de l'instance (`config.json`), pour ses routes internes. */
 export function instanceWorkerSecret(instance: CampaignInstance): string {
-  return NodalConfigSchema.parse(JSON.parse(readFileSync(instancePaths(instance).config, 'utf8')))
-    .workerSecret;
+  const path = instancePaths(instance).config;
+  const config = readNodalConfigFile(path);
+  if (config === null) throw new Error(`campaign_config_missing: ${path} does not exist`);
+  return config.workerSecret;
 }
 
 // ─── Le CLI du produit ───────────────────────────────────────────────────────

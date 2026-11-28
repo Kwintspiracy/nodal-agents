@@ -2,16 +2,21 @@
 //
 // Sequence:
 //  1. Read installed version + fetch latest from npm.
-//  2. If already on latest → print notice, return.
-//  3. Otherwise: runDown() (best-effort), npm install -g nodal-agents@latest,
-//     then optionally restart with a detached `nodal-agents up`.
+//  2. Decide with THE comparison rule (`compareVersions`, shared with `up`'s
+//     notice and the dashboard's badge): only a registry version STRICTLY
+//     newer than the installed one is installed. The same version, an older
+//     one (a mirror that lags, an installed pre-release or newer build), or a
+//     version that cannot be ordered: nothing is stopped and nothing installed,
+//     and the reason is said.
+//  3. Otherwise: runDown() (best-effort), npm install -g nodal-agents@<that
+//     exact version>, then optionally restart with a detached `nodal-agents up`.
 //
 // FAIL LOUD invariant: permission errors and npm-not-found are reported with
 // actionable messages and the process exits non-zero. No silent fallbacks.
 
 import chalk from 'chalk';
 import { execa } from 'execa';
-import { getInstalledVersion, getLatestVersion } from '../lib/version.ts';
+import { compareVersions, getInstalledVersion, getLatestVersion } from '../lib/version.ts';
 import { runDown } from './down.ts';
 
 export interface UpdateOptions {
@@ -45,10 +50,33 @@ export async function runUpdate(opts: UpdateOptions = {}): Promise<void> {
     process.exit(1);
   }
 
-  // ── 2. Already up to date ──────────────────────────────────────────────────
+  // ── 2. Is the registry's version newer? One rule, no second one ───────────
 
-  if (installed === latest) {
+  const order = compareVersions(latest, installed);
+  if (order === null) {
+    // Not a version the rule can order (a registry or a build answering
+    // something else): installing it would be a guess (invariant #4).
+    console.error(
+      chalk.red(
+        `  ✗ Cannot compare the registry's version (${latest}) with the installed one ` +
+          `(${installed}): nothing was installed.`,
+      ),
+    );
+    process.exit(1);
+  }
+  if (order === 0) {
     console.log(chalk.green(`  ✓ Already on the latest version (${installed})`));
+    return;
+  }
+  if (order < 0) {
+    // The registry is BEHIND this install. Installing what it answers would
+    // put an older program in front of a database this one may have migrated.
+    console.log(
+      chalk.yellow(
+        `  The registry's latest version (${latest}) is older than the installed one ` +
+          `(${installed}): nothing to update, nothing was changed.`,
+      ),
+    );
     return;
   }
 
@@ -68,9 +96,12 @@ export async function runUpdate(opts: UpdateOptions = {}): Promise<void> {
 
   // ── 5. Install ─────────────────────────────────────────────────────────────
 
-  console.log(chalk.gray('  Installing nodal-agents@latest…'));
+  // The EXACT version the decision was made on, not the `latest` tag: the tag
+  // can move between the check and the install, and what is installed must be
+  // what was compared.
+  console.log(chalk.gray(`  Installing nodal-agents@${latest}…`));
   try {
-    await execa('npm', ['install', '-g', 'nodal-agents@latest'], { stdio: 'inherit' });
+    await execa('npm', ['install', '-g', `nodal-agents@${latest}`], { stdio: 'inherit' });
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
     const message = err instanceof Error ? err.message : String(err);

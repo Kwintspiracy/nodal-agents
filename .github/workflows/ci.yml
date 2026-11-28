@@ -61,7 +61,7 @@ jobs:
   # cache turbo froid pour cette lignée) → budget 14.
   checks:
     runs-on: ubuntu-24.04
-    timeout-minutes: 50
+    timeout-minutes: 52
     steps:
       - uses: actions/checkout@v5
 
@@ -154,6 +154,16 @@ jobs:
       - name: Capacités du produit
         timeout-minutes: 2
         run: pnpm capacites:check
+
+      # #1120: a migration not in the last release must come after every one it
+      # shipped, or every published install skips it and then refuses to start.
+      # The checkout is shallow, so the release tags (and only their tips) are
+      # fetched first; with no tag the check fails rather than pass on nothing.
+      - name: Migration order against the last release
+        timeout-minutes: 2
+        run: |
+          git fetch --no-tags --depth=1 origin "+refs/tags/v*:refs/tags/v*"
+          pnpm migrations:check
 
       # Les bornes de temps de la CI (#517) : chaque étape run bornée, et chaque job
       # au moins la somme de ses étapes + 5 min. Une borne de JOB trop courte
