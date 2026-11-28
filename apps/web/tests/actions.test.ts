@@ -4476,14 +4476,31 @@ describe('updateNetworkSettingsAction', () => {
   });
 
   it('returns cli_config_missing when mergeNodalaiConfig signals the file is absent', async () => {
+    const { StateFileError } = await import('@nodal-agents/shared/state-files');
     cliConfigMocks.merge.mockReset();
     cliConfigMocks.merge.mockImplementation(() => {
-      throw new Error('cli_config_missing');
+      throw new StateFileError('STATE_FILE_ABSENT', '/h/config.json', 'absent');
     });
     const { updateNetworkSettingsAction } = await import('../src/lib/actions.ts');
     const r = await updateNetworkSettingsAction({ bind: 'lan' });
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.code).toBe('cli_config_missing');
+  });
+
+  it('an UNUSABLE config is reported as unusable, with the reader’s message, never as missing', async () => {
+    const { StateFileError } = await import('@nodal-agents/shared/state-files');
+    const message = "Nodal's configuration file at /h/config.json exists but is not valid: …";
+    cliConfigMocks.merge.mockReset();
+    cliConfigMocks.merge.mockImplementation(() => {
+      throw new StateFileError('STATE_FILE_INVALID', '/h/config.json', message);
+    });
+    const { updateNetworkSettingsAction } = await import('../src/lib/actions.ts');
+    const r = await updateNetworkSettingsAction({ bind: 'loopback' });
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.code).toBe('cli_config_invalid');
+      expect(r.message).toBe(message);
+    }
   });
 });
 

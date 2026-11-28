@@ -11,6 +11,10 @@ import {
   last4,
   loadOrCreateMasterKey,
   masterKeyPath,
+  createMasterKeyFile,
+  masterKeyCheckValue,
+  masterKeyMatchesCheck,
+  readMasterKeyFile,
   _resetMasterKeyCacheForTests,
 } from '../index.ts';
 
@@ -164,5 +168,41 @@ describe('@nodal-agents/secrets', () => {
       expect(last4('ab')).toBe('ab');
       expect(last4('abcd')).toBe('abcd');
     });
+  });
+});
+
+describe('the master key file: created once, never replaced @cap:installer-et-demarrer/moteur', () => {
+  let tmp: string;
+
+  beforeEach(() => {
+    tmp = mkdtempSync(join(tmpdir(), 'nodal clé ü '));
+  });
+
+  afterEach(() => {
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it('a second creator gets the FIRST key, read back from the file, and the file is not rewritten', () => {
+    const path = join(tmp, 'secrets.key');
+    const first = createMasterKeyFile(path);
+    const bytes = readFileSync(path);
+    const second = createMasterKeyFile(path);
+    expect(second.equals(first)).toBe(true);
+    expect(readFileSync(path).equals(bytes)).toBe(true);
+  });
+
+  it('an empty key file is an unusable file, never a missing one', () => {
+    const path = join(tmp, 'secrets.key');
+    writeFileSync(path, '');
+    expect(() => readMasterKeyFile(path)).toThrow(/malformed/);
+    expect(() => createMasterKeyFile(path)).toThrow();
+    expect(readFileSync(path, 'utf-8')).toBe('');
+  });
+
+  it('the check value opens with its key and with no other', () => {
+    const a = randomBytes(32);
+    const check = masterKeyCheckValue(a);
+    expect(masterKeyMatchesCheck(check, a)).toBe(true);
+    expect(masterKeyMatchesCheck(check, randomBytes(32))).toBe(false);
   });
 });

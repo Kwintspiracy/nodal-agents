@@ -40,7 +40,7 @@ export function resolveMcpServeOptions(
 ): McpServeOptions {
   if (!config) {
     throw new Error(
-      `mcp_config_missing: ${CONFIG_FILE} not found or unreadable. ` +
+      `mcp_config_missing: ${CONFIG_FILE} not found. ` +
         'Run `nodal-agents init` (or `nodal-agents up` once) before connecting MCP clients.',
     );
   }

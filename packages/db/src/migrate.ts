@@ -25,6 +25,14 @@ export interface RunMigrationsOptions {
    * Default: false.
    */
   patchVectorAsText?: boolean;
+  /**
+   * The program's migrations folder (the `.sql` files and `meta/_journal.json`).
+   * Defaults to the one bundled with this build (`sourceMigrationsFolder`).
+   * Every reader below (the migrator, the gap check, the schema state) takes
+   * the journal from the SAME folder, so a caller cannot compare a database
+   * with one journal and migrate it with another.
+   */
+  migrationsFolder?: string;
 }
 
 /**
@@ -57,8 +65,14 @@ export async function runMigrations(
 
   const migrationsFolder = effectiveMigrationsFolder(opts);
 
-  await migrate(db, { migrationsFolder });
-  await sql.end();
+  // Closed on failure too: a failed migration used to leave its connection
+  // open, and a database with a session on it can be neither copied nor
+  // renamed (the copy taken before it could not be swapped back in).
+  try {
+    await migrate(db, { migrationsFolder });
+  } finally {
+    await sql.end();
+  }
 }
 
 /**
@@ -93,7 +107,7 @@ const dossiersPatches = new Map<string, string>();
 
 /** The folder Drizzle is actually pointed at — patched when pgvector is absent. */
 function effectiveMigrationsFolder(opts: RunMigrationsOptions): string {
-  const source = sourceMigrationsFolder();
+  const source = opts.migrationsFolder ?? sourceMigrationsFolder();
   if (opts.patchVectorAsText !== true) return source;
   const deja = dossiersPatches.get(source);
   if (deja !== undefined) return deja;
@@ -154,7 +168,7 @@ function patchMigrationsForNoVector(sourceFolder: string): string {
 // tel quel dans `created_at` par drizzle, patché ou non.
 
 /** Une entrée de `meta/_journal.json`. */
-interface JournalEntry {
+export interface JournalEntry {
   idx: number;
   when: number;
   tag: string;
@@ -195,6 +209,46 @@ function readJournal(folder: string): JournalEntry[] {
   }
   const brut = JSON.parse(readFileSync(chemin, 'utf8')) as { entries?: JournalEntry[] };
   return brut.entries ?? [];
+}
+
+/**
+ * The applied `created_at` values no journal entry claims, in two lists that
+ * must never be read as one, oldest first:
+ *   - `ahead`: LATER than the journal's newest entry: the database was migrated
+ *     by a newer program (the only case that makes it "newer");
+ *   - `unclaimed`: not later: what a development branch leaves once its
+ *     migration is renumbered or dropped. The migrator and the gap check
+ *     ignore them; so does everything that reads this.
+ * PURE: the one rule, read by the schema state and by a restore's journal.
+ */
+export function historyNotInJournal(
+  journal: readonly { when: number }[],
+  applied: readonly number[],
+): { ahead: number[]; unclaimed: number[] } {
+  const known = new Set(journal.map((e) => Number(e.when)));
+  const newest = journal.length > 0 ? Math.max(...journal.map((e) => Number(e.when))) : -Infinity;
+  const notIn = [...new Set(applied.map((w) => Number(w)).filter((w) => !known.has(w)))].sort(
+    (a, b) => a - b,
+  );
+  return { ahead: notIn.filter((w) => w > newest), unclaimed: notIn.filter((w) => w <= newest) };
+}
+
+/** Le journal du programme, celui que `runMigrations` appliquerait avec ces options. */
+export function readProgramJournal(opts: RunMigrationsOptions = {}): JournalEntry[] {
+  return readJournal(effectiveMigrationsFolder(opts));
+}
+
+/**
+ * Les `created_at` que la base a enregistrés, ou `null` quand elle n'a pas de
+ * table d'historique (une base que personne n'a migrée).
+ */
+export async function appliedMigrationTimes(connectionString: string): Promise<number[] | null> {
+  const sql = postgres(connectionString, { max: 1, onnotice: () => {} });
+  try {
+    return await appliedWhen(sql);
+  } finally {
+    await sql.end();
+  }
 }
 
 /** Les `created_at` déjà enregistrés, ou `null` quand la table n'existe pas. */

@@ -341,6 +341,42 @@ export function scanForNodalHomeCopies(opts: ScanOptions): Violation[] {
 }
 
 /**
+ * The files an install cannot live without (`config.json`, `secrets.key`,
+ * `pids/processes.json`) are read and written by ONE module:
+ * `packages/shared/src/state-files.ts` (atomic replace, last good copy, an
+ * unusable file is an error, never "absent"), through `nodal-config-file.ts`
+ * for the config. A second writer is how the config was lost: two of them
+ * truncated it in place, and a crash in between left an empty file that the
+ * next start took for a first run (B38-02, B49-14).
+ *
+ * Two fingerprints, read in `.ts` and `.tsx`:
+ *   - a state file's PATH built outside the module: the config's name handed to
+ *     `nodalHomeEntry` or `nodalHomePath`, and the names `secrets.key` and `processes.json`
+ *     as quoted literals. The module exports the paths (`nodalConfigPath`,
+ *     `masterKeyFilePath`, `processesFilePath`);
+ *   - a `node:fs` write, rename, copy or removal aimed straight at one of those
+ *     paths (`CONFIG_FILE`, `NODALAI_CONFIG_PATH`, `PROCESSES_FILE`, or a call
+ *     to a path function).
+ * Not caught: a path copied into another variable before the write, and a
+ * name assembled at run time. Comments are not read as paths: the names
+ * appear there in backticks, which neither fingerprint matches.
+ */
+export const STATE_FILE_PATH_PATTERN =
+  /nodalHome(?:Entry|Path)\(\s*['"]config\.json['"]|['"](?:secrets\.key|processes\.json)['"]/;
+export const STATE_FILE_DIRECT_WRITE_PATTERN =
+  /\b(?:writeFileSync|writeFile|appendFileSync|appendFile|renameSync|rename|copyFileSync|copyFile|cpSync|createWriteStream|truncateSync|truncate|rmSync|rm|unlinkSync|unlink|openSync|open)\(\s*(?:CONFIG_FILE|NODALAI_CONFIG_PATH|PROCESSES_FILE|(?:nodalConfigPath|masterKeyFilePath|masterKeyPath|processesFilePath)\()/;
+
+export function scanForStateFileBypass(opts: ScanOptions): Violation[] {
+  return [
+    ...scanForPattern(opts, { pattern: STATE_FILE_PATH_PATTERN, rule: 'state-file-path-copy' }),
+    ...scanForPattern(opts, {
+      pattern: STATE_FILE_DIRECT_WRITE_PATTERN,
+      rule: 'state-file-direct-write',
+    }),
+  ];
+}
+
+/**
  * The MCP tool prefix (`my-server` → `my_server`) lives in ONE place:
  * `packages/shared/src/mcp-tool-prefix.ts` (#661).
  *
