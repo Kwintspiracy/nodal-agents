@@ -2,7 +2,8 @@
 
 import type { MigrateDatabaseOptions, MigrateDatabaseResult } from '@nodal-agents/db/safe-migrate';
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync, unlinkSync } from 'node:fs';
-import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
 import { PG_DATA_DIR } from './config.ts';
 import { runWindowsPowerShell } from './windows-powershell.ts';
 import {
@@ -13,6 +14,12 @@ import {
   type DetachedSpawnArm,
 } from './embedded-postgres-module.ts';
 import { applyPostgresLoggingConfig, postgresLogDirFor } from './pg-logging.ts';
+import { checkPathsFor, type PathReader } from './path-handoff.ts';
+import {
+  POSTGRES_PROGRAMS,
+  resolvePostgresPathReader,
+  type PostgresBinaryPaths,
+} from './postgres-code-page.ts';
 import {
   formatForeignSkip,
   judgeClaimedPostmaster,
@@ -637,6 +644,26 @@ export async function stopOrphanPostgres(
  * paths. Everything is checked rather than assumed: a layout that stops
  * exposing `pg_ctl` returns null here and the caller says so with a code.
  */
+/**
+ * The three PostgreSQL programs, as absolute paths. A package that stops
+ * exposing one of them is said, by name, rather than started half-checked.
+ */
+export async function postgresBinaryPaths(): Promise<PostgresBinaryPaths> {
+  const found = await importEmbeddedPostgresBinaries();
+  const out: Partial<Record<(typeof POSTGRES_PROGRAMS)[number], string>> = {};
+  for (const name of POSTGRES_PROGRAMS) {
+    const path = found?.[name];
+    if (typeof path !== 'string' || !existsSync(path)) {
+      throw new Error(
+        `EMBEDDED_POSTGRES_BINARY_MISSING: the embedded-postgres package does not provide ${name} ` +
+          `(got ${typeof path === 'string' ? path : String(path)}).`,
+      );
+    }
+    out[name] = path;
+  }
+  return out as PostgresBinaryPaths;
+}
+
 export async function resolvePgCtl(): Promise<string | null> {
   try {
     const pgCtl = (await importEmbeddedPostgresBinaries())?.pg_ctl;
@@ -909,11 +936,36 @@ export async function startEmbeddedPostgres(
   // is spawned detached at OS level; `handle.outliveLauncher()` then removes the
   // package's stop-at-exit. A foreground start leaves both alone, so that
   // Ctrl+C and a crash of the launcher still take the cluster with them.
-  options: { detached?: boolean } = {},
+  options: {
+    detached?: boolean;
+    /**
+     * The reader the PostgreSQL programs are. Resolved from the machine when
+     * absent (`resolvePostgresPathReader`); a test passes a narrower one to
+     * prove the refusal.
+     */
+    pathReader?: PathReader;
+  } = {},
 ): Promise<PostgresHandle> {
   // Dynamic import — embedded-postgres is a runtime-only dep, loaded through
   // the one helper that keeps it from rewriting the process exit code
   const EmbeddedPostgres = await importEmbeddedPostgres();
+
+  // EVERY path the PostgreSQL programs will be given, checked against what
+  // they decode BEFORE anything is created (#1231): the data directory (`-D`
+  // of initdb, postgres and pg_ctl), the log directory (written into
+  // postgresql.auto.conf), the folder the package writes initdb's password
+  // file into, and the folder the programs themselves live in (PostgreSQL
+  // finds its share/ and lib/ from its own path). A path the reader would not
+  // get back exactly is refused by name: a best-fit spelling would have put
+  // the cluster in ANOTHER folder and reported success.
+  const binaries = await postgresBinaryPaths();
+  const reader = options.pathReader ?? (await resolvePostgresPathReader(binaries));
+  checkPathsFor(reader, [
+    resolve(dataDir),
+    resolve(logDirectory),
+    tmpdir(),
+    dirname(binaries.postgres),
+  ]);
 
   // embedded-postgres@18.3.0-beta.17 sometimes rejects `pg.start()` with
   // literal `undefined` — the real diagnostic only flows through `onLog`
@@ -978,7 +1030,7 @@ export async function startEmbeddedPostgres(
     // crashes is exactly the start whose log is worth having, and until
     // 2026-09-15 that log did not exist. The only trace of two crashes that day
     // was the runner's side of the disconnect.
-    applyPostgresLoggingConfig(dataDir, logDirectory);
+    applyPostgresLoggingConfig(dataDir, logDirectory, reader);
     arm = options.detached ? await armDetachedPostgresSpawn() : null;
     try {
       await startAndWaitUntilReady(pg, {

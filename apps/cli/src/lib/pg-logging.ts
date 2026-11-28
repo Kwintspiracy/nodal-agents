@@ -64,6 +64,7 @@ import {
 import { join, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
 import { LOG_DIR } from './config.ts';
+import { encodeForReader, type PathReader } from './path-handoff.ts';
 
 /** The root all cluster logs live under. Absolute: Postgres never guesses. */
 export const PG_LOG_DIR = join(LOG_DIR, 'postgres');
@@ -207,7 +208,13 @@ export function mergeAutoConf(existing: string, settings: Record<string, string>
  * WRITE failure propagates: a start that silently keeps no log is exactly the
  * situation #111 is about.
  */
-export function applyPostgresLoggingConfig(dataDir: string, logDirectory: string): string {
+export function applyPostgresLoggingConfig(
+  dataDir: string,
+  logDirectory: string,
+  // Who reads the file: `log_directory` is a path, and PostgreSQL decodes it
+  // in ITS code page, not Node's (#1231). See `postgres-code-page.ts`.
+  reader: PathReader,
+): string {
   mkdirSync(logDirectory, { recursive: true });
   const target = join(dataDir, 'postgresql.auto.conf');
   let existing = '';
@@ -218,7 +225,12 @@ export function applyPostgresLoggingConfig(dataDir: string, logDirectory: string
       existing = '';
     }
   }
-  writeAtomically(target, mergeAutoConf(existing, postgresLoggingSettings(logDirectory)));
+  const settings = postgresLoggingSettings(logDirectory);
+  const logDirectoryValue = settings['log_directory'] ?? '';
+  writeAtomically(
+    target,
+    encodeForReader(reader, mergeAutoConf(existing, settings), [logDirectoryValue]),
+  );
   return logDirectory;
 }
 
@@ -244,9 +256,9 @@ export function tempConfPath(target: string): string {
  * first shape of this fix was caught, by the third case in
  * `pg-logging-atomic.test.ts`.
  */
-function writeAtomically(target: string, contents: string): void {
+function writeAtomically(target: string, contents: Uint8Array): void {
   const tmp = tempConfPath(target);
-  writeFileSync(tmp, contents, 'utf-8');
+  writeFileSync(tmp, contents);
   try {
     renameSync(tmp, target);
   } catch (err) {

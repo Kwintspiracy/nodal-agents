@@ -21,6 +21,9 @@ import {
   PG_LOG_DIR,
   quoteGuc,
 } from '../lib/pg-logging.ts';
+import type { PathReader } from '../lib/path-handoff.ts';
+
+const UTF8_READER: PathReader = { program: 'PostgreSQL', encoding: 'utf-8' };
 
 const dirs: string[] = [];
 function tempDir(): string {
@@ -116,7 +119,7 @@ describe('applyPostgresLoggingConfig @cap:installer-et-demarrer/moteur', () => {
   it('writes postgresql.auto.conf and creates the log directory', () => {
     const dataDir = tempDir();
     const logDir = join(tempDir(), 'logs', 'postgres');
-    applyPostgresLoggingConfig(dataDir, logDir);
+    applyPostgresLoggingConfig(dataDir, logDir, UTF8_READER);
     expect(existsSync(logDir)).toBe(true);
     const written = readFileSync(join(dataDir, 'postgresql.auto.conf'), 'utf-8');
     expect(written).toContain("logging_collector = 'on'");
@@ -128,9 +131,9 @@ describe('applyPostgresLoggingConfig @cap:installer-et-demarrer/moteur', () => {
     // who cleared the file gets it back. Running twice must not accumulate.
     const dataDir = tempDir();
     const logDir = join(tempDir(), 'logs');
-    applyPostgresLoggingConfig(dataDir, logDir);
+    applyPostgresLoggingConfig(dataDir, logDir, UTF8_READER);
     const first = readFileSync(join(dataDir, 'postgresql.auto.conf'), 'utf-8');
-    applyPostgresLoggingConfig(dataDir, logDir);
+    applyPostgresLoggingConfig(dataDir, logDir, UTF8_READER);
     expect(readFileSync(join(dataDir, 'postgresql.auto.conf'), 'utf-8')).toBe(first);
   });
 
@@ -138,7 +141,7 @@ describe('applyPostgresLoggingConfig @cap:installer-et-demarrer/moteur', () => {
     const dataDir = tempDir();
     const logDir = join(tempDir(), 'logs');
     writeFileSync(join(dataDir, 'postgresql.auto.conf'), Buffer.from([0xff, 0xfe, 0x00]));
-    expect(() => applyPostgresLoggingConfig(dataDir, logDir)).not.toThrow();
+    expect(() => applyPostgresLoggingConfig(dataDir, logDir, UTF8_READER)).not.toThrow();
     expect(readFileSync(join(dataDir, 'postgresql.auto.conf'), 'utf-8')).toContain(
       "logging_collector = 'on'",
     );
