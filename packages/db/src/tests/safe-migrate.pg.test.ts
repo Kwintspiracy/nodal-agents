@@ -519,7 +519,7 @@ describe('migrateDatabase: a program older than the database @cap:installer-et-d
     );
     expect(err).toBeInstanceOf(DatabaseNewerThanProgramError);
     const e = err as DatabaseNewerThanProgramError;
-    expect(e.unknown).toEqual([M.destroy.when]);
+    expect(e.ahead).toEqual([M.destroy.when]);
     expect(e.openedBy).toMatchObject({ version: '0.9.12', lastMigration: '0002_destroy' });
     expect(e.programLastMigration).toBe('0001_seen');
     expect(e.message).toContain('version 0.9.12');
@@ -566,6 +566,57 @@ describe('migrateDatabase: a program older than the database @cap:installer-et-d
       version: '0.9.11',
       lastMigration: '0000_base',
     });
+  }, 120_000);
+});
+
+describe('migrateDatabase: a history row no journal claims, older than the journal @cap:installer-et-demarrer/moteur', () => {
+  /** A row the way a branch migration leaves it once its file is renumbered or dropped. */
+  async function addUnclaimedRow(url: string, when: number): Promise<void> {
+    await withSql(
+      url,
+      (sql) =>
+        sql`INSERT INTO drizzle.__drizzle_migrations (hash, created_at) VALUES ('from-another-branch', ${when})`,
+    );
+  }
+  const BETWEEN_BASE_AND_SEEN = 1_700_000_050_000;
+
+  it('alone: starts, says it is ignored, and a pending migration is still applied after the copy', async () => {
+    const files = stateFiles();
+    const url = await installAtBase(files);
+    await addUnclaimedRow(url, BETWEEN_BASE_AND_SEEN);
+    const before = await notes(url);
+
+    const result = await migrateDatabase(url, options(program(M.base, M.seen), files));
+
+    expect(result.unclaimed).toEqual([BETWEEN_BASE_AND_SEEN]);
+    expect(result.applied).toEqual(['0001_seen']);
+    expect(result.snapshot).not.toBeNull();
+    // Named after the newest migration the journal claims, not the unclaimed row.
+    expect(result.snapshot!.meta?.lastMigration).toBe('0000_base');
+    expect(await notes(urlOf(url, result.snapshot!.name))).toEqual(before);
+    expect(await withSql(url, async (sql) => [...(await sql`SELECT copies FROM seen`)])).toEqual([
+      { copies: 1 },
+    ]);
+    // Nothing rewritten: the row is still in the history.
+    expect(await history(url)).toContain(BETWEEN_BASE_AND_SEEN);
+  }, 120_000);
+
+  it('with a row AHEAD of the journal as well: refused before anything is written', async () => {
+    const files = stateFiles();
+    const url = await installAtBase(files);
+    await addUnclaimedRow(url, BETWEEN_BASE_AND_SEEN);
+    await addUnclaimedRow(url, 1_700_000_900_000);
+    const historyBefore = await history(url);
+
+    const err = await migrateDatabase(url, options(program(M.base, M.seen), files)).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(DatabaseNewerThanProgramError);
+    expect((err as DatabaseNewerThanProgramError).ahead).toEqual([1_700_000_900_000]);
+    expect(await history(url)).toEqual(historyBefore);
+    expect(await tableExists(url, 'seen')).toBe(false);
+    expect(await listSnapshots(url, files.dir)).toEqual([]);
   }, 120_000);
 });
 

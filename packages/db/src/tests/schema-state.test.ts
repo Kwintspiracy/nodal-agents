@@ -12,11 +12,12 @@ const journal = [
 ];
 
 describe('schemaStateOf @cap:installer-et-demarrer/moteur', () => {
-  it('a database nothing migrated: every entry pending, nothing unknown', () => {
+  it('a database nothing migrated: every entry pending, nothing ahead or unclaimed', () => {
     const s = schemaStateOf(journal, null);
     expect(s.pending.map((e) => e.tag)).toEqual(['0000_a', '0001_b', '0002_c', '0003_d']);
     expect(s.gaps).toEqual([]);
-    expect(s.unknown).toEqual([]);
+    expect(s.ahead).toEqual([]);
+    expect(s.unclaimed).toEqual([]);
     expect(s.lastApplied).toBeNull();
   });
 
@@ -33,17 +34,36 @@ describe('schemaStateOf @cap:installer-et-demarrer/moteur', () => {
     expect(s.pending.map((e) => e.tag)).toEqual(['0003_d']);
   });
 
-  it('a history row this journal does not have: unknown, the database is newer', () => {
+  it('history rows LATER than the newest journal entry: ahead, the database is newer', () => {
     // An older program: its journal stops at 0001; the database went to 0003.
     const older = journal.slice(0, 2);
     const s = schemaStateOf(older, [1000, 2000, 3000, 4000]);
-    expect(s.unknown).toEqual([3000, 4000]);
+    expect(s.ahead).toEqual([3000, 4000]);
+    expect(s.unclaimed).toEqual([]);
     expect(s.pending).toEqual([]);
     expect(s.lastApplied).toEqual({ when: 4000, tag: null });
   });
 
-  it('an unknown row BETWEEN known ones (a renumbered migration) is unknown too', () => {
+  it('a row no journal entry claims, BETWEEN known ones (a branch migration later renumbered or dropped): unclaimed, not ahead', () => {
     const s = schemaStateOf(journal, [1000, 1500, 2000]);
-    expect(s.unknown).toEqual([1500]);
+    expect(s.unclaimed).toEqual([1500]);
+    expect(s.ahead).toEqual([]);
+    // It changes nothing else: what is pending and the newest claimed entry.
+    expect(s.pending.map((e) => e.tag)).toEqual(['0002_c', '0003_d']);
+    expect(s.lastClaimed).toEqual({ when: 2000, tag: '0001_b' });
+  });
+
+  it('an unclaimed row that is the NEWEST applied: still unclaimed, pending counted from it like the migrator does', () => {
+    const s = schemaStateOf(journal, [1000, 2000, 2500]);
+    expect(s.unclaimed).toEqual([2500]);
+    expect(s.ahead).toEqual([]);
+    expect(s.pending.map((e) => e.tag)).toEqual(['0002_c', '0003_d']);
+    expect(s.lastClaimed).toEqual({ when: 2000, tag: '0001_b' });
+  });
+
+  it('both at once: the unclaimed row and the one ahead are told apart', () => {
+    const s = schemaStateOf(journal, [1000, 1500, 2000, 3000, 4000, 9000]);
+    expect(s.unclaimed).toEqual([1500]);
+    expect(s.ahead).toEqual([9000]);
   });
 });

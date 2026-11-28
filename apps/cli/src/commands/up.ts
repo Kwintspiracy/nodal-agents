@@ -89,7 +89,12 @@ import {
   formatBytes,
   homeStateFiles,
 } from '@nodal-agents/db/snapshots';
-import { databaseNewerRefusal, migrationFailure, snapshotRefusal } from '../lib/schema-messages.ts';
+import {
+  databaseNewerRefusal,
+  migrationFailure,
+  snapshotRefusal,
+  unclaimedHistoryNotice,
+} from '../lib/schema-messages.ts';
 import { getInstalledVersion } from '../lib/version.ts';
 import { startHealthWatchdog, probeRunnerHealth, type Watchdog } from '../lib/watchdog.ts';
 
@@ -938,6 +943,9 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
         said.length > 0 ? `Database schema: ${said.join('; ')}` : 'Database schema up to date',
       ),
     );
+    if (result.unclaimed.length > 0) {
+      console.log(chalk.yellow(`  ${unclaimedHistoryNotice(result.unclaimed)}`));
+    }
     if (result.pruned.length > 0) {
       console.log(
         chalk.gray(

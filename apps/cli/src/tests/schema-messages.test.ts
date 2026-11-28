@@ -5,7 +5,12 @@
 import { describe, it, expect } from 'vitest';
 import { DatabaseNewerThanProgramError } from '@nodal-agents/db/schema-state';
 import { SnapshotError } from '@nodal-agents/db/snapshots';
-import { databaseNewerRefusal, migrationFailure, snapshotRefusal } from '../lib/schema-messages.ts';
+import {
+  databaseNewerRefusal,
+  migrationFailure,
+  snapshotRefusal,
+  unclaimedHistoryNotice,
+} from '../lib/schema-messages.ts';
 
 describe('schema messages @cap:installer-et-demarrer/moteur', () => {
   it('a newer database names the version that migrated it, and both ways out', () => {
@@ -55,5 +60,13 @@ describe('schema messages @cap:installer-et-demarrer/moteur', () => {
     expect(text).toContain('division by zero');
     expect(text).toContain('nodalai_snap_20261128120000000_0166 (50.0 MB)');
     expect(text).toContain('nodal-agents rollback nodalai_snap_20261128120000000_0166');
+  });
+  it('rows no journal claims, older than the journal: one line, how many, their dates, ignored', () => {
+    const line = unclaimedHistoryNotice([1785300000000, 1785400000000]);
+    expect(line).toContain('2 applied migrations');
+    expect(line).toContain(new Date(1785300000000).toISOString());
+    expect(line).toContain(new Date(1785400000000).toISOString());
+    expect(line).toContain('ignored');
+    expect(line.split('\n')).toHaveLength(1);
   });
 });

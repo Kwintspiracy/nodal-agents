@@ -211,6 +211,28 @@ function readJournal(folder: string): JournalEntry[] {
   return brut.entries ?? [];
 }
 
+/**
+ * The applied `created_at` values no journal entry claims, in two lists that
+ * must never be read as one, oldest first:
+ *   - `ahead`: LATER than the journal's newest entry: the database was migrated
+ *     by a newer program (the only case that makes it "newer");
+ *   - `unclaimed`: not later: what a development branch leaves once its
+ *     migration is renumbered or dropped. The migrator and the gap check
+ *     ignore them; so does everything that reads this.
+ * PURE: the one rule, read by the schema state and by a restore's journal.
+ */
+export function historyNotInJournal(
+  journal: readonly { when: number }[],
+  applied: readonly number[],
+): { ahead: number[]; unclaimed: number[] } {
+  const known = new Set(journal.map((e) => Number(e.when)));
+  const newest = journal.length > 0 ? Math.max(...journal.map((e) => Number(e.when))) : -Infinity;
+  const notIn = [...new Set(applied.map((w) => Number(w)).filter((w) => !known.has(w)))].sort(
+    (a, b) => a - b,
+  );
+  return { ahead: notIn.filter((w) => w > newest), unclaimed: notIn.filter((w) => w <= newest) };
+}
+
 /** Le journal du programme, celui que `runMigrations` appliquerait avec ces options. */
 export function readProgramJournal(opts: RunMigrationsOptions = {}): JournalEntry[] {
   return readJournal(effectiveMigrationsFolder(opts));
@@ -223,8 +245,9 @@ export function readProgramJournal(opts: RunMigrationsOptions = {}): JournalEntr
  * gaps included. A restore builds an archive's schema from it (backup.ts),
  * through `migrateDatabase` like any other schema. The files are copied
  * unpatched: the caller's `patchVectorAsText` applies to this folder as to the
- * bundled one. Throws when `applied` holds a `when` this journal does not have
- * (the history is newer than the program). The caller removes the folder.
+ * bundled one. Throws when `applied` holds a `when` later than this journal's
+ * newest entry (the history is newer than the program); an older `when` no
+ * entry claims is left out (`historyNotInJournal`). The caller removes the folder.
  */
 export function migrationsFolderFor(
   applied: readonly number[],
@@ -233,12 +256,15 @@ export function migrationsFolderFor(
   const source = opts.migrationsFolder ?? sourceMigrationsFolder();
   const journal = readJournal(source);
   const wanted = new Set(applied.map((w) => Number(w)));
-  const known = new Set(journal.map((e) => Number(e.when)));
-  const unknown = [...wanted].filter((w) => !known.has(w));
-  if (unknown.length > 0) {
+  // Only a `when` LATER than the journal's newest entry is refused (the
+  // history is newer than the program). An older one no entry claims is left
+  // out of the folder: no file of this program builds it, and the history
+  // rows themselves come back with the archive's rows.
+  const { ahead } = historyNotInJournal(journal, [...wanted]);
+  if (ahead.length > 0) {
     throw new Error(
-      `the history holds ${unknown.length} migration(s) this program's journal does not have ` +
-        `(created_at ${unknown.sort((a, b) => a - b).join(', ')})`,
+      `the history holds ${ahead.length} migration(s) later than this program's journal ` +
+        `(created_at ${ahead.join(', ')})`,
     );
   }
   const raw = JSON.parse(readFileSync(join(source, 'meta', '_journal.json'), 'utf8')) as Record<
