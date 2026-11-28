@@ -35,6 +35,7 @@ cannot. See
 | `nodal-agents rollback [copy]` | List the copies of the database taken before migrations, or swap one back in. |
 | `nodal-agents backup` | Write everything this install needs into one file, verified before it is called done. |
 | `nodal-agents restore <file>` | Bring an install back from a backup, here or on another machine. |
+| `nodal-agents open` | Open the dashboard in a browser: in `local-trust`, a one-time launch link (also printed; `--print` only prints it). |
 | `nodal-agents logs [service]` | Tail logs for `web`, `runner`, or `postgres`. |
 | `nodal-agents checkpoints` | List the snapshots taken before an agent wrote in a folder. |
 | `nodal-agents checkpoints restore <sha>` | Put a workspace back to a snapshot. |
@@ -45,7 +46,7 @@ cannot. See
 
 ### `nodal-agents up`
 
-Starts everything in order: cleans up what a previous run left behind, starts embedded Postgres, applies Drizzle migrations, seeds the default user/entity/agent (local-trust mode only), spawns the runner and web, waits for both `/api/health` checks to pass, then opens the dashboard in your browser.
+Starts everything in order: cleans up what a previous run left behind, starts embedded Postgres, applies Drizzle migrations, seeds the default user/entity/agent (local-trust mode only), spawns the runner and web, waits for both `/api/health` checks to pass, then opens the dashboard in your browser. In `local-trust` it opens a launch link: it works once, within 10 minutes, and leaves a cookie that keeps that browser in. In a terminal, `up` also prints it; `nodal-agents open` makes another.
 
 If a configured port is occupied or reserved by the OS, `up` rotates to the next free port and saves the new value to `~/.nodalai/config.json`, never giving one service a port another one holds. If no config exists yet, it writes a default one and the dashboard finishes the setup; if the folder already holds an install (a database, a master key), a missing config is refused instead, with what to put back.
 

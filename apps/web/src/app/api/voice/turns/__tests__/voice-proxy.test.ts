@@ -110,7 +110,9 @@ describe('the web door of the voice turn is a pass-through (#942) @cap:parler-a-
     const res = await chunk(
       new Request('http://web.test/api/voice/turns/t-9/chunks/3', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/octet-stream' },
+        // The framing a browser gives a 4-byte body: the door reads it to know
+        // a body is there.
+        headers: { 'Content-Type': 'application/octet-stream', 'Content-Length': '4' },
         body: new Uint8Array([0, 255, 7, 128]),
       }),
       params({ turnId: 't-9', seq: '3' }),
@@ -125,6 +127,27 @@ describe('the web door of the voice turn is a pass-through (#942) @cap:parler-a-
       },
     ]);
     expect(await res.json()).toEqual({ received: 4 });
+  });
+
+  it('a request whose body is empty reaches the runner with no body and no invented type', async () => {
+    // What a browser sends to end a turn: a POST with `Content-Length: 0`.
+    await end(
+      new Request('http://web.test/api/voice/turns/t-9/end', {
+        method: 'POST',
+        headers: { 'Content-Length': '0' },
+        body: new Uint8Array([]),
+      }),
+      params({ turnId: 't-9' }),
+    );
+    expect(received).toEqual([
+      {
+        url: 'http://runner.test/api/voice/turns/t-9/end',
+        method: 'POST',
+        authorization: 'Bearer worker-secret',
+        contentType: null,
+        body: null,
+      },
+    ]);
   });
 
   it('end: the runner stream comes back as it is, event by event, as it is written (#943)', async () => {

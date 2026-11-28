@@ -162,7 +162,10 @@ export const delegationSection: Section = {
     const runnerUrl =
       process.env['BENCH_RUNNER_URL'] ?? `http://127.0.0.1:${config.ports?.runner ?? 3001}`;
 
-    const health = await fetch(`${runnerUrl}/api/health`).catch(() => null);
+    // With the install's proof: the runner admits no caller without it.
+    const health = await fetch(`${runnerUrl}/api/health`, {
+      headers: { authorization: `Bearer ${secret}` },
+    }).catch(() => null);
     if (!health?.ok) throw new Error(`Runner injoignable sur ${runnerUrl} — démarre la stack.`);
 
     const { db, close } = await openDb();

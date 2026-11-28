@@ -13,6 +13,8 @@
 // loud : on nomme la panne dans le terminal, on annonce le retour, et c'est
 // tout.
 
+import { installProof } from './install-proof.ts';
+
 export type HealthState = 'healthy' | 'degraded' | 'unreachable';
 
 export interface HealthProbeResult {
@@ -47,11 +49,18 @@ export interface Watchdog {
  *                    seule cause qu'il connaisse est sa base, cf. health.ts)
  *   fetch échoue   → unreachable (runner absent ou gelé)
  */
-export async function probeRunnerHealth(runnerUrl: string): Promise<HealthProbeResult> {
+export async function probeRunnerHealth(
+  runnerUrl: string,
+  workerSecret: string,
+): Promise<HealthProbeResult> {
   try {
     const controller = new AbortController();
     const t = setTimeout(() => controller.abort(), 3000);
-    const res = await fetch(`${runnerUrl}/api/health`, { signal: controller.signal });
+    // With the install's proof: the runner admits no caller without it.
+    const res = await fetch(`${runnerUrl}/api/health`, {
+      headers: installProof(workerSecret),
+      signal: controller.signal,
+    });
     clearTimeout(t);
     if (res.status === 200) return { state: 'healthy', detail: '' };
     // Le détail est LU DANS LA RÉPONSE, jamais deviné (revue P1 du 25/08) :

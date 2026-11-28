@@ -62,10 +62,17 @@ export function estPrete(status) {
   return status < 400;
 }
 
-async function repond(url) {
+async function repond(url, preuve) {
   if (!url) return false;
   try {
-    const r = await fetch(url, { redirect: 'manual', signal: AbortSignal.timeout(5_000) });
+    // La preuve de l'installation : les deux serveurs n'admettent aucun
+    // appelant sans elle, dans aucun mode (le tableau de bord en local-trust
+    // répond 401 sans elle).
+    const r = await fetch(url, {
+      redirect: 'manual',
+      headers: preuve(),
+      signal: AbortSignal.timeout(5_000),
+    });
     return estPrete(r.status);
   } catch {
     return false;
@@ -84,18 +91,23 @@ async function repond(url) {
  * `detached` est ce qui fait survivre l'enfant : sous Linux un nouveau groupe
  * de processus, sous Windows la sortie du « job » que libuv tue avec le parent.
  * Sans shell : `boot-stack.mjs` ne tourne pas sous Windows (voir ce fichier).
+ *
+ * `preuve` rend les en-têtes qui prouvent l'appelant (le secret de
+ * l'installation), relue à chaque sonde : le config.json qui le porte n'existe
+ * qu'une fois que le CLI l'a écrit.
  */
 export async function lancerEtAttendre({
   commande,
   args,
   env = process.env,
   url,
+  preuve = () => ({}),
   journal,
   plafondMs,
   pasMs = 2_000,
 }) {
   const adresse = () => (typeof url === 'function' ? url() : url);
-  if (await repond(adresse())) return { etat: 'occupee', apresMs: 0, pid: null };
+  if (await repond(adresse(), preuve)) return { etat: 'occupee', apresMs: 0, pid: null };
 
   const fd = openSync(journal, 'a');
   const enfant = spawn(commande, args, {
@@ -116,7 +128,7 @@ export async function lancerEtAttendre({
   enfant.unref();
 
   const verdict = await attendreLaStack({
-    sonder: () => repond(adresse()),
+    sonder: () => repond(adresse(), preuve),
     sortie: () => fin,
     maintenant: () => Date.now(),
     attendre: (ms) => new Promise((r) => setTimeout(r, ms)),

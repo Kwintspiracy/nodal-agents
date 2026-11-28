@@ -124,13 +124,15 @@ export async function decideStartFromProbes(opts: {
   runnerPort: number;
   webPort: number;
   dataDir: string;
+  /** The install's secret: a runner of THIS install answers it with 200. */
+  workerSecret: string;
 }): Promise<StartVerdict> {
   const { livePostmasterPid } = await import('./postgres.ts');
   const postmasterPid = livePostmasterPid(opts.dataDir);
   if (postmasterPid === null) return { proceed: true };
 
   const { probeRunnerHealth } = await import('./watchdog.ts');
-  const health = await probeRunnerHealth(`http://127.0.0.1:${opts.runnerPort}`);
+  const health = await probeRunnerHealth(`http://127.0.0.1:${opts.runnerPort}`, opts.workerSecret);
   if (health.state !== 'healthy') return { proceed: true };
 
   const { pidListeningOnPort } = await import('./ports.ts');

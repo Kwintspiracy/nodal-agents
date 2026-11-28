@@ -170,6 +170,45 @@ describe('lancerEtAttendre, sur de VRAIS processus', () => {
     }
   });
 
+  it('une stack qui n’admet que le secret de l’installation : prête avec la preuve, jamais sans', async () => {
+    // Les deux serveurs répondent 401 à qui ne prouve rien (le tableau de bord
+    // en local-trust compris) : la sonde porte la preuve que `preuve` rend.
+    dossier = mkdtempSync(join(tmpdir(), 'boot-stack-'));
+    const serveur =
+      "const s=require('http').createServer((q,r)=>{r.writeHead(q.headers.authorization==='Bearer s3cret'?200:401);r.end()});" +
+      "s.listen(0,'127.0.0.1',()=>{require('fs').writeFileSync(process.env.PORT_FILE,String(s.address().port))});" +
+      'setTimeout(()=>process.exit(0),20000)';
+    const lancer = (preuve, portFile) =>
+      lancerEtAttendre({
+        commande: process.execPath,
+        args: ['-e', serveur],
+        env: { ...process.env, PORT_FILE: portFile },
+        url: () => {
+          try {
+            return `http://127.0.0.1:${readFileSync(portFile, 'utf8')}/`;
+          } catch {
+            return null;
+          }
+        },
+        ...(preuve ? { preuve } : {}),
+        journal: join(dossier, 'stack.log'),
+        plafondMs: 3_000,
+        pasMs: 200,
+      });
+    const sans = await lancer(null, join(dossier, 'port-a'));
+    expect(sans.etat).toBe('plafond');
+    const avec = await lancer(() => ({ authorization: 'Bearer s3cret' }), join(dossier, 'port-b'));
+    expect(avec.etat).toBe('prete');
+    for (const pid of [sans.pid, avec.pid]) {
+      const veille = await watchProcess(pid);
+      try {
+        veille.kill();
+      } finally {
+        veille.release();
+      }
+    }
+  });
+
   it('la stack SURVIT à la fin du processus qui l’a lancée (l’étape suivante du workflow la teste)', async () => {
     // Le test précédent vérifie l'enfant tant que Vitest vit : il resterait vert
     // si le script retenait son enfant ou l'emportait en sortant. Ici un vrai

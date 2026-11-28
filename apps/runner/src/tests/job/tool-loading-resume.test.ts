@@ -29,6 +29,7 @@ import {
   testEnv,
   toolResults,
 } from './tool-loading-harness.ts';
+import { seedResponder } from '../approvals/workspace-responder.ts';
 
 // Provider calls leave through packages/llm's own transport (#609), not the
 // global fetch. Routed back to it here, so the harness's stub is still the
@@ -130,6 +131,7 @@ describe('a loaded tool stays offered across the life of its job @cap:assigner-o
       .where(and(eq(approvalRequests.jobId, jobId), eq(approvalRequests.status, 'pending')));
     expect(pending?.toolName).toBe('create_schedule');
     await db.update(agentJobs).set({ status: 'awaiting_approval' }).where(eq(agentJobs.id, jobId));
+    await seedResponder(db, pending!.entityId!);
     const resolved = await resolveApprovalDecision(deps, testEnv, {
       answeredBy: { userId: '00000000-0000-4000-8000-00000000a11e' },
       approvalRequestId: pending!.id,

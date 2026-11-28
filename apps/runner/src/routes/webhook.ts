@@ -3,7 +3,7 @@
 // Brique 5: inbound webhooks. An entity operator configures a `webhook_triggers`
 // row (name, slug, task_template, a generated secret) via the dashboard; hitting
 // this URL fires an agent_jobs row the same way a cron schedule does. This route
-// sits OUTSIDE requireRunnerAuth (server.ts) — an external webhook caller has no
+// sits OUTSIDE `/api/*` and its admission (server.ts) — an external webhook caller has no
 // session or WORKER_SECRET to present, its only credential is knowing slug+secret,
 // checked per-trigger below.
 //

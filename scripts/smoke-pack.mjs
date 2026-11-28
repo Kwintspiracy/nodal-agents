@@ -274,7 +274,12 @@ try {
         );
       }
       try {
-        const res = await fetch(probe.url, { redirect: 'follow' });
+        // With the install's proof: both servers admit no caller without it,
+        // in every auth mode, the default one included.
+        const res = await fetch(probe.url, {
+          redirect: 'follow',
+          headers: { authorization: `Bearer ${config.workerSecret}` },
+        });
         lastStatus = `HTTP ${res.status}`;
         // A page must actually render, not merely respond: 0.8.0's dashboard
         // returned 500 on every route while health stayed green.

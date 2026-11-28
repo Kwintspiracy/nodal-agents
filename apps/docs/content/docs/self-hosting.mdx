@@ -87,7 +87,12 @@ Set `NODALAI_NO_BROWSER=1` to prevent the browser from opening automatically —
 
 ### Loopback (default)
 
-Services bind to `127.0.0.1`. No authentication is required — the dashboard is accessible only from the same machine. This is the recommended mode for single-user local use.
+Services bind to `127.0.0.1`. There is no password to type, but every caller still proves who it is with the install's secret, which only your account can read (`~/.nodalai/config.json`). This is the recommended mode for single-user local use.
+
+- **The dashboard** opens through a link that `nodal-agents up` opens in your browser. The link works once, within 10 minutes, and leaves a cookie that keeps that browser in. Another browser or profile, or a bookmark opened before `up`, shows a page that says to run `nodal-agents open`: it opens a new link (`nodal-agents open --print` only prints it).
+- **Your own scripts** that call the runner send `Authorization: Bearer <workerSecret>` (see [HTTP API](/docs/reference/api)).
+- **Paired devices** keep their own key and are not affected.
+- **After an update**, the first start opens the link as usual. A browser that was already on the dashboard before the update shows the page once: run `nodal-agents open`.
 
 ### LAN mode
 
@@ -112,7 +117,7 @@ The runner supports three auth modes (`AUTH_MODE` in `apps/runner/src/env.ts`); 
 
 | Mode           | Behaviour                                                                                                                                                                           |
 | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `local-trust`  | No authentication. The dashboard trusts any request. Default for a loopback bind.                                                                                                   |
+| `local-trust`  | No password. Every caller proves it holds the install's secret: the dashboard through a launch link and its cookie, programs through `WORKER_SECRET`. Default for a loopback bind.  |
 | `local-auth`   | Email + password sign-in. Default for a LAN bind. On a fresh install the first sign-up becomes the admin; on an existing install the owner claims the account (see LAN mode above). |
 | `bearer-token` | The runner API requires a static `Authorization: Bearer <token>` header. Used for headless / programmatic access.                                                                   |
 
