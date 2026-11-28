@@ -76,6 +76,7 @@ beforeAll(async () => {
     toolName: 'file_write',
     toolInput: { path: `${racine}/app/src/module/a.ts` },
     toolOutput: '{"ok":true}',
+    outcome: 'done',
   });
   _resetProjectsCacheForTests();
 });

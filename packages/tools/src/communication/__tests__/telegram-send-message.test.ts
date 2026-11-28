@@ -233,6 +233,19 @@ describe('createTelegramSendMessageTool', () => {
     expect(sendTextMock).not.toHaveBeenCalled();
   });
 
+  it('reports what it acts on, the chat it resolved, before it sends: a failure is keyed to it too (#1184)', async () => {
+    sendTextMock.mockRejectedValueOnce(new DeliveryError('telegram_rate_limited', 'Rate limited'));
+    const tool = createTelegramSendMessageTool();
+    const targets: string[] = [];
+    const ctx = {
+      ...makeCtx({ jobChatId: '12345', jobChatChannel: 'telegram' }),
+      reportTarget: (t: string) => targets.push(t),
+    };
+    await expect(tool.execute({ text: 'x' }, ctx)).rejects.toBeInstanceOf(DeliveryError);
+    await tool.execute({ text: 'y' }, ctx);
+    expect(targets).toEqual(['chat:telegram:12345', 'chat:telegram:12345']);
+  });
+
   it('propagates DeliveryError from the adapter (fail loud)', async () => {
     sendTextMock.mockRejectedValueOnce(new DeliveryError('telegram_rate_limited', 'Rate limited'));
 

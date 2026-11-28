@@ -5,8 +5,9 @@
 // What `pnpm test` cannot prove (its database is built from the inline SQL of
 // helpers.ts, never from `migrations/`): the columns exist AFTER the real
 // migrations, the closed set is enforced by the database, and the backfill of
-// existing rows types only what the seam had written explicitly, leaving every
-// other row NULL ("not recorded"), never `done`.
+// existing rows types them once, by the rule the seam applies from now on: what
+// it wrote explicitly, each declaration of 0170 for the shape it reads, and
+// `done` for what returned and declares nothing.
 //
 // The backfill is proved on rows that exist BEFORE it runs: they are written
 // with no outcome, then the migration's own file is run again (it is written
@@ -21,7 +22,7 @@ import { describe, it, expect, afterAll } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { startRealPostgres, type RealPostgres } from '@nodal-agents/test-kit';
-import { createClient, sql, like, toolCalls } from '@nodal-agents/db';
+import { createClient, sql, toolCalls } from '@nodal-agents/db';
 import { runMigrations } from '@nodal-agents/db/migrate';
 
 let pg: RealPostgres | null = null;
@@ -70,101 +71,167 @@ describe('migration 0170_tool_call_outcome @cap:verifier-un-livrable/moteur', ()
     }
   });
 
-  it('existing rows: the explicit shapes are typed once, every other row stays not recorded', async () => {
+  it('existing rows are typed once, by the rule the seam now applies, and never guessed again', async () => {
     const { db, close } = createClient(harness().url, { max: 1 });
     try {
-      const tag = `m0170-${Date.now()}-`;
+      const tag = `m0170-${Date.now()}`;
       const rows: Array<{
-        name: string;
+        case: string;
+        toolName: string;
         toolOutput: string | null;
         executionStarted?: boolean;
         expected: string | null;
       }> = [
+        // What the seam wrote explicitly.
         {
-          name: 'failed',
-          toolOutput: '{"outcome":"error","error":"ECONNRESET","raisedByTool":true}',
+          case: 'failed',
+          toolName: 'gmail_send_email',
+          toolOutput: '{"outcome":"error","error":"403","raisedByTool":true}',
           expected: 'failed',
         },
         {
-          name: 'unknown',
-          toolOutput: '{"outcome":"error","error":"timed out — AMBIGUOUS","mayHaveDelivered":true}',
+          case: 'unknown',
+          toolName: 'telegram_send_message',
+          toolOutput: '{"outcome":"error","error":"timed out","mayHaveDelivered":true}',
           expected: 'unknown',
         },
         {
-          name: 'refused',
+          case: 'refused',
+          toolName: 'run_command',
           toolOutput: '{"outcome":"error","error":"blocked: an approval rule forbids"}',
           expected: 'refused',
         },
         {
-          name: 'rejected',
+          case: 'rejected',
+          toolName: 'run_command',
           toolOutput: '{"outcome":"error","error":"approval_already_rejected: the owner already"}',
           expected: 'refused',
         },
         {
-          name: 'held',
+          case: 'held',
+          toolName: 'run_command',
           toolOutput: '{"outcome":"awaiting_approval","approvalRequestId":"r"}',
           expected: 'awaiting_approval',
         },
         {
-          name: 'delegated',
+          case: 'delegated',
+          toolName: 'assign_x',
           toolOutput: '{"outcome":"delegation_requested","to":"x"}',
           expected: 'done',
         },
-        { name: 'mark', toolOutput: null, executionStarted: true, expected: 'unknown' },
         {
-          name: 'cli-refused',
+          case: 'mark',
+          toolName: 'file_write',
+          toolOutput: null,
+          executionStarted: true,
+          expected: 'unknown',
+        },
+        {
+          case: 'never-ran',
+          toolName: 'file_write',
+          toolOutput: null,
+          executionStarted: false,
+          expected: null,
+        },
+        // The declarations 0170 introduces, for the shapes they read.
+        {
+          case: 'cli-refused',
+          toolName: 'cli:Write',
           toolOutput: '<tool_use_error>No such tool</tool_use_error>',
           expected: 'failed',
         },
         {
-          name: 'ok-false',
-          toolOutput: '{"ok":false,"reason":"outside the workspace"}',
+          case: 'ok-false',
+          toolName: 'file_edit',
+          toolOutput: '{"ok":false,"reason":"old_string not found"}',
           expected: 'failed',
         },
-        // A returned output is NOT read as done: that is the reading 0170 removes.
-        { name: 'returned', toolOutput: '{"ok":true,"path":"a.txt"}', expected: null },
         {
-          name: 'timed-out-command',
-          toolOutput: '{"exitCode":null,"timedOut":true}',
-          expected: null,
+          case: 'timed-out',
+          toolName: 'run_command',
+          toolOutput: '{"sandbox":{},"exitCode":null,"stdout":"","timedOut":true}',
+          expected: 'failed',
         },
-        { name: 'text', toolOutput: 'plain text result', expected: null },
-        { name: 'never-ran', toolOutput: null, executionStarted: false, expected: null },
+        {
+          case: 'exit-1',
+          toolName: 'run_command',
+          toolOutput: '{"sandbox":{},"exitCode":1,"stdout":"","timedOut":false}',
+          expected: 'done',
+        },
+        {
+          case: 'code-error',
+          toolName: 'code_task',
+          toolOutput: '{"provider":"claude","isError":true}',
+          expected: 'failed',
+        },
+        {
+          case: 'declared-not',
+          toolName: 'declare_verification',
+          toolOutput: '{"declared":false,"reason":"no write"}',
+          expected: 'failed',
+        },
+        {
+          case: 'still-running',
+          toolName: 'poyo_generate_image',
+          toolOutput: '{"taskId":"t","status":"running","images":[]}',
+          expected: 'unknown',
+        },
+        {
+          case: 'apify-running',
+          toolName: 'apify_run_actor',
+          toolOutput: '{"runId":"r","status":"RUNNING"}',
+          expected: 'unknown',
+        },
+        {
+          case: 'apify-failed',
+          toolName: 'apify_run_actor',
+          toolOutput: '{"runId":"r","status":"FAILED"}',
+          expected: 'failed',
+        },
+        {
+          case: 'apify-done',
+          toolName: 'apify_run_actor',
+          toolOutput: '{"runId":"r","status":"SUCCEEDED"}',
+          expected: 'done',
+        },
+        // What returned and declares nothing: done, as the seam writes it now.
+        {
+          case: 'returned',
+          toolName: 'file_write',
+          toolOutput: '{"ok":true,"path":"a.txt"}',
+          expected: 'done',
+        },
+        { case: 'text', toolName: 'web_fetch', toolOutput: 'plain text result', expected: 'done' },
       ];
       for (const r of rows) {
         await db.insert(toolCalls).values({
-          toolName: tag + r.name,
+          toolName: r.toolName,
+          toolInput: { tag, case: r.case },
           toolOutput: r.toolOutput,
           executionStarted: r.executionStarted ?? true,
         });
       }
+      const read = async () =>
+        new Map(
+          (
+            (await db.execute(
+              sql`SELECT tool_input->>'case' AS c, outcome, target FROM tool_calls
+                  WHERE tool_input->>'tag' = ${tag}`,
+            )) as unknown as Array<{ c: string; outcome: string | null; target: string | null }>
+          ).map((r) => [r.c, r]),
+        );
 
       await db.execute(sql.raw(readFileSync(MIGRATION, 'utf-8')));
-
-      const after = await db
-        .select({
-          toolName: toolCalls.toolName,
-          outcome: toolCalls.outcome,
-          target: toolCalls.target,
-        })
-        .from(toolCalls)
-        .where(like(toolCalls.toolName, `${tag}%`));
-      const byName = new Map(after.map((a) => [a.toolName.slice(tag.length), a]));
+      const after = await read();
       for (const r of rows) {
-        expect(byName.get(r.name)?.outcome, r.name).toBe(r.expected);
+        expect(after.get(r.case)?.outcome, r.case).toBe(r.expected);
         // What an old call acted on was never recorded: not reconstructed.
-        expect(byName.get(r.name)?.target, r.name).toBeNull();
+        expect(after.get(r.case)?.target, r.case).toBeNull();
       }
 
       // Run again: nothing moves.
       await db.execute(sql.raw(readFileSync(MIGRATION, 'utf-8')));
-      const again = await db
-        .select({ toolName: toolCalls.toolName, outcome: toolCalls.outcome })
-        .from(toolCalls)
-        .where(like(toolCalls.toolName, `${tag}%`));
-      expect(new Map(again.map((a) => [a.toolName, a.outcome]))).toEqual(
-        new Map(after.map((a) => [a.toolName, a.outcome])),
-      );
+      expect(await read()).toEqual(after);
     } finally {
       await close();
     }

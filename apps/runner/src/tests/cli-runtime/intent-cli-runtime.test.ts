@@ -531,6 +531,7 @@ describe('run-job : le REGISTRE des projets, APRÈS binding.run (revue passe 27)
         toolInput: { file_path: `${alpha}/index.ts` },
         // `tool_output` est du TEXTE, pas du jsonb — voir le schéma.
         toolOutput: '{"ok":true}',
+        outcome: 'done',
       });
       return { ...greenTurn(), isError: true, errorDetail: 'tests failed' };
     });
@@ -570,6 +571,7 @@ describe('run-job : le REGISTRE des projets, APRÈS binding.run (revue passe 27)
         toolName: 'cli:Write',
         toolInput: { file_path: `${alpha}/index.ts` },
         toolOutput: '{"ok":true}',
+        outcome: 'done',
       });
       // Pendant le tour, le job est remis en file et repris par un autre run.
       await db.update(agentJobs).set({ status: 'pending' }).where(eq(agentJobs.id, jobId));
@@ -623,6 +625,7 @@ describe('run-job : le REGISTRE des projets, APRÈS binding.run (revue passe 27)
         toolName: 'cli:Read',
         toolInput: { file_path: `${alpha}/index.ts` },
         toolOutput: '{"ok":true}',
+        outcome: 'done',
       });
       return { ...greenTurn(), isError: true, errorDetail: 'stop' };
     });
@@ -672,6 +675,7 @@ describe('run-job : le registre se remplit tout seul (P5b) @cap:travailler-sur-d
       toolName: 'cli:Write',
       toolInput: { file_path: filePath },
       toolOutput: '{"ok":true}',
+      outcome: 'done',
     });
 
   it('deux fichiers écrits dans alpha/src : `alpha` (manifeste) est DÉCLARÉ et le job rattaché — pas le terrain', async () => {

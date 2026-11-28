@@ -70,7 +70,7 @@ export function extractFilePath(input: Record<string, unknown> | null): string |
  * Nodal once recorded those exactly like successful calls, so the Code tab
  * counted files that were never written, showed their content in Changes, and
  * even qualified a pipeline as a "coding session" on writes that never
- * happened (Quentin 20/08: Dev C, 9 attempts, 9 refusals).
+ * happened (20/08: a read-only coding agent, 9 attempts, 9 refusals).
  */
 export function isRefusedToolCall(outcome: string | null | undefined): boolean {
   return !callMayHaveActed(readCallOutcome(outcome));

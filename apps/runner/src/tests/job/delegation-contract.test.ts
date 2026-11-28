@@ -1317,6 +1317,7 @@ async function recordToolCall(
     toolName,
     toolInput: {},
     toolOutput: JSON.stringify(output),
+    outcome: 'done',
     turn,
   } as never);
 }

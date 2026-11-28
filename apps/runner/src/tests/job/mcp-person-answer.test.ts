@@ -959,6 +959,7 @@ describe('le relevé suit le message d’outils à toute écriture de la transcr
       riskLevel: 'write',
       toolInput: {},
       toolOutput: null,
+      outcome: null,
       executionStarted: true,
       turn: 2,
       toolCallId: 'tc-cut',

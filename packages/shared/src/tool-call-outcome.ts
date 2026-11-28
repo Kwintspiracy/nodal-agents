@@ -23,9 +23,10 @@
 //   - `refused`: a rule of the owner, or a person, did not let it run;
 //   - `awaiting_approval`: it waits on a person (an approval, a question).
 //
-// A row written before 0170 carries no outcome: `not_recorded`. Readers say so;
-// nobody guesses it (migration 0170 typed, once, only what the seam had written
-// explicitly).
+// Rows written before 0170 were typed ONCE by the migration, by the same rule
+// (packages/db/migrations/0170_tool_call_outcome.sql). A row with no outcome
+// (a mark that never started, a writer that did not say) is `not_recorded`:
+// its readers say so, and nobody guesses it.
 
 import { CLAUDE_SHELL_TOOLS } from './cli-shell';
 import { projectKey } from './project-key';

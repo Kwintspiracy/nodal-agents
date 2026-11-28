@@ -66,8 +66,9 @@ export const toolCalls = pgTable(
     // refused, awaiting_approval), déclaré par l'outil et écrit UNE fois par la
     // porte (`executeTool`) ou par l'enregistreur d'un runtime CLI. Lu par
     // `readCallOutcome` et par rien d'autre : plus aucun lecteur ne devine
-    // l'issue dans `tool_output`. NULL : une ligne d'avant 0170 dont la porte
-    // n'avait rien écrit d'explicite (« non enregistré », dit tel quel).
+    // l'issue dans `tool_output`. Les lignes d'avant 0170 ont été typées UNE
+    // fois par la migration, par la même règle. NULL : rien n'a été dit
+    // (« non enregistré », dit tel quel par ses lecteurs, jamais deviné).
     outcome: text('outcome'),
     // 0170 : CE SUR QUOI l'appel a agi, en clé (`chat:<canal>:<id>`,
     // `file:<chemin>`, `input:<outil>:<empreinte>`). Un échec n'est résolu que

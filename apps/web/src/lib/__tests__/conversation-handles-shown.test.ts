@@ -137,6 +137,7 @@ beforeAll(async () => {
     toolName: 'telegram_send_message',
     toolInput: { chatId: handle, text: 'Bonjour Marie', channel: 'whatsapp' },
     toolOutput: JSON.stringify({ sent: true }),
+    outcome: 'done',
     durationMs: 5,
     turn: 1,
     toolCallId: 'c_send_824',

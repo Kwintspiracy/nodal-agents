@@ -732,6 +732,7 @@ describe('une marque posée après le point de reprise, quel que soit son tour (
       riskLevel: 'destructive',
       toolInput: { command: 'npm publish' },
       toolOutput: null,
+      outcome: null,
       turn: 5,
     });
     await db

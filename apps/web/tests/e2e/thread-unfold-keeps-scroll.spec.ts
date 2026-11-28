@@ -213,6 +213,7 @@ async function seedThread(): Promise<string> {
         toolCallId,
         toolInput: { query: `the seeded probe ${rank}` },
         toolOutput: TOOL_OUTPUT,
+        outcome: 'done',
         durationMs: 1_234,
         turn: 1,
         createdAt: at(step + 1),
