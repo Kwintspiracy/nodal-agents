@@ -8,8 +8,17 @@ import { mapGmailError } from '../errors';
 import { paginateGmail } from '../helpers/pagination';
 import { mapWithConcurrency } from '../helpers/concurrency';
 import { parseGmailHeaders } from '../helpers/parse-payload';
-import { buildRfc2822Message } from '../helpers/rfc2822';
-import type { AttachmentSpec } from '../helpers/rfc2822';
+import {
+  mailBodyFormatSchema,
+  parseMailAddressList,
+  resolveMailBodyFormat,
+} from '@nodal-agents/shared/mail-contract';
+import {
+  attachmentSpecsToMime,
+  buildMimeMessage,
+  toGmailRaw,
+  type AttachmentSpec,
+} from '../helpers/mime';
 
 // audit#2026-07-07 F3: cap how many per-draft GET requests run at once when
 // hydrating a list page (up to 500 stubs) — an unbounded Promise.all fan-out
@@ -134,9 +143,12 @@ export function createListDraftsTool(
 const CreateDraftInput = z.object({
   to: z.string().describe('Recipient email address.'),
   subject: z.string().describe('Email subject line.'),
-  body: z.string().describe('Email body — plain text or HTML.'),
-  cc: z.string().optional().describe('CC address(es), comma-separated.'),
-  bcc: z.string().optional().describe('BCC address(es), comma-separated.'),
+  body: z
+    .string()
+    .describe('Email body, kept exactly as written, in the format given by body_format.'),
+  body_format: mailBodyFormatSchema,
+  cc: z.string().optional().describe('CC address list.'),
+  bcc: z.string().optional().describe('BCC address list.'),
   reply_to_message_id: z
     .string()
     .optional()
@@ -191,16 +203,19 @@ export function createCreateDraftTool(
             : priorRefs || undefined;
         }
 
-        const raw = buildRfc2822Message({
-          to: input.to,
-          subject,
-          body: input.body,
-          cc: input.cc,
-          bcc: input.bcc,
-          inReplyTo,
-          references,
-          attachments: input.attachments as AttachmentSpec[] | undefined,
-        });
+        const raw = toGmailRaw(
+          await buildMimeMessage({
+            to: parseMailAddressList(input.to),
+            cc: parseMailAddressList(input.cc),
+            bcc: parseMailAddressList(input.bcc),
+            subject,
+            body: input.body,
+            bodyFormat: resolveMailBodyFormat(input.body_format),
+            ...(inReplyTo ? { inReplyTo } : {}),
+            ...(references ? { references: references.split(/\s+/).filter(Boolean) } : {}),
+            attachments: attachmentSpecsToMime(input.attachments as AttachmentSpec[] | undefined),
+          }),
+        );
 
         const requestBody: gmail_v1.Schema$Draft = {
           message: { raw, ...(threadId && { threadId }) },
@@ -229,9 +244,12 @@ const UpdateDraftInput = z.object({
     .describe('Draft ID to update (from gmail_list_drafts or gmail_create_draft).'),
   to: z.string().describe('Recipient email address.'),
   subject: z.string().describe('Email subject line.'),
-  body: z.string().describe('Email body — plain text or HTML.'),
-  cc: z.string().optional().describe('CC address(es), comma-separated.'),
-  bcc: z.string().optional().describe('BCC address(es), comma-separated.'),
+  body: z
+    .string()
+    .describe('Email body, kept exactly as written, in the format given by body_format.'),
+  body_format: mailBodyFormatSchema,
+  cc: z.string().optional().describe('CC address list.'),
+  bcc: z.string().optional().describe('BCC address list.'),
   attachments: z.array(AttachmentItemSchema).optional().describe('Optional file attachments.'),
 });
 
@@ -251,14 +269,17 @@ export function createUpdateDraftTool(
     inputSchema: UpdateDraftInput,
     async execute(input) {
       try {
-        const raw = buildRfc2822Message({
-          to: input.to,
-          subject: input.subject,
-          body: input.body,
-          cc: input.cc,
-          bcc: input.bcc,
-          attachments: input.attachments as AttachmentSpec[] | undefined,
-        });
+        const raw = toGmailRaw(
+          await buildMimeMessage({
+            to: parseMailAddressList(input.to),
+            cc: parseMailAddressList(input.cc),
+            bcc: parseMailAddressList(input.bcc),
+            subject: input.subject,
+            body: input.body,
+            bodyFormat: resolveMailBodyFormat(input.body_format),
+            attachments: attachmentSpecsToMime(input.attachments as AttachmentSpec[] | undefined),
+          }),
+        );
         const res = await gmail.users.drafts.update({
           userId: 'me',
           id: input.draft_id,

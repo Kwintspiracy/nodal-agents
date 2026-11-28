@@ -6,12 +6,10 @@ import {
   createSendEmailTool,
   createListMessagesTool,
   createGetMessageTool,
-  createReplyMessageTool,
   createModifyLabelsTool,
   createTrashMessageTool,
   createUntrashMessageTool,
   createDeleteMessageTool,
-  createForwardMessageTool,
 } from '../../tools/messages';
 
 function makeGmail(): gmail_v1.Gmail {
@@ -450,103 +448,6 @@ describe('gmail_delete_message', () => {
   });
 });
 
-// ── gmail_reply_message ───────────────────────────────────────────────────────
-
-describe('gmail_reply_message', () => {
-  let gmail: gmail_v1.Gmail;
-  beforeEach(() => {
-    gmail = makeGmail();
-  });
-
-  it('fetches original metadata and sends reply in-thread', async () => {
-    (gmail.users.messages.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
-      data: {
-        id: 'msg-1',
-        threadId: 'thread-1',
-        payload: {
-          headers: [
-            { name: 'From', value: 'alice@example.com' },
-            { name: 'Subject', value: 'Original subject' },
-            { name: 'Message-ID', value: '<orig@example.com>' },
-            { name: 'References', value: '' },
-          ],
-        },
-      },
-    });
-    (gmail.users.messages.send as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
-      data: { id: 'msg-2', threadId: 'thread-1' },
-    });
-
-    const tool = createReplyMessageTool(gmail);
-    const result = await tool.execute({ message_id: 'msg-1', body: 'My reply.' }, {} as never);
-
-    expect(result.messageId).toBe('msg-2');
-    expect(result.threadId).toBe('thread-1');
-
-    // Verify threadId was set on send
-    const sendCall = (gmail.users.messages.send as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as {
-      requestBody: { threadId?: string; raw: string };
-    };
-    expect(sendCall?.requestBody?.threadId).toBe('thread-1');
-  });
-});
-
-// ── gmail_forward_message ─────────────────────────────────────────────────────
-
-describe('gmail_forward_message', () => {
-  let gmail: gmail_v1.Gmail;
-  beforeEach(() => {
-    gmail = makeGmail();
-  });
-
-  it('prefixes Fwd: to subject and includes forwarded body', async () => {
-    (gmail.users.messages.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
-      data: {
-        id: 'msg-1',
-        threadId: 'thread-1',
-        payload: {
-          mimeType: 'text/plain',
-          headers: [
-            { name: 'From', value: 'sender@example.com' },
-            { name: 'Subject', value: 'Original' },
-            { name: 'Date', value: '2024-01-01' },
-            { name: 'To', value: 'recipient@example.com' },
-          ],
-          body: {
-            data: Buffer.from('Original email body', 'utf-8')
-              .toString('base64')
-              .replace(/\+/g, '-')
-              .replace(/\//g, '_')
-              .replace(/=/g, ''),
-          },
-        },
-      },
-    });
-    (gmail.users.messages.send as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
-      data: { id: 'msg-3', threadId: 'thread-3' },
-    });
-
-    const tool = createForwardMessageTool(gmail);
-    const result = await tool.execute({ message_id: 'msg-1', to: 'fwd@example.com' }, {} as never);
-
-    expect(result.messageId).toBe('msg-3');
-
-    const sendCall = (gmail.users.messages.send as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as {
-      requestBody: { raw: string };
-    };
-    // Decode the outer base64url envelope to get the full RFC 2822 raw message
-    const rawEncoded = sendCall?.requestBody?.raw ?? '';
-    const padded = rawEncoded.replace(/-/g, '+').replace(/_/g, '/');
-    const padLength = (4 - (padded.length % 4)) % 4;
-    const withPad = padded + '='.repeat(padLength);
-    const rawMsg = Buffer.from(withPad, 'base64').toString('utf-8');
-    expect(rawMsg).toContain('Fwd: Original');
-    // The body is base64-encoded within the RFC 2822 message — decode it
-    const bodyBase64 = rawMsg.split('\r\n\r\n').slice(1).join('\r\n\r\n').trim();
-    const bodyPadded = bodyBase64.replace(/-/g, '+').replace(/_/g, '/');
-    const bodyPadLength = (4 - (bodyPadded.replace(/\s/g, '').length % 4)) % 4;
-    const bodyWithPad = bodyPadded.replace(/\s/g, '') + '='.repeat(bodyPadLength);
-    const bodyText = Buffer.from(bodyWithPad, 'base64').toString('utf-8');
-    expect(bodyText).toContain('Original email body');
-  });
-});
+// gmail_reply_message and gmail_forward_message are proved by the mail
+// contract's conformance suite (../mail-contract.test.ts), on the decoded
+// message Gmail would receive.
