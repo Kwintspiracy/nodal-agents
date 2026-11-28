@@ -6,8 +6,8 @@
 // @nodal-agents/test-kit — one scanner, every package, no local copies to drift.
 
 import { describe, it, expect } from 'vitest';
-import { existsSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   scanForAgentSlugs,
@@ -15,6 +15,7 @@ import {
   scanForDbDriverImports,
   scanForModuleReferences,
   assertNoViolations,
+  listSourceFiles,
 } from '@nodal-agents/test-kit';
 
 const srcDir = join(fileURLToPath(import.meta.url), '..', '..');
@@ -75,6 +76,29 @@ describe('architecture invariants', () => {
         ],
       }),
     );
+  });
+
+  // The schema moves through ONE function (packages/db/src/safe-migrate.ts):
+  // it refuses a database newer than the program and copies the database
+  // before it migrates. A second caller of the migrator or of the gap repair
+  // would migrate without either, in silence. Test files may call them to
+  // build their databases; product code may not.
+  it('calls the migrator nowhere but packages/db/src/safe-migrate.ts', () => {
+    const repoRoot = join(srcDir, '..', '..', '..');
+    const allowed = new Set(['packages/db/src/migrate.ts', 'packages/db/src/safe-migrate.ts']);
+    const dirs = workspaceSrcDirs(repoRoot);
+    expect(dirs).toEqual(expect.arrayContaining([join(repoRoot, 'packages', 'db', 'src')]));
+    // The shared walk (it skips build output); test files are left out here.
+    const callers = dirs
+      .flatMap((dir) => listSourceFiles(dir, { extensions: ['.ts', '.tsx', '.mts'] }))
+      .map((full) => ({ full, rel: relative(repoRoot, full).split(sep).join('/') }))
+      .filter(({ rel }) => !/(^|\/)tests\//.test(rel) && !/\.test\./.test(rel))
+      .filter(({ rel }) => !allowed.has(rel))
+      .filter(({ full }) =>
+        /\b(runMigrations|repairMigrations)\s*\(/.test(readFileSync(full, 'utf-8')),
+      )
+      .map(({ rel }) => rel);
+    expect(callers).toEqual([]);
   });
 
   // Invariant #2 is deliberately NOT asserted here. It governs the RUNNER —

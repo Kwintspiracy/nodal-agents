@@ -58,8 +58,14 @@ export function isPortBindable(port: number): Promise<boolean> {
 /**
  * Find a free port starting from the given preferred port.
  * Tries preferred, then preferred+1, preferred+2, etc., up to maxAttempts.
+ * A port in `reserved` is never answered, free or not: it belongs to another
+ * service of the same configuration, which may simply not be started yet.
  */
-export function findFreePort(preferred: number, maxAttempts = 20): Promise<number> {
+export function findFreePort(
+  preferred: number,
+  maxAttempts = 20,
+  reserved: ReadonlySet<number> = new Set(),
+): Promise<number> {
   return new Promise((resolve, reject) => {
     let attempt = 0;
     const tryPort = (port: number): void => {
@@ -72,6 +78,10 @@ export function findFreePort(preferred: number, maxAttempts = 20): Promise<numbe
         return;
       }
       attempt++;
+      if (reserved.has(port)) {
+        tryPort(port + 1);
+        return;
+      }
       const server = createServer();
       server.listen(port, '127.0.0.1', () => {
         const addr = server.address();
@@ -84,6 +94,52 @@ export function findFreePort(preferred: number, maxAttempts = 20): Promise<numbe
     };
     tryPort(preferred);
   });
+}
+
+/** The three ports of one configuration. */
+export interface ServicePorts {
+  readonly web: number;
+  readonly runner: number;
+  readonly postgres: number;
+}
+
+/** How `allocateServicePorts` asks the machine about a port. */
+export interface PortProbe {
+  readonly bindable: (port: number) => Promise<boolean>;
+  readonly freeFrom: (start: number, reserved: ReadonlySet<number>) => Promise<number>;
+}
+
+const MACHINE: PortProbe = {
+  bindable: isPortBindable,
+  freeFrom: (start, reserved) => findFreePort(start, 20, reserved),
+};
+
+/**
+ * The ports the services start on: each configured one when it can be bound,
+ * else the next free one. ONE decision over the set (B38-03, B39-01): a port
+ * that another service of this configuration holds or was given is never
+ * handed to a second one. Probing one port at a time used to give the web the
+ * runner's port, because the runner was not listening yet, and `up` saved it.
+ */
+export async function allocateServicePorts(
+  configured: ServicePorts,
+  probe: PortProbe = MACHINE,
+): Promise<{
+  ports: ServicePorts;
+  moved: { name: keyof ServicePorts; from: number; to: number }[];
+}> {
+  const reserved = new Set<number>([configured.web, configured.runner, configured.postgres]);
+  const ports = { ...configured };
+  const moved: { name: keyof ServicePorts; from: number; to: number }[] = [];
+  for (const name of ['web', 'runner', 'postgres'] as const) {
+    const from = configured[name];
+    if (await probe.bindable(from)) continue;
+    const to = await probe.freeFrom(from + 1, reserved);
+    reserved.add(to);
+    ports[name] = to;
+    moved.push({ name, from, to });
+  }
+  return { ports, moved };
 }
 
 export const DEFAULT_PORTS = {
