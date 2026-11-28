@@ -28,6 +28,7 @@ import {
   connectors,
   credentials,
   entityLlmKeys,
+  entitySettings,
   mcpServers,
   webhookTriggers,
 } from '../schema/index.ts';
@@ -147,6 +148,39 @@ async function workspaceWithSecrets() {
 }
 
 describe('the registry holds every secret Nodal keeps for the workspace, and only those @cap:connecter-un-service/moteur', () => {
+  it('the key of a voice server the person runs (#1048), for its own workspace only', async () => {
+    const a = await seedMinimal(db);
+    const b = await seedMinimal(db);
+    const speechKey = randomBytes(20).toString('hex');
+    const earKey = randomBytes(20).toString('hex');
+    const voice = (key: string, ear: string) =>
+      JSON.stringify({
+        source: 'openai-compatible',
+        model: 'kokoro',
+        voice: 'af_heart',
+        speechServer: { address: 'http://127.0.0.1:8880/v1', key: encrypt(key) },
+        transcriptionSource: 'openai-compatible',
+        transcriptionModel: 'whisper',
+        transcriptionServer: { address: 'http://127.0.0.1:8786/v1', key: encrypt(ear) },
+      });
+    for (const [entityId, value] of [
+      [a.entityId, voice(speechKey, earKey)],
+      [b.entityId, '{}'],
+    ] as const) {
+      await db
+        .insert(entitySettings)
+        .values({ entityId, key: 'voice', value })
+        .onConflictDoUpdate({
+          target: [entitySettings.entityId, entitySettings.key],
+          set: { value },
+        });
+    }
+    const values = await loadWorkspaceSecretValues(db, a.entityId);
+    expect(values).toContain(speechKey);
+    expect(values).toContain(earKey);
+    expect(await loadWorkspaceSecretValues(db, b.entityId)).not.toContain(speechKey);
+  });
+
   it('every store, decrypted: provider, connector, OAuth, MCP key and variables, channel, bot, webhook', async () => {
     const { seed, v } = await workspaceWithSecrets();
     const values = await loadWorkspaceSecretValues(db, seed.entityId);

@@ -24,7 +24,10 @@
 //                                          agents are given);
 //   - `channel_bindings.credentials`       every value of a channel's bag;
 //   - `agents.telegram_bot_token`          the legacy bot token column;
-//   - `webhook_triggers.secret`            the webhook secrets.
+//   - `webhook_triggers.secret`            the webhook secrets;
+//   - `entity_settings` (key `voice`)      the keys of the speech and
+//                                          transcription servers the person
+//                                          runs (#1048).
 //
 // A row that does not decrypt is not a value Nodal can hold in clear: it
 // cannot reach any tool, so it cannot be in a result. It is skipped and said
@@ -48,6 +51,7 @@ import { credentials } from '../schema/credentials.ts';
 import { entityLlmKeys } from '../schema/llm_keys.ts';
 import { agentMcpServers, mcpServers } from '../schema/mcp.ts';
 import { webhookTriggers } from '../schema/webhooks.ts';
+import { entitySettings } from '../schema/app-settings.ts';
 
 /** A stored secret in clear: decrypted when it is an envelope, as stored otherwise. */
 function clear(raw: string | null | undefined, what: string, skipped: string[]): string | null {
@@ -191,6 +195,28 @@ export async function loadWorkspaceSecretValues(
   for (const r of hooks) {
     const v = clear(r.secret, `webhook_triggers ${r.id}`, skipped);
     if (v) values.push(v);
+  }
+
+  // The keys of the voice servers the person runs (#1048), inside the voice
+  // setting. A setting that is not JSON holds no key Nodal could hand on.
+  const voice = await db
+    .select({ value: entitySettings.value })
+    .from(entitySettings)
+    .where(and(eq(entitySettings.entityId, entityId), eq(entitySettings.key, 'voice')));
+  for (const r of voice) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(r.value);
+    } catch {
+      continue;
+    }
+    const servers = (parsed ?? {}) as Record<string, { key?: unknown } | undefined>;
+    for (const part of ['speechServer', 'transcriptionServer'] as const) {
+      const key = servers[part]?.key;
+      if (typeof key !== 'string') continue;
+      const v = clear(key, `entity_settings voice ${part}`, skipped);
+      if (v) values.push(v);
+    }
   }
 
   if (skipped.length > 0) {
